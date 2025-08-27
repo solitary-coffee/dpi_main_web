@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>MD preview</title>
+<meta http-equiv="Content-type" content="text/html;charset=UTF-8">
+</head>
+<body>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/0.7.0/marked.js"></script>  
+
+<script type="text/plain" id="here">
+# 特定商取引法に基づく表記
+## サービス名:Disaster prevention information provision BOT
+## 略称：DPI-Bot
+
+運営責任者:菊池一斗
+
+サービス提供方法:インターネットにより提供。
+
+サービス提供開始時期:締結後、1日～3日
+
+
+
+支払い方法:クレジットカード(Visa, Mastercard, JCB, Amex, Diners)
+クレジットカードの場合、決済名は「DPI_運営」、「ディーピーアイウンエイ」または「DPIUNEI」となります。 
+
+支払い後のキャンセル:できかねます。
+
+住所:北海道札幌市手稲区富丘1条5丁目12-27
+
+電話番号:080-5744-7943
+電話での問い合わせは受け付けていません。
+原則としてメールまたは、サポートサーバーをご利用ください。
+
+メールアドレス:dpibot.dev@gmail.com
+・2025 年  7 月 16日 改定
+
+
+</script>
+
+<script>
+var here = document.getElementById('here').textContent;
+
+var md = marked(here);  
+console.log(md); // Debug
+
+document.body.innerHTML = md;
+</script>  
+
+</body>
+</html>
+
