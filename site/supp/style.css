@@ -1,0 +1,396 @@
+/* 基本スタイルとリセット */
+html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    background-color: #444950; /* 全体の背景を薄い灰色に */
+    color: #ffffff;
+}
+
+/* ページ全体のコンテナ */
+.page-container {
+    display: flex; /* サイドバーとメインコンテンツを横並びにする */
+    height: 100%;
+}
+
+/* 左側のサイドバー */
+.sidebar {
+    width: 240px; /* サイドバーの幅を固定 */
+    background-color: #343a40; /* サイドバーの背景を濃い灰色に */
+    color: #f8f9fa; /* 文字色を明るく */
+    padding: 20px;
+    box-sizing: border-box; /* paddingを含めて幅を計算 */
+    height: 100vh; /* 画面の高さいっぱいに広げる */
+    display: flex;
+    flex-direction: column;
+}
+
+.sidebar-header h2 {
+    margin: 0 0 30px 0;
+    text-align: center;
+    border-bottom: 1px solid #258af0;
+    padding-bottom: 20px;
+}
+
+.sidebar ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.sidebar ul li a {
+    display: block;
+    color: #dee2e6;
+    text-decoration: none;
+    padding: 15px 10px;
+    border-radius: 5px;
+    transition: background-color 0.3s, color 0.3s;
+}
+
+.sidebar ul li a:hover,
+.sidebar ul li a.active {
+    background-color: #495057; /* ホバー時やアクティブなメニューの背景色 */
+    color: #fff;
+}
+
+/* 右側のメインコンテンツ */
+.main-content {
+    flex: 1; /* 残りの幅をすべて使用 */
+    padding: 40px;
+    overflow-y: auto; /* コンテンツがはみ出た場合にスクロールバーを表示 */
+    height: 100vh;
+    box-sizing: border-box;
+}
+
+/* ★★★ 変更点 ★★★ */
+/* メインコンテンツ内の各セクションのスタイル */
+.section {
+    padding-bottom: 30px;
+    margin-bottom: 30px;
+    border-bottom: 1px solid #e0e0e0; /* セクションを区切る線 */
+}
+.main-content .section:last-child {
+    border-bottom: none; /* 最後のセクションの線は消す */
+    margin-bottom: 0;
+}
+
+
+/* 見出しスタイル */
+header h1 {
+    text-align: center;
+    color: #237fdb;
+    margin: 0 0 30px 0;
+}
+
+h2 {
+    text-align: center;
+    color: #3498db;
+    border-bottom: 2px solid #3498db;
+    padding-bottom: 10px;
+    margin-top: 0;
+    margin-bottom: 30px;
+}
+
+h3 {
+    color: #2980b9;
+}
+
+/* 機能リスト */
+.feature-category ul {
+    list-style-type: none;
+    padding: 0;
+}
+
+.feature-category li {
+    background-color: #e9ecef; /* 背景色に合わせて少し調整 */
+    border-left: 5px solid #3498db;
+    padding: 10px 15px;
+    margin-bottom: 8px;
+    border-radius: 5px;
+}
+
+/* スライドショー */
+.slider {
+    position: relative;
+    max-width: 100%;
+    margin: 0 auto;
+    overflow: hidden;
+    border-radius: 10px;
+}
+
+.slides {
+    display: flex;
+    transition: transform 0.5s ease-in-out;
+}
+
+.slides img {
+    width: 100%;
+    flex-shrink: 0;
+}
+
+.prev-btn, .next-btn {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    background-color: rgba(0,0,0,0.5);
+    color: white;
+    border: none;
+    padding: 10px 15px;
+    cursor: pointer;
+    font-size: 18px;
+    border-radius: 5px;
+    user-select: none;
+}
+
+.prev-btn { left: 10px; }
+.next-btn { right: 10px; }
+.prev-btn:hover, .next-btn:hover { background-color: rgba(0,0,0,0.8); }
+
+/* (トップページ用) クイックリンクのスタイル */
+.quick-links {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: 20px;
+}
+.link-card {
+    border: 1px solid #ddd;
+    padding: 25px;
+    border-radius: 8px;
+    text-decoration: none;
+    color: inherit;
+    transition: background-color 0.2s, border-color 0.2s;
+    display: block;
+}
+.link-card:hover {
+    background-color: #fff;
+    border-color: #ccc;
+}
+.link-card h3 {
+    margin-top: 0;
+    color: #3498db;
+}
+.link-card p {
+    margin-bottom: 0;
+    color: #ffffff;
+}
+/* --- 開発者紹介ページ用のスタイル (追記) --- */
+.developer-card {
+    /* .sectionのスタイルを継承しつつ、独自のスタイルも適用 */
+}
+
+.developer-header {
+    display: flex;
+    align-items: center;
+    gap: 20px; /* アイコンと名前の間のスペース */
+    margin-bottom: 20px;
+}
+
+.developer-icon {
+    width: 80px;
+    height: 80px;
+    border-radius: 50%; /* アイコンを丸くする */
+    object-fit: cover; /* 画像の比率を保ったままトリミング */
+    border: 3px solid #f0f2f5;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+}
+
+.developer-name {
+    margin: 0;
+    text-align: left;
+    border: none;
+    padding: 0;
+    font-size: 1.8em;
+    color: #333;
+}
+
+.developer-body .bio {
+    margin-bottom: 2em;
+    line-height: 1.7;
+}
+
+.developer-body h3 {
+    text-align: left;
+    font-size: 1.2em;
+    color: #2980b9;
+    margin-top: 0;
+    margin-bottom: 10px;
+}
+
+.skills {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-wrap: wrap; /* タグが多すぎたら折り返す */
+    gap: 10px; /* タグ同士の間隔 */
+    margin-bottom: 1.5em;
+}
+
+.skills li {
+    background-color: #e0eaf1; /* タグの背景色 */
+    color: #34495e; /* タグの文字色 */
+    padding: 5px 12px;
+    border-radius: 15px; /* タグを角丸にする */
+    font-size: 0.9em;
+    font-weight: 500;
+}
+
+.developer-body p {
+    margin-bottom: 0;
+}
+#menu-toggle-btn {
+    display: none; /* PCでは非表示 */
+    position: fixed;
+    top: 15px;
+    left: 15px;
+    width: 40px;
+    height: 40px;
+    background: #fff;
+    border: 1px solid #ddd;
+    border-radius: 5px;
+    z-index: 2000; /* 最前面に表示 */
+    cursor: pointer;
+    padding: 8px;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+}
+
+#menu-toggle-btn span {
+    display: block;
+    background: #333;
+    height: 3px;
+    width: 100%;
+    margin: 4px auto;
+    border-radius: 2px;
+}
+
+/* メニュー表示時の背景オーバーレイ */
+.overlay {
+    display: none; /* PCでは非表示 */
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0,0,0,0.5);
+    z-index: 900;
+}
+
+.overlay.open {
+    display: block;
+}
+
+
+/* 画面幅が768px以下の場合に適用されるスタイル */
+@media (max-width: 768px) {
+    
+    #menu-toggle-btn {
+        display: block; /* スマホでは表示 */
+    }
+
+    .page-container {
+        display: block; /* flex解除 */
+    }
+
+    .sidebar {
+        position: fixed;
+        left: 0;
+        top: 0;
+        width: 250px;
+        height: 100%;
+        z-index: 1000; /* ボタンよりは下、オーバーレイよりは上 */
+        transform: translateX(-100%); /* 初期状態では画面の外に隠す */
+        transition: transform 0.3s ease-in-out;
+    }
+
+    .sidebar.open {
+        transform: translateX(0); /* .openクラスが付いたら表示 */
+        box-shadow: 0 0 20px rgba(0,0,0,0.2);
+    }
+    
+    .main-content {
+        padding: 20px;
+        padding-top: 70px; /* ヘッダーボタンと被らないように調整 */
+    }
+
+    /* PC用の見出しは非表示に */
+    .main-content > header {
+        display: none;
+    }
+
+    /* h1,h2のフォントサイズを調整 */
+    h1 { font-size: 1.8em; }
+    h2 { font-size: 1.4em; }
+
+    /* 開発者カードのアイコンサイズ調整 */
+    .developer-icon {
+        width: 60px;
+        height: 60px;
+    }
+    .developer-name {
+        font-size: 1.4em;
+    }
+}
+.contact-form {
+    margin-top: 30px;
+}
+
+.form-group {
+    margin-bottom: 20px;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 8px;
+    font-weight: bold;
+    color: #555;
+}
+
+.form-group input[type="text"],
+.form-group input[type="email"],
+.form-group select,
+.form-group textarea {
+    width: 100%;
+    padding: 12px;
+    border: 1px solid #ccc;
+    border-radius: 5px;
+    font-size: 1em;
+    font-family: inherit; /* bodyのフォントを継承 */
+    box-sizing: border-box; /* paddingを含めて幅を100%に */
+    transition: border-color 0.3s, box-shadow 0.3s;
+}
+
+.form-group input[type="text"]:focus,
+.form-group input[type="email"]:focus,
+.form-group select:focus,
+.form-group textarea:focus {
+    outline: none;
+    border-color: #3498db;
+    box-shadow: 0 0 5px rgba(52, 152, 219, 0.5);
+}
+
+.submit-btn {
+    display: block;
+    width: 100%;
+    padding: 15px;
+    background-color: #3498db;
+    color: white;
+    border: none;
+    border-radius: 5px;
+    font-size: 1.1em;
+    font-weight: bold;
+    cursor: pointer;
+    transition: background-color 0.3s;
+}
+
+.submit-btn:hover {
+    background-color: #2980b9;
+}
+
+/* スマホ表示でボタンの幅を調整したい場合 */
+@media (min-width: 769px) {
+    .submit-btn {
+        width: auto;
+        min-width: 200px;
+    }
+}

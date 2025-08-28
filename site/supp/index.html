@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>お問い合わせ - DPI-Bot公式サイト</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+
+    <button id="menu-toggle-btn">
+        <span></span>
+        <span></span>
+        <span></span>
+    </button>
+    <div class="overlay"></div>
+
+    <div class="page-container">
+        <nav class="sidebar">
+            <div class="sidebar-header">
+                <h2>メニュー</h2>
+            </div>
+            <ul>
+                <li><a href="top.html">トップページ</a></li>
+                <li><a href="index.html">BOT機能紹介</a></li>
+                <li><a href="developer.html">開発者紹介</a></li>
+                <li><a href="terms.html">利用規約</a></li>
+                <li><a href="contact.html" class="active">お問い合わせ</a></li>
+            </ul>
+        </nav>
+
+        <main class="main-content">
+            <header>
+                <h1>お問い合わせ</h1>
+            </header>
+
+            <div class="section">
+                <p>BOTに関する不具合のご報告、ご意見・ご要望、その他のお問い合わせはこちらのフォームからご連絡ください。</p>
+                <form action="https://formspree.io/f/xjkekzly" method="POST" class="contact-form">
+                    <div class="form-group">
+                        <label for="name">お名前（必須）</label>
+                        <input type="text" id="name" name="name" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="email">メールアドレス（必須）</label>
+                        <input type="email" id="email" name="email" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="topic">概要（必須）</label>
+                        <select id="topic" name="topic" required>
+                            <option value="">選択してください</option>
+                            <option value="bot_issue">BOTの不具合</option>
+                            <option value="bug_report">バグ報告</option>
+                            <option value="other">その他のお問い合わせ</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="message">本文（必須）</label>
+                        <textarea id="message" name="message" rows="8" required></textarea>
+                    </div>
+
+                    <div class="form-group">
+                        <button type="submit" class="submit-btn">送信</button>
+                    </div>
+                    <input type="hidden" name="_next" value="tha.html">
+                </form>
+
+            </div>
+        </main>
+    </div>
+    
+    <script src="script.js"></script>
+</body>
+
+</html>
