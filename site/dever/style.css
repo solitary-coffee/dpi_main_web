@@ -239,3 +239,95 @@ h3 {
 .developer-body p {
     margin-bottom: 0;
 }
+#menu-toggle-btn {
+    display: none; /* PCでは非表示 */
+    position: fixed;
+    top: 15px;
+    left: 15px;
+    width: 40px;
+    height: 40px;
+    background: #fff;
+    border: 1px solid #ddd;
+    border-radius: 5px;
+    z-index: 2000; /* 最前面に表示 */
+    cursor: pointer;
+    padding: 8px;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+}
+
+#menu-toggle-btn span {
+    display: block;
+    background: #333;
+    height: 3px;
+    width: 100%;
+    margin: 4px auto;
+    border-radius: 2px;
+}
+
+/* メニュー表示時の背景オーバーレイ */
+.overlay {
+    display: none; /* PCでは非表示 */
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0,0,0,0.5);
+    z-index: 900;
+}
+
+.overlay.open {
+    display: block;
+}
+
+
+/* 画面幅が768px以下の場合に適用されるスタイル */
+@media (max-width: 768px) {
+    
+    #menu-toggle-btn {
+        display: block; /* スマホでは表示 */
+    }
+
+    .page-container {
+        display: block; /* flex解除 */
+    }
+
+    .sidebar {
+        position: fixed;
+        left: 0;
+        top: 0;
+        width: 250px;
+        height: 100%;
+        z-index: 1000; /* ボタンよりは下、オーバーレイよりは上 */
+        transform: translateX(-100%); /* 初期状態では画面の外に隠す */
+        transition: transform 0.3s ease-in-out;
+    }
+
+    .sidebar.open {
+        transform: translateX(0); /* .openクラスが付いたら表示 */
+        box-shadow: 0 0 20px rgba(0,0,0,0.2);
+    }
+    
+    .main-content {
+        padding: 20px;
+        padding-top: 70px; /* ヘッダーボタンと被らないように調整 */
+    }
+
+    /* PC用の見出しは非表示に */
+    .main-content > header {
+        display: none;
+    }
+
+    /* h1,h2のフォントサイズを調整 */
+    h1 { font-size: 1.8em; }
+    h2 { font-size: 1.4em; }
+
+    /* 開発者カードのアイコンサイズ調整 */
+    .developer-icon {
+        width: 60px;
+        height: 60px;
+    }
+    .developer-name {
+        font-size: 1.4em;
+    }
+}
