@@ -1,25 +1,23 @@
 document.addEventListener('DOMContentLoaded', function() {
     
-    // --- メニュー開閉機能 ---
+    // --- ① メニュー開閉機能 ---
     const menuToggleBtn = document.getElementById('menu-toggle-btn');
     const sidebar = document.querySelector('.sidebar');
     const overlay = document.querySelector('.overlay');
 
     if (menuToggleBtn && sidebar && overlay) {
-        // ハンバーガーボタンをクリックした時
         menuToggleBtn.addEventListener('click', () => {
             sidebar.classList.toggle('open');
             overlay.classList.toggle('open');
         });
 
-        // オーバーレイをクリックした時
         overlay.addEventListener('click', () => {
             sidebar.classList.remove('open');
             overlay.classList.remove('open');
         });
     }
 
-    // --- スライドショー機能（既存のコード） ---
+    // --- ② スライドショー機能 ---
     const slides = document.querySelector('.slides');
     if (slides) {
         const images = document.querySelectorAll('.slides img');
@@ -49,4 +47,21 @@ document.addEventListener('DOMContentLoaded', function() {
             });
         }
     }
-});
+
+    // --- ③ アコーディオン機能 ---
+    const commandTriggers = document.querySelectorAll('.command-trigger');
+
+    commandTriggers.forEach(trigger => {
+        trigger.addEventListener('click', function() {
+            this.classList.toggle('active');
+            const content = this.nextElementSibling;
+
+            if (content.style.maxHeight) {
+                content.style.maxHeight = null;
+            } else {
+                content.style.maxHeight = content.scrollHeight + "px";
+            }
+        });
+    });
+
+}); 
