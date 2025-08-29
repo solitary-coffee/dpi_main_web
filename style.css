@@ -266,3 +266,64 @@ h3 {
         font-size: 1.4em;
     }
 }
+/* --- トップページ バナー用のスタイル（文字重ねなし版） --- */
+.banner-section {
+    margin-bottom: 30px; /* バナーと下のテキストとの間隔 */
+}
+
+
+
+.banner-image-container { /* 新しく追加するスタイル */
+    width: 100%;
+    height: 250px; /* ★この数値を変更してバナーの高さを調整 */
+    display: flex; /* 画像をコンテナ内で中央に配置するため */
+    justify-content: center;
+    align-items: center;
+    overflow: hidden; /* コンテナの境界線を超えた画像を隠す */
+    background-color: #f0f2f5; /* 画像の周りに余白ができる場合の背景色 */
+    border-radius: 8px;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+}
+
+.banner-image {
+    width: 700px;      /* ★この数値を変更して横幅を固定 */
+    max-width: 100%;   /* 画面が狭い時にはみ出さないようにする */
+    height: 250px;     
+    /*object-fit: fill; */
+    display: block;
+    margin: 0 auto;    /* ← これが中央揃えの指定 */
+    border-radius: 8px;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+}
+
+
+/* スマートフォン表示時の調整 */
+@media (max-width: 768px) {
+    .banner-image {
+        height: 180px; /* スマホでは少し高さを抑える */
+    }
+}
+
+.welcome-text {
+    text-align: center; /* テキストを中央揃えに */
+}
+
+.welcome-text h1 {
+    /* ページのメインタイトルとしてスタイルを調整 */
+    font-size: 2.2em;
+    border: none;
+    padding: 0;
+    margin-bottom: 15px;
+}
+.welcome-text p {
+    font-size: 1.1em;
+    color: #555;
+}
+
+
+/* スマートフォン表示時の調整 */
+@media (max-width: 768px) {
+    .welcome-text h1 {
+        font-size: 1.8em;
+    }
+}
