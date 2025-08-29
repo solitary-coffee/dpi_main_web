@@ -331,3 +331,19 @@ h3 {
         font-size: 1.4em;
     }
 }
+.main-content a {
+    color: #3498db; /* 文字色（明るい青） */
+    text-decoration: underline; /* 下線あり */
+    transition: color 0.2s;
+}
+
+/* 一度訪れたことがあるリンク */
+.main-content a:visited {
+    color: #8e44ad; /* 文字色（紫色） */
+}
+
+/* マウスカーソルを乗せたとき */
+.main-content a:hover {
+    color: #2980b9; /* 文字色（少し濃い青） */
+    text-decoration: none; /* 下線を消す */
+}
