@@ -1,11 +1,13 @@
 <!DOCTYPE html>
 <html lang="ja">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>すごいBOTの紹介ページ</title>
     <link rel="stylesheet" href="style.css">
 </head>
+
 <body>
     <button id="menu-toggle-btn">
         <span></span>
@@ -38,40 +40,125 @@
                 </p>
             </section>
 
-            <section class="features card">
-                <h2>機能一覧</h2>
+            <section class="section features">
+                <h2>コマンド一覧</h2>
                 <div class="feature-category">
-                    <h3>気象系</h3>
-                    <ul>
-                        <li>今日の天気予報</li>
-                        <li>週間天気予報</li>
-                        <li>雨雲レーダーの表示</li>
-                    </ul>
+                    <h3>申請系</h3>
+                    <div class="command-item">
+                        <button type="button" class="command-trigger">/app</button>
+                        <div class="command-content">
+                            <p><strong>説明:</strong>確認したい情報について新規申請できます。（配信情報については<a href="#">こちらを参照</a>してください。</p>
+                            <p><strong>使用例:</strong>配信してほしいチャンネルにて<code>/app</code></p>
+                        </div>
+                    </div>
+                    <div class="command-item">
+                        <button type="button" class="command-trigger">/del</button>
+                        <div class="command-content">
+                            <p><strong>説明:</strong>申請情報の変更（削除）ができます。</p>
+                            <p><strong>使用例:</strong> <code>/del</code></p>
+                        </div>
+                    </div>
                 </div>
-                <div class="feature-category">
-                    <h3>地震系</h3>
-                    <ul>
-                        <li>最新の地震情報</li>
-                        <li>指定地域の震度速報</li>
-                    </ul>
-                </div>
-                </section>
 
-        <section class="slider-container">
-            <h2>ギャラリー</h2>
-            <div class="slider">
-                <div class="slides">
-                    <img src="img/eew.png" alt="BOTの画像1">
-                    <img src="img/kentyo.png" alt="BOTの画像2">
-                    <img src="img/kirotan.png" alt="BOTの画像3">
-                    <img src="img/tunami.png" alt="BOTの画像4">
+                <div class="feature-category">
+                    <h3>情報系</h3>
+                    <div class="command-item">
+                        <button type="button" class="command-trigger">/amedas</button>
+                        <div class="command-content">
+                            <p><strong>説明:</strong>全国にあるアメダスの各情報を確認できます。</p>
+                            <p><strong>使用例:</strong> <code>/amedas</code></p>
+                        </div>
+                    </div>
+                    <div class="command-item">
+                        <button type="button" class="command-trigger">/weather</button>
+                        <div class="command-content">
+                            <p><strong>説明:</strong>地方別の最新の天気情報を確認できます。</p>
+                            <p><strong>使用例:</strong> <code>/weather</code></p>
+                        </div>
+                    </div>
+                    <div class="command-item">
+                        <button type="button" class="command-trigger">/earthquake</button>
+                        <div class="command-content">
+                            <p><strong>説明:</strong>【準備中】過去100件の地震情報を確認できます。</p>
+                            <p><strong>使用例:</strong> <code>/earthquake</code></p>
+                        </div>
+                    </div>
                 </div>
-                <button class="prev-btn">&lt;</button>
-                <button class="next-btn">&gt;</button>
-            </div>
-        </section>
+                <div class="feature-category">
+                    <h3>レーダー・図情報系</h3>
+                    <div class="command-item">
+                        <button type="button" class="command-trigger">/amagumo</button>
+                        <div class="command-content">
+                            <p><strong>説明:</strong>雨雲レーダーを確認できます。</p>
+                            <p><strong>使用例:</strong> <code>/amagumo</code></p>
+                        </div>
+                    </div>
+                    <div class="command-item">
+                        <button type="button" class="command-trigger">/tenkizu</button>
+                        <div class="command-content">
+                            <p><strong>説明:</strong>天気図を確認できます。</p>
+                            <p><strong>使用例:</strong> <code>/tenkizu</code></p>
+                        </div>
+                    </div>
+                    <div class="command-item">
+                        <button type="button" class="command-trigger">/satellite_image</button>
+                        <div class="command-content">
+                            <p><strong>説明:</strong>衛星写真を確認できます。</p>
+                            <p><strong>使用例:</strong> <code>/satellite_image</code></p>
+                        </div>
+                    </div>
+                    <div class="command-item">
+                        <button type="button" class="command-trigger">/thunder</button>
+                        <div class="command-content">
+                            <p><strong>説明:</strong>【準備中】雷レーダーを確認できます。</p>
+                            <p><strong>使用例:</strong> <code>/thunder</code></p>
+                        </div>
+                    </div>
+                </div>
+                <div class="feature-category">
+                    <h3>エラー対応</h3>
+                    <div class="command-item">
+                        <button type="button" class="command-trigger">コマンドが見つからない場合</button>
+                        <div class="command-content">
+                            <p><strong>説明:</strong> 入力されたコマンドが存在しない場合、BOTはエラーメッセージを返信します。</p>
+                            <p><strong>対処法:</strong> コマンドのスペルが正しいか、先頭の`/`を忘れていないかご確認ください。</p>
+                        </div>
+                    </div>
+                    <div class="command-item">
+                        <button type="button" class="command-trigger">新規申請ができない場合</button>
+                        <div class="command-content">
+                            <p><strong>説明:</strong> <code>/app</code>既に新規申請を受け付けている状態です。</p>
+                            <p><strong>対処法:</strong>申請後は<code>/del</code>のみ変更・削除を受け付けています。</p>
+                        </div>
+                    </div>
+                    <div class="command-item">
+                        <button type="button" class="command-trigger">変更・削除ができない場合</button>
+                        <div class="command-content">
+                            <p><strong>説明:</strong> <code>/del</code>申請されていない状態です。</p>
+                            <p><strong>対処法:</strong>新規での申請<code>/app</code>を行ってからご利用ください。</p>
+                        </div>
+                    </div>
+                </div>
+
+            </section>
+
+
+            <section class="slider-container">
+                <h2>配信内容</h2>
+                <div class="slider">
+                    <div class="slides">
+                        <img src="img/eew.png" alt="BOTの画像1">
+                        <img src="img/kentyo.png" alt="BOTの画像2">
+                        <img src="img/kirotan.png" alt="BOTの画像3">
+                        <img src="img/tunami.png" alt="BOTの画像4">
+                    </div>
+                    <button class="prev-btn">&lt;</button>
+                    <button class="next-btn">&gt;</button>
+                </div>
+            </section>
     </div>
 
     <script src="script.js"></script>
 </body>
+
 </html>

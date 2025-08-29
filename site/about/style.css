@@ -266,3 +266,58 @@ h3 {
         font-size: 1.4em;
     }
 }
+.command-item {
+    margin-bottom: 8px;
+}
+
+.command-trigger {
+    width: 100%;
+    padding: 15px 20px;
+    background-color: #e9ecef;
+    border: none;
+    text-align: left;
+    font-size: 1.1em;
+    font-family: inherit;
+    cursor: pointer;
+    transition: background-color 0.3s;
+    position: relative;
+    border-radius: 5px;
+}
+
+.command-trigger:hover {
+    background-color: #dde2e6;
+}
+
+/* 閉じてるときの「+」アイコン */
+.command-trigger::after {
+    content: '+';
+    position: absolute;
+    right: 20px;
+    font-size: 1.2em;
+    font-weight: bold;
+    color: #555;
+}
+
+/* 開いてるとき（activeクラスが付いた時）の「-」アイコン */
+.command-trigger.active::after {
+    content: '−';
+}
+
+.command-content {
+    max-height: 0; /* JSで高さを変更してアニメーションさせる */
+    overflow: hidden; /* 高さが0の時は中身を隠す */
+    transition: max-height 0.3s ease-out; /* なめらかな開閉アニメーション */
+    background-color: #f8f9fa;
+    border: 1px solid #e9ecef;
+    border-top: none;
+    border-radius: 0 0 5px 5px;
+}
+.command-content p {
+    margin: 0;
+    padding: 15px 20px;
+}
+.command-content code {
+    background-color: #e0e0e0;
+    padding: 2px 5px;
+    border-radius: 3px;
+}
