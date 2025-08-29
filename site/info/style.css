@@ -341,8 +341,8 @@ h3 {
 .content-card {
     display: block;
     background-color: #fff;
-    padding: 18px 20px;
-    margin-bottom: 15px;
+    padding: 12px 15px;
+    margin-bottom: 12px;
     border-radius: 8px;
     box-shadow: 0 2px 8px rgba(0,0,0,0.08);
     text-decoration: none;
@@ -360,18 +360,20 @@ h3 {
 .content-card::after {
     content: '→';
     position: absolute;
-    right: 25px;
+    right: 15px;
     top: 50%;
     transform: translateY(-50%);
-    font-size: 1.4em;
+    font-size: 1.2em;
     color: #3498db;
     font-weight: bold;
 }
 
+
+
 .content-card-text h3 {
-    margin: 0 0 8px 0;
+    margin: 0 0 5px 0;
     color: #2c3e50;
-    font-size: 1.2em;
+    font-size: 1.0em;
 }
 .content-card-text p {
     margin: 0;
@@ -400,3 +402,13 @@ h3 {
 .back-link:hover {
     text-decoration: underline;
 }
+/* --- 申請名表示用のスタイル (追記) --- */
+.content-card-text .application-name {
+    font-size: 0.85em;      /* 文字を少し小さく */
+    color: #6c757d;        /* 文字色を少し薄く（グレー系）*/
+    margin: -2px 0 8px 0;  /* 上下の余白を微調整 */
+    padding: 0;
+    font-style: italic;    /* 少し斜体にする */
+}
+
+/* 申請名が追加されたことで、h3の下の余白を再調整 */
