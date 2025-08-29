@@ -96,6 +96,9 @@ h3 {
     color: #2980b9;
 }
 
+h4{
+    color: #2980b9;
+}
 /* 機能リスト */
 .feature-category ul {
     list-style-type: none;
@@ -411,4 +414,123 @@ h3 {
     font-style: italic;    /* 少し斜体にする */
 }
 
-/* 申請名が追加されたことで、h3の下の余白を再調整 */
+.status-legend {
+    background-color: #f8f9fa;
+    border: 1px solid #e9ecef;
+    border-radius: 8px;
+    padding: 15px 20px;
+    margin-bottom: 30px;
+}
+.status-legend h4 { margin: 0 0 10px 0; }
+.status-legend ul { list-style: none; padding: 0; margin: 0; }
+.status-legend li { margin-bottom: 5px; color: #555; }
+.status-legend li:last-child { margin-bottom: 0; }
+.legend-badge {
+    display: inline-block;
+    width: 60px;
+    text-align: center;
+    font-size: 0.8em;
+    font-weight: bold;
+    padding: 2px 6px;
+    border-radius: 4px;
+    margin-right: 10px;
+    vertical-align: middle;
+}
+.badge-adjusting { color: #0f5132; background-color: #d1e7dd; }
+.badge-disabled { color: #6c757d; background-color: #e9ecef; }
+.badge-abolished { color: #dc3545; background-color: #f8d7da; }
+.badge-ok { color: #665e5f; background-color: #ffffff; }
+
+
+/* --- ステータス別カードの基本スタイル --- */
+
+/* 「調整中」のカードスタイル (グレーアウト, クリック可能) */
+.content-card.is-adjusting {
+    opacity: 0.5;
+    background-color: #f8f9fa;
+}
+.content-card.is-adjusting:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 5px 15px rgba(0,0,0,0.12);
+}
+
+/* 「準備中」のカードスタイル (グレーアウト, クリック可能) */
+.content-card.is-disabled {
+    opacity: 0.5;
+    background-color: #f8f9fa;
+}
+.content-card.is-disabled:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 5px 15px rgba(0,0,0,0.12);
+}
+
+/* 「廃止」のカードスタイル (グレーアウト, クリック不可, 取り消し線) */
+.content-card.is-abolished {
+    opacity: 0.5;
+    background-color: #f8f9fa;
+    cursor: not-allowed;
+    pointer-events: none; /* クリック無効化 */
+    text-decoration: line-through; /* 取り消し線 */
+    color: #6c757d;
+}
+.content-card.is-abolished:hover {
+    transform: none;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+}
+
+
+/* --- タイトル横のバッジスタイル --- */
+
+.content-card.is-adjusting .content-card-text h3::after {
+    content: '調整中';
+    font-size: 0.7em;
+    font-weight: bold;
+    color: #0f5132;
+    background-color: #d1e7dd;
+    padding: 2px 6px;
+    border-radius: 4px;
+    margin-left: 10px;
+    vertical-align: middle;
+}
+
+.content-card.is-disabled .content-card-text h3::after {
+    content: '準備中';
+    font-size: 0.7em;
+    font-weight: bold;
+    color: #6c757d;
+    background-color: #e9ecef;
+    padding: 2px 6px;
+    border-radius: 4px;
+    margin-left: 10px;
+    vertical-align: middle;
+}
+
+.content-card.is-abolished .content-card-text h3::after {
+    content: '廃止';
+    font-size: 0.7em;
+    font-weight: bold;
+    color: #dc3545;
+    background-color: #f8d7da;
+    padding: 2px 6px;
+    border-radius: 4px;
+    margin-left: 10px;
+    vertical-align: middle;
+    text-decoration: none; /* バッジの取り消し線は消す */
+}
+.badge-ending-soon {
+    color: #664d03;
+    background-color: #fff3cd;
+}
+
+/* 「廃止予定」カードのタイトル横バッジ */
+.content-card.is-ending-soon .content-card-text h3::after {
+    content: '廃止予定';
+    font-size: 0.7em;
+    font-weight: bold;
+    color: #664d03; /* 黄色系の色 */
+    background-color: #fff3cd; /* 薄い黄色 */
+    padding: 2px 6px;
+    border-radius: 4px;
+    margin-left: 10px;
+    vertical-align: middle;
+}

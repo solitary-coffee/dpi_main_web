@@ -35,6 +35,17 @@
             <header>
                 <h1>配信内容の紹介</h1>
             </header>
+            <section class="section status-legend">
+                <h4>【表記について】</h4>
+                <ul>
+                    <li><span class="legend-badge badge-ok">表記なし</span>：現在配信されています。</li>
+                    <li><span class="legend-badge badge-adjusting">調整中</span>：配信を休止している。または近日中に廃止する可能性があります。</li>
+                    <li><span class="legend-badge badge-disabled">準備中</span>：準備中です。今後配信が開始されます。</li>
+                    <li><span class="legend-badge badge-ending-soon">廃止予定</span>：今後、廃止が決定しています。</li>
+                    <li><span class="legend-badge badge-abolished">廃止</span>：配信は廃止されました。</li>
+                    
+                </ul>
+            </section>
             
             <section class="section">
                 <div class="category-group">
@@ -61,16 +72,245 @@
                         </div>
                     </a>
                     </div>
-
                 <div class="category-group">
-                    <h2>気象系</h2>
-                    <a href="deta/weather-alert.html" class="content-card">
+                    <h2>地震・津波系</h2>
+                    <a href="#" class="content-card">
                         <div class="content-card-text">
-                            <h3>気象警報・注意報</h3>
-                            <p>大雨や暴風など、気象庁が発表する警報・注意報を速やかにお知らせします。</p>
+                            <h3>地震情報</h3>
+                            <p class="application-name">（申請名:地震情報）</p>
+                            <p>震度速報、震源情報、各地の震度情報などを配信します。</p>
                         </div>
                     </a>
-                    </div>
+                    <a href="#" class="content-card">
+                        <div class="content-card-text">
+                            <h3>津波情報</h3>
+                            <p class="application-name">（申請名:津波情報）</p>
+                            <p>津波情報、予想される津波の高さ、観測した津波などを配信します。</p>
+                        </div>
+                    </a>
+                    <a href="#" class="content-card is-adjusting">
+                        <div class="content-card-text">
+                            <h3>海外・国内地震情報</h3>
+                            <p class="application-name">（申請名:Hi-net_USGS）</p>
+                            <p>防災科学技術研究所またはUSGS（外国機関）の地震情報を配信します。</p>
+                        </div>
+                    </a>
+                    <a href="#" class="content-card is-abolished">
+                        <div class="content-card-text">
+                            <h3>南海トラフ地震情報</h3>
+                            <p class="application-name">（申請名:南海トラフ）</p>
+                            <p>新しい配信をご利用ください。（南海トラフ解説情報または南海トラフ臨時情報）</p>
+                        </div>
+                    </a>
+                    <a href="#" class="content-card">
+                        <div class="content-card-text">
+                            <h3>南海トラフ解説情報</h3>
+                            <p class="application-name">（申請名:南海トラフ解説情報）</p>
+                            <p>南海トラフに関する定時解説報を配信します。</p>
+                        </div>
+                    </a>
+                    <a href="#" class="content-card">
+                        <div class="content-card-text">
+                            <h3>南海トラフ臨時情報</h3>
+                            <p class="application-name">（申請名:南海トラフ臨時情報）</p>
+                            <p>南海トラフに関する臨時情報または定時外を配信します。</p>
+                        </div>
+                    </a>
+                    <a href="#" class="content-card">
+                        <div class="content-card-text">
+                            <h3>北海道・三陸沖後発地震注意情報</h3>
+                            <p class="application-name">（申請名:北海道_三陸沖地震情報）</p>
+                            <p>北海道・三陸沖後発地震注意情報を配信します。</p>
+                        </div>
+                    </a>
+                </div>
+                <div class="category-group">
+                    <h2>気象系</h2>
+                    <h4>2026年出水期より配信電文が大幅に変更される予定です。※今後新規配信枠を新設する予定です。</h4>
+                    <a href="#" class="content-card is-ending-soon">
+                        <div class="content-card-text">
+                            <h3>気象警報・注意報</h3>
+                            <p class="application-name">（申請名:気象警報_注意報）</p>
+                            <p>気象特別警報・警報・注意報を配信します。</p>
+                        </div>
+                    </a>
+                    <a href="#" class="content-card is-ending-soon">
+                        <div class="content-card-text">
+                            <h3>気象情報・概況</h3>
+                            <p class="application-name">（申請名:気象情報_概況）</p>
+                            <p>全般、地方、府県気象情報及び気象概況について配信します。</p>
+                        </div>
+                    </a>
+                    <a href="#" class="content-card is-ending-soon">
+                        <div class="content-card-text">
+                            <h3>土砂災害警戒情報</h3>
+                            <p class="application-name">（申請名:土砂災害警戒情報）</p>
+                            <p>土砂災害警戒情報を配信します。</p>
+                        </div>
+                    </a>
+                    <a href="#" class="content-card">
+                        <div class="content-card-text">
+                            <h3>竜巻注意情報</h3>
+                            <p class="application-name">（申請名:竜巻注意情報）</p>
+                            <p>竜巻注意情報（目撃情報含む）を配信します。</p>
+                        </div>
+                    </a>
+                    <a href="#" class="content-card is-ending-soon">
+                        <div class="content-card-text">
+                            <h3>記録的短時間大雨情報</h3>
+                            <p class="application-name">（申請名:記録的短時間大雨情報）</p>
+                            <p>記録的短時間大雨情報を配信します。</p>
+                        </div>
+                    </a>
+                    <a href="#" class="content-card">
+                        <div class="content-card-text">
+                            <h3>顕著な大雨に関する情報</h3>
+                            <p class="application-name">（申請名:顕著な大雨）</p>
+                            <p>線状降水帯または顕著な大雪に関する情報を配信します。</p>
+                        </div>
+                    </a>
+                    <a href="#" class="content-card">
+                        <div class="content-card-text">
+                            <h3>指定河川洪水予報</h3>
+                            <p class="application-name">（申請名:指定河川情報）</p>
+                            <p>指定河川洪水予報を配信します。</p>
+                        </div>
+                    </a>
+                    <a href="#" class="content-card is-ending-soon">
+                        <div class="content-card-text">
+                            <h3>気象特別警報報知</h3>
+                            <p class="application-name">（申請名:気象特別警報報知）</p>
+                            <p>気象特別警報報知を配信します。</p>
+                        </div>
+                    </a>
+                    <a href="#" class="content-card is-abolished">
+                        <div class="content-card-text">
+                            <h3>特殊気象報</h3>
+                            <p class="application-name">（申請名:特殊気象報）</p>
+                            <p>光化学スモッグなどについてを配信します。</p>
+                        </div>
+                    </a>
+                    <a href="#" class="content-card is-abolished">
+                        <div class="content-card-text">
+                            <h3>生物季節観測</h3>
+                            <p class="application-name">（申請名:生物季節観測）</p>
+                            <p>生物季節観測,開花日などについてを配信します。</p>
+                        </div>
+                    </a>
+                    <a href="#" class="content-card">
+                        <div class="content-card-text">
+                            <h3>熱中症警戒アラート</h3>
+                            <p class="application-name">（申請名:熱中症警戒アラート）</p>
+                            <p>熱中症警戒アラートを配信します。</p>
+                        </div>
+                    </a>
+                    <a href="#" class="content-card">
+                        <div class="content-card-text">
+                            <h3>早期天候情報</h3>
+                            <p class="application-name">（申請名:早期天候情報）</p>
+                            <p>早期天候情報を配信します。</p>
+                        </div>
+                    </a>
+                    <a href="#" class="content-card">
+                        <div class="content-card-text">
+                            <h3>全般気象情報</h3>
+                            <p class="application-name">（申請名:天候情報）</p>
+                            <p>早期天候情報を配信します。</p>
+                        </div>
+                    </a>
+                    <a href="#" class="content-card">
+                        <div class="content-card-text">
+                            <h3>台風情報</h3>
+                            <p class="application-name">（申請名:台風情報）</p>
+                            <p>全般台風情報、解析（3日予報）を配信します。</p>
+                        </div>
+                    </a>
+                    <a href="#" class="content-card is-adjusting">
+                        <div class="content-card-text">
+                            <h3>全般天気予報</h3>
+                            <p class="application-name">（申請名:全般天気予報）</p>
+                            <p>全般天気予報を配信します。</p>
+                        </div>
+                    </a>
+                </div>
+                <div class="category-group">
+                    <h2>火山系</h2>
+                    <a href="#" class="content-card">
+                        <div class="content-card-text">
+                            <h3>火山情報</h3>
+                            <p class="application-name">（申請名:火山情報）</p>
+                            <p>降灰予想、火山の解説情報などについて配信します。</p>
+                        </div>
+                    </a>
+                    <a href="#" class="content-card">
+                        <div class="content-card-text">
+                            <h3>噴火速報</h3>
+                            <p class="application-name">（申請名:噴火情報）</p>
+                            <p>噴火速報、噴火警報などについて配信します。</p>
+                        </div>
+                    </a>
+                </div>
+                <div class="category-group">
+                    <h2>その他</h2>
+                    <a href="#" class="content-card is-ending-soon">
+                        <div class="content-card-text">
+                            <h3>大雨危険度通知</h3>
+                            <p class="application-name">（申請名:大雨危険度通知）</p>
+                            <p>大雨危険度について配信します。</p>
+                        </div>
+                    </a>
+                    <a href="#" class="content-card is-ending-soon">
+                        <div class="content-card-text">
+                            <h3>土砂災害危険度</h3>
+                            <p class="application-name">（申請名:土砂災害危険度）</p>
+                            <p>キキクルの土砂災害危険度について配信します。</p>
+                        </div>
+                    </a>
+                    <a href="#" class="content-card is-ending-soon">
+                        <div class="content-card-text">
+                            <h3>洪水害危険度</h3>
+                            <p class="application-name">（申請名:洪水害危険度）</p>
+                            <p>キキクルの洪水害危険度について配信します。</p>
+                        </div>
+                    </a>
+                    <a href="#" class="content-card is-ending-soon">
+                        <div class="content-card-text">
+                            <h3>浸水害危険度</h3>
+                            <p class="application-name">（申請名:浸水害危険度）</p>
+                            <p>キキクルの浸水害危険度について配信します。</p>
+                        </div>
+                    </a>
+                    <a href="#" class="content-card">
+                        <div class="content-card-text">
+                            <h3>避難情報</h3>
+                            <p class="application-name">（申請名:避難情報）</p>
+                            <p>避難情報を配信します。</p>
+                        </div>
+                    </a>
+                    <a href="#" class="content-card">
+                        <div class="content-card-text">
+                            <h3>潮位情報</h3>
+                            <p class="application-name">（申請名:潮位情報）</p>
+                            <p>潮位情報を配信します。</p>
+                        </div>
+                    </a>
+                    <a href="#" class="content-card">
+                        <div class="content-card-text">
+                            <h3>雨雲レーダー</h3>
+                            <p class="application-name">（申請名:雨雲レーダー）</p>
+                            <p>全国の雨雲レーダーを配信します。</p>
+                        </div>
+                    </a>
+                </div>
+                <div class="category-group">
+                    <h2>管理系</h2>
+                    <a href="#" class="content-card">
+                        <div class="content-card-text">
+                            <h3>運営からのお知らせ</h3>
+                            <p class="application-name">（申請名:DPI_Bot通知）</p>
+                            <p>運営からのお知らせを配信します。</p>
+                        </div>
+                    </a>                
             </section>
         </main>
     </div>
