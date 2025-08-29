@@ -116,15 +116,15 @@ h4{
 /* スライドショー */
 .slider {
     position: relative;
-    max-width: 100%;
+    max-width: 75%;
     margin: 0 auto;
     overflow: hidden;
-    border-radius: 10px;
+    border-radius: 8px;
 }
 
 .slides {
     display: flex;
-    transition: transform 0.5s ease-in-out;
+    transition: transform 0.4s ease-in-out;
 }
 
 .slides img {
@@ -533,4 +533,127 @@ h4{
     border-radius: 4px;
     margin-left: 10px;
     vertical-align: middle;
+}
+.modal {
+    display: none; /* 初期状態では非表示 */
+    position: fixed;
+    z-index: 2000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.85);
+}
+
+/* モーダルのコンテンツ部分 */
+.modal-content {
+    position: relative;
+    margin: auto;
+    width: 90%;
+    max-width: 800px;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+}
+
+/* 拡大表示される画像 */
+#modal-image {
+    max-width: 100%;
+    max-height: 80vh; /* 画面の高さの80%まで */
+    display: block;
+}
+
+/* キャプション（画像のaltテキストが表示される） */
+#caption {
+    margin-top: 15px;
+    color: #ccc;
+    font-size: 1.1em;
+    text-align: center;
+}
+
+/* 閉じるボタン */
+.close-btn {
+    position: absolute;
+    top: 15px;
+    right: 35px;
+    color: #f1f1f1;
+    font-size: 40px;
+    font-weight: bold;
+    cursor: pointer;
+}
+
+/* 次へ・前へボタン */
+.prev-slide, .next-slide {
+    cursor: pointer;
+    position: absolute;
+    top: 50%;
+    width: auto;
+    padding: 16px;
+    margin-top: -50px;
+    color: white;
+    font-weight: bold;
+    font-size: 20px;
+    transition: 0.3s ease;
+    border-radius: 0 3px 3px 0;
+    user-select: none;
+}
+.next-slide { right: 0; border-radius: 3px 0 0 3px; }
+.prev-slide { left: 0; }
+.prev-slide:hover, .next-slide:hover {
+    background-color: rgba(0, 0, 0, 0.8);
+}
+.single-image-viewer {
+    position: relative; /* 矢印ボタンを配置するための基準 */
+    max-width: 600px;
+    margin: 20px auto;
+    border-radius: 8px;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+    overflow: hidden;
+}
+
+#main-display-image {
+    width: 100%;
+    height: auto;
+    display: block;
+    aspect-ratio: 16 / 9;
+    object-fit: contain;
+    background-color: #333;
+}
+
+.image-caption {
+    background-color: rgba(0, 0, 0, 0.7);
+    color: #fff;
+    padding: 10px;
+    font-size: 0.9em;
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    box-sizing: border-box;
+    text-align: center;
+}
+
+/* ページ上の次へ・前へボタン */
+.prev-btn-onpage, .next-btn-onpage {
+    cursor: pointer;
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%); /* 上下中央揃え */
+    width: auto;
+    padding: 10px 15px;
+    color: white;
+    font-weight: bold;
+    font-size: 24px;
+    background-color: rgba(0, 0, 0, 0.3);
+    border: none;
+    user-select: none;
+    transition: background-color 0.3s ease;
+}
+.prev-btn-onpage { left: 0; border-radius: 0 5px 5px 0; }
+.next-btn-onpage { right: 0; border-radius: 5px 0 0 5px; }
+
+.prev-btn-onpage:hover, .next-btn-onpage:hover {
+    background-color: rgba(0, 0, 0, 0.6);
 }
