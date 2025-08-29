@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BOTを招待する - DPI-Bot公式サイト</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
+</head>
+<body>
+
+    <button id="menu-toggle-btn">
+        <span></span><span></span><span></span>
+    </button>
+    <div class="overlay"></div>
+
+    <div class="page-container">
+        <nav class="sidebar">
+            <div class="sidebar-header"><h2>メニュー</h2></div>
+            <ul>
+                <li><a href="../../index.html" class="active">トップページ</a></li>
+                <li><a href="../../site/about/index.html">コマンド</a></li>
+                <li><a href="../../site/info/index.html">配信内容</a></li>
+                <li><a href="#">開発者紹介</a></li>
+                <li><a href="../../site/invi/index.html">BOTを招待</a></li>
+                <li><a href="../../site/buy/index.html">ご支援のお願い</a></li>
+                <li><a href="../../terms/index.html">利用規約等</a></li>
+                <li><a href="../../site/supp/index.html">お問い合わせ</a></li>
+            </ul>
+        </nav>
+
+        <main class="main-content">
+            <header>
+                <h1>BOTをサーバーに追加</h1>
+            </header>
+            
+            <section class="section">
+                <p>下のボタンから、あなたのDiscordサーバーにBOTを招待できます。<br>使い方や質問がある場合は、公式サポートサーバーにもぜひご参加ください。</p>
+                
+                <div class="invite-links">
+                    <a href="https://ptb.discord.com/oauth2/authorize?client_id=943752169029505114" class="invite-button bot-invite">
+                        <i class="fa-solid fa-robot"></i> BOTを招待する
+                    </a>
+                    <a href="https://discord.gg/qFuZcGUb4K" class="invite-button server-invite">
+                        <i class="fa-brands fa-discord"></i> サポートサーバーに参加
+                    </a>
+                </div>
+                </section>
+
+            <section class="section invite-instructions">
+                <h2>簡単な招待方法</h2>
+                <ol>
+                    <li>上の「BOTを招待する」ボタンをクリックします。</li>
+                    <li>Discordの認証画面が開きます。「サーバーを選択」からBOTを追加したいサーバーを選びます。</li>
+                    <li>「認証」ボタンをクリックします。（BOTが必要とする権限が表示されます）</li>
+                    <li>認証が完了すると、指定したサーバーにBOTが参加します。</li>
+                </ol>
+            </section>
+        </main>
+    </div>
+    <script src="script.js"></script>
+</body>
+</html>
