@@ -337,3 +337,7 @@ h3 {
     color: #2980b9; /* 文字色（少し濃い青） */
     text-decoration: none; /* 下線を消す */
 }
+
+.intro.card p{
+    color: rgb(255, 255, 255);
+}
