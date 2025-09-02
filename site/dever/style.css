@@ -8,6 +8,7 @@ html, body {
     color: #ffffff;
 }
 
+
 /* ページ全体のコンテナ */
 .page-container {
     display: flex; /* サイドバーとメインコンテンツを横並びにする */
@@ -201,7 +202,7 @@ h3 {
     border: none;
     padding: 0;
     font-size: 1.8em;
-    color: #333;
+    color: #bacaff;
 }
 
 .developer-body .bio {
