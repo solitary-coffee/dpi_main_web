@@ -8,7 +8,6 @@ html, body {
     color: #ffffff;
 }
 
-
 /* ページ全体のコンテナ */
 .page-container {
     display: flex; /* サイドバーとメインコンテンツを横並びにする */
@@ -26,6 +25,7 @@ html, body {
     display: flex;
     flex-direction: column;
     overflow-y: auto; 
+    
 }
 
 .sidebar-header h2 {
@@ -176,71 +176,6 @@ h3 {
     margin-bottom: 0;
     color: #ffffff;
 }
-/* --- 開発者紹介ページ用のスタイル (追記) --- */
-.developer-card {
-    /* .sectionのスタイルを継承しつつ、独自のスタイルも適用 */
-}
-
-.developer-header {
-    display: flex;
-    align-items: center;
-    gap: 20px; /* アイコンと名前の間のスペース */
-    margin-bottom: 20px;
-}
-
-.developer-icon {
-    width: 80px;
-    height: 80px;
-    border-radius: 50%; /* アイコンを丸くする */
-    object-fit: cover; /* 画像の比率を保ったままトリミング */
-    border: 3px solid #f0f2f5;
-    box-shadow: 0 2px 5px rgba(0,0,0,0.1);
-}
-
-.developer-name {
-    margin: 0;
-    text-align: left;
-    border: none;
-    padding: 0;
-    font-size: 1.8em;
-    color: #bacaff;
-}
-
-.developer-body .bio {
-    margin-bottom: 2em;
-    line-height: 1.7;
-}
-
-.developer-body h3 {
-    text-align: left;
-    font-size: 1.2em;
-    color: #2980b9;
-    margin-top: 0;
-    margin-bottom: 10px;
-}
-
-.skills {
-    list-style: none;
-    padding: 0;
-    margin: 0;
-    display: flex;
-    flex-wrap: wrap; /* タグが多すぎたら折り返す */
-    gap: 10px; /* タグ同士の間隔 */
-    margin-bottom: 1.5em;
-}
-
-.skills li {
-    background-color: #e0eaf1; /* タグの背景色 */
-    color: #34495e; /* タグの文字色 */
-    padding: 5px 12px;
-    border-radius: 15px; /* タグを角丸にする */
-    font-size: 0.9em;
-    font-weight: 500;
-}
-
-.developer-body p {
-    margin-bottom: 0;
-}
 #menu-toggle-btn {
     display: none; /* PCでは非表示 */
     position: fixed;
@@ -333,6 +268,67 @@ h3 {
         font-size: 1.4em;
     }
 }
+/* --- トップページ バナー用のスタイル（文字重ねなし版） --- */
+.banner-section {
+    margin-bottom: 30px; /* バナーと下のテキストとの間隔 */
+}
+
+
+
+.banner-image-container { /* 新しく追加するスタイル */
+    width: 100%;
+    height: 250px; /* ★この数値を変更してバナーの高さを調整 */
+    display: flex; /* 画像をコンテナ内で中央に配置するため */
+    justify-content: center;
+    align-items: center;
+    overflow: hidden; /* コンテナの境界線を超えた画像を隠す */
+    background-color: #f0f2f5; /* 画像の周りに余白ができる場合の背景色 */
+    border-radius: 8px;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+}
+
+.banner-image {
+    width: 700px;      /* ★この数値を変更して横幅を固定 */
+    max-width: 100%;   /* 画面が狭い時にはみ出さないようにする */
+    height: 250px;     
+    /*object-fit: fill; */
+    display: block;
+    margin: 0 auto;    /* ← これが中央揃えの指定 */
+    border-radius: 8px;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+}
+
+
+/* スマートフォン表示時の調整 */
+@media (max-width: 768px) {
+    .banner-image {
+        height: 180px; /* スマホでは少し高さを抑える */
+    }
+}
+
+.welcome-text {
+    text-align: center; /* テキストを中央揃えに */
+}
+
+.welcome-text h1 {
+    /* ページのメインタイトルとしてスタイルを調整 */
+    font-size: 2.2em;
+    border: none;
+    padding: 0;
+    margin-bottom: 15px;
+}
+.welcome-text p {
+    font-size: 1.1em;
+    color: #555;
+}
+
+
+/* スマートフォン表示時の調整 */
+@media (max-width: 768px) {
+    .welcome-text h1 {
+        font-size: 1.8em;
+    }
+}
 .main-content a {
     color: #3498db; /* 文字色（明るい青） */
     text-decoration: underline; /* 下線あり */
@@ -348,4 +344,69 @@ h3 {
 .main-content a:hover {
     color: #2980b9; /* 文字色（少し濃い青） */
     text-decoration: none; /* 下線を消す */
+}
+.infra-container {
+    display: grid;
+    grid-template-columns: 1fr 1fr; /* 左右に2分割 */
+    gap: 30px;
+    margin-top: 30px;
+}
+
+.infra-description h3 {
+    font-size: 1.3em;
+    color: #2980b9;
+    border-bottom: 2px solid #3498db;
+    padding-bottom: 5px;
+    margin-top: 25px;
+    margin-bottom: 15px;
+}
+.infra-description ul {
+    padding-left: 20px;
+}
+
+.infra-diagram img {
+    width: 100%;
+    height: auto;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+}
+
+/* スマホ表示では縦並びにする */
+@media (max-width: 992px) {
+    .infra-container {
+        grid-template-columns: 1fr; /* 1列にする */
+    }
+}
+.data-table .total-row {
+    background-color: #676b72; /* 背景を少し濃い灰色に */
+    font-size: 1.1em;
+}
+
+/* 説明文内のアイコン */
+.infra-description .fa-solid {
+    margin-right: 5px;
+    color: #27ae60; /* 緑色 */
+}
+.modal {
+    display: none; position: fixed; z-index: 2000;
+    left: 0; top: 0; width: 100%; height: 100%;
+    background-color: rgba(0, 0, 0, 0.85);
+}
+.modal-content {
+    position: relative; margin: auto;
+    width: 90%; max-width: 1000px; /* ★最大幅を少し広げました */
+    height: 100%; display: flex; flex-direction: column;
+    justify-content: center; align-items: center;
+}
+#modal-image {
+    max-width: 100%; max-height: 90vh; display: block;
+}
+#caption {
+    margin-top: 15px; color: #ccc; font-size: 1.1em; text-align: center;
+}
+.close-btn {
+    position: absolute; top: 15px; right: 35px;
+    color: #f1f1f1; font-size: 40px; font-weight: bold;
+    cursor: pointer;
 }
