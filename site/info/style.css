@@ -24,6 +24,7 @@ html, body {
     height: 100vh; /* 画面の高さいっぱいに広げる */
     display: flex;
     flex-direction: column;
+    overflow-y: auto; 
 }
 
 .sidebar-header h2 {

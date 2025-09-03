@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>運用構成 - DPI-Bot公式サイト</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
+    <link rel="icon" href="favicon.png" type="image/png">
+</head>
+<body>
+    <button id="menu-toggle-btn"><span></span><span></span><span></span></button>
+    <div class="overlay"></div>
+
+    <div class="page-container">
+        <nav class="sidebar">
+            <div class="sidebar-header"><h2>メニュー</h2></div>
+            <ul>
+                <li><a href="../../index.html">トップページ</a></li>
+                <li><a href="../../site/about/index.html">コマンド</a></li>
+                <li><a href="../../site/info/index.html">配信内容</a></li>
+                <li><a href="../../site/status/index.html">お知らせ</a></li>
+                <li><a href="../../site/dever/index.html">開発者紹介</a></li>
+                <li><a href="../../site/invi/index.html">BOTを招待</a></li>
+                <li><a href="../../site/buy/index.html">ご支援のお願い</a></li>
+                <li><a href="../../terms/index.html">利用規約等</a></li>
+                <li><a href="../../site/supp/index.html">お問い合わせ</a></li>
+            </ul>
+        </nav>
+
+        <main class="main-content">
+            <header>
+                <h1>BOTの運用構成</h1>
+            </header>
+            
+            <section class="section">
+                <p>
+                    当BOTは、安定性と迅速性を重視し、複数のサーバーとクラウドサービスを組み合わせた冗長性の高い構成で運用されています。
+                </p>
+                <div class="infra-container">
+                 <div class="infra-description">
+                        <h3>1. データ受信</h3>
+                        <p>気象庁防災情報XMLやDM-D.S.S様から提供される情報を、自宅サーバーで受信・一次処理します。このサーバーは配信全体の監視も担っています。</p>
+                        <p>なおサーバー稼働地域は北海道石狩地方です。また自宅には太陽光パネル及び蓄電池を備えております。今後UPSの導入も検討しております。</p>
+                        <h3>2. クラウドでの処理 (AWS)</h3>
+                        <p>一次処理されたデータは、クラウドプラットフォームであるAmazon Web Services (AWS) に送られます。AWS内では、障害対策として地理的に離れた2つの拠点（東京リージョン・大阪リージョン）を利用しています。</p>
+                        <ul>
+                            <li><strong>東京リージョン:</strong> 主に地震・津波関連の情報を処理・配信します。</li>
+                            <li><strong>大阪リージョン:</strong> 主に気象・火山関連の情報を処理・配信します。</li>
+                        </ul>
+                        <p><strong><i class="fa-solid fa-shield-halved"></i> 常時監視と自動切り替え</strong><br>
+                        両リージョンは常時相互監視されており、片方の拠点で障害が発生した場合は、もう片方の正常な拠点から自動で配信が継続されるようになっています。</p>
+                        <p>また、配信の処理時間やDiscordまでの配信時間を常に記録・監視しており、大幅な遅延・配信がされない状態が発生した場合は管理者に通知される仕組みになっています。万が一、自動配信システムに広範囲な障害が発生した場合でも、手動で情報を配信できるバックアップ体制を整えています。</p>
+                        <h3>3. 配信</h3>
+                        <p>各リージョン内で、複数の配信サーバーが稼働しており、ユーザーへの情報配信を行います。各プログラムは常にバックアップされており、安定した情報提供を可能にしています。</p>
+                        <p>特に情報の迅速性が求められる<strong>緊急地震速報と地震情報については16台</strong>の配信サーバーが、<strong>それ以外の情報については10台</strong>の配信サーバーが稼働しています。</p>
+                        
+
+                        <h3>4. 配信遅延の目安</h3>
+                        <p>BOTは情報の種類に応じて、配信遅延の目標値を設定しています。<strong>緊急地震速報、地震情報、津波情報は15秒以内</strong>、<strong>その他の情報は20秒以内</strong>での配信を目標とし、目標を達成するために<strong>必要に応じて配信サーバーを増設する</strong>体制を整えています。以下は平常時の各処理段階での遅延の目安です。</p>
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>区間</th>
+                                    <th>遅延時間 (目安)</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td>配信元 → 自宅サーバー</td>
+                                    <td>0.1 ～ 1.5秒</td>
+                                </tr>
+                                <tr>
+                                    <td>データ処理時間</td>
+                                    <td>0.1 ～ 0.3秒</td>
+                                </tr>
+                                <tr>
+                                    <td>自宅サーバー → AWS</td>
+                                    <td>0.1 ～ 0.3秒</td>
+                                </tr>
+                                 <tr>
+                                    <td>AWS → Discord（すべて配信されるまで）</td>
+                                    <td>2.0 ～ 15秒</td>
+                                </tr>
+                                <tr class="total-row">
+                                    <td><strong>合計</strong></td>
+                                    <td><strong>約 2.3 ～ 17.1秒</strong></td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="infra-diagram">
+                        <a href="img/aws_new1.png" class="lightbox-trigger">
+                            <img src="img/aws_new1.png" alt="BOT運用構成図">
+                        </a>
+                    </div>
+                    </div>
+            </section>
+        </main>
+    </div>
+    <script src="script.js"></script>
+</body>
+</html>
