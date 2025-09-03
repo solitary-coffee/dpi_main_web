@@ -708,3 +708,37 @@ h4{
     margin-top: -10px;     /* h4との間隔を詰める */
     margin-bottom: 20px;   /* 下のコンテンツとの間隔を確保 */
 }
+.alert-box {
+    display: flex;
+    gap: 15px;
+    padding: 15px;
+    margin-top: 20px;
+    border-radius: 8px;
+    border-left-width: 5px;
+    border-left-style: solid;
+}
+.alert-box i {
+    font-size: 1.5em;
+    margin-top: 5px;
+}
+.alert-box p, .alert-box div {
+    margin: 0;
+    line-height: 1.6;
+}
+
+/* 警告・注意 (黄色) */
+.alert-box.alert-warning {
+    background-color: #fff9e6;
+    border-color: #f39c12;
+    color: #664d03;
+}
+.alert-box.alert-warning i { color: #f39c12; }
+.alert-box.alert-warning a { color: #664d03; font-weight: bold; }
+
+.alert-box.alert-deprecation {
+    background-color: #ffe5d0;
+    border-color: #fd7e14;
+    color: #653209;
+}
+.alert-box.alert-deprecation i { color: #fd7e14; }
+.alert-box.alert-deprecation a { color: #653209; font-weight: bold; }
