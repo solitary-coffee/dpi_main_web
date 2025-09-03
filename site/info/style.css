@@ -701,3 +701,10 @@ h4{
     color: #664d03;
 }
 .alert-box.alert-warning i { color: #f39c12; }
+/* --- h4見出し下の説明文スタイル (追記) --- */
+.subtitle-description {
+    font-size: 0.9em;      /* h4より少し小さい文字サイズ */
+    color: #c0bfbf;           /* 少し薄い文字色 */
+    margin-top: -10px;     /* h4との間隔を詰める */
+    margin-bottom: 20px;   /* 下のコンテンツとの間隔を確保 */
+}

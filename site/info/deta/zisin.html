@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>地震情報の詳細 - DPI-Bot公式サイト</title>
+    <link rel="icon" href="../../../img/dpi.png" type="image/png">
+    <link rel="stylesheet" href="../style.css"> <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
+</head>
+<body>
+
+    <button id="menu-toggle-btn"><span></span><span></span><span></span></button>
+    <div class="overlay"></div>
+
+    <div class="page-container">
+        <nav class="sidebar">
+             <div class="sidebar-header"><h2>メニュー</h2></div>
+             <ul>
+                <li><a href="../../../index.html">トップページ</a></li>
+                <li><a href="../../../site/about/index.html">コマンド</a></li>
+                <li><a href="../../../site/info/index.html">配信内容</a></li>
+                <li><a href="../../../site/status/index.html">お知らせ</a></li>
+                <li><a href="../../../site/dever/index.html">開発者紹介</a></li>
+                <li><a href="../../../site/invi/index.html">BOTを招待</a></li>
+                <li><a href="../../../site/buy/index.html">ご支援のお願い</a></li>
+                <li><a href="../../../terms/index.html">利用規約等</a></li>
+                <li><a href="../../../site/supp/index.html">お問い合わせ</a></li>
+            </ul>
+        </nav>
+
+        <main class="main-content">
+            <header>
+                <h1>「地震情報」の詳細</h1>
+            </header>
+            
+            <section class="section">
+                <h2>概要</h2>
+                <p>気象庁から発表される、「震度速報」「震源に関する情報」「震源・震度に関する情報」「顕著な地震の震源要素更新のお知らせ」を配信します。</p>
+                <div class="alert-box alert-warning">
+                    <i class="fa-solid fa-triangle-exclamation"></i>
+                    <div>
+                        <strong>留意事項:</strong><br>
+                        ・震源・震度に関する情報では海外などで発生した大地震または大規模噴火も発表されます。<br>
+                        ・海外での大規模噴火の際、海外で規模の大きな地震が発生しましたと表記されますが、これは気象庁の仕様です。実際には大きな地震は発生していません。
+                    </div>
+                </div>
+            </section>
+            <section class="section">
+                <h3>配信内容</h3>
+                <h4>震度速報（各都道府県ごとに配信されます。）</h4>
+                <p  class="subtitle-description">（各都道府県別で配信されます。）</p>
+                <ul>
+                    <li>観測震度</li>
+                    <li>地域名</li>
+                </ul>
+                    <h4>震源に関する情報</h4>
+                <ul>    
+                    <li>震源地</li>
+                    <li>マグニチュード</li>
+                    <li>深さ</li>
+                    <li>発生時刻</li>
+                    <li>津波の有無</li>
+                </ul>
+                <h4>震源・震度に関する情報</h4>
+                <p  class="subtitle-description">（震源情報と各都道府県別で配信されます。）</p>
+                <ul>    
+                    <li>震源地</li>
+                    <li>マグニチュード</li>
+                    <li>深さ</li>
+                    <li>発生時刻</li>
+                    <li>津波の有無</li>
+                </ul>
+                <ul>        
+                    <li>観測震度</li>
+                    <li>地域名</li>
+                    <p>観測震度ごとに分けて地域名が表記されます。</p>
+                </ul>    
+                <h4>顕著な地震の震源要素更新のお知らせ</h4>
+                <ul>    
+                    <li>震源地</li>
+                    <li>マグニチュード</li>
+                    <li>深さ</li>
+                    <li>発生時刻</li>   
+                <div class="slider">
+                    <div class="slides">
+                        <img src="../img/zisin_sa1.png" alt="BOTの画像1">
+                        <img src="../img/zisin_sa2.png" alt="BOTの画像2">
+                        <img src="../img/zisin_sa3.png" alt="BOTの画像3">
+                        <img src="../img/zisin_sa4.png" alt="BOTの画像4">
+                        <img src="../img/zisin_sa5.png" alt="BOTの画像5">
+                    </div>
+                    <button class="prev-btn">&lt;</button>
+                    <button class="next-btn">&gt;</button>
+                </div>
+            </section>
+            <a href="../index.html" class="back-link">← 配信内容一覧に戻る</a>
+
+        </main>
+    </div>
+    <script src="../script.js"></script> </body>
+</html>
