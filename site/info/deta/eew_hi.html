@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>緊急地震速報（警報）の詳細 - DPI-Bot公式サイト</title>
+    <title>緊急地震速報（地震動予報）の詳細 - DPI-Bot公式サイト</title>
     <link rel="icon" href="../../../img/dpi.png" type="image/png">
     <link rel="stylesheet" href="../style.css"> <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
 </head>
@@ -30,23 +30,40 @@
 
         <main class="main-content">
             <header>
-                <h1>「緊急地震速報（警報）」の詳細</h1>
+                <h1>「緊急地震速報（地震動予報）」の詳細</h1>
             </header>
             
             <section class="section">
                 <h2>概要</h2>
-                <p>緊急地震速報の一般向けです。発表条件は、最大震度が5弱以上または最大長周期地震動階級が3以上と予想された場合に発表されます。<br>また、震度5弱以上または長周期地震動階級3以上の強い揺れ及び震度4以上が予想される地域名が発表されます。</p>
+                <p>高度利用者向けの緊急地震速報です。<br>発表条件は、P波またはS波の振幅が100gal以上またはマグニチュード3.5以上または、最大予測震度3以上、長周期地震動階級が1以上で発表されます。</p>
+                <div class="alert-box alert-warning">
+                    <i class="fa-solid fa-triangle-exclamation"></i>
+                    <div>
+                        <strong>留意事項:</strong><br>
+                        ・大地震発生時は、短時間に多数の情報が連続して配信されることがあります。<br>
+                        ・1点の観測データなどで発表された場合、解析後にノイズと判断されキャンセル報（取消報）となる場合があります。
+                    </div>
+                </div>
                 <p>詳しくは気象庁の<a href="https://www.jma.go.jp/jma/kishou/know/jishin/eew/shikumi/shousai.html">緊急地震速報（警報）及び（予報）について</a>をご覧ください。</p>    
+                <p>緊急地震速報の処理手法などにつきましては<a href="https://www.jma.go.jp/jma/kishou/know/jishin/eew/katsuyou/reference.pdf">緊急地震速報の概要や処理手法に関する技術的参考資料</a>をご覧ください。</p>
+                </p>
+            </section>
+            <section class="section">
+                <h3>配信内容</h3>
                 <ul>
-                    <p>配信内容</p>
+                    <li>最大震度</li>
+                    <li>最大長周期階級</li>
                     <li>震源地</li>
-                    <li>強い揺れが予測される地域</li>
+                    <li>マグニチュード</li>
+                    <li>深さ</li>
+                    <li>発生時刻</li>
+                    <li>（警報時）強い揺れが予測される地域</li>
                 </ul>
                 <div class="slider">
                     <div class="slides">
-                        <img src="../img/eew_wrr-sample1.png" alt="BOTの画像1">
-                        <img src="../img/eew_wrr-sample2.png" alt="BOTの画像2">
-                        <img src="../img/eew_wrr-sample3.png" alt="BOTの画像3">
+                        <img src="../img/eew_hi_sa1.png" alt="BOTの画像1">
+                        <img src="../img/eew_hi_sa2.png" alt="BOTの画像2">
+                        <img src="../img/eew_hi_sa3.png" alt="BOTの画像3">
                     </div>
                     <button class="prev-btn">&lt;</button>
                     <button class="next-btn">&gt;</button>
