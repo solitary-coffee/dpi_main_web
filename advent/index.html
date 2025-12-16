@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Loading...</title>
+    
+    <link rel="stylesheet" href="../style.css">
+    
+    <link rel="stylesheet" href="style.css">
+
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+
+    <script src="../script.js" defer></script>
+    
+    <script src="script.js" defer></script>
+</head>
+
+<body>
+    <button id="menu-toggle-btn">
+        <span></span>
+        <span></span>
+        <span></span>
+    </button>
+    <div class="overlay"></div>
+
+    <div class="page-container">
+        
+        <nav class="sidebar">
+            <div class="sidebar-header">
+                <a href="../index.html" class="sidebar-logo-link">
+                    <img src="../img/dpi.png" alt="DPI-Bot" class="sidebar-logo">
+                </a>
+            </div>
+            <ul>
+                <li><a href="../index.html">トップページ</a></li>
+                <li><a href="../site/about/index.html">コマンド</a></li>
+                <li><a href="../site/info/index.html">配信内容</a></li>
+                <li><a href="../site/status/index.html">お知らせ</a></li>
+                <li><a href="../site/dever/index.html">開発者紹介</a></li>
+                <li><a href="../site/invi/index.html">BOTを招待</a></li>
+                <li><a href="../site/buy/index.html">ご支援のお願い</a></li>
+                <li><a href="../terms/index.html">利用規約等</a></li>
+                <li><a href="../site/supp/index.html">お問い合わせ</a></li>
+            </ul>
+        </nav>
+
+        <main class="main-content">
+
+            <div class="post-layout">
+                
+                <article class="post-content">
+                    <a href="../index.html" class="back-link">← トップに戻る</a>
+
+                    <div id="content" class="markdown-body">
+                        <p style="color: #666;">読み込み中...</p>
+                    </div>
+                </article>
+
+                <aside class="toc-sidebar" id="toc-sidebar">
+                    <div class="toc-title">目次</div>
+                    <ul id="toc-list" class="toc-list"></ul>
+                </aside>
+
+            </div>
+
+        </main>
+    </div>
+</body>
+</html>

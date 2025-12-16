@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>配信内容 | DPI-Bot</title>
+    <link rel="stylesheet" href="../../../style.css"> 
+    <link rel="stylesheet" href="list-style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+</head>
+<body>
+
+    <button id="menu-toggle-btn"><span></span><span></span><span></span></button>
+    <div class="overlay"></div>
+
+    <div class="page-container">
+        <nav class="sidebar">
+            <div class="sidebar-header"><h2>メニュー</h2></div>
+            <ul>
+                <li><a href="../../../index.html">トップページ</a></li>
+                <li><a href="../../../site/about/index.html">コマンド</a></li>
+                <li><a href="../../../site/info/index.html" class="active">配信内容</a></li>
+                <li><a href="../../../site/status/index.html">お知らせ</a></li>
+                <li><a href="../../../site/dever/index.html">開発者紹介</a></li>
+                <li><a href="../../../site/invi/index.html">BOTを招待</a></li>
+                <li><a href="../../../site/buy/index.html">ご支援のお願い</a></li>
+                <li><a href="../../../terms/index.html">利用規約等</a></li>
+                <li><a href="../../../site/supp/index.html">お問い合わせ</a></li>
+            </ul>
+        </nav>
+
+        <main class="main-content">
+            <section class="content-hero">
+                <h1>配信予定・対応リスト</h1>
+                <p>2025年4月より適用される配信資料の一覧です。</p>
+            </section>
+
+
+
+
+            <section class="list-section">
+                <h2 class="section-title tsunami"></i>緊急地震速報・津波情報・地震情報・火山情報では配信の変更等はありません。</h2>
+                <p>詳細は<a href="../index.html">各配信資料のページ</a>をご覧ください。</p>
+            </section>
+            <div class="table-header-row">
+                <div class="col-status">状態</div>
+                <div class="col-info">Bot配信名</div>
+                <div class="col-info">資料名</div>
+                <div class="col-info">詳細・備考</div>
+            </div>
+
+
+            <section class="list-section">
+                <h2 class="section-title weather"></i> 気象関連</h2>
+                <div class="dpi-table-list">
+                    <div class="dpi-row type-end">
+                        <div class="col-status"><span class="status-badge">移行措置</span></div>
+                        <div class="col-bot">気象警報_注意報</div>
+                        <div class="col-name">気象特別警報・警報・注意報</div>
+                        <div class="col-detail">2026年10月まで移行期間として配信<a href="#note1" class="note-mark">※1</a></div>
+                    </div>
+                    
+                    <div class="dpi-row type-endtbs">
+                        <div class="col-status"><span class="status-badge">終了予定</span></div>
+                        <div class="col-bot">気象特別報知</div>
+                        <div class="col-name">特別警報報知</div>
+                        <div class="col-detail">電文廃止に伴い2028年以降配信終了予定</div>
+                    </div>
+
+                    <div class="dpi-row type-end">
+                        <div class="col-status"><span class="status-badge">移行措置</span></div>
+                        <div class="col-bot">記録的短時間大雨情報</div>
+                        <div class="col-name">記録的短時間大雨情報</div>
+                        <div class="col-detail">2026年10月まで移行期間として配信<a href="#note1" class="note-mark">※1</a></div>
+                    </div>
+                    <div class="dpi-row type-end">
+                        <div class="col-status"><span class="status-badge">移行措置</span></div>
+                        <div class="col-bot">潮位情報</div>
+                        <div class="col-name">全般潮位情報<br>地方潮位情報<br>府県潮位情報</div>
+                        <div class="col-detail">2026年10月まで移行期間として配信<a href="#note1" class="note-mark">※1</a></div>
+                    </div>
+                    <div class="dpi-row type-end">
+                        <div class="col-status"><span class="status-badge">移行措置</span></div>
+                        <div class="col-bot">気象情報<br>顕著な大雨・大雪</div>
+                        <div class="col-name">全般気象情報<br>地方気象情報<br>府県気象情報</div>
+                        <div class="col-detail">2026年10月まで移行期間として配信<a href="#note1" class="note-mark">※1</a></div>
+                    </div>
+                    <div class="dpi-row type-current">
+                        <div class="col-status"><span class="status-badge">変更なし</span></div>
+                        <div class="col-bot">早期天候情報</div>
+                        <div class="col-name">早期天候情報</div>
+                        <div class="col-detail">-</div>
+                    </div>
+                    <div class="dpi-row type-current">
+                        <div class="col-status"><span class="status-badge">変更なし</span></div>
+                        <div class="col-bot">竜巻注意情報</div>
+                        <div class="col-name">竜巻注意情報<br>竜巻注意情報（目撃情報付き）</div>
+                        <div class="col-detail">電文変更があるものの表現自体に変更なし。</div>
+                    </div>
+                    <div class="dpi-row type-current">
+                        <div class="col-status"><span class="status-badge">変更なし</span></div>
+                        <div class="col-bot">熱中症警戒アラート</div>
+                        <div class="col-name">熱中症警戒アラート</div>
+                        <div class="col-detail">-</div>
+                    </div>
+                    <div class="dpi-row type-current">
+                        <div class="col-status"><span class="status-badge">変更なし</span></div>
+                        <div class="col-bot">天候情報</div>
+                        <div class="col-name">全般気象情報（社会的に影響の大きい天候に関する情報）<br class="">地方気象情報（社会的に影響が大きい天候に関する情報）</div>
+                        <div class="col-detail">-</div>
+                    </div>
+                    <div class="dpi-row type-change">
+                        <div class="col-status"><span class="status-badge">内容変更</span></div>
+                        <div class="col-bot">台風情報</div>
+                        <div class="col-name">台風解析・予報情報（5日進路・強度予報）<br><span class="ends">全般台風情報（総合情報、上陸等情報）<br>全般台風情報（位置、発生情報）<br>全般台風情報（位置詳細）</span></div>
+                        <div class="col-detail">台風解析・予報情報（5日進路・強度予報）のみ継続、それ以外は電文としては終了。（別電文による台風情報を配信予定）</div>
+                    </div>
+                    <div class="dpi-row type-end">
+                        <div class="col-status"><span class="status-badge">移行措置</span></div>
+                        <div class="col-bot">土砂災害警戒情報</div>
+                        <div class="col-name">土砂災害警戒情報</div>
+                        <div class="col-detail">2026年10月まで移行期間として配信<br>2026年出水期よりレベル4の発表・解除のみ配信。<a href="#note1" class="note-mark">※1</a></div>
+                    </div>
+                    <div class="dpi-row type-current">
+                        <div class="col-status"><span class="status-badge">変更なし</span></div>
+                        <div class="col-bot">指定河川洪水予報</div>
+                        <div class="col-name">指定河川洪水予報</div>
+                        <div class="col-detail">-</div>
+                    </div>
+                    <div class="dpi-row type-theend">
+                        <div class="col-status"><span class="status-badge">配信終了</span></div>
+                        <div class="col-bot">大雨危険度通知</div>
+                        <div class="col-name">大雨危険度<br>土砂災害危険度<br>洪水害危険度<br>浸水害危険度</div>
+                        <div class="col-detail">-</div>
+                    </div>
+                    <div class="dpi-row type-new">
+                        <div class="col-status"><span class="status-badge">新規</span></div>
+                        <div class="col-bot">大雨に関する警戒レベル情報<a href="#note2" class="note-mark">※2</a></div>
+                        <div class="col-name">大雨に関する警戒レベル情報</div>
+                        <div class="col-detail">-</div>
+                    </div>
+                    <div class="dpi-row type-new">
+                        <div class="col-status"><span class="status-badge">新規</span></div>
+                        <div class="col-bot">土砂災害に関する警戒レベル情報<a href="#note2" class="note-mark">※2</a></div>
+                        <div class="col-name">土砂災害に関する警戒レベル情報</div>
+                        <div class="col-detail">-</div>
+                    </div>
+                    <div class="dpi-row type-new">
+                        <div class="col-status"><span class="status-badge">新規</span></div>
+                        <div class="col-bot">高潮に関する警戒レベル情報<a href="#note2" class="note-mark">※2</a></div>
+                        <div class="col-name">高潮に関する警戒レベル情報</div>
+                        <div class="col-detail">-</div>
+                    </div>
+                    <div class="dpi-row type-new">
+                        <div class="col-status"><span class="status-badge">新規</span></div>
+                        <div class="col-bot">暴風・暴風雪に関する警報・注意報<a href="#note2" class="note-mark">※2</a></div>
+                        <div class="col-name">暴風・暴風雪に関する警報・注意報</div>
+                        <div class="col-detail">-</div>
+                    </div>
+                    <div class="dpi-row type-new">
+                        <div class="col-status"><span class="status-badge">新規</span></div>
+                        <div class="col-bot">波浪に関する警報・注意報<a href="#note2" class="note-mark">※2</a></div>
+                        <div class="col-name">波浪に関する警報・注意報</div>
+                        <div class="col-detail">-</div>
+                    </div>
+                    <div class="dpi-row type-new">
+                        <div class="col-status"><span class="status-badge">新規</span></div>
+                        <div class="col-bot">大雪に関する警報・注意報<a href="#note2" class="note-mark">※2</a></div>
+                        <div class="col-name">大雪に関する警報・注意報</div>
+                        <div class="col-detail">-</div>
+                    </div>
+                    <div class="dpi-row type-new">
+                        <div class="col-status"><span class="status-badge">新規</span></div>
+                        <div class="col-bot">その他の気象注意報<a href="#note2" class="note-mark">※2</a></div>
+                        <div class="col-name">その他の気象注意報</div>
+                        <div class="col-detail">-</div>
+                    </div>
+                    <div class="dpi-row type-new">
+                        <div class="col-status"><span class="status-badge">新規</span></div>
+                        <div class="col-bot">暴風・暴風雪に関する警報・注意報<a href="#note2" class="note-mark">※2</a></div>
+                        <div class="col-name">暴風・暴風雪に関する警報・注意報</div>
+                        <div class="col-detail">-</div>
+                    </div>
+                    <div class="dpi-row type-new">
+                        <div class="col-status"><span class="status-badge">新規</span></div>
+                        <div class="col-bot">気象警報・注意報時系列予想<a href="#note2" class="note-mark">※2</a></div>
+                        <div class="col-name">警戒・注意事項と各気象要素の時系列予想</div>
+                        <div class="col-detail">PDF化し有料での提供予定<a href="#note3" class="note-mark">※3</a></div>
+                    </div>
+                    <div class="dpi-row type-new">
+                        <div class="col-status"><span class="status-badge">新規</span></div>
+                        <div class="col-bot">全国集約通報<a href="#note2" class="note-mark">※2</a></div>
+                        <div class="col-name">警戒・注意事項を全要素した全国分の通報情報</div>
+                        <div class="col-detail">PDF化し有料での提供予定<a href="#note3" class="note-mark">※3</a></div>
+                    </div>
+                    <div class="dpi-row type-new">
+                        <div class="col-status"><span class="status-badge">新規</span></div>
+                        <div class="col-bot">気象防災速報<br>線状降水帯情報<br>顕著な大雪<br>記録的短時間大雨情報<a href="#note2"class="note-mark">※2</a><a href="#note4"class="note-mark">※4</a></div>
+                        <div class="col-name">気象防災速報</div>
+                        <div class="col-detail">-</div>
+                    </div>
+                    <div class="dpi-row type-new">
+                        <div class="col-status"><span class="status-badge">新規</span></div>
+                        <div class="col-bot">気象解説情報<a href="#note2"class="note-mark">※2</a><a href="#note4"class="note-mark">※4</a></div>
+                        <div class="col-name">全般気象解説情報<br>地方気象解説情報<br>府県気象解説情報</div>
+                        <div class="col-detail">-</div>
+                    </div>
+                    <div class="dpi-row type-new">
+                        <div class="col-status"><span class="status-badge">新規</span></div>
+                        <div class="col-bot">気象解説情報（潮位）<a href="#note2"class="note-mark">※2</a></div>
+                        <div class="col-name">全般気象情報（潮位）<br>地方気象情報（潮位）<br>府県気象情報（潮位）</div>
+                        <div class="col-detail">-</div>
+                    </div>
+                </div>
+            </section>
+
+            <div class="notes-area">
+                <ul>
+                    <li id="note1"><span class="note-mark" >※1</span>2026年10月（未確定のため変更の可能性があります）で配信終了予定です。</li>
+                    <li id="note2"><span class="note-mark" >※2</span>配信名は未確定です。変更の可能性があります。</li>
+                    <li id="note3"><span class="note-mark" >※3</span>配信方法、金額については現段階では未定です。今後お知らせします。</li>
+                    <li id="note4"><span class="note-mark" >※4</span>配信枠については今後増える可能性があります。</li>
+                </ul>
+            </div>
+        </main>
+    </div>
+
+    <script src="../../../script.js"></script>
+</body>
+</html>

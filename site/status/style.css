@@ -438,3 +438,39 @@ h3 {
     padding: 2px 5px;
     border-radius: 3px;
 }
+
+/* 警告ボックス全体のスタイル */
+.warning-box {
+  /* 背景色: 画像に近い暗い黄褐色 */
+  background-color: #474537; 
+  /* 左側の線の太さと色 */
+  border-left: 5px solid #ffcc00;
+  /* 内側の余白 */
+  padding: 15px 20px;
+  /* 角を少し丸くする場合（お好みで） */
+  border-radius: 3px;
+  /* 全体の文字色 */
+  color: #ffffff;
+  /* フォント（サイト全体のフォントに合わせる場合は削除可） */
+  font-family: sans-serif;
+  /* 下の要素との隙間 */
+  margin-bottom: 20px;
+}
+
+/* "WARN" ラベルのスタイル */
+.warning-label {
+  /* 文字色: 左線と同じ黄色 */
+  color: #ffcc00;
+  font-weight: bold;
+  font-size: 0.9em; /* 少し小さめに */
+  margin-bottom: 5px; /* 下のテキストとの隙間 */
+  text-transform: uppercase; /* 大文字に変換 */
+  letter-spacing: 0.05em; /* 文字間隔を少し広げる */
+}
+
+/* 本文テキストのスタイル */
+.warning-text {
+  margin: 0;
+  font-size: 1.1em;
+  line-height: 1.5;
+}

@@ -1,0 +1,264 @@
+@charset "UTF-8";
+
+
+/* ヒーローエリア */
+.content-hero {
+    margin-bottom: 40px;
+    border-bottom: 2px solid #e1e8ed;
+    padding-bottom: 20px;
+}
+.content-hero h1 {
+    font-size: 1.8rem;
+    color: #258af0;
+    margin: 0 0 10px 0;
+}
+.content-hero p { color: #ffffff; margin: 0; }
+
+/* --- セクションタイトル --- */
+.list-section { margin-bottom: 50px; }
+
+.section-title {
+    font-size: 1.3rem;
+    color: #34495e;
+    margin-bottom: 15px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding-left: 10px;
+    border-left: 5px solid #ccc;
+}
+.section-title.quake { border-color: #fc4733; color: #f05746; }
+.section-title.tsunami { border-color: #3498db; color: #2980b9; }
+.section-title.info { border-color: #f39c12; color: #d35400; }
+.section-title.volcano { border-color: #8e44ad; color: #8e44ad; }
+.section-title.weather { border-color: #1abc9c; color: #16a085; }
+
+
+/* =========================================
+   ▼ 表・リストのデザイン ▼
+   ========================================= */
+
+.dpi-table-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+/* ★PCレイアウト: 列の定義 */
+/* 状態(80px) | Bot配信名(3fr) | 資料名(4fr) | 詳細(3fr) */
+/* Bot名を先に持ってきています。資料名は長いので4fr確保。 */
+.table-header-row,
+.dpi-row {
+    display: grid;
+    grid-template-columns: 80px 3fr 4fr 3fr; 
+    gap: 15px;
+    padding: 15px 20px; /* 前回のサイズ感を維持 */
+    align-items: center;
+}
+
+/* ヘッダー行 */
+.table-header-row {
+    margin-bottom: 5px;
+    font-size: 0.85rem;
+    font-weight: bold;
+    color: #ffffff;
+}
+.table-header-row .col-status { text-align: left; }
+
+
+/* 行（Row） */
+.dpi-row {
+    background: #fff;
+    border-radius: 6px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    border-left: 5px solid #ccc;
+    transition: transform 0.1s;
+    
+    /* 高さ自動調整 */
+    height: auto; 
+    min-height: 30px; /* 前回のサイズ感を維持 */
+}
+
+/* 複数行になった時のために、念のため items-start に切り替える余地を残しますが、
+   基本はセンター揃えが見やすいため center にしています。
+   文字数が多い行だけ上揃えにしたい場合はここを start に変更してください */
+.dpi-row { align-items: center; }
+
+
+.dpi-row:hover {
+    transform: translateX(3px);
+    box-shadow: 0 4px 8px rgba(0,0,0,0.08);
+}
+
+/* --- 列ごとのスタイル --- */
+
+.col-status {
+    text-align: left;
+    display: flex;
+    align-items: center;
+}
+.status-badge {
+    display: inline-block;
+    padding: 4px 10px;
+    font-size: 0.75rem;
+    border-radius: 20px;
+    color: #fff;
+    background: #999;
+    font-weight: bold;
+    white-space: nowrap;
+}
+
+/* 2. Bot配信名 (青文字・強調) */
+.col-bot {
+    color: #007bff;
+    font-weight: bold;
+    font-size: 1rem;
+    line-height: 1.5;
+    word-break: break-all;
+}
+
+/* 3. 資料名 (黒文字・標準) */
+.col-name {
+    font-weight: bold;
+    color: #555;
+    font-size: 0.95rem;
+    line-height: 1.4;
+}
+
+/* 4. 詳細 */
+.col-detail {
+    color: #666;
+    font-size: 0.9rem;
+    line-height: 1.5;
+}
+
+/* その他の装飾 */
+.mute { 
+    color: #ccc; 
+    font-weight: normal; 
+}
+
+.note-mark { 
+    color: #ff9184; 
+    font-size: 0.7em; 
+    vertical-align: top; 
+    margin-left: 2px;
+}
+
+/* =========================================
+   ▼ 色分け設定 ▼
+   ========================================= */
+
+/* 現行 */
+.dpi-row.type-current { border-left-color: #3498db; }
+.dpi-row.type-current .status-badge { background-color: #3498db; }
+
+/* 新規 */
+.dpi-row.type-new { 
+    border-left-color: #2ecc71; 
+    background-color: #fafffc; 
+}
+.dpi-row.type-new .status-badge { background-color: #2ecc71; }
+
+
+.ends{
+ text-decoration: line-through;   
+ color: #999; 
+}/* 変更 */
+.dpi-row.type-change { 
+    border-left-color: #f39c12; 
+    background-color: #fffaf4; 
+}
+.dpi-row.type-change .status-badge { background-color: #f39c12; }
+
+/* 廃止 */
+.dpi-row.type-end { 
+    border-left-color: #95a5a6; 
+    background-color: #f2f2f2; 
+    /* opacity: 0.8;  */
+}
+.dpi-row.type-theend { 
+    border-left-color: #535858; 
+    background-color: #f2f2f2; 
+    opacity: 0.8; 
+}
+
+.dpi-row.type-endtbs{ 
+    border-left-color:#4c7979; 
+    background-color: #f2f2f2; 
+
+}
+.dpi-row.type-endtbs .status-badge { background-color :#4c7979}
+
+.dpi-row.type-theend :where(.col-name, .col-bot, .col-detail) {
+    color: #999;
+    /* text-decoration: line-through; */
+}
+.dpi-row.type-end .status-badge { background-color: #95a5a6; }
+.dpi-row.type-theend .status-badge { background-color :#535858; }
+
+
+/* =========================================
+   ▼ スマホ対応 ▼
+   ========================================= */
+@media (max-width: 768px) {
+    .table-header-row { display: none; }
+
+    .dpi-row {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 8px;
+        padding-top: 45px; 
+        position: relative;
+    }
+    
+    .col-status {
+        position: absolute;
+        top: 15px;
+        left: 15px;
+        width: auto;
+    }
+
+    /* ラベルの調整 */
+    /* Bot名が一番上に来るため、ラベルなしでOK */
+    .col-bot {
+        font-size: 1.1rem; /* スマホでは少し大きく */
+        margin-bottom: 2px;
+    }
+
+    /* 資料名にラベル付与 */
+    .col-name::before {
+        content: "資料名: ";
+        font-size: 0.85em;
+        color: #aaa;
+        font-weight: normal;
+        margin-right: 5px;
+    }
+
+    .col-detail::before {
+        content: "詳細: ";
+        font-size: 0.85em;
+        color: #aaa;
+        display: block;
+    }
+}
+
+/* 注釈エリア */
+.notes-area {
+    margin-top: 40px;
+    padding: 20px;
+    border-top: 1px solid #ddd;
+    font-size: 0.85rem;
+    color: #ffffff;
+}
+
+.notes-area ul {
+    list-style: none; /* ★これで「・」が消えます */
+    padding-left: 0;  /* 左の余白をなくして左端に揃えます */
+    margin: 0;
+}
+
+.notes-area li {
+    margin-bottom: 5px; /* 行ごとの間隔 */
+}

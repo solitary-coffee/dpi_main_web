@@ -1,0 +1,288 @@
+@charset "UTF-8";
+
+/* ===========================================
+   1. サイドバーのロゴ設定 (高さ調整版)
+=========================================== */
+.sidebar-header {
+    text-align: center;
+    margin-bottom: 20px;
+    padding-bottom: 15px;
+    border-bottom: 1px solid #258af0;
+}
+
+.sidebar-logo {
+    /* ★ここが高さを低くする設定です */
+    height: 60px;       /* 好きな高さに変更してください */
+    width: 150px;        /* 高さに合わせて横幅を自動調整 */
+    max-width: 100%;    /* 親要素からはみ出さないように */
+    object-fit: fill; /* 画像の比率を崩さずに収める */
+    
+    border-radius: 4px;
+    transition: opacity 0.3s;
+    vertical-align: middle;
+}
+
+.sidebar-logo:hover {
+    opacity: 0.8;
+}
+
+/* ===========================================
+   2. 記事エリア全体のレイアウト
+=========================================== */
+.post-layout {
+    display: flex;
+    gap: 40px; /* 本文と目次の間隔 */
+    align-items: flex-start;
+    /* margin-top: 20px; バナーがないので詰めて表示 */
+}
+
+/* 左側：記事本文エリアの枠 */
+.post-content {
+    flex: 1; /* 余った幅をすべて使う */
+    min-width: 0; /* はみ出し防止 */
+    background-color: #444950; /* メイン背景色と同じ */
+}
+
+/* 戻るリンク */
+.back-link {
+    display: inline-block;
+    margin-bottom: 20px;
+    font-size: 0.9em;
+    color: #3498db;
+    text-decoration: none;
+}
+.back-link:hover {
+    text-decoration: underline;
+}
+
+/* ===========================================
+   3. 右サイドバー (目次エリア)
+=========================================== */
+.toc-sidebar {
+    width: 240px; /* 目次の幅 */
+    position: sticky;
+    top: 20px; /* 上端からの固定位置 */
+    flex-shrink: 0;
+    max-height: 80vh;
+    overflow-y: auto;
+    
+    background-color: #343a40; /* サイドバーと同じ濃い灰色 */
+    padding: 20px;
+    border-radius: 8px;
+    border: 1px solid #555;
+    
+    /* スクロールバー非表示設定 */
+    scrollbar-width: none; /* Firefox */
+    -ms-overflow-style: none; /* IE/Edge */
+}
+/* Chrome/Safari用 */
+.toc-sidebar::-webkit-scrollbar {
+    display: none;
+}
+
+.toc-title {
+    font-weight: bold;
+    margin-bottom: 15px;
+    font-size: 1.1em;
+    color: #3498db;
+    border-bottom: 1px solid #555;
+    padding-bottom: 10px;
+}
+
+.toc-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    font-size: 0.9em;
+}
+
+.toc-list li {
+    margin-bottom: 8px;
+    line-height: 1.4;
+}
+
+.toc-list a {
+    text-decoration: none;
+    color: #dee2e6; /* 薄い灰色 */
+    display: block;
+    transition: color 0.2s;
+}
+
+.toc-list a:hover {
+    color: #3498db; /* 青色 */
+    text-decoration: underline;
+}
+
+/* 見出しレベルごとのインデントと色 */
+.toc-h1 { 
+    font-weight: bold; 
+    color: #fff !important; 
+    margin-top: 10px; 
+}
+.toc-h2 { 
+    margin-left: 10px; 
+}
+.toc-h3 { 
+    margin-left: 20px; 
+    font-size: 0.9em; 
+    color: #adb5bd !important; 
+}
+
+/* スマホ対応: 900px以下で目次を隠す */
+@media (max-width: 900px) {
+    .post-layout {
+        flex-direction: column;
+    }
+    .toc-sidebar {
+        display: none; /* スマホでは目次を非表示 */
+        width: 100%;
+        position: static;
+        margin-top: 30px;
+    }
+}
+
+/* ===========================================
+   4. Markdown本文のデザイン (ダークテーマ対応)
+=========================================== */
+.markdown-body {
+    line-height: 1.8;
+    color: #ffffff;
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+}
+
+/* リンク */
+.markdown-body a {
+    color: #3498db;
+    text-decoration: none;
+}
+.markdown-body a:hover {
+    text-decoration: underline;
+}
+
+/* 見出し */
+.markdown-body h1 {
+    font-size: 2em;
+    color: #237fdb;
+    border-bottom: none;
+    margin-bottom: 30px;
+    text-align: center;
+}
+
+.markdown-body h2 {
+    font-size: 1.5em;
+    color: #3498db;
+    border-bottom: 2px solid #3498db;
+    padding-bottom: 10px;
+    margin-top: 40px;
+    margin-bottom: 20px;
+}
+
+.markdown-body h3 {
+    font-size: 1.25em;
+    color: #2980b9;
+    margin-top: 30px;
+    margin-bottom: 15px;
+    border-left: 4px solid #2980b9;
+    padding-left: 10px;
+}
+
+/* 段落・リスト */
+.markdown-body p {
+    margin-bottom: 16px;
+}
+.markdown-body ul {
+    list-style-type: disc;
+    padding-left: 2em;
+    margin-bottom: 20px;
+}
+.markdown-body li {
+    margin-bottom: 5px;
+}
+
+/* 画像 */
+.markdown-body img {
+    max-width: 100%;
+    height: auto;
+    border-radius: 8px;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+    margin: 20px 0;
+}
+
+/* コードブロック */
+.markdown-body pre {
+    background-color: #2d3136; /* 暗い背景 */
+    padding: 15px;
+    border-radius: 5px;
+    overflow-x: auto;
+    margin-bottom: 20px;
+    border: 1px solid #555;
+    color: #f8f9fa;
+}
+.markdown-body code {
+    font-family: Consolas, Monaco, 'Andale Mono', monospace;
+    background-color: rgba(255,255,255,0.1);
+    padding: 2px 6px;
+    border-radius: 4px;
+}
+.markdown-body pre code {
+    background-color: transparent;
+    padding: 0;
+}
+
+/* 引用 (Blockquotes) */
+.markdown-body blockquote {
+    margin: 0 0 20px 0;
+    padding: 10px 20px;
+    border-left: 5px solid #3498db;
+    background-color: #3a3f45;
+    color: #e9ecef;
+}
+
+/* ===========================================
+   5. カスタムブロック (:::note info 等)
+=========================================== */
+.admonition {
+    padding: 15px;
+    margin: 20px 0;
+    border-left: 5px solid #ccc;
+    background-color: #3a3f45;
+    border-radius: 4px;
+    color: #fff;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+}
+
+.admonition-title {
+    font-weight: bold;
+    margin-bottom: 8px !important;
+    display: block;
+    text-transform: uppercase;
+    font-size: 0.9em;
+    letter-spacing: 0.05em;
+}
+
+/* info (青) */
+.admonition.info {
+    background-color: rgba(33, 150, 243, 0.15); /* 少し透明な青背景 */
+    border-left-color: #2196f3;
+}
+.admonition.info .admonition-title {
+    color: #64b5f6;
+}
+
+/* warn (黄) */
+.admonition.warn {
+    background-color: rgba(255, 193, 7, 0.15); /* 少し透明な黄背景 */
+    border-left-color: #ffc107;
+}
+.admonition.warn .admonition-title {
+    color: #ffd54f;
+}
+
+/* alert (赤) */
+.admonition.alert {
+    background-color: rgba(244, 67, 54, 0.15); /* 少し透明な赤背景 */
+    border-left-color: #f44336;
+}
+.admonition.alert .admonition-title {
+    color: #e57373;
+}
