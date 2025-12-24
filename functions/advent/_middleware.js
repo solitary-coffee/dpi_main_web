@@ -11,7 +11,7 @@ export async function onRequest(context) {
 
     // 2. 記事のMarkdownファイルを取得しに行く
     // (自分自身のサイトのURLから取得)
-    const mdUrl = `${url.origin}/posts/${fileId}.md`;
+    const mdUrl = `${url.origin}/advent/${fileId}.md`;
     
     // 内部通信で取得を試みる
     const mdResponse = await fetch(mdUrl);
