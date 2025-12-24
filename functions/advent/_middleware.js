@@ -11,7 +11,7 @@ export async function onRequest(context) {
 
     // 2. 記事のMarkdownファイルを取得しに行く
     // (自分自身のサイトのURLから取得)
-    const mdUrl = `${url.origin}/advent/${fileId}.md`;
+    const mdUrl = `${url.origin}/advent/?id=${fileId}`;
     
     // 内部通信で取得を試みる
     const mdResponse = await fetch(mdUrl);
@@ -29,7 +29,7 @@ export async function onRequest(context) {
     const imgMatch = mdText.match(/!\[.*?\]\((.*?)\)/);
 
     // タイトルが見つかればそれを使う。なければデフォルト。
-    const title = titleMatch ? titleMatch[1] : 'DPI-Bot 記事';
+    const title = titleMatch ? titleMatch[1] : 'DPI-Bot Advent Calendar';
     
     // 画像が見つかれば、絶対パスに変換して使う。なければデフォルト。
     let image = 'https://dpi-bot.com/img/dpi.png'; // ★デフォルト画像のURL
