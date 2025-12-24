@@ -175,6 +175,7 @@
     padding-bottom: 10px;
     margin-top: 40px;
     margin-bottom: 20px;
+    text-align: left;
 }
 
 .markdown-body h3 {
@@ -285,4 +286,28 @@
 }
 .admonition.alert .admonition-title {
     color: #e57373;
+}
+/* ... (これまでのCSSの末尾に追加) ... */
+
+/* -------------------------------------------
+   動画埋め込み (YouTube)
+------------------------------------------- */
+.video-container {
+    position: relative;
+    width: 100%;
+    padding-bottom: 56.25%; /* 16:9 の比率を維持 */
+    height: 0;
+    margin: 20px 0;
+    border-radius: 8px;
+    overflow: hidden;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+    background-color: #000;
+}
+
+.video-container iframe {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
 }
