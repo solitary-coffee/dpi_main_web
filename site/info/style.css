@@ -744,6 +744,14 @@ h4{
 .alert-box.alert-deprecation i { color: #fd7e14; }
 .alert-box.alert-deprecation a { color: #653209; font-weight: bold; }
 
+.alert-box.alert-new {
+    background-color: #c0f5c4;
+    border-color: #00e60b;
+    color: #1d241b;
+}
+.alert-box.alert-new i { color: #007000; }
+.alert-box.alert-new a { color: #2bff00; font-weight: bold; }
+
 /* 警告ボックス全体のスタイル */
 .warning-box {
   /* 背景色: 画像に近い暗い黄褐色 */
@@ -778,4 +786,11 @@ h4{
   margin: 0;
   font-size: 1.1em;
   line-height: 1.5;
+}
+ul.no-style {
+  list-style: none; /* 点（・）を消す */
+}
+li.no-style {
+  list-style: none; /* 点（・）を消す */
+
 }
