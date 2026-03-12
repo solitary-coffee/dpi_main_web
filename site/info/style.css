@@ -428,7 +428,7 @@ h4{
 .status-legend li:last-child { margin-bottom: 0; }
 .legend-badge {
     display: inline-block;
-    width: 60px;
+    width: 70px;
     text-align: center;
     font-size: 0.8em;
     font-weight: bold;
@@ -438,7 +438,7 @@ h4{
     vertical-align: middle;
 }
 .badge-adjusting { color: #0f5132; background-color: #d1e7dd; }
-.badge-disabled { color: #6c757d; background-color: #e9ecef; }
+.badge-disabled { color: #269622; background-color: #e9ecef; }
 .badge-abolished { color: #dc3545; background-color: #f8d7da; }
 .badge-ok { color: #665e5f; background-color: #ffffff; }
 
@@ -458,11 +458,11 @@ h4{
 /* 「準備中」のカードスタイル (グレーアウト, クリック可能) */
 .content-card.is-disabled {
     opacity: 0.5;
-    background-color: #f8f9fa;
+    background-color: #a2c1e0;
 }
 .content-card.is-disabled:hover {
     transform: translateY(-5px);
-    box-shadow: 0 5px 15px rgba(0,0,0,0.12);
+    box-shadow: 0 5px 15px rgb(128, 116, 116);
 }
 
 /* 「廃止」のカードスタイル (グレーアウト, クリック不可, 取り消し線) */
@@ -495,10 +495,10 @@ h4{
 }
 
 .content-card.is-disabled .content-card-text h3::after {
-    content: '準備中';
+    content: '配信準備中';
     font-size: 0.7em;
     font-weight: bold;
-    color: #6c757d;
+    color: #269622;
     background-color: #e9ecef;
     padding: 2px 6px;
     border-radius: 4px;
@@ -507,7 +507,7 @@ h4{
 }
 
 .content-card.is-abolished .content-card-text h3::after {
-    content: '廃止';
+    content: '終了';
     font-size: 0.7em;
     font-weight: bold;
     color: #dc3545;
@@ -525,7 +525,7 @@ h4{
 
 /* 「廃止予定」カードのタイトル横バッジ */
 .content-card.is-ending-soon .content-card-text h3::after {
-    content: '廃止予定';
+    content: '終了予定';
     font-size: 0.7em;
     font-weight: bold;
     color: #664d03; /* 黄色系の色 */
