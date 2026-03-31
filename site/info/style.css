@@ -457,7 +457,7 @@ h4{
 
 /* 「準備中」のカードスタイル (グレーアウト, クリック可能) */
 .content-card.is-disabled {
-    opacity: 0.5;
+    opacity: 0.95; 
     background-color: #a2c1e0;
 }
 .content-card.is-disabled:hover {
