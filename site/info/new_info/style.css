@@ -253,9 +253,9 @@ h4{
     }
 
     /* PC用の見出しは非表示に */
-    .main-content > header {
+    /*.main-content > header {
         display: none;
-    }
+    }*/
 
     /* h1,h2のフォントサイズを調整 */
     h1 { font-size: 1.8em; }
