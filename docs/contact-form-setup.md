@@ -42,6 +42,8 @@ npx wrangler secret put CONTACT_TO_EMAIL
 
 `CONTACT_TO_EMAIL` は `wrangler.jsonc` の `secrets.required` に宣言済みで、平文の `vars` には保存しません。Secretが未設定の場合、`wrangler deploy` と `wrangler versions upload` は失敗するため、初回デプロイより先に登録してください。
 
+Secretを追加・更新しても、すでに失敗したGit連携ビルドは自動では再実行されません。登録後にCloudflareのビルド画面から再試行するか、新しいコミットでビルドを起動してください。
+
 Workers Freeプランで「確認済み送信先」だけへ送信する場合、`CONTACT_TO_EMAIL` には `support@dpi-bot.com` のような転送元アドレスではなく、Cloudflare上で認証済みの実受信先アドレスを設定してください。
 
 ## 3. デプロイ前確認
