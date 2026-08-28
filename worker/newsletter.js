@@ -427,7 +427,7 @@ async function handleProtectedAdminAsset(request, env) {
     if ((headers.get('content-type') || '').includes('text/html')) {
         headers.set(
             'Content-Security-Policy',
-            "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+            "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; frame-src blob:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'",
         );
     }
     return new Response(assetResponse.body, {
@@ -445,6 +445,12 @@ async function handleAdminApi(request, env, pathname) {
     if (pathname === '/site/mail-admin/api/summary') {
         assertMethod(request, ['GET']);
         return adminSummary(env, admin);
+    }
+
+    if (pathname === '/site/mail-admin/api/preview') {
+        assertMethod(request, ['POST']);
+        assertSameOrigin(request);
+        return previewCampaign(request, env);
     }
 
     if (pathname === '/site/mail-admin/api/campaigns') {
@@ -476,7 +482,24 @@ async function adminSummary(env, admin) {
             `SELECT
                 SUM(CASE WHEN status = 'active' AND instr(',' || categories || ',', ',maintenance,') > 0 THEN 1 ELSE 0 END) AS maintenance_count,
                 SUM(CASE WHEN status = 'active' AND instr(',' || categories || ',', ',outage,') > 0 THEN 1 ELSE 0 END) AS outage_count,
-                SUM(CASE WHEN status = 'active' AND instr(',' || categories || ',', ',update,') > 0 THEN 1 ELSE 0 END) AS update_count
+                SUM(CASE WHEN status = 'active' AND instr(',' || categories || ',', ',update,') > 0 THEN 1 ELSE 0 END) AS update_count,
+                SUM(CASE WHEN status = 'active' AND (
+                    instr(',' || categories || ',', ',maintenance,') > 0 OR
+                    instr(',' || categories || ',', ',outage,') > 0
+                ) THEN 1 ELSE 0 END) AS maintenance_outage_count,
+                SUM(CASE WHEN status = 'active' AND (
+                    instr(',' || categories || ',', ',maintenance,') > 0 OR
+                    instr(',' || categories || ',', ',update,') > 0
+                ) THEN 1 ELSE 0 END) AS maintenance_update_count,
+                SUM(CASE WHEN status = 'active' AND (
+                    instr(',' || categories || ',', ',outage,') > 0 OR
+                    instr(',' || categories || ',', ',update,') > 0
+                ) THEN 1 ELSE 0 END) AS outage_update_count,
+                SUM(CASE WHEN status = 'active' AND (
+                    instr(',' || categories || ',', ',maintenance,') > 0 OR
+                    instr(',' || categories || ',', ',outage,') > 0 OR
+                    instr(',' || categories || ',', ',update,') > 0
+                ) THEN 1 ELSE 0 END) AS maintenance_outage_update_count
              FROM newsletter_subscribers`,
         ),
         env.NEWSLETTER_DB.prepare(
@@ -497,6 +520,15 @@ async function adminSummary(env, admin) {
     ]);
 
     const categoryRow = categoryRows.results?.[0] || null;
+    const audienceSelections = [
+        ['maintenance'],
+        ['outage'],
+        ['update'],
+        ['maintenance', 'outage'],
+        ['maintenance', 'update'],
+        ['outage', 'update'],
+        ['maintenance', 'outage', 'update'],
+    ];
     const statuses = Object.fromEntries(
         (statusRows.results || []).map((row) => [row.status, Number(row.count || 0)]),
     );
@@ -514,6 +546,12 @@ async function adminSummary(env, admin) {
                     Number(categoryRow?.[`${category}_count`] || 0),
                 ]),
             ),
+            audiences: Object.fromEntries(
+                audienceSelections.map((categories) => [
+                    serializeCategories(categories),
+                    Number(categoryRow?.[`${categories.join('_')}_count`] || 0),
+                ]),
+            ),
         },
         campaigns: (campaignRows.results || []).map(normalizeCampaignRow),
         limits: { maxRecipientsPerCampaign: MAX_CAMPAIGN_RECIPIENTS },
@@ -524,7 +562,10 @@ async function createCampaign(request, env, admin) {
     const input = await readJson(request, MAX_JSON_BYTES);
     const subject = validateCampaignSubject(input.subject);
     const bodyText = validateCampaignBody(input.body);
-    const category = validateSingleCategory(input.category);
+    const categories = Array.isArray(input.categories)
+        ? validateCategories(input.categories)
+        : [validateSingleCategory(input.category)];
+    const category = serializeCategories(categories);
     const now = new Date().toISOString();
     const campaignId = crypto.randomUUID();
 
@@ -541,10 +582,31 @@ async function createCampaign(request, env, admin) {
             subject,
             body: bodyText,
             category,
+            categories,
             status: 'draft',
             createdAt: now,
         },
     }, 201);
+}
+
+async function previewCampaign(request, env) {
+    const input = await readJson(request, MAX_JSON_BYTES);
+    const subject = validateCampaignSubject(input.subject);
+    const bodyText = validateCampaignBody(input.body);
+    const categories = validateCategories(input.categories);
+    const previewMail = buildCampaignEmail({
+        campaign_id: 'preview',
+        category: serializeCategories(categories),
+        subject,
+        body_text: bodyText,
+        email: 'preview@example.invalid',
+    }, 'preview.preview', env);
+
+    return jsonResponse({
+        success: true,
+        html: previewMail.html,
+        text: previewMail.text,
+    });
 }
 
 async function queueCampaign(request, env, campaignId) {
@@ -565,10 +627,18 @@ async function queueCampaign(request, env, campaignId) {
         throw new NewsletterError(409, 'この配信は開始済みか、取り消されています。', 'campaign_not_sendable');
     }
 
+    const campaignCategories = parseSerializedCategories(campaign.category);
+    if (campaignCategories.length === 0) {
+        throw new NewsletterError(409, '配信カテゴリが正しくありません。', 'campaign_category_invalid');
+    }
+    const categoryMatchSql = campaignCategories
+        .map(() => "instr(',' || categories || ',', ',' || ? || ',') > 0")
+        .join(' OR ');
+
     const eligibleRow = await env.NEWSLETTER_DB.prepare(
         `SELECT COUNT(*) AS count FROM newsletter_subscribers
-         WHERE status = 'active' AND instr(',' || categories || ',', ',' || ? || ',') > 0`,
-    ).bind(campaign.category).first();
+         WHERE status = 'active' AND (${categoryMatchSql})`,
+    ).bind(...campaignCategories).first();
     const eligibleCount = Number(eligibleRow?.count || 0);
     if (eligibleCount > MAX_CAMPAIGN_RECIPIENTS) {
         throw new NewsletterError(
@@ -604,8 +674,8 @@ async function queueCampaign(request, env, campaignId) {
          )
          SELECT lower(hex(randomblob(16))), ?, id, 'pending', 0, ?, ?
          FROM newsletter_subscribers
-         WHERE status = 'active' AND instr(',' || categories || ',', ',' || ? || ',') > 0`,
-    ).bind(campaignId, now, now, campaign.category).run();
+         WHERE status = 'active' AND (${categoryMatchSql})`,
+    ).bind(campaignId, now, now, ...campaignCategories).run();
 
     const pendingRows = await env.NEWSLETTER_DB.prepare(
         `SELECT id FROM newsletter_deliveries
@@ -718,7 +788,7 @@ async function processDeliveryMessage(message, env) {
     if (
         delivery.campaign_status === 'cancelled'
         || delivery.subscriber_status !== 'active'
-        || !serializedCategoriesContain(delivery.categories, delivery.category)
+        || !serializedCategoriesOverlap(delivery.categories, delivery.category)
     ) {
         await env.NEWSLETTER_DB.prepare(
             `UPDATE newsletter_deliveries SET status = 'skipped', updated_at = ?
@@ -1042,12 +1112,160 @@ function serializeCategories(categories) {
     return CATEGORY_ORDER.filter((category) => categories.includes(category)).join(',');
 }
 
-function serializedCategoriesContain(serialized, category) {
-    return stringValue(serialized).split(',').includes(category);
+function parseSerializedCategories(value) {
+    const rawCategories = stringValue(value).split(',').filter(Boolean);
+    const selected = new Set(rawCategories);
+    if (
+        selected.size === 0
+        || selected.size !== rawCategories.length
+        || rawCategories.some((category) => !Object.hasOwn(CATEGORIES, category))
+    ) return [];
+    return CATEGORY_ORDER.filter((category) => selected.has(category));
+}
+
+function serializedCategoriesOverlap(subscriberValue, campaignValue) {
+    const subscriberCategories = new Set(parseSerializedCategories(subscriberValue));
+    return parseSerializedCategories(campaignValue)
+        .some((category) => subscriberCategories.has(category));
 }
 
 function normalizeText(value) {
     return value.normalize('NFC').replace(/\r\n?/g, '\n');
+}
+
+function renderMarkdownEmail(value) {
+    const lines = normalizeText(stringValue(value)).split('\n');
+    const html = [];
+    let listType = '';
+
+    const closeList = () => {
+        if (!listType) return;
+        html.push(`</${listType}>`);
+        listType = '';
+    };
+
+    for (const line of lines) {
+        if (!line.trim()) {
+            closeList();
+            continue;
+        }
+
+        const heading = line.match(/^\s{0,3}(#{1,3})\s+(.+)$/u);
+        if (heading) {
+            closeList();
+            const level = heading[1].length + 1;
+            const size = level === 2 ? '21px' : level === 3 ? '18px' : '16px';
+            html.push(`<h${level} style="margin:24px 0 10px;font-size:${size};line-height:1.45">${renderInlineMarkdown(heading[2])}</h${level}>`);
+            continue;
+        }
+
+        if (/^\s{0,3}([-*_])(?:\s*\1){2,}\s*$/u.test(line)) {
+            closeList();
+            html.push('<hr style="margin:24px 0;border:0;border-top:1px solid #d8dee6">');
+            continue;
+        }
+
+        const quote = line.match(/^\s{0,3}>\s?(.*)$/u);
+        if (quote) {
+            closeList();
+            html.push(`<blockquote style="margin:16px 0;padding:10px 14px;border-left:4px solid #3498db;background:#f2f6fa;color:#465466">${renderInlineMarkdown(quote[1])}</blockquote>`);
+            continue;
+        }
+
+        const unorderedItem = line.match(/^\s*[-+*]\s+(.+)$/u);
+        const orderedItem = line.match(/^\s*\d+[.)]\s+(.+)$/u);
+        if (unorderedItem || orderedItem) {
+            const nextListType = unorderedItem ? 'ul' : 'ol';
+            if (listType !== nextListType) {
+                closeList();
+                listType = nextListType;
+                html.push(`<${listType} style="margin:12px 0;padding-left:26px;line-height:1.8">`);
+            }
+            html.push(`<li>${renderInlineMarkdown((unorderedItem || orderedItem)[1])}</li>`);
+            continue;
+        }
+
+        closeList();
+        html.push(`<p style="margin:12px 0;line-height:1.8">${renderInlineMarkdown(line)}</p>`);
+    }
+
+    closeList();
+    return html.join('');
+}
+
+function renderInlineMarkdown(value) {
+    const text = stringValue(value);
+    let html = '';
+    let plain = '';
+
+    const flushPlain = () => {
+        if (!plain) return;
+        html += escapeHtml(plain);
+        plain = '';
+    };
+
+    for (let index = 0; index < text.length;) {
+        if (text.startsWith('**', index)) {
+            const end = text.indexOf('**', index + 2);
+            if (end > index + 2) {
+                flushPlain();
+                html += `<strong>${escapeHtml(text.slice(index + 2, end))}</strong>`;
+                index = end + 2;
+                continue;
+            }
+        }
+
+        if (text[index] === '*') {
+            const end = text.indexOf('*', index + 1);
+            if (end > index + 1) {
+                flushPlain();
+                html += `<em>${escapeHtml(text.slice(index + 1, end))}</em>`;
+                index = end + 1;
+                continue;
+            }
+        }
+
+        if (text[index] === '`') {
+            const end = text.indexOf('`', index + 1);
+            if (end > index + 1) {
+                flushPlain();
+                html += `<code style="padding:2px 5px;border-radius:4px;background:#eef1f4;font-family:monospace">${escapeHtml(text.slice(index + 1, end))}</code>`;
+                index = end + 1;
+                continue;
+            }
+        }
+
+        if (text[index] === '[') {
+            const labelEnd = text.indexOf('](', index + 1);
+            const urlEnd = labelEnd >= 0 ? text.indexOf(')', labelEnd + 2) : -1;
+            if (labelEnd > index + 1 && urlEnd > labelEnd + 2) {
+                const label = text.slice(index + 1, labelEnd);
+                const url = text.slice(labelEnd + 2, urlEnd);
+                if (isSafeMarkdownUrl(url)) {
+                    flushPlain();
+                    html += `<a href="${escapeHtml(url)}" rel="noopener noreferrer">${escapeHtml(label)}</a>`;
+                    index = urlEnd + 1;
+                    continue;
+                }
+            }
+        }
+
+        plain += text[index];
+        index += 1;
+    }
+
+    flushPlain();
+    return html;
+}
+
+function isSafeMarkdownUrl(value) {
+    if (typeof value !== 'string' || value.length > 2_048) return false;
+    try {
+        const url = new URL(value);
+        return url.protocol === 'https:' && !url.username && !url.password;
+    } catch {
+        return false;
+    }
 }
 
 async function verifyRecaptcha(token, request, env) {
@@ -1136,7 +1354,9 @@ function buildCampaignEmail(delivery, unsubscribeToken, env) {
     const unsubscribeUrl = new URL('/api/newsletter/unsubscribe', origin);
     unsubscribeUrl.searchParams.set('token', unsubscribeToken);
     const subscribeUrl = new URL('/site/mail/', origin);
-    const categoryLabel = CATEGORIES[delivery.category] || 'お知らせ';
+    const categoryLabel = parseSerializedCategories(delivery.category)
+        .map((category) => CATEGORIES[category])
+        .join('・') || 'お知らせ';
     const text = [
         `【${categoryLabel}】`,
         '',
@@ -1146,8 +1366,8 @@ function buildCampaignEmail(delivery, unsubscribeToken, env) {
         'このメールはDPI-Botのお知らせメールに登録した方へお送りしています。',
         `配信停止: ${unsubscribeUrl.toString()}`,
     ].join('\n');
-    const safeBody = escapeHtml(delivery.body_text).replaceAll('\n', '<br>');
-    const html = `<!doctype html><html lang="ja"><body style="margin:0;background:#f2f5f8;font-family:sans-serif;color:#172033"><main style="max-width:680px;margin:0 auto;background:#fff;padding:28px"><p style="color:#1769aa;font-weight:700">${escapeHtml(categoryLabel)}</p><h1 style="font-size:24px">${escapeHtml(delivery.subject)}</h1><div style="line-height:1.8;overflow-wrap:anywhere">${safeBody}</div><hr style="margin:32px 0;border:0;border-top:1px solid #d8dee6"><p style="font-size:13px;color:#596273">このメールはDPI-Botのお知らせメールに登録した方へお送りしています。<br><a href="${escapeHtml(unsubscribeUrl.toString())}">すべての配信を停止する</a></p></main></body></html>`;
+    const safeBody = renderMarkdownEmail(delivery.body_text);
+    const html = `<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body style="margin:0;background:#f2f5f8;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#172033"><main style="max-width:680px;margin:0 auto;background:#fff;padding:28px"><p style="color:#1769aa;font-weight:700">${escapeHtml(categoryLabel)}</p><h1 style="font-size:24px;line-height:1.45">${escapeHtml(delivery.subject)}</h1><div style="line-height:1.8;overflow-wrap:anywhere">${safeBody}</div><hr style="margin:32px 0;border:0;border-top:1px solid #d8dee6"><p style="font-size:13px;color:#596273">このメールはDPI-Botのお知らせメールに登録した方へお送りしています。<br><a href="${escapeHtml(unsubscribeUrl.toString())}">すべての配信を停止する</a></p></main></body></html>`;
 
     return {
         to: delivery.email,
@@ -1296,11 +1516,13 @@ function normalizePublicOrigin(value) {
 }
 
 function normalizeCampaignRow(row) {
+    const categories = parseSerializedCategories(row.category);
     return {
         id: row.id,
         subject: row.subject,
         body: row.body_text,
-        category: row.category,
+        category: categories[0] || '',
+        categories,
         status: row.status,
         createdBy: row.created_by,
         createdAt: row.created_at,
@@ -1430,7 +1652,10 @@ export const __test = Object.freeze({
     escapeHtml,
     isConfirmationToken,
     normalizePublicOrigin,
+    parseSerializedCategories,
+    renderMarkdownEmail,
     serializeCategories,
+    serializedCategoriesOverlap,
     validateCampaignBody,
     validateCampaignSubject,
     validateCategories,
