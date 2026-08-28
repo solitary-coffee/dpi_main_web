@@ -1,5 +1,6 @@
 {
   "name": "main-dpi",
+  "keep_vars": true,
   "compatibility_date": "2025-05-06",
   "main": "./worker/index.js",
   "assets": {
