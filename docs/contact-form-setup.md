@@ -22,12 +22,27 @@ npx wrangler secret put RECAPTCHA_SECRET_KEY
 
 ## 2. Cloudflare Email Service
 
-1. Cloudflareの「Email Service」で `dpi-bot.com` を送信ドメインとして登録し、表示されるSPF・DKIM・DMARC等のDNS設定を完了します。
-2. `noreply@dpi-bot.com` を送信元として利用できる状態にします。
-3. `support@dpi-bot.com` を受信先として利用できることを確認します。無料枠の「確認済み送信先」を使う場合は、受信先アドレスの確認も完了してください。
-4. `wrangler.jsonc` の `CONTACT_FROM_EMAIL` と `CONTACT_TO_EMAIL` が実際の設定と一致していることを確認します。
+1. Cloudflareの「Email Service」→「Email Routing」で `dpi-bot.com` を登録し、表示されるDNS設定を完了します。
+2. 「Destination Addresses」に実際に受信するメールアドレスを追加し、確認メールから認証を完了します。
+3. `support@dpi-bot.com` 宛ての通常メールも受信する場合は、`support` から手順2の認証済みアドレスへ転送するRouting Ruleを作成します。
+4. `noreply@dpi-bot.com` をWorkerの送信元として利用します。
 
-`CONTACT_EMAIL` のSend Emailバインディングは `wrangler.jsonc` に定義済みです。宛先を個人メールアドレスにする場合は、リポジトリへ書かずCloudflareダッシュボードの環境変数で上書きしてください。
+`CONTACT_EMAIL` のSend Emailバインディングは `wrangler.jsonc` に定義済みです。
+
+お問い合わせの実受信先は、Cloudflare Worker `main-dpi` のSecretとして次の名前で登録します。
+
+- 名前: `CONTACT_TO_EMAIL`
+- 値: 手順2で認証した実際の受信先メールアドレス
+
+Cloudflareダッシュボードでは「Workers & Pages」→ `main-dpi` →「Settings」→「Variables and Secrets」→「Add」から、種類を `Secret` にして登録します。CLIを使用する場合は次のコマンドです。
+
+```bash
+npx wrangler secret put CONTACT_TO_EMAIL
+```
+
+`CONTACT_TO_EMAIL` は `wrangler.jsonc` の `secrets.required` に宣言済みで、平文の `vars` には保存しません。Secretが未設定の場合、`wrangler deploy` と `wrangler versions upload` は失敗するため、初回デプロイより先に登録してください。
+
+Workers Freeプランで「確認済み送信先」だけへ送信する場合、`CONTACT_TO_EMAIL` には `support@dpi-bot.com` のような転送元アドレスではなく、Cloudflare上で認証済みの実受信先アドレスを設定してください。
 
 ## 3. デプロイ前確認
 
@@ -36,6 +51,14 @@ npm test
 npm run check
 npx wrangler deploy --dry-run
 npx wrangler deploy
+```
+
+ローカルで確認する場合は、Git管理対象外の `.dev.vars` に必要なSecretを設定します。
+
+```dotenv
+CONTACT_TO_EMAIL="認証済みの実受信先メールアドレス"
+RECAPTCHA_SITE_KEY="reCAPTCHAのサイトキー"
+RECAPTCHA_SECRET_KEY="reCAPTCHAのシークレットキー"
 ```
 
 デプロイ後は次を確認します。
