@@ -55,11 +55,27 @@ export default {
 };
 
 function contactConfig(env) {
+    const missing = getMissingConfiguration(env);
     const siteKey = cleanConfigValue(env.RECAPTCHA_SITE_KEY);
+
+    if (missing.length) {
+        console.error('Contact form configuration is incomplete', { missing });
+        return jsonResponse(
+            {
+                success: false,
+                configured: false,
+                siteKey: null,
+                code: 'service_not_configured',
+                message: 'お問い合わせフォームの設定が本番環境へ反映されていません。',
+            },
+            503,
+        );
+    }
+
     return jsonResponse({
         success: true,
-        configured: Boolean(siteKey),
-        siteKey: siteKey || null,
+        configured: true,
+        siteKey,
     });
 }
 
@@ -175,14 +191,7 @@ export async function handleContactRequest(request, env) {
 }
 
 function assertConfigured(env) {
-    const required = [
-        ['CONTACT_EMAIL', env.CONTACT_EMAIL],
-        ['CONTACT_FROM_EMAIL', cleanConfigValue(env.CONTACT_FROM_EMAIL)],
-        ['CONTACT_TO_EMAIL', cleanConfigValue(env.CONTACT_TO_EMAIL)],
-        ['RECAPTCHA_SITE_KEY', cleanConfigValue(env.RECAPTCHA_SITE_KEY)],
-        ['RECAPTCHA_SECRET_KEY', cleanConfigValue(env.RECAPTCHA_SECRET_KEY)],
-    ];
-    const missing = required.filter(([, value]) => !value).map(([name]) => name);
+    const missing = getMissingConfiguration(env);
 
     if (missing.length) {
         console.error('Contact form configuration is incomplete', { missing });
@@ -192,6 +201,17 @@ function assertConfigured(env) {
             'service_not_configured',
         );
     }
+}
+
+function getMissingConfiguration(env) {
+    const required = [
+        ['CONTACT_EMAIL', env.CONTACT_EMAIL],
+        ['CONTACT_FROM_EMAIL', cleanConfigValue(env.CONTACT_FROM_EMAIL)],
+        ['CONTACT_TO_EMAIL', cleanConfigValue(env.CONTACT_TO_EMAIL)],
+        ['RECAPTCHA_SITE_KEY', cleanConfigValue(env.RECAPTCHA_SITE_KEY)],
+        ['RECAPTCHA_SECRET_KEY', cleanConfigValue(env.RECAPTCHA_SECRET_KEY)],
+    ];
+    return required.filter(([, value]) => !value).map(([name]) => name);
 }
 
 function assertSameOrigin(request) {

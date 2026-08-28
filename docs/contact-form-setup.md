@@ -42,7 +42,15 @@ npx wrangler secret put CONTACT_TO_EMAIL
 
 `CONTACT_TO_EMAIL` は平文の `vars` には保存せず、Cloudflare上のSecretだけで管理します。Workerは送信処理の開始前にこの値を確認し、未設定なら `503 service_not_configured` で拒否するフェイルクローズ構成です。
 
-Git連携の非本番ブランチでは `wrangler versions upload` が使用されます。本プロジェクトでは、ダッシュボードで登録済みのSecretが `secrets.required` の継承検査で未設定と誤判定される状態を避けるため、同項目はWrangler設定へ宣言せず、上記の実行時検査で必須性を保証します。Secretの値をリポジトリやビルドログへ渡す必要はありません。
+`wrangler.jsonc` の `secrets.required` には、次の3件を宣言しています。
+
+- `CONTACT_TO_EMAIL`
+- `RECAPTCHA_SECRET_KEY`
+- `RECAPTCHA_SITE_KEY`
+
+これにより、いずれかが対象Worker版へ関連付いていない場合は `wrangler deploy` と `wrangler versions upload` を失敗させ、設定不足の版が成功扱いで配信されることを防ぎます。Secretの値自体はリポジトリ、Wrangler設定、ビルドログへ保存しません。
+
+Secretを登録した後にコードをデプロイしてフォームが `service_not_configured` になった場合は、現在の本番版へSecretが関連付いていない可能性があります。「Workers & Pages」→ `main-dpi` →「Settings」→「Variables and Secrets」で上記3件を再入力し、必ず「Deploy」を押してください。その後、失敗したGit連携ビルドを再試行します。
 
 Secretを追加・更新しても、すでに失敗したGit連携ビルドは自動では再実行されません。登録後にCloudflareのビルド画面から再試行するか、新しいコミットでビルドを起動してください。
 
@@ -67,7 +75,7 @@ RECAPTCHA_SECRET_KEY="reCAPTCHAのシークレットキー"
 
 デプロイ後は次を確認します。
 
-- `GET /api/contact/config` が `configured: true` を返す
+- `GET /api/contact/config` がHTTP 200で `configured: true` を返す
 - reCAPTCHA未完了の送信が拒否される
 - PNG、JPEG、TXTまたはLOGを添付して受信できる
 - SVG、PDF、Office文書、ZIP、実行ファイルが拒否される

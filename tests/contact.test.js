@@ -90,6 +90,24 @@ test('設定APIはサイトキーだけを返し、シークレットを公開�
     assert.equal(response.headers.get('cache-control'), 'no-store');
 });
 
+test('設定APIは必須Secretが欠けた本番版を503で検出し、サイトキーを返さない', async () => {
+    const env = createEnvironment();
+    delete env.RECAPTCHA_SECRET_KEY;
+
+    const response = await worker.fetch(
+        new Request('https://dpi-bot.com/api/contact/config'),
+        env,
+    );
+    const body = await response.json();
+
+    assert.equal(response.status, 503);
+    assert.equal(body.success, false);
+    assert.equal(body.configured, false);
+    assert.equal(body.code, 'service_not_configured');
+    assert.equal(body.siteKey, null);
+    assert.doesNotMatch(JSON.stringify(body), /RECAPTCHA_SECRET_KEY/u);
+});
+
 test('CONTACT_TO_EMAILが未設定なら送信処理を開始せず拒否する', async () => {
     const env = createEnvironment();
     delete env.CONTACT_TO_EMAIL;

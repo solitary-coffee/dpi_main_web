@@ -90,12 +90,17 @@ function setupContactForm() {
     fileInput.addEventListener('change', updateAttachmentSelection);
     form.addEventListener('submit', submitContactForm);
 
-    loadRecaptchaConfig().catch(() => {
-        setFormStatus(
-            'reCAPTCHAを読み込めませんでした。ページを再読み込みするか、メールでお問い合わせください。',
-            'error',
-        );
-        document.getElementById('recaptcha-loading').textContent = 'reCAPTCHAの読み込みに失敗しました。';
+    loadRecaptchaConfig().catch((error) => {
+        const configurationMissing = error?.code === 'service_not_configured';
+        const statusMessage = configurationMissing
+            ? 'お問い合わせフォームの設定が本番環境へ反映されていません。メールでお問い合わせください。'
+            : 'reCAPTCHAを読み込めませんでした。ページを再読み込みするか、メールでお問い合わせください。';
+        const loadingMessage = configurationMissing
+            ? 'reCAPTCHAの設定が本番環境へ反映されていません。'
+            : 'reCAPTCHAの読み込みに失敗しました。';
+
+        setFormStatus(statusMessage, 'error');
+        document.getElementById('recaptcha-loading').textContent = loadingMessage;
         submitButton.disabled = true;
     });
 }
@@ -107,11 +112,23 @@ async function loadRecaptchaConfig() {
         credentials: 'same-origin',
         cache: 'no-store',
     });
-    if (!response.ok) throw new Error('Contact form configuration request failed');
+    let config;
+    try {
+        config = await response.json();
+    } catch {
+        throw new Error('Contact form configuration response was invalid');
+    }
 
-    const config = await response.json();
+    if (!response.ok) {
+        const error = new Error(config.message || 'Contact form configuration request failed');
+        error.code = config.code || 'configuration_request_failed';
+        throw error;
+    }
+
     if (!config.configured || typeof config.siteKey !== 'string' || !config.siteKey) {
-        throw new Error('reCAPTCHA is not configured');
+        const error = new Error('reCAPTCHA is not configured');
+        error.code = 'service_not_configured';
+        throw error;
     }
 
     contactCaptchaState.siteKey = config.siteKey;
