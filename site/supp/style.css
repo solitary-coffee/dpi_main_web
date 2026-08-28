@@ -349,6 +349,7 @@ h3 {
 
 .form-group input[type="text"],
 .form-group input[type="email"],
+.form-group input[type="file"],
 .form-group select,
 .form-group textarea {
     width: 100%;
@@ -363,6 +364,7 @@ h3 {
 
 .form-group input[type="text"]:focus,
 .form-group input[type="email"]:focus,
+.form-group input[type="file"]:focus,
 .form-group select:focus,
 .form-group textarea:focus {
     outline: none;
@@ -386,6 +388,107 @@ h3 {
 
 .submit-btn:hover {
     background-color: #2980b9;
+}
+
+.submit-btn:disabled {
+    background-color: #6c757d;
+    cursor: not-allowed;
+    opacity: 0.8;
+}
+
+.form-group input[type="file"] {
+    background-color: #fff;
+    color: #222;
+}
+
+.form-group input[type="file"]::file-selector-button {
+    margin-right: 12px;
+    padding: 8px 12px;
+    border: 0;
+    border-radius: 4px;
+    background-color: #495057;
+    color: #fff;
+    cursor: pointer;
+}
+
+.form-help,
+.file-selection {
+    margin: 8px 0 0;
+    color: #d8dde2;
+    font-size: 0.9rem;
+    line-height: 1.6;
+}
+
+.consent-group {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+}
+
+.consent-group input[type="checkbox"] {
+    width: 20px;
+    height: 20px;
+    margin: 2px 0 0;
+    flex: 0 0 auto;
+}
+
+.consent-group label {
+    display: inline;
+    margin: 0;
+    font-weight: normal;
+}
+
+.consent-group a {
+    color: #8ec9ff;
+}
+
+.captcha-group {
+    min-height: 84px;
+    overflow-x: auto;
+}
+
+.form-status {
+    display: none;
+    margin: 0 0 20px;
+    padding: 12px 14px;
+    border-radius: 5px;
+    line-height: 1.5;
+}
+
+.form-status.error,
+.form-status.pending,
+.form-status.success {
+    display: block;
+}
+
+.form-status.error {
+    border: 1px solid #ff8c8c;
+    background-color: rgba(180, 30, 30, 0.25);
+    color: #fff0f0;
+}
+
+.form-status.pending {
+    border: 1px solid #8ec9ff;
+    background-color: rgba(35, 127, 219, 0.2);
+    color: #eef7ff;
+}
+
+.form-status.success {
+    border: 1px solid #79d69a;
+    background-color: rgba(25, 135, 84, 0.2);
+    color: #effff4;
+}
+
+.honeypot-field {
+    position: absolute !important;
+    width: 1px !important;
+    height: 1px !important;
+    padding: 0 !important;
+    margin: -1px !important;
+    overflow: hidden !important;
+    clip: rect(0, 0, 0, 0) !important;
+    white-space: nowrap !important;
+    border: 0 !important;
 }
 
 /* スマホ表示でボタンの幅を調整したい場合 */

@@ -1,10 +1,24 @@
 {
   "name": "main-dpi",
   "compatibility_date": "2025-05-06",
+  "main": "./worker/index.js",
   "assets": {
-    "directory": "./"
+    "directory": "./",
+    "binding": "ASSETS",
+    "run_worker_first": ["/api/*"]
   },
-  
+
+  "send_email": [
+    {
+      "name": "CONTACT_EMAIL"
+    }
+  ],
+
+  "vars": {
+    "CONTACT_FROM_EMAIL": "noreply@dpi-bot.com",
+    "RECAPTCHA_ALLOWED_HOSTS": "dpi-bot.com,www.dpi-bot.com"
+  },
+
   "observability": {
     "enabled": false,
     "head_sampling_rate": 1,
@@ -21,4 +35,3 @@
     }
   }
 }
-
