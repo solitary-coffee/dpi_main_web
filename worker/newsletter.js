@@ -29,7 +29,7 @@ const HTML_HEADERS = Object.freeze({
     'Content-Type': 'text/html; charset=utf-8',
     'Cache-Control': 'no-store',
     'X-Content-Type-Options': 'nosniff',
-    'Referrer-Policy': 'no-referrer',
+    'Referrer-Policy': 'origin',
     'X-Robots-Tag': 'noindex, nofollow',
     'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
 });
@@ -308,7 +308,7 @@ async function handleSubscribe(request, env) {
 
 async function handleConfirmation(request, env) {
     assertDatabaseAndTokenConfigured(env);
-    assertSameOrigin(request);
+    assertSameOriginFormNavigation(request);
     const form = await readForm(request, MAX_FORM_BYTES);
     const token = stringValue(form.get('token'));
     if (!isConfirmationToken(token)) {
@@ -377,7 +377,7 @@ async function handleUnsubscribe(request, env) {
     const token = stringValue(form.get('token')) || new URL(request.url).searchParams.get('token') || '';
     const isOneClick = form.get('List-Unsubscribe') === 'One-Click';
 
-    if (!isOneClick) assertSameOrigin(request);
+    if (!isOneClick) assertSameOriginFormNavigation(request);
     if (!isSignedTokenShape(token)) {
         return actionResultPage('配信停止できませんでした', '配信停止用リンクが正しくありません。', false, 400);
     }
@@ -882,6 +882,31 @@ function assertSameOrigin(request) {
     if (!origin || origin !== expectedOrigin) {
         throw new NewsletterError(403, 'このページ以外からは操作できません。', 'invalid_origin');
     }
+}
+
+function assertSameOriginFormNavigation(request) {
+    const expectedOrigin = new URL(request.url).origin;
+    const origin = request.headers.get('origin');
+
+    if (origin) {
+        if (origin === expectedOrigin) return;
+        throw new NewsletterError(403, 'このページ以外からは操作できません。', 'invalid_origin');
+    }
+
+    const referrer = request.headers.get('referer');
+    if (referrer) {
+        try {
+            if (new URL(referrer).origin === expectedOrigin) return;
+        } catch {
+            // 不正なRefererは下の共通エラーで拒否する。
+        }
+    }
+
+    const fetchSite = request.headers.get('sec-fetch-site');
+    const fetchMode = request.headers.get('sec-fetch-mode');
+    if (fetchSite === 'same-origin' && fetchMode === 'navigate') return;
+
+    throw new NewsletterError(403, 'このページ以外からは操作できません。', 'invalid_origin');
 }
 
 function assertReasonableSubmissionTime(rawStartedAt) {
