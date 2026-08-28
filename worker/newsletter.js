@@ -467,18 +467,18 @@ async function handleAdminApi(request, env, pathname) {
 }
 
 async function adminSummary(env, admin) {
-    const [statusRows, categoryRow, campaignRows] = await Promise.all([
+    const [statusRows, categoryRows, campaignRows] = await env.NEWSLETTER_DB.batch([
         env.NEWSLETTER_DB.prepare(
             `SELECT status, COUNT(*) AS count FROM newsletter_subscribers
              GROUP BY status ORDER BY status`,
-        ).all(),
+        ),
         env.NEWSLETTER_DB.prepare(
             `SELECT
-                SUM(CASE WHEN status = 'active' AND instr(',' || categories || ',', ',maintenance,') > 0 THEN 1 ELSE 0 END) AS maintenance,
-                SUM(CASE WHEN status = 'active' AND instr(',' || categories || ',', ',outage,') > 0 THEN 1 ELSE 0 END) AS outage,
-                SUM(CASE WHEN status = 'active' AND instr(',' || categories || ',', ',update,') > 0 THEN 1 ELSE 0 END) AS update
+                SUM(CASE WHEN status = 'active' AND instr(',' || categories || ',', ',maintenance,') > 0 THEN 1 ELSE 0 END) AS maintenance_count,
+                SUM(CASE WHEN status = 'active' AND instr(',' || categories || ',', ',outage,') > 0 THEN 1 ELSE 0 END) AS outage_count,
+                SUM(CASE WHEN status = 'active' AND instr(',' || categories || ',', ',update,') > 0 THEN 1 ELSE 0 END) AS update_count
              FROM newsletter_subscribers`,
-        ).first(),
+        ),
         env.NEWSLETTER_DB.prepare(
             `SELECT
                 c.id, c.subject, c.body_text, c.category, c.status, c.created_by,
@@ -493,9 +493,10 @@ async function adminSummary(env, admin) {
              GROUP BY c.id
              ORDER BY c.created_at DESC
              LIMIT 30`,
-        ).all(),
+        ),
     ]);
 
+    const categoryRow = categoryRows.results?.[0] || null;
     const statuses = Object.fromEntries(
         (statusRows.results || []).map((row) => [row.status, Number(row.count || 0)]),
     );
@@ -508,7 +509,10 @@ async function adminSummary(env, admin) {
             unsubscribed: statuses.unsubscribed || 0,
             bounced: statuses.bounced || 0,
             categories: Object.fromEntries(
-                CATEGORY_ORDER.map((category) => [category, Number(categoryRow?.[category] || 0)]),
+                CATEGORY_ORDER.map((category) => [
+                    category,
+                    Number(categoryRow?.[`${category}_count`] || 0),
+                ]),
             ),
         },
         campaigns: (campaignRows.results || []).map(normalizeCampaignRow),
@@ -1419,6 +1423,7 @@ function stringValue(value) {
 }
 
 export const __test = Object.freeze({
+    adminSummary,
     buildCampaignEmail,
     constantTimeEqual,
     createUnsubscribeToken,
