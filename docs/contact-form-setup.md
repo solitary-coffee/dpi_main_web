@@ -7,7 +7,7 @@
 1. Google reCAPTCHA管理画面で「チャレンジ（v2）」「チェックボックス」を作成します。
 2. 本番用ドメインに `dpi-bot.com` を登録します。プレビュー環境でも試す場合は、そのホスト名も登録します。
 3. CloudflareのWorker `main-dpi` に次の値を設定します。
-   - `RECAPTCHA_SITE_KEY`: サイトキー（平文の環境変数で可）
+   - `RECAPTCHA_SITE_KEY`: サイトキー（Secretとして設定）
    - `RECAPTCHA_SECRET_KEY`: シークレットキー（必ずSecretとして設定）
 4. 許可ホストを変更する場合は、`wrangler.jsonc` の `RECAPTCHA_ALLOWED_HOSTS` をカンマ区切りで更新します。
 
