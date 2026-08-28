@@ -1,0 +1,12 @@
+{
+  "name": "dpi-main-web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test",
+    "check": "node --check worker/index.js && node --check site/supp/script.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

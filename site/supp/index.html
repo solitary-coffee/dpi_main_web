@@ -53,17 +53,22 @@
             <div class="section">
                 <p>BOTに関する不具合のご報告、ご意見・ご要望、その他のお問い合わせはこちらのフォームからご連絡ください。</p>
                 <p>または[support&dpi-bot.com]（&を@に変更してください）にメールを送信してください。</p>
-                <form action="28072b0930ba8e94cc31cd817c65b4f3" method="POST" class="contact-form">
-                
-                    <input type="hidden" name="_next" value="https://dpi-bot.com/site/supp/tha.html">
+                <form action="/api/contact" method="POST" enctype="multipart/form-data" class="contact-form" id="contact-form">
+                    <input type="hidden" id="form-started-at" name="formStartedAt" value="">
+
+                    <div class="honeypot-field" aria-hidden="true">
+                        <label for="website">ウェブサイト</label>
+                        <input type="text" id="website" name="website" tabindex="-1" autocomplete="off">
+                    </div>
+
                     <div class="form-group">
                         <label for="name">お名前（必須）</label>
-                        <input type="text" id="name" name="name" required>
+                        <input type="text" id="name" name="name" maxlength="80" autocomplete="name" required>
                     </div>
 
                     <div class="form-group">
                         <label for="email">メールアドレス（必須）</label>
-                        <input type="email" id="email" name="email" required>
+                        <input type="email" id="email" name="email" maxlength="254" autocomplete="email" required>
                     </div>
 
                     <div class="form-group">
@@ -79,15 +84,45 @@
 
                     <div class="form-group">
                         <label for="message">本文（必須）</label>
-                        <textarea id="message" name="message" rows="8" required></textarea>
+                        <textarea id="message" name="message" rows="8" maxlength="5000" required></textarea>
                     </div>
 
                     <div class="form-group">
-                        <button type="submit" class="submit-btn">送信</button>
+                        <label for="attachments">添付ファイル（任意）</label>
+                        <input
+                            type="file"
+                            id="attachments"
+                            name="attachments"
+                            accept=".png,.jpg,.jpeg,.txt,.log,image/png,image/jpeg,text/plain"
+                            multiple
+                            aria-describedby="attachment-help attachment-selection"
+                        >
+                        <p class="form-help" id="attachment-help">
+                            PNG・JPEG・TXT・LOGのみ、最大3個、1個2MB・合計3MBまでです。安全上、PDF・Office文書・SVG・ZIP・プログラムは添付できません。
+                        </p>
+                        <p class="file-selection" id="attachment-selection" aria-live="polite">ファイルは選択されていません。</p>
                     </div>
-                    
+
+                    <div class="form-group consent-group">
+                        <input type="checkbox" id="privacy-consent" name="privacyConsent" value="agreed" required>
+                        <label for="privacy-consent">
+                            <a href="../../terms/policy.html" target="_blank" rel="noopener noreferrer">プライバシーポリシー</a>に同意します（必須）
+                        </label>
+                    </div>
+
+                    <div class="form-group captcha-group">
+                        <div id="recaptcha-container"></div>
+                        <p class="form-help" id="recaptcha-loading">reCAPTCHAを読み込んでいます…</p>
+                    </div>
+
+                    <div id="form-status" class="form-status" role="alert" aria-live="assertive"></div>
+
+                    <div class="form-group">
+                        <button type="submit" class="submit-btn" id="submit-btn" disabled>送信</button>
+                    </div>
                 </form>
                 <p>メールアドレスは必ず受信できるものを入力してください。<br>
+                    添付ファイルは安全確認のため、ファイル名・メタデータ・形式を変換して送信します。<br>
                     内容により回答を控えさせていただきます。ご了承ください。<br>
                     返信までにお時間をいただく場合があります。（学生のため対応に最大1週間かかることがあります。）
                 </p>
