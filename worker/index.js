@@ -1,3 +1,5 @@
+import { handleNewsletterQueue, handleNewsletterRequest } from './newsletter.js';
+
 const TOPICS = Object.freeze({
     bot_issue: 'BOTの不具合',
     bug_report: 'Webサイトのバグ報告',
@@ -30,9 +32,12 @@ class ContactError extends Error {
 }
 
 export default {
-    async fetch(request, env) {
+    async fetch(request, env, ctx) {
         const url = new URL(request.url);
         const pathname = url.pathname.replace(/\/+$/, '') || '/';
+
+        const newsletterResponse = await handleNewsletterRequest(request, env, ctx);
+        if (newsletterResponse) return newsletterResponse;
 
         if (pathname === '/api/contact/config' && request.method === 'GET') {
             return contactConfig(env);
@@ -51,6 +56,10 @@ export default {
         }
 
         return env.ASSETS.fetch(request);
+    },
+
+    async queue(batch, env) {
+        await handleNewsletterQueue(batch, env);
     },
 };
 

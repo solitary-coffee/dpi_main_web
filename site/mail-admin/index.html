@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="robots" content="noindex,nofollow">
+    <title>メール配信管理 - DPI-Bot</title>
+    <link rel="icon" href="../../img/dpi.png" type="image/png">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <header class="topbar">
+        <div>
+            <p class="eyebrow">DPI-Bot</p>
+            <h1>メール配信管理</h1>
+        </div>
+        <div class="topbar-actions">
+            <span id="admin-email"></span>
+            <button id="refresh-btn" type="button" class="secondary-btn">更新</button>
+        </div>
+    </header>
+
+    <main>
+        <div id="global-status" class="status" role="alert" aria-live="assertive"></div>
+
+        <section aria-labelledby="subscriber-title">
+            <div class="section-heading">
+                <div><p class="eyebrow">SUBSCRIBERS</p><h2 id="subscriber-title">購読状況</h2></div>
+                <p>メールアドレス自体はこの画面に表示しません。</p>
+            </div>
+            <div id="subscriber-stats" class="stats-grid"></div>
+        </section>
+
+        <section aria-labelledby="compose-title">
+            <div class="section-heading">
+                <div><p class="eyebrow">COMPOSE</p><h2 id="compose-title">新しい配信</h2></div>
+                <p>本文はプレーンテキストとして保存し、HTMLへ安全にエスケープして送信します。</p>
+            </div>
+            <form id="campaign-form" class="campaign-form">
+                <label>
+                    配信カテゴリ
+                    <select id="category" required>
+                        <option value="">選択してください</option>
+                        <option value="maintenance">メンテナンス情報</option>
+                        <option value="outage">障害・重要情報</option>
+                        <option value="update">アップデート情報</option>
+                    </select>
+                </label>
+                <label>
+                    件名（120文字以内）
+                    <input id="subject" type="text" maxlength="120" required>
+                </label>
+                <label>
+                    本文（10,000文字以内・HTML不可）
+                    <textarea id="body" rows="12" maxlength="10000" required></textarea>
+                </label>
+                <p id="recipient-preview" class="recipient-preview">カテゴリを選ぶと現在の対象件数を表示します。</p>
+                <button id="save-btn" type="submit" class="primary-btn">下書きを保存</button>
+            </form>
+        </section>
+
+        <section aria-labelledby="history-title">
+            <div class="section-heading">
+                <div><p class="eyebrow">CAMPAIGNS</p><h2 id="history-title">配信履歴</h2></div>
+                <p>開始後はQueueへ1件ずつ登録されます。途中で取り消した場合、未送信分をスキップします。</p>
+            </div>
+            <div id="campaign-list" class="campaign-list"></div>
+        </section>
+    </main>
+
+    <script src="script.js"></script>
+</body>
+</html>

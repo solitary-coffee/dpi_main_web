@@ -4,6 +4,7 @@ wrangler.jsonc
 /functions/
 /tests/
 /docs/
+/migrations/
 /package.json
 /package-lock.json
 /README.md

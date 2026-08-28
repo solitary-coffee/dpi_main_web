@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="DPI-Botのメンテナンス、障害、アップデート情報をメールで受け取るための登録ページです。">
+    <title>お知らせメール配信 - DPI-Bot</title>
+    <link rel="icon" href="../../img/dpi.png" type="image/png">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <button id="menu-toggle-btn" type="button" aria-label="メニューを開く">
+        <span></span><span></span><span></span>
+    </button>
+    <div class="overlay"></div>
+
+    <div class="page-container">
+        <nav class="sidebar" aria-label="サイトメニュー">
+            <div class="sidebar-header"><h2>メニュー</h2></div>
+            <ul>
+                <li><a href="../../index.html">トップページ</a></li>
+                <li><a href="../about/index.html">コマンド</a></li>
+                <li><a href="../info/index.html">配信内容</a></li>
+                <li><a href="../status/index.html">お知らせ</a></li>
+                <li><a href="../dever/index.html">開発者紹介</a></li>
+                <li><a href="../invi/index.html">BOTを招待</a></li>
+                <li><a href="../buy/index.html">ご支援のお願い</a></li>
+                <li><a href="../../terms/index.html">利用規約等</a></li>
+                <li><a href="../supp/index.html">お問い合わせ</a></li>
+                <li><a href="./" class="active">メール配信</a></li>
+            </ul>
+        </nav>
+
+        <main class="main-content">
+            <header><h1>お知らせメール配信</h1></header>
+
+            <section class="section intro">
+                <p>DPI-Botの運営に関するメンテナンス、障害、アップデート情報をメールで受け取れます。必要な種類だけ選択できます。</p>
+                <div class="notice-box">
+                    このメールは運営情報用です。地震・津波・気象警報などをリアルタイム配信するものではありません。
+                </div>
+                <ol class="steps">
+                    <li>メールアドレスと配信内容を入力します。</li>
+                    <li>届いた確認メールのURLを開きます。</li>
+                    <li>確認画面のボタンを押すと登録が完了します。</li>
+                </ol>
+            </section>
+
+            <section class="section">
+                <h2>配信登録</h2>
+                <form id="newsletter-form" class="newsletter-form" novalidate>
+                    <input type="hidden" id="form-started-at" value="">
+
+                    <div class="honeypot-field" aria-hidden="true">
+                        <label for="website">ウェブサイト</label>
+                        <input id="website" type="text" tabindex="-1" autocomplete="off">
+                    </div>
+
+                    <div class="form-group">
+                        <label for="email">メールアドレス（必須）</label>
+                        <input id="email" type="email" maxlength="254" autocomplete="email" required>
+                    </div>
+
+                    <fieldset class="form-group category-group">
+                        <legend>受け取る情報（1つ以上・必須）</legend>
+                        <label><input type="checkbox" name="categories" value="maintenance"> メンテナンス情報</label>
+                        <label><input type="checkbox" name="categories" value="outage"> 障害・重要情報</label>
+                        <label><input type="checkbox" name="categories" value="update"> アップデート情報</label>
+                    </fieldset>
+
+                    <div class="form-group consent-group">
+                        <input id="consent" type="checkbox" required>
+                        <label for="consent">
+                            選択した情報をメールで受け取ることと、<a href="../../terms/policy.html" target="_blank" rel="noopener noreferrer">プライバシーポリシー</a>に同意します（必須）
+                        </label>
+                    </div>
+
+                    <div class="form-group captcha-group">
+                        <div id="recaptcha-container"></div>
+                        <p class="form-help" id="recaptcha-loading">reCAPTCHAを読み込んでいます…</p>
+                    </div>
+
+                    <div id="form-status" class="form-status" role="alert" aria-live="assertive"></div>
+
+                    <button id="submit-btn" class="submit-btn" type="submit" disabled>確認メールを送る</button>
+                </form>
+
+                <p class="footnote">登録完了後も、各メールにある配信停止リンクからいつでも停止できます。確認メールが届かない場合は、迷惑メールフォルダと入力内容をご確認ください。</p>
+            </section>
+        </main>
+    </div>
+    <script src="script.js"></script>
+</body>
+</html>
