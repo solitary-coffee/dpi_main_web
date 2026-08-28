@@ -59,6 +59,76 @@ test('確認リンクのGETはDBを変更せず、POST確認フォームだけ�
     assert.match(html, /method="post"/u);
     assert.match(html, /登録を確定する/u);
     assert.equal(response.headers.get('cache-control'), 'no-store');
+    assert.equal(response.headers.get('referrer-policy'), 'origin');
+});
+
+test('確認フォームはOriginが省略されても同一サイトのブラウザ遷移なら登録できる', async () => {
+    const token = 'B'.repeat(43);
+    let subscriberWasActivated = false;
+    const database = {
+        prepare(sql) {
+            return {
+                bind() {
+                    return this;
+                },
+                async first() {
+                    if (sql.includes('FROM newsletter_subscribers WHERE confirmation_token_hash')) {
+                        return {
+                            id: 'subscriber-id',
+                            pending_categories: 'outage,update',
+                            pending_consent_version: '2026-08-29',
+                            confirmation_expires_at: new Date(Date.now() + 60_000).toISOString(),
+                        };
+                    }
+                    return null;
+                },
+                async run() {
+                    if (sql.includes("status = 'active'")) subscriberWasActivated = true;
+                    return { meta: { changes: 1 } };
+                },
+            };
+        },
+        async batch() {
+            return [];
+        },
+    };
+    const response = await worker.fetch(new Request('https://dpi-bot.com/api/newsletter/confirm', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Sec-Fetch-Site': 'same-origin',
+            'Sec-Fetch-Mode': 'navigate',
+        },
+        body: new URLSearchParams({ token }),
+    }), minimalEnvironment({
+        NEWSLETTER_DB: database,
+        NEWSLETTER_TOKEN_SECRET: 'x'.repeat(48),
+    }));
+    const html = await response.text();
+
+    assert.equal(response.status, 200);
+    assert.equal(subscriberWasActivated, true);
+    assert.match(html, /登録が完了しました/u);
+});
+
+test('確認フォームは異なるサイトのOriginをFetch Metadataで上書きできない', async () => {
+    const response = await worker.fetch(new Request('https://dpi-bot.com/api/newsletter/confirm', {
+        method: 'POST',
+        headers: {
+            Origin: 'https://attacker.example',
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Sec-Fetch-Site': 'same-origin',
+            'Sec-Fetch-Mode': 'navigate',
+        },
+        body: new URLSearchParams({ token: 'C'.repeat(43) }),
+    }), minimalEnvironment({
+        NEWSLETTER_DB: { prepare() {} },
+        NEWSLETTER_TOKEN_SECRET: 'x'.repeat(48),
+    }));
+    const html = await response.text();
+
+    assert.equal(response.status, 403);
+    assert.match(html, /このページ以外からは操作できません/u);
 });
 
 test('公開登録はreCAPTCHA確認後にハッシュだけをD1へ保存して確認メールを送る', async () => {
