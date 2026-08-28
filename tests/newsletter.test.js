@@ -248,6 +248,46 @@ test('Access設定がなければ管理画面をフェイルクローズしAsset
     assert.match(html, /認証設定が完了していません/u);
 });
 
+test('管理画面サマリーはD1予約語を列名に使わずbatchで集計する', async () => {
+    const capturedSql = [];
+    const database = {
+        prepare(sql) {
+            capturedSql.push(sql);
+            return { sql };
+        },
+        async batch(statements) {
+            assert.equal(statements.length, 3);
+            return [
+                { results: [{ status: 'active', count: 1 }] },
+                {
+                    results: [{
+                        maintenance_count: 0,
+                        outage_count: 1,
+                        update_count: 1,
+                    }],
+                },
+                { results: [] },
+            ];
+        },
+    };
+    const response = await newsletterTest.adminSummary(
+        { NEWSLETTER_DB: database },
+        { email: 'admin@example.com' },
+    );
+    const result = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.equal(result.success, true);
+    assert.equal(result.subscribers.active, 1);
+    assert.deepEqual(result.subscribers.categories, {
+        maintenance: 0,
+        outage: 1,
+        update: 1,
+    });
+    assert.doesNotMatch(capturedSql.join('\n'), /\bAS\s+update\b/iu);
+    assert.match(capturedSql.join('\n'), /AS update_count/iu);
+});
+
 test('管理者が入力したHTMLやJavaScriptをメールHTMLで無害化する', () => {
     const injected = '<script>globalThis.pwned=true</script>\n<img src=x onerror=alert(1)>';
     const email = newsletterTest.buildCampaignEmail({
