@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import worker from '../worker/index.js';
 import { __test as newsletterTest } from '../worker/newsletter.js';
 import { __test as accessTest, authenticateNewsletterAdmin } from '../worker/access.js';
@@ -264,6 +265,10 @@ test('管理画面サマリーはD1予約語を列名に使わずbatchで集計�
                         maintenance_count: 0,
                         outage_count: 1,
                         update_count: 1,
+                        maintenance_outage_count: 1,
+                        maintenance_update_count: 1,
+                        outage_update_count: 1,
+                        maintenance_outage_update_count: 1,
                     }],
                 },
                 { results: [] },
@@ -284,6 +289,8 @@ test('管理画面サマリーはD1予約語を列名に使わずbatchで集計�
         outage: 1,
         update: 1,
     });
+    assert.equal(result.subscribers.audiences['maintenance,outage'], 1);
+    assert.equal(result.subscribers.audiences['maintenance,outage,update'], 1);
     assert.doesNotMatch(capturedSql.join('\n'), /\bAS\s+update\b/iu);
     assert.match(capturedSql.join('\n'), /AS update_count/iu);
 });
@@ -309,6 +316,75 @@ test('管理者が入力したHTMLやJavaScriptをメールHTMLで無害化す�
     assert.equal(email.headers['List-Unsubscribe-Post'], 'List-Unsubscribe=One-Click');
     assert.match(email.headers['List-Unsubscribe'], /^<https:\/\/dpi-bot\.com\/api\/newsletter\/unsubscribe\?token=/u);
     assert.equal(email.attachments, undefined);
+});
+
+test('メール本文は安全なMarkdownだけをHTMLへ変換する', () => {
+    const email = newsletterTest.buildCampaignEmail({
+        campaign_id: 'campaign-markdown',
+        category: 'maintenance,outage',
+        subject: 'Markdown配信テスト',
+        body_text: [
+            '## 状況のお知らせ',
+            '',
+            '**重要**な内容と`コード`です。',
+            '- 項目1',
+            '- 項目2',
+            '> 続報をお待ちください。',
+            '[公式サイト](https://dpi-bot.com/)',
+            '<script>alert(1)</script>',
+            '[危険](javascript:alert(1))',
+        ].join('\n'),
+        email: 'reader@example.com',
+    }, 'signed-token.value', {
+        NOTICE_FROM_EMAIL: 'notice@dpi-bot.com',
+        NEWSLETTER_PUBLIC_ORIGIN: 'https://dpi-bot.com',
+    });
+
+    assert.match(email.html, /メンテナンス情報・障害・重要情報/u);
+    assert.match(email.html, /<h3[^>]*>状況のお知らせ<\/h3>/u);
+    assert.match(email.html, /<strong>重要<\/strong>/u);
+    assert.match(email.html, /<code[^>]*>コード<\/code>/u);
+    assert.match(email.html, /<ul[^>]*><li>項目1<\/li><li>項目2<\/li><\/ul>/u);
+    assert.match(email.html, /<blockquote[^>]*>続報をお待ちください。<\/blockquote>/u);
+    assert.match(email.html, /href="https:\/\/dpi-bot\.com\/"/u);
+    assert.doesNotMatch(email.html, /<script>/u);
+    assert.match(email.html, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/u);
+    assert.doesNotMatch(email.html, /href="javascript:/u);
+});
+
+test('複数カテゴリ配信は購読カテゴリが1つでも一致すれば対象になる', () => {
+    assert.equal(
+        newsletterTest.serializedCategoriesOverlap('outage', 'maintenance,outage'),
+        true,
+    );
+    assert.equal(
+        newsletterTest.serializedCategoriesOverlap('update', 'maintenance,outage'),
+        false,
+    );
+    assert.deepEqual(
+        newsletterTest.parseSerializedCategories('outage,maintenance'),
+        ['maintenance', 'outage'],
+    );
+});
+
+test('管理画面はカテゴリチップ・3種類のテンプレート・隔離プレビューを備える', async () => {
+    const [html, script, style] = await Promise.all([
+        readFile(new URL('../site/mail-admin/index.html', import.meta.url), 'utf8'),
+        readFile(new URL('../site/mail-admin/script.js', import.meta.url), 'utf8'),
+        readFile(new URL('../site/mail-admin/style.css', import.meta.url), 'utf8'),
+    ]);
+
+    assert.equal((html.match(/name="campaign-categories"/gu) || []).length, 3);
+    assert.match(html, /data-template="maintenance"/u);
+    assert.match(html, /data-template="outage"/u);
+    assert.match(html, /data-template="update"/u);
+    assert.match(html, /<iframe[^>]+id="email-preview"[^>]+sandbox(?:\s|>)/u);
+    assert.doesNotMatch(html, /sandbox="[^"]*(?:allow-scripts|allow-same-origin)/u);
+    assert.match(script, /\/site\/mail-admin\/api\/preview/u);
+    assert.match(script, /URL\.createObjectURL/u);
+    assert.doesNotMatch(script, /\.innerHTML\s*=/u);
+    assert.match(style, /background:\s*#444950/iu);
+    assert.match(style, /\.category-chip input:checked \+ span/u);
 });
 
 test('Queue consumerは受信者ごとに個別送信して配信完了を記録する', async () => {

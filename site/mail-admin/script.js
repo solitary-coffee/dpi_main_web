@@ -12,12 +12,75 @@ const statusLabels = Object.freeze({
     cancelled: '取消済み',
 });
 
+const campaignTemplates = Object.freeze({
+    maintenance: Object.freeze({
+        subject: '【メンテナンス情報】DPI-Bot メンテナンスのお知らせ',
+        body: `## メンテナンスのお知らせ
+
+DPI-Botをご利用いただきありがとうございます。以下の日程でメンテナンスを実施します。
+
+- 実施日時：
+- 対象サービス：
+- 影響範囲：
+- 作業内容：
+
+> 作業状況により、終了時刻が前後する場合があります。
+
+メンテナンス完了後、改めてお知らせします。`,
+    }),
+    outage: Object.freeze({
+        subject: '【障害情報】DPI-Botで発生している障害について',
+        body: `## 障害情報
+
+現在、DPI-Botの一部機能で障害が発生しています。
+
+- 発生日時：
+- 対象サービス：
+- 影響範囲：
+- 現在の状況：
+- 次回更新予定：
+
+> 復旧作業を進めています。ご不便をおかけして申し訳ありません。
+
+状況が更新され次第、改めてお知らせします。`,
+    }),
+    update: Object.freeze({
+        subject: '【アップデート情報】DPI-Bot 更新のお知らせ',
+        body: `## アップデート情報
+
+DPI-Botを更新しました。
+
+- 実施日：
+- 対象サービス：
+- 主な変更内容：
+  - 
+- 利用者側で必要な操作：なし
+
+詳しい内容は、[DPI-Bot公式サイト](https://dpi-bot.com/)をご確認ください。`,
+    }),
+});
+
 let summaryState = null;
+let previewObjectUrl = '';
+let previewTimer = null;
+let previewRequestId = 0;
 
 document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('refresh-btn').addEventListener('click', loadSummary);
     document.getElementById('campaign-form').addEventListener('submit', createCampaign);
-    document.getElementById('category').addEventListener('change', updateRecipientPreview);
+    document.getElementById('preview-btn').addEventListener('click', updateEmailPreview);
+    document.getElementById('subject').addEventListener('input', scheduleEmailPreview);
+    document.getElementById('body').addEventListener('input', scheduleEmailPreview);
+    for (const input of document.querySelectorAll('input[name="campaign-categories"]')) {
+        input.addEventListener('change', function() {
+            updateRecipientPreview();
+            scheduleEmailPreview();
+        });
+    }
+    for (const button of document.querySelectorAll('[data-template]')) {
+        button.addEventListener('click', () => applyTemplate(button.dataset.template));
+    }
+    window.addEventListener('beforeunload', revokePreviewUrl);
     loadSummary();
 });
 
@@ -69,7 +132,9 @@ function renderCampaigns(campaigns) {
         const heading = element('div', 'campaign-heading');
         const titleWrap = document.createElement('div');
         const badges = element('div', 'badges');
-        badges.append(element('span', 'badge category', categoryLabels[campaign.category] || campaign.category));
+        for (const category of campaignCategories(campaign)) {
+            badges.append(element('span', 'badge category', categoryLabels[category] || category));
+        }
         badges.append(element('span', `badge status ${campaign.status}`, statusLabels[campaign.status] || campaign.status));
         titleWrap.append(badges, element('h3', '', campaign.subject));
         heading.append(titleWrap, element('time', '', formatDate(campaign.createdAt)));
@@ -124,15 +189,19 @@ async function createCampaign(event) {
     button.disabled = true;
     setStatus('下書きを保存中…', 'info');
     try {
+        const categories = selectedCampaignCategories();
+        if (categories.length === 0) throw new Error('配信カテゴリを1つ以上選択してください。');
         const result = await adminRequest('/site/mail-admin/api/campaigns', {
             method: 'POST',
             body: JSON.stringify({
-                category: document.getElementById('category').value,
+                categories,
                 subject: document.getElementById('subject').value,
                 body: document.getElementById('body').value,
             }),
         });
         document.getElementById('campaign-form').reset();
+        updateRecipientPreview();
+        clearEmailPreview();
         setStatus(`下書きを保存しました。配信ID: ${result.campaign.id}`, 'success');
         await loadSummary();
     } catch (error) {
@@ -143,7 +212,7 @@ async function createCampaign(event) {
 }
 
 async function sendCampaign(campaign, button) {
-    const count = summaryState?.subscribers?.categories?.[campaign.category] ?? '不明';
+    const count = audienceCount(campaignCategories(campaign));
     const confirmed = window.confirm(
         `「${campaign.subject}」を${count}件の購読者へ配信開始します。\n\n配信開始後、すでに送信されたメールは取り消せません。`,
     );
@@ -182,14 +251,102 @@ async function cancelCampaign(campaign, button) {
 }
 
 function updateRecipientPreview() {
-    const category = document.getElementById('category').value;
+    const categories = selectedCampaignCategories();
     const preview = document.getElementById('recipient-preview');
-    if (!category || !summaryState) {
-        preview.textContent = 'カテゴリを選ぶと現在の対象件数を表示します。';
+    if (categories.length === 0 || !summaryState) {
+        preview.textContent = 'カテゴリを1つ以上選ぶと現在の対象件数を表示します。';
         return;
     }
-    const count = summaryState.subscribers.categories[category] || 0;
+    const count = audienceCount(categories);
     preview.textContent = `現在の配信対象: ${count}件（実際の対象は配信開始時に再計算されます）`;
+}
+
+function selectedCampaignCategories() {
+    return Array.from(document.querySelectorAll('input[name="campaign-categories"]:checked'))
+        .map((input) => input.value);
+}
+
+function campaignCategories(campaign) {
+    if (Array.isArray(campaign.categories) && campaign.categories.length > 0) return campaign.categories;
+    return campaign.category ? [campaign.category] : [];
+}
+
+function audienceCount(categories) {
+    if (!summaryState) return '不明';
+    const key = categories.join(',');
+    const exactCount = summaryState.subscribers.audiences?.[key];
+    if (Number.isFinite(exactCount)) return exactCount;
+    if (categories.length === 1) return summaryState.subscribers.categories[categories[0]] || 0;
+    return '不明';
+}
+
+function applyTemplate(templateId) {
+    const template = campaignTemplates[templateId];
+    if (!template) return;
+
+    const subject = document.getElementById('subject');
+    const body = document.getElementById('body');
+    if ((subject.value.trim() || body.value.trim()) && !window.confirm('現在の件名と本文をテンプレートで上書きしますか？')) {
+        return;
+    }
+
+    const categoryInput = document.querySelector(`input[name="campaign-categories"][value="${templateId}"]`);
+    if (categoryInput) categoryInput.checked = true;
+    subject.value = template.subject;
+    body.value = template.body;
+    updateRecipientPreview();
+    scheduleEmailPreview(0);
+}
+
+function scheduleEmailPreview(delay = 600) {
+    window.clearTimeout(previewTimer);
+    previewTimer = window.setTimeout(updateEmailPreview, delay);
+}
+
+async function updateEmailPreview() {
+    window.clearTimeout(previewTimer);
+    const categories = selectedCampaignCategories();
+    const subject = document.getElementById('subject').value.trim();
+    const body = document.getElementById('body').value.trim();
+    const status = document.getElementById('preview-status');
+    if (categories.length === 0 || !subject || !body) {
+        status.textContent = 'カテゴリ・件名・本文を入力するとプレビューできます。';
+        clearEmailPreview(false);
+        return;
+    }
+
+    const requestId = ++previewRequestId;
+    status.textContent = 'プレビューを生成中…';
+    try {
+        const result = await adminRequest('/site/mail-admin/api/preview', {
+            method: 'POST',
+            body: JSON.stringify({ categories, subject, body }),
+        });
+        if (requestId !== previewRequestId) return;
+        revokePreviewUrl();
+        previewObjectUrl = URL.createObjectURL(new Blob([result.html], { type: 'text/html;charset=utf-8' }));
+        document.getElementById('email-preview').src = previewObjectUrl;
+        status.textContent = '実際に送信されるHTMLメールの表示です。リンク操作は無効化しています。';
+    } catch (error) {
+        if (requestId !== previewRequestId) return;
+        status.textContent = error.message;
+        clearEmailPreview(false);
+    }
+}
+
+function clearEmailPreview(resetStatus = true) {
+    previewRequestId += 1;
+    revokePreviewUrl();
+    document.getElementById('email-preview').removeAttribute('src');
+    if (resetStatus) {
+        document.getElementById('preview-status').textContent = 'カテゴリ・件名・本文を入力するとプレビューできます。';
+    }
+}
+
+function revokePreviewUrl() {
+    if (!previewObjectUrl) return;
+    URL.revokeObjectURL(previewObjectUrl);
+    previewObjectUrl = '';
 }
 
 async function adminRequest(path, options = {}) {
