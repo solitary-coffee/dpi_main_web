@@ -40,7 +40,9 @@ Cloudflareダッシュボードでは「Workers & Pages」→ `main-dpi` →「S
 npx wrangler secret put CONTACT_TO_EMAIL
 ```
 
-`CONTACT_TO_EMAIL` は `wrangler.jsonc` の `secrets.required` に宣言済みで、平文の `vars` には保存しません。Secretが未設定の場合、`wrangler deploy` と `wrangler versions upload` は失敗するため、初回デプロイより先に登録してください。
+`CONTACT_TO_EMAIL` は平文の `vars` には保存せず、Cloudflare上のSecretだけで管理します。Workerは送信処理の開始前にこの値を確認し、未設定なら `503 service_not_configured` で拒否するフェイルクローズ構成です。
+
+Git連携の非本番ブランチでは `wrangler versions upload` が使用されます。本プロジェクトでは、ダッシュボードで登録済みのSecretが `secrets.required` の継承検査で未設定と誤判定される状態を避けるため、同項目はWrangler設定へ宣言せず、上記の実行時検査で必須性を保証します。Secretの値をリポジトリやビルドログへ渡す必要はありません。
 
 Secretを追加・更新しても、すでに失敗したGit連携ビルドは自動では再実行されません。登録後にCloudflareのビルド画面から再試行するか、新しいコミットでビルドを起動してください。
 

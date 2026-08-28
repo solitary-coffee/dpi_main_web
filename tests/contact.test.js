@@ -90,6 +90,24 @@ test('設定APIはサイトキーだけを返し、シークレットを公開�
     assert.equal(response.headers.get('cache-control'), 'no-store');
 });
 
+test('CONTACT_TO_EMAILが未設定なら送信処理を開始せず拒否する', async () => {
+    const env = createEnvironment();
+    delete env.CONTACT_TO_EMAIL;
+    let recaptchaWasCalled = false;
+    globalThis.fetch = async () => {
+        recaptchaWasCalled = true;
+        return Response.json({ success: true });
+    };
+
+    const response = await handleContactRequest(createFormRequest(), env);
+    const body = await response.json();
+
+    assert.equal(response.status, 503);
+    assert.equal(body.success, false);
+    assert.equal(body.code, 'service_not_configured');
+    assert.equal(recaptchaWasCalled, false);
+});
+
 test('スクリプト文字列を実行せず、プレーンテキストのメールとして送る', async () => {
     const sentMessages = [];
     const env = createEnvironment(sentMessages);

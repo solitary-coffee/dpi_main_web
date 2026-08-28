@@ -14,14 +14,6 @@
     }
   ],
 
-  "secrets": {
-    "required": [
-      "CONTACT_TO_EMAIL",
-      "RECAPTCHA_SITE_KEY",
-      "RECAPTCHA_SECRET_KEY"
-    ]
-  },
-
   "vars": {
     "CONTACT_FROM_EMAIL": "noreply@dpi-bot.com",
     "RECAPTCHA_ALLOWED_HOSTS": "dpi-bot.com,www.dpi-bot.com"
