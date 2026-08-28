@@ -380,3 +380,14 @@ h3 {
   font-size: 1.1em;
   line-height: 1.5;
 }
+
+.warning-text + .warning-text {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(255, 204, 0, 0.35);
+}
+
+.warning-box a,
+.warning-box a:visited {
+  color: #8ec9ff;
+}
