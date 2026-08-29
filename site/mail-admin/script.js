@@ -66,6 +66,7 @@ let previewTimer = null;
 let previewRequestId = 0;
 
 document.addEventListener('DOMContentLoaded', function() {
+    setupMenu();
     document.getElementById('refresh-btn').addEventListener('click', loadSummary);
     document.getElementById('campaign-form').addEventListener('submit', createCampaign);
     document.getElementById('preview-btn').addEventListener('click', updateEmailPreview);
@@ -83,6 +84,25 @@ document.addEventListener('DOMContentLoaded', function() {
     window.addEventListener('beforeunload', revokePreviewUrl);
     loadSummary();
 });
+
+function setupMenu() {
+    const button = document.getElementById('menu-toggle-btn');
+    const sidebar = document.querySelector('.sidebar');
+    const overlay = document.querySelector('.overlay');
+    if (!button || !sidebar || !overlay) return;
+
+    const setOpen = (open) => {
+        sidebar.classList.toggle('open', open);
+        overlay.classList.toggle('open', open);
+        button.setAttribute('aria-expanded', String(open));
+        button.setAttribute('aria-label', open ? 'メニューを閉じる' : 'メニューを開く');
+    };
+    button.addEventListener('click', () => setOpen(!sidebar.classList.contains('open')));
+    overlay.addEventListener('click', () => setOpen(false));
+    document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') setOpen(false);
+    });
+}
 
 async function loadSummary() {
     setStatus('読み込み中…', 'info');

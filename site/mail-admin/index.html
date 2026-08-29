@@ -9,18 +9,41 @@
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <header class="topbar">
-        <div>
-            <p class="eyebrow">DPI-Bot</p>
-            <h1>メール配信管理</h1>
-        </div>
-        <div class="topbar-actions">
-            <span id="admin-email"></span>
-            <button id="refresh-btn" type="button" class="secondary-btn">更新</button>
-        </div>
-    </header>
+    <button id="menu-toggle-btn" type="button" aria-label="メニューを開く" aria-expanded="false">
+        <span></span><span></span><span></span>
+    </button>
+    <div class="overlay"></div>
 
-    <main>
+    <div class="page-container">
+        <nav class="sidebar" aria-label="サイトメニュー">
+            <div class="sidebar-header"><h2>メニュー</h2></div>
+            <ul>
+                <li><a href="../../index.html">トップページ</a></li>
+                <li><a href="../about/index.html">コマンド</a></li>
+                <li><a href="../info/index.html">配信内容</a></li>
+                <li><a href="../status/index.html">お知らせ</a></li>
+                <li><a href="../dever/index.html">開発者紹介</a></li>
+                <li><a href="../invi/index.html">BOTを招待</a></li>
+                <li><a href="../buy/index.html">ご支援のお願い</a></li>
+                <li><a href="../../terms/index.html">利用規約等</a></li>
+                <li><a href="../supp/index.html">お問い合わせ</a></li>
+                <li><a href="../mail/index.html" class="active">メール配信</a></li>
+            </ul>
+        </nav>
+
+        <div class="admin-shell">
+            <header class="topbar">
+                <div>
+                    <p class="eyebrow">DPI-Bot</p>
+                    <h1>メール配信管理</h1>
+                </div>
+                <div class="topbar-actions">
+                    <span id="admin-email"></span>
+                    <button id="refresh-btn" type="button" class="secondary-btn">更新</button>
+                </div>
+            </header>
+
+            <main>
         <div id="global-status" class="status" role="alert" aria-live="assertive"></div>
 
         <section aria-labelledby="subscriber-title">
@@ -93,7 +116,9 @@
             </div>
             <div id="campaign-list" class="campaign-list"></div>
         </section>
-    </main>
+            </main>
+        </div>
+    </div>
 
     <script src="script.js"></script>
 </body>
