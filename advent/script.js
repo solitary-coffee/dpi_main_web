@@ -1,88 +1,5 @@
 /**
  * 1. カスタム拡張機能 (:::note info 等)
-
-
-
-/**
- * 2. メイン処理
- */
-document.addEventListener('DOMContentLoaded', async () => {
-    
-    // URLパラメータからファイルIDを取得 (?id=filename)
-    const params = new URLSearchParams(window.location.search);
-    const fileId = params.get('id');
-    
-    const contentDiv = document.getElementById('content');
-    const tocList = document.getElementById('toc-list');
-    const tocSidebar = document.getElementById('toc-sidebar');
-
-    if (!fileId) {
-        contentDiv.innerHTML = '<h1>記事を選択してください</h1><p>URLの末尾に ?id=ファイル名 をつけてください。</p>';
-        if(tocSidebar) tocSidebar.style.display = 'none';
-        return;
-    }
-
-    try {
-        // Markdownファイルを取得
-        const response = await fetch(`./${fileId}.md?t=${new Date().getTime()}`);
-        
-        if (!response.ok) {
-            throw new Error(`記事が見つかりませんでした (Status: ${response.status})`);
-        }
-
-        const markdownText = await response.text();
-
-        // 変換して表示
-        contentDiv.innerHTML = marked.parse(markdownText);
-
-        // ページタイトルを更新 (H1があればそれを使用)
-        const h1 = contentDiv.querySelector('h1');
-        if(h1) {
-            document.title = h1.innerText + " | DPI-Bot";
-        } else {
-            document.title = fileId + " | DPI-Bot";
-        }
-
-        // ---------------------------------------------------
-        // 目次 (TOC) 生成
-        // ---------------------------------------------------
-        const headers = contentDiv.querySelectorAll('h1, h2, h3');
-        
-        if (headers.length === 0) {
-            if(tocSidebar) tocSidebar.style.display = 'none';
-        } else {
-            headers.forEach((header, index) => {
-                // ID付与
-                const anchorId = `header-${index}`;
-                header.id = anchorId;
-
-                // リストアイテム作成
-                const li = document.createElement('li');
-                const a = document.createElement('a');
-                
-                a.href = `#${anchorId}`;
-                a.innerText = header.innerText;
-                a.className = `toc-${header.tagName.toLowerCase()}`;
-                
-                // スムーズスクロール
-                a.onclick = (e) => {
-                    e.preventDefault();
-                    header.scrollIntoView({ behavior: 'smooth' });
-                };
-
-                li.appendChild(a);
-                tocList.appendChild(li);
-            });
-        }
-
-    } catch (error) {
-        console.error(error);
-        contentDiv.innerHTML = `<div class="admonition alert"><span class="admonition-title">Error</span><p>${error.message}</p></div>`;
-        if(tocSidebar) tocSidebar.style.display = 'none';
-    }
-});
-/**
- * 1. カスタム拡張機能 (:::note info 等)
  */
 /**
  * 1. カスタム拡張機能 (:::summary や :::note info 等)
@@ -175,6 +92,51 @@ marked.setOptions({
     gfm: true     // GitHub Flavored Markdown (URL自動リンクなど) を有効化
 });
 
+function renderMarkdownWithMath(markdownText, contentDiv) {
+    const mathExpressions = [];
+    const placeholderPattern = /@@LATEX_(\d+)@@/g;
+    const protectedMarkdown = markdownText.replace(
+        /\$\$([\s\S]*?)\$\$|\\\[([\s\S]*?)\\\]|\\\(([\s\S]*?)\\\)|\$([^$\n]+)\$/g,
+        (match, displayDollar, displayBracket, inlineBracket, inlineDollar) => {
+            const expression = displayDollar ?? displayBracket ?? inlineBracket ?? inlineDollar;
+            const displayMode = displayDollar !== undefined || displayBracket !== undefined;
+            const index = mathExpressions.push({ expression: expression.trim(), displayMode }) - 1;
+            return `@@LATEX_${index}@@`;
+        }
+    );
+
+    contentDiv.innerHTML = marked.parse(protectedMarkdown);
+    const textNodes = [];
+    const walker = document.createTreeWalker(contentDiv, NodeFilter.SHOW_TEXT);
+    while (walker.nextNode()) {
+        textNodes.push(walker.currentNode);
+    }
+
+    textNodes.forEach((textNode) => {
+        if (!placeholderPattern.test(textNode.nodeValue)) {
+            return;
+        }
+
+        const fragment = document.createDocumentFragment();
+        let lastIndex = 0;
+        placeholderPattern.lastIndex = 0;
+        let match;
+        while ((match = placeholderPattern.exec(textNode.nodeValue)) !== null) {
+            fragment.append(textNode.nodeValue.slice(lastIndex, match.index));
+            const math = mathExpressions[Number(match[1])];
+            const mathElement = document.createElement('span');
+            katex.render(math.expression, mathElement, {
+                displayMode: math.displayMode,
+                throwOnError: false
+            });
+            fragment.append(mathElement);
+            lastIndex = match.index + match[0].length;
+        }
+        fragment.append(textNode.nodeValue.slice(lastIndex));
+        textNode.replaceWith(fragment);
+    });
+}
+
 
 /**
  * 2. メイン処理
@@ -204,7 +166,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const markdownText = await response.text();
 
         // 変換して表示
-        contentDiv.innerHTML = marked.parse(markdownText);
+        renderMarkdownWithMath(markdownText, contentDiv);
 
         // タイトル更新
         const h1 = contentDiv.querySelector('h1');
