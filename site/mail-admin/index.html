@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="robots" content="noindex,nofollow">
+    <title>メール配信管理 - DPI-Bot</title>
+    <link rel="icon" href="../../img/dpi.png" type="image/png">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <header class="topbar">
+        <div>
+            <p class="eyebrow">DPI-Bot</p>
+            <h1>メール配信管理</h1>
+        </div>
+        <div class="topbar-actions">
+            <span id="admin-email"></span>
+            <button id="refresh-btn" type="button" class="secondary-btn">更新</button>
+        </div>
+    </header>
+
+    <main>
+        <div id="global-status" class="status" role="alert" aria-live="assertive"></div>
+
+        <section aria-labelledby="subscriber-title">
+            <div class="section-heading">
+                <div><p class="eyebrow">SUBSCRIBERS</p><h2 id="subscriber-title">購読状況</h2></div>
+                <p>メールアドレス自体はこの画面に表示しません。</p>
+            </div>
+            <div id="subscriber-stats" class="stats-grid"></div>
+        </section>
+
+        <section aria-labelledby="compose-title">
+            <div class="section-heading">
+                <div><p class="eyebrow">COMPOSE</p><h2 id="compose-title">新しい配信</h2></div>
+                <p>Markdown本文を安全なHTMLメールへ変換し、送信前に実際の表示を確認できます。</p>
+            </div>
+            <form id="campaign-form" class="campaign-form">
+                <fieldset class="category-selector">
+                    <legend>配信カテゴリ（1つ以上）</legend>
+                    <div id="category-chips" class="category-chips">
+                        <label class="category-chip">
+                            <input type="checkbox" name="campaign-categories" value="maintenance">
+                            <span>メンテナンス情報</span>
+                        </label>
+                        <label class="category-chip">
+                            <input type="checkbox" name="campaign-categories" value="outage">
+                            <span>障害・重要情報</span>
+                        </label>
+                        <label class="category-chip">
+                            <input type="checkbox" name="campaign-categories" value="update">
+                            <span>アップデート情報</span>
+                        </label>
+                    </div>
+                    <p class="field-help">チップを押すと追加・解除できます。複数カテゴリの登録者にも同じメールは1通だけ送信されます。</p>
+                </fieldset>
+                <div class="template-selector">
+                    <span class="field-label">テンプレート</span>
+                    <div class="template-buttons">
+                        <button type="button" class="template-btn" data-template="maintenance">メンテナンス情報</button>
+                        <button type="button" class="template-btn" data-template="outage">障害・重要情報</button>
+                        <button type="button" class="template-btn" data-template="update">アップデート情報</button>
+                    </div>
+                    <p class="field-help">選択すると対応カテゴリを追加し、件名とMarkdown本文のひな形を入力します。</p>
+                </div>
+                <label>
+                    件名（120文字以内）
+                    <input id="subject" type="text" maxlength="120" required>
+                </label>
+                <label>
+                    本文（Markdown対応・10,000文字以内・HTML不可）
+                    <textarea id="body" rows="12" maxlength="10000" required></textarea>
+                </label>
+                <p class="field-help markdown-help">
+                    使用可能: <code># 見出し</code>、<code>**太字**</code>、<code>*斜体*</code>、<code>- リスト</code>、<code>&gt; 引用</code>、<code>`コード`</code>、<code>[リンク](https://...)</code>。HTMLと画像埋め込みは無効です。
+                </p>
+                <p id="recipient-preview" class="recipient-preview">カテゴリを1つ以上選ぶと現在の対象件数を表示します。</p>
+                <div class="preview-toolbar">
+                    <strong>メールプレビュー</strong>
+                    <button id="preview-btn" type="button" class="secondary-btn">プレビューを更新</button>
+                </div>
+                <p id="preview-status" class="field-help" aria-live="polite">カテゴリ・件名・本文を入力するとプレビューできます。</p>
+                <iframe id="email-preview" class="email-preview" title="送信メールのプレビュー" sandbox></iframe>
+                <button id="save-btn" type="submit" class="primary-btn">下書きを保存</button>
+            </form>
+        </section>
+
+        <section aria-labelledby="history-title">
+            <div class="section-heading">
+                <div><p class="eyebrow">CAMPAIGNS</p><h2 id="history-title">配信履歴</h2></div>
+                <p>開始後はQueueへ1件ずつ登録されます。途中で取り消した場合、未送信分をスキップします。</p>
+            </div>
+            <div id="campaign-list" class="campaign-list"></div>
+        </section>
+    </main>
+
+    <script src="script.js"></script>
+</body>
+</html>

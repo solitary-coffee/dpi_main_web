@@ -1,2 +1,10 @@
 wrangler.jsonc
 /.*
+/worker/
+/functions/
+/tests/
+/docs/
+/migrations/
+/package.json
+/package-lock.json
+/README.md

@@ -1,10 +1,61 @@
 {
   "name": "main-dpi",
   "compatibility_date": "2025-05-06",
+  "main": "./worker/index.js",
+  "keep_vars": true,
   "assets": {
-    "directory": "./"
+    "directory": "./",
+    "binding": "ASSETS",
+    "run_worker_first": ["/api/*", "/site/mail-admin", "/site/mail-admin/*"]
   },
-  
+
+  "send_email": [
+    {
+      "name": "CONTACT_EMAIL"
+    },
+    {
+      "name": "NOTICE_EMAIL",
+      "allowed_sender_addresses": ["notice@dpi-bot.com"]
+    }
+  ],
+
+  "d1_databases": [
+    {
+      "binding": "NEWSLETTER_DB",
+      "database_name": "dpi-newsletter",
+      "migrations_dir": "migrations"
+    }
+  ],
+
+  "queues": {
+    "producers": [
+      {
+        "binding": "NEWSLETTER_QUEUE",
+        "queue": "dpi-newsletter-delivery"
+      }
+    ],
+    "consumers": [
+      {
+        "queue": "dpi-newsletter-delivery",
+        "max_batch_size": 5,
+        "max_batch_timeout": 5,
+        "max_retries": 5,
+        "dead_letter_queue": "dpi-newsletter-delivery-dlq",
+        "max_concurrency": 1,
+        "retry_delay": 60
+      }
+    ]
+  },
+
+  "vars": {
+    "CONTACT_FROM_EMAIL": "noreply@dpi-bot.com",
+    "RECAPTCHA_ALLOWED_HOSTS": "dpi-bot.com,www.dpi-bot.com",
+    "NOTICE_FROM_EMAIL": "notice@dpi-bot.com",
+    "NOTICE_REPLY_TO_EMAIL": "support@dpi-bot.com",
+    "NEWSLETTER_PUBLIC_ORIGIN": "https://dpi-bot.com",
+    "NEWSLETTER_CONSENT_VERSION": "2026-08-29"
+  },
+
   "observability": {
     "enabled": false,
     "head_sampling_rate": 1,
@@ -21,4 +72,3 @@
     }
   }
 }
-
