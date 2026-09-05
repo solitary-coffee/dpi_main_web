@@ -5,7 +5,39 @@
     background: #444950;
 }
 * { box-sizing: border-box; }
+html, body { height: 100%; }
 body { margin: 0; background: #444950; }
+
+.page-container { display: flex; height: 100%; }
+.sidebar {
+    width: 240px;
+    flex: 0 0 240px;
+    height: 100vh;
+    padding: 20px;
+    overflow-y: auto;
+    background: #343a40;
+    color: #f8f9fa;
+}
+.sidebar-header h2 {
+    margin: 0 0 30px;
+    padding-bottom: 20px;
+    border-bottom: 1px solid #258af0;
+    color: #f8f9fa;
+    font-size: 1.5em;
+    text-align: center;
+}
+.sidebar ul { margin: 0; padding: 0; list-style: none; }
+.sidebar a {
+    display: block;
+    padding: 15px 10px;
+    border-radius: 5px;
+    color: #dee2e6;
+    text-decoration: none;
+    transition: background-color .3s, color .3s;
+}
+.sidebar a:hover, .sidebar a.active { background: #495057; color: #fff; }
+.admin-shell { flex: 1; min-width: 0; height: 100vh; overflow-y: auto; }
+#menu-toggle-btn, .overlay { display: none; }
 
 .topbar {
     display: flex;
@@ -129,10 +161,53 @@ button:disabled { opacity: .55; cursor: not-allowed; }
 
 @media (max-width: 680px) {
     .topbar, .section-heading, .campaign-heading { align-items: flex-start; flex-direction: column; }
-    .topbar { padding: 18px 20px; }
+    .topbar { padding: 70px 20px 18px; }
     main { width: min(100% - 20px, 1180px); margin-top: 14px; }
     section { padding: 19px 15px; }
     .campaign-heading time { white-space: normal; }
     .preview-toolbar { align-items: flex-start; flex-direction: column; }
     .email-preview { min-height: 430px; }
+}
+
+@media (max-width: 768px) {
+    .topbar { padding: 70px 20px 18px; }
+    #menu-toggle-btn {
+        position: fixed;
+        top: 14px;
+        left: 14px;
+        z-index: 2000;
+        display: block;
+        width: 40px;
+        height: 40px;
+        padding: 8px;
+        border: 1px solid #ddd;
+        border-radius: 5px;
+        background: #fff;
+    }
+    #menu-toggle-btn span {
+        display: block;
+        height: 3px;
+        margin: 4px 0;
+        border-radius: 2px;
+        background: #333;
+    }
+    .page-container { display: block; }
+    .sidebar {
+        position: fixed;
+        inset: 0 auto 0 0;
+        z-index: 1500;
+        width: 250px;
+        flex-basis: 250px;
+        transform: translateX(-100%);
+        transition: transform .3s ease-in-out;
+    }
+    .sidebar.open { transform: translateX(0); }
+    .overlay.open {
+        position: fixed;
+        inset: 0;
+        z-index: 1000;
+        display: block;
+        background: rgba(0, 0, 0, .5);
+    }
+    .admin-shell { width: 100%; height: auto; min-height: 100vh; overflow: visible; }
 }

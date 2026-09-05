@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import worker from '../worker/index.js';
 import { __test as newsletterTest } from '../worker/newsletter.js';
 import { __test as accessTest, authenticateNewsletterAdmin } from '../worker/access.js';
@@ -385,6 +387,52 @@ test('管理画面はカテゴリチップ・3種類のテンプレート・隔�
     assert.doesNotMatch(script, /\.innerHTML\s*=/u);
     assert.match(style, /background:\s*#444950/iu);
     assert.match(style, /\.category-chip input:checked \+ span/u);
+});
+
+test('全ページの左メニューは同じ10項目とメール配信リンクを使用する', async () => {
+    const repositoryRoot = fileURLToPath(new URL('../', import.meta.url));
+    const expectedLabels = [
+        'トップページ',
+        'コマンド',
+        '配信内容',
+        'お知らせ',
+        '開発者紹介',
+        'BOTを招待',
+        'ご支援のお願い',
+        '利用規約等',
+        'お問い合わせ',
+        'メール配信',
+    ];
+    const htmlFiles = [];
+    const collectHtmlFiles = async (directory) => {
+        for (const entry of await readdir(directory, { withFileTypes: true })) {
+            const entryPath = join(directory, entry.name);
+            if (entry.isDirectory()) await collectHtmlFiles(entryPath);
+            else if (entry.isFile() && entry.name.endsWith('.html')) htmlFiles.push(entryPath);
+        }
+    };
+    await collectHtmlFiles(repositoryRoot);
+
+    let sidebarCount = 0;
+    for (const file of htmlFiles) {
+        const html = await readFile(file, 'utf8');
+        const sidebar = html.match(/<nav\b[^>]*class="[^"]*\bsidebar\b[^"]*"[^>]*>([\s\S]*?)<\/nav>/u);
+        if (!sidebar) continue;
+        sidebarCount += 1;
+        const labels = Array.from(sidebar[1].matchAll(/<a\b[^>]*>([^<]+)<\/a>/gu))
+            .map((match) => match[1].trim());
+        assert.deepEqual(labels, expectedLabels, file);
+
+        const mailLink = sidebar[1].match(/<a\b[^>]*href="([^"]+)"[^>]*>メール配信<\/a>/u);
+        assert.ok(mailLink, file);
+        const resolvedMailPath = resolve(dirname(file), mailLink[1]);
+        const expectedMailPath = resolve(repositoryRoot, 'site/mail/index.html');
+        assert.ok(
+            resolvedMailPath === expectedMailPath || resolve(resolvedMailPath, 'index.html') === expectedMailPath,
+            `${file}: ${mailLink[1]}`,
+        );
+    }
+    assert.ok(sidebarCount > 0);
 });
 
 test('Queue consumerは受信者ごとに個別送信して配信完了を記録する', async () => {
