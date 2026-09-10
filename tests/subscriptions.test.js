@@ -1,0 +1,17 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {handleSubscriptionsRequest as handle} from '../worker/subscriptions.js';
+const origin='https://dev.example';
+const env={SUBSCRIPTIONS_DEV_ENABLED:'true',SUBSCRIPTIONS_DEV_PUBLIC_ORIGIN:origin,SUBSCRIPTIONS_DEV_API_ORIGIN:'https://abc123.execute-api.ap-northeast-1.amazonaws.com'};
+const req=(path,options)=>new Request(origin+path,options);
+test('unrelated APIs pass through',async()=>{assert.equal(await handle(req('/api/contact'),env),null);assert.equal(await handle(req('/api/newsletter'),env),null);});
+test('disabled and mismatched origins fail closed',async()=>{assert.equal((await handle(req('/api/subscriptions-dev/me'),{})).status,503);assert.equal((await handle(req('/api/subscriptions-dev/me'),{...env,SUBSCRIPTIONS_DEV_PUBLIC_ORIGIN:'https://other.example'})).status,503);});
+test('arbitrary upstream and route rejected',async()=>{assert.equal((await handle(req('/api/subscriptions-dev/me'),{...env,SUBSCRIPTIONS_DEV_API_ORIGIN:'https://evil.example'})).status,503);assert.equal((await handle(req('/api/subscriptions-dev/contact'),env)).status,404);});
+test('cross origin mutations rejected',async()=>{assert.equal((await handle(req('/api/subscriptions-dev/settings',{method:'PUT',headers:{Origin:'https://evil.example'}}),env)).status,403);});
+test('readiness and checkout return routes',async()=>{assert.equal((await (await handle(req('/api/subscriptions-dev/config'),env)).json()).configured,true);assert.equal((await handle(req('/?checkout=success'),env)).headers.get('location'),'/site/subscriptions/?checkout=success');});
+test('proxy isolates cookies and preserves multiple set-cookie headers',async(t)=>{t.mock.method(globalThis,'fetch',async(url,init)=>{assert.equal(url,env.SUBSCRIPTIONS_DEV_API_ORIGIN+'/api/me');assert.equal(init.headers.get('cookie'),'dpi_session=s; dpi_oauth=o');assert.equal(init.headers.get('authorization'),null);assert.equal(init.redirect,'manual');const h=new Headers();h.append('Set-Cookie','dpi_session=n; Path=/; Secure; HttpOnly');h.append('Set-Cookie','dpi_oauth=; Path=/; Max-Age=0');h.append('Set-Cookie','other=x');return new Response('{}',{headers:h});});const r=await handle(req('/api/subscriptions-dev/me',{headers:{cookie:'site_admin=secret; dpi_session=s; dpi_oauth=o',Authorization:'Bearer secret'}}),env);assert.equal(r.headers.getSetCookie().length,2);});
+test('oauth callback returns to portal',async(t)=>{t.mock.method(globalThis,'fetch',async()=>new Response(null,{status:302,headers:{Location:'/'}}));assert.equal((await handle(req('/auth/callback?code=abc&state=s'),env)).headers.get('location'),'/site/subscriptions/');});
+test('oauth validates configured redirect origin',async(t)=>{t.mock.method(globalThis,'fetch',async()=>new Response(null,{status:302,headers:{Location:'https://discord.com/oauth2/authorize?redirect_uri=https%3A%2F%2Fwrong.example%2Fauth%2Fcallback'}}));assert.equal((await handle(req('/api/subscriptions-dev/auth/login'),env)).status,503);});
+test('oversize body is not forwarded',async()=>{assert.equal((await handle(req('/api/subscriptions-dev/checkout',{method:'POST',headers:{Origin:origin},body:'x'.repeat(65537)}),env)).status,413);});
+
+test('Bot root link opens portal only on the configured development host',async()=>{assert.equal((await handle(req('/'),env)).headers.get('location'),'/site/subscriptions/');assert.equal(await handle(req('/'),{}),null);});
