@@ -1,3 +1,4 @@
+import { handleSubscriptionsRequest } from './subscriptions.js';
 import { handleNewsletterQueue, handleNewsletterRequest } from './newsletter.js';
 
 const TOPICS = Object.freeze({
@@ -35,6 +36,9 @@ export default {
     async fetch(request, env, ctx) {
         const url = new URL(request.url);
         const pathname = url.pathname.replace(/\/+$/, '') || '/';
+
+        const subscriptionResponse = await handleSubscriptionsRequest(request, env);
+        if (subscriptionResponse) return subscriptionResponse;
 
         const newsletterResponse = await handleNewsletterRequest(request, env, ctx);
         if (newsletterResponse) return newsletterResponse;
@@ -744,3 +748,4 @@ export const __test = Object.freeze({
     sanitizePng,
     validateMessage,
 });
+

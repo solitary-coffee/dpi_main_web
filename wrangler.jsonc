@@ -6,7 +6,7 @@
   "assets": {
     "directory": "./",
     "binding": "ASSETS",
-    "run_worker_first": ["/api/*", "/site/mail-admin", "/site/mail-admin/*"]
+    "run_worker_first": ["/", "/auth/callback", "/api/*", "/site/mail-admin", "/site/mail-admin/*"]
   },
 
   "send_email": [
@@ -72,3 +72,4 @@
     }
   }
 }
+
