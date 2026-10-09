@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="ja">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="robots" content="noindex,nofollow,noarchive">
+    <title>IP遮断管理 | DPI-Bot</title>
+    <link rel="stylesheet" href="/site/ip-admin/style.css">
+</head>
+<body>
+    <header class="topbar">
+        <div>
+            <p class="eyebrow">DPI-BOT SECURITY</p>
+            <h1>IP遮断管理</h1>
+        </div>
+        <nav class="topbar-actions" aria-label="管理メニュー">
+            <span id="admin-email">認証確認中</span>
+            <a href="/site/mail-admin/">メール管理</a>
+            <a href="/cdn-cgi/access/logout">ログアウト</a>
+        </nav>
+    </header>
+
+    <main>
+        <div id="global-status" class="status" role="status" aria-live="polite"></div>
+
+        <section class="notice" aria-labelledby="security-title">
+            <div>
+                <p class="eyebrow">CLOUDFLARE ACCESS</p>
+                <h2 id="security-title">認証済み管理者専用</h2>
+            </div>
+            <p>Cloudflare AccessのワンタイムPINと、Worker側のJWT署名・Audience・管理者メール検証を通過した操作だけを受け付けます。</p>
+            <dl class="connection-details">
+                <dt>現在の接続元IP</dt><dd id="current-ip">取得中</dd>
+                <dt>Secret登録</dt><dd id="secret-state">確認中</dd>
+                <dt>D1反映目安</dt><dd>最大約30秒</dd>
+            </dl>
+        </section>
+
+        <section aria-labelledby="add-title">
+            <div class="section-heading">
+                <div>
+                    <p class="eyebrow">NEW RULE</p>
+                    <h2 id="add-title">遮断ルールを追加</h2>
+                </div>
+                <p>IPv4・IPv6・CIDRに対応</p>
+            </div>
+            <form id="rule-form" class="rule-form">
+                <label>
+                    IPアドレスまたはCIDR
+                    <input id="network" name="network" type="text" maxlength="80" autocomplete="off" spellcheck="false" placeholder="例: 203.0.113.10 または 198.51.100.0/24" required>
+                </label>
+                <label>
+                    遮断理由
+                    <textarea id="reason" name="reason" rows="4" maxlength="500" placeholder="遮断画面に表示する説明を入力してください。" required></textarea>
+                </label>
+                <p class="field-help">現在の接続元を含むルールの場合は、登録前に追加確認が表示されます。管理画面は緊急解除のためAccess認証後に限り利用できます。</p>
+                <button id="add-button" class="primary-btn" type="submit">遮断ルールを追加</button>
+            </form>
+        </section>
+
+        <section aria-labelledby="rules-title">
+            <div class="section-heading">
+                <div>
+                    <p class="eyebrow">ACTIVE RULES</p>
+                    <h2 id="rules-title">現在の遮断一覧</h2>
+                </div>
+                <button id="reload-button" class="secondary-btn" type="button">再読み込み</button>
+            </div>
+            <div id="rules-list" class="card-list"></div>
+        </section>
+
+        <section aria-labelledby="audit-title">
+            <div class="section-heading">
+                <div>
+                    <p class="eyebrow">AUDIT LOG</p>
+                    <h2 id="audit-title">操作履歴</h2>
+                </div>
+                <p>直近50件</p>
+            </div>
+            <div class="table-wrap">
+                <table>
+                    <thead><tr><th>日時</th><th>操作</th><th>対象</th><th>管理者</th><th>Ray ID</th></tr></thead>
+                    <tbody id="audit-list"></tbody>
+                </table>
+            </div>
+        </section>
+    </main>
+
+    <script src="/site/ip-admin/script.js" defer></script>
+</body>
+</html>

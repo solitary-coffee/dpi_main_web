@@ -249,6 +249,27 @@ test('Access設定がなければ管理画面をフェイルクローズしAsset
     assert.match(html, /認証設定が完了していません/u);
 });
 
+test('IP遮断管理画面もAccess設定がなければフェイルクローズする', async () => {
+    let assetWasFetched = false;
+    const response = await worker.fetch(
+        new Request('https://dpi-bot.com/site/ip-admin/'),
+        minimalEnvironment({
+            ASSETS: {
+                fetch: async () => {
+                    assetWasFetched = true;
+                    return new Response('private ip admin asset');
+                },
+            },
+        }),
+    );
+    const html = await response.text();
+
+    assert.equal(response.status, 503);
+    assert.equal(assetWasFetched, false);
+    assert.doesNotMatch(html, /private ip admin asset/u);
+    assert.match(html, /認証設定が完了していません/u);
+});
+
 test('管理画面サマリーはD1予約語を列名に使わずbatchで集計する', async () => {
     const capturedSql = [];
     const database = {
@@ -385,6 +406,22 @@ test('管理画面はカテゴリチップ・3種類のテンプレート・隔�
     assert.doesNotMatch(script, /\.innerHTML\s*=/u);
     assert.match(style, /background:\s*#444950/iu);
     assert.match(style, /\.category-chip input:checked \+ span/u);
+});
+
+test('IP遮断管理画面は追加・削除・監査表示を備えDOMへHTML文字列を挿入しない', async () => {
+    const [html, script, style] = await Promise.all([
+        readFile(new URL('../site/ip-admin/index.html', import.meta.url), 'utf8'),
+        readFile(new URL('../site/ip-admin/script.js', import.meta.url), 'utf8'),
+        readFile(new URL('../site/ip-admin/style.css', import.meta.url), 'utf8'),
+    ]);
+
+    assert.match(html, /id="rule-form"/u);
+    assert.match(html, /id="rules-list"/u);
+    assert.match(html, /id="audit-list"/u);
+    assert.match(script, /self_block_confirmation_required/u);
+    assert.match(script, /method: 'DELETE'/u);
+    assert.doesNotMatch(script, /\.innerHTML\s*=/u);
+    assert.match(style, /\.action-delete/u);
 });
 
 test('Queue consumerは受信者ごとに個別送信して配信完了を記録する', async () => {

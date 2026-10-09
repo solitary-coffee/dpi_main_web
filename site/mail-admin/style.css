@@ -20,6 +20,7 @@ body { margin: 0; background: #444950; }
 .topbar h1 { margin: 2px 0 0; font-size: clamp(1.5rem, 3vw, 2.1rem); }
 .eyebrow { margin: 0; color: #8ec9ff; font-size: .75rem; font-weight: 800; letter-spacing: .14em; }
 .topbar-actions { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.topbar-actions a { color: #8ec9ff; font-weight: 700; }
 
 main { width: min(1180px, calc(100% - 32px)); margin: 30px auto 70px; }
 section {
