@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { blockResponseForRequest, __test } from '../worker/ip-block.js';
+import { blockResponseForRequest, invalidateIpBlockRuleCache, __test } from '../worker/ip-block.js';
 
 function request(path = '/', ip = '203.0.113.10', headers = {}) {
     return new Request(`https://dpi-bot.com${path}`, {
@@ -8,12 +8,12 @@ function request(path = '/', ip = '203.0.113.10', headers = {}) {
     });
 }
 
-test('設定が空の場合は遮断しない', () => {
-    assert.equal(blockResponseForRequest(request(), {}), null);
+test('設定が空の場合は遮断しない', async () => {
+    assert.equal(await blockResponseForRequest(request(), {}), null);
 });
 
 test('IPv4完全一致を403のカスタムHTMLで遮断する', async () => {
-    const response = blockResponseForRequest(request('/', '203.0.113.10', { 'cf-ray': 'ray-test' }), {
+    const response = await blockResponseForRequest(request('/', '203.0.113.10', { 'cf-ray': 'ray-test' }), {
         BLOCKED_IPS: '203.0.113.10|不正なアクセスが確認されたため制限しています。',
     });
 
@@ -27,7 +27,7 @@ test('IPv4完全一致を403のカスタムHTMLで遮断する', async () => {
 });
 
 test('APIは403のカスタムJSONを返す', async () => {
-    const response = blockResponseForRequest(request('/api/contact'), {
+    const response = await blockResponseForRequest(request('/api/contact'), {
         BLOCKED_IPS: '203.0.113.10',
     });
     assert.equal(response.status, 403);
@@ -57,10 +57,35 @@ test('無効なIP・CIDR設定は無視する', () => {
 });
 
 test('HTMLへ設定値を埋め込む際にエスケープする', async () => {
-    const response = blockResponseForRequest(request(), {
+    const response = await blockResponseForRequest(request(), {
         BLOCKED_IPS: '203.0.113.10|<script>alert(1)</script>',
     });
     const body = await response.text();
     assert.doesNotMatch(body, /<script>alert/);
     assert.match(body, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
+});
+
+test('D1へ登録したCIDRを遮断し、Secretと併用できる', async () => {
+    invalidateIpBlockRuleCache();
+    const database = {
+        prepare(sql) {
+            assert.match(sql, /FROM ip_block_rules/u);
+            return {
+                async all() {
+                    return { results: [{ network: '203.0.113.0/24', reason: 'D1登録ルール' }] };
+                },
+            };
+        },
+    };
+    const response = await blockResponseForRequest(request('/', '203.0.113.55'), {
+        NEWSLETTER_DB: database,
+        BLOCKED_IPS: '198.51.100.10|Secret登録ルール',
+    });
+    assert.equal(response.status, 403);
+    assert.match(await response.text(), /D1登録ルール/u);
+});
+
+test('CIDRはネットワークアドレスだけを受け付ける', () => {
+    assert.equal(__test.parseNetwork('198.51.100.10/24'), null);
+    assert.equal(__test.parseNetwork('198.51.100.0/24').network, '198.51.100.0/24');
 });

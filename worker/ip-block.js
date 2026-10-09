@@ -1,5 +1,7 @@
 const BLOCK_STATUS = 403;
 const DEFAULT_MESSAGE = 'サイトの安全な運用のため、この接続元からのアクセスを制限しています。';
+const DATABASE_CACHE_MS = 30_000;
+let databaseRuleCache = new WeakMap();
 
 const HTML_HEADERS = Object.freeze({
     'Content-Type': 'text/html; charset=utf-8',
@@ -21,11 +23,13 @@ const JSON_HEADERS = Object.freeze({
     'X-Robots-Tag': 'noindex, nofollow, noarchive',
 });
 
-export function blockResponseForRequest(request, env) {
+export async function blockResponseForRequest(request, env) {
     const clientIp = normalizeIp(request.headers.get('cf-connecting-ip'));
     if (!clientIp) return null;
 
-    const rule = findMatchingRule(clientIp, env.BLOCKED_IPS);
+    const staticRules = parseRules(env.BLOCKED_IPS);
+    const databaseRules = await loadDatabaseRules(env);
+    const rule = findMatchingParsedRule(clientIp, [...staticRules, ...databaseRules]);
     if (!rule) return null;
 
     const url = new URL(request.url);
@@ -74,15 +78,52 @@ function prefersJson(request, pathname) {
 }
 
 function findMatchingRule(clientIp, rawRules) {
+    return findMatchingParsedRule(clientIp, parseRules(rawRules));
+}
+
+function findMatchingParsedRule(clientIp, rules) {
     const parsedClient = parseIp(clientIp);
     if (!parsedClient) return null;
 
-    for (const rule of parseRules(rawRules)) {
+    for (const rule of rules) {
         if (rule.version !== parsedClient.version) continue;
         const hostBits = BigInt(rule.bits - rule.prefix);
         if ((parsedClient.value >> hostBits) === (rule.value >> hostBits)) return rule;
     }
     return null;
+}
+
+async function loadDatabaseRules(env) {
+    if (!env.NEWSLETTER_DB?.prepare) return [];
+    const cached = databaseRuleCache.get(env.NEWSLETTER_DB);
+    if (cached?.expiresAt > Date.now()) return cached.rules;
+
+    try {
+        const statement = env.NEWSLETTER_DB.prepare(
+            `SELECT network, reason FROM ip_block_rules
+             WHERE enabled = 1 ORDER BY created_at ASC`,
+        );
+        if (typeof statement?.all !== 'function') return [];
+        const result = await statement.all();
+        const rules = (result?.results || []).flatMap((row) => {
+            const parsed = parseNetwork(row?.network);
+            if (!parsed) return [];
+            return [{ ...parsed, reason: cleanText(row?.reason, 500) }];
+        });
+        databaseRuleCache.set(env.NEWSLETTER_DB, { expiresAt: Date.now() + DATABASE_CACHE_MS, rules });
+        return rules;
+    } catch (error) {
+        console.error('IP block rules could not be loaded from D1', {
+            errorName: error?.name || 'Error',
+            errorCode: error?.code || 'unknown',
+        });
+        databaseRuleCache.set(env.NEWSLETTER_DB, { expiresAt: Date.now() + DATABASE_CACHE_MS, rules: [] });
+        return [];
+    }
+}
+
+export function invalidateIpBlockRuleCache() {
+    databaseRuleCache = new WeakMap();
 }
 
 function parseRules(rawRules) {
@@ -94,20 +135,40 @@ function parseRules(rawRules) {
         const network = networkValue.trim();
         if (!network) return [];
 
-        const [address, prefixValue] = splitCidr(network);
-        const parsed = parseIp(address);
+        const parsed = parseNetwork(network);
         if (!parsed) return [];
-
-        const prefix = prefixValue === null ? parsed.bits : Number(prefixValue);
-        if (!Number.isInteger(prefix) || prefix < 0 || prefix > parsed.bits) return [];
 
         return [{
             ...parsed,
-            prefix,
-            network,
             reason: cleanText(reasonParts.join('|'), 500),
         }];
     });
+}
+
+export function parseNetwork(value) {
+    if (typeof value !== 'string') return null;
+    const network = value.trim();
+    const [address, prefixValue] = splitCidr(network);
+    const parsed = parseIp(address);
+    if (!parsed) return null;
+
+    const prefix = prefixValue === null ? parsed.bits : Number(prefixValue);
+    if (!Number.isInteger(prefix) || prefix < 0 || prefix > parsed.bits) return null;
+
+    const hostBits = BigInt(parsed.bits - prefix);
+    const networkValue = (parsed.value >> hostBits) << hostBits;
+    if (networkValue !== parsed.value) return null;
+
+    return {
+        ...parsed,
+        prefix,
+        network: prefix === parsed.bits ? parsed.normalized : `${parsed.normalized}/${prefix}`,
+    };
+}
+
+export function ipMatchesNetwork(clientIp, network) {
+    const parsed = parseNetwork(network);
+    return parsed ? Boolean(findMatchingParsedRule(clientIp, [parsed])) : false;
 }
 
 function splitCidr(value) {
@@ -227,7 +288,9 @@ function escapeHtml(value) {
 
 export const __test = Object.freeze({
     findMatchingRule,
+    findMatchingParsedRule,
     normalizeIp,
+    parseNetwork,
     parseRules,
     prefersJson,
 });

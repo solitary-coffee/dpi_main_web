@@ -2,6 +2,8 @@
 
 Cloudflare Workerが静的ページ・APIを含む全リクエストを最初に確認し、`BLOCKED_IPS` に一致した接続元へ標準の `403 Forbidden` を返します。
 
+D1の `ip_block_rules` に登録されたルールも同時に評価します。D1ルールはCloudflare Accessで保護された `/site/ip-admin/` から追加・削除・確認でき、最大約30秒で各Workerへ反映されます。
+
 - ブラウザ: 説明、接続元IP、Cloudflare Ray ID、判定時刻を含むDPI-Bot専用画面
 - API: `code: "ip_blocked"` を含むJSON
 - 対応形式: IPv4、IPv6、IPv4/IPv6 CIDR

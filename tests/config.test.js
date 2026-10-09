@@ -16,6 +16,7 @@ test('メール配信のSecretをリポジトリ上のvarsへ保存しない', a
         'NEWSLETTER_TOKEN_SECRET',
         'ACCESS_TEAM_DOMAIN',
         'ACCESS_AUD',
+        'ADMIN_EMAILS',
         'MAIL_ADMIN_EMAILS',
     ];
 
@@ -45,4 +46,12 @@ test('遮断IPを平文のvarsへ保存しない', async () => {
 
     assert.equal(Object.hasOwn(config.vars || {}, 'BLOCKED_IPS'), false);
     assert.equal(Object.hasOwn(config.vars || {}, 'IP_BLOCK_MESSAGE'), false);
+});
+
+test('IP遮断用D1マイグレーションを同梱する', async () => {
+    const migrationPath = new URL('../migrations/0002_ip_blocking.sql', import.meta.url);
+    const migration = await readFile(migrationPath, 'utf8');
+
+    assert.match(migration, /CREATE TABLE IF NOT EXISTS ip_block_rules/u);
+    assert.match(migration, /CREATE TABLE IF NOT EXISTS ip_block_audit/u);
 });

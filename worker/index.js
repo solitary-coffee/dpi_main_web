@@ -1,5 +1,6 @@
 import { handleNewsletterQueue, handleNewsletterRequest } from './newsletter.js';
 import { blockResponseForRequest } from './ip-block.js';
+import { handleIpAdminRequest } from './ip-admin.js';
 
 const TOPICS = Object.freeze({
     bot_issue: 'BOTの不具合',
@@ -37,7 +38,11 @@ export default {
         const url = new URL(request.url);
         const pathname = url.pathname.replace(/\/+$/, '') || '/';
 
-        const blockedResponse = blockResponseForRequest(request, env);
+        // 遮断済みIPでも、Access認証済み管理者だけは緊急解除画面へ到達できます。
+        const ipAdminResponse = await handleIpAdminRequest(request, env);
+        if (ipAdminResponse) return ipAdminResponse;
+
+        const blockedResponse = await blockResponseForRequest(request, env);
         if (blockedResponse) return blockedResponse;
 
         const newsletterResponse = await handleNewsletterRequest(request, env, ctx);
