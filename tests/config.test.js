@@ -36,5 +36,13 @@ test('D1・Queue・送信元制限・管理画面ルーティングを宣言す�
     assert.equal(config.queues.producers[0].binding, 'NEWSLETTER_QUEUE');
     assert.equal(config.queues.consumers[0].max_concurrency, 1);
     assert.equal(config.queues.consumers[0].dead_letter_queue, 'dpi-newsletter-delivery-dlq');
-    assert.ok(config.assets.run_worker_first.includes('/site/mail-admin/*'));
+    assert.equal(config.assets.run_worker_first, true);
+});
+
+test('遮断IPを平文のvarsへ保存しない', async () => {
+    const configPath = new URL('../wrangler.jsonc', import.meta.url);
+    const config = JSON.parse(await readFile(configPath, 'utf8'));
+
+    assert.equal(Object.hasOwn(config.vars || {}, 'BLOCKED_IPS'), false);
+    assert.equal(Object.hasOwn(config.vars || {}, 'IP_BLOCK_MESSAGE'), false);
 });

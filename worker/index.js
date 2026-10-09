@@ -1,4 +1,5 @@
 import { handleNewsletterQueue, handleNewsletterRequest } from './newsletter.js';
+import { blockResponseForRequest } from './ip-block.js';
 
 const TOPICS = Object.freeze({
     bot_issue: 'BOTの不具合',
@@ -35,6 +36,9 @@ export default {
     async fetch(request, env, ctx) {
         const url = new URL(request.url);
         const pathname = url.pathname.replace(/\/+$/, '') || '/';
+
+        const blockedResponse = blockResponseForRequest(request, env);
+        if (blockedResponse) return blockedResponse;
 
         const newsletterResponse = await handleNewsletterRequest(request, env, ctx);
         if (newsletterResponse) return newsletterResponse;
