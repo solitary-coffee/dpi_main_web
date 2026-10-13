@@ -35,7 +35,9 @@ test('APIは403のカスタムJSONを返す', async () => {
         success: false,
         status: 403,
         code: 'ip_blocked',
-        message: 'サイトの安全な運用のため、この接続元からのアクセスを制限しています。',
+        message: '不審なアクセスが確認されたため、安全確認のため一時的にアクセスを制限しています。',
+        blockLevel: 'suspected',
+        blockLevelLabel: '攻撃疑い',
         rayId: '取得できませんでした',
     });
 });
@@ -72,7 +74,13 @@ test('D1へ登録したCIDRを遮断し、Secretと併用できる', async () =>
             assert.match(sql, /FROM ip_block_rules/u);
             return {
                 async all() {
-                    return { results: [{ network: '203.0.113.0/24', reason: 'D1登録ルール' }] };
+                    return {
+                        results: [{
+                            network: '203.0.113.0/24',
+                            reason: 'D1登録ルール',
+                            block_level: 'confirmed',
+                        }],
+                    };
                 },
             };
         },
@@ -82,7 +90,10 @@ test('D1へ登録したCIDRを遮断し、Secretと併用できる', async () =>
         BLOCKED_IPS: '198.51.100.10|Secret登録ルール',
     });
     assert.equal(response.status, 403);
-    assert.match(await response.text(), /D1登録ルール/u);
+    const body = await response.text();
+    assert.match(body, /D1登録ルール/u);
+    assert.match(body, /攻撃確定/u);
+    assert.match(body, /https:\/\/dpi-bot\.com\/site\/supp\//u);
 });
 
 test('CIDRはネットワークアドレスだけを受け付ける', () => {
