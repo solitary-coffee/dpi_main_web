@@ -408,7 +408,7 @@ test('管理画面はカテゴリチップ・3種類のテンプレート・隔�
     assert.match(style, /\.category-chip input:checked \+ span/u);
 });
 
-test('IP遮断管理画面は追加・削除・監査表示を備えDOMへHTML文字列を挿入しない', async () => {
+test('IP遮断管理画面は追加・編集・削除・監査表示を備えDOMへHTML文字列を挿入しない', async () => {
     const [html, script, style] = await Promise.all([
         readFile(new URL('../site/ip-admin/index.html', import.meta.url), 'utf8'),
         readFile(new URL('../site/ip-admin/script.js', import.meta.url), 'utf8'),
@@ -419,7 +419,9 @@ test('IP遮断管理画面は追加・削除・監査表示を備えDOMへHTML�
     assert.match(html, /id="rules-list"/u);
     assert.match(html, /id="audit-list"/u);
     assert.match(script, /self_block_confirmation_required/u);
+    assert.match(script, /method: 'PUT'/u);
     assert.match(script, /method: 'DELETE'/u);
+    assert.match(script, /startEdit/u);
     assert.doesNotMatch(script, /\.innerHTML\s*=/u);
     assert.match(style, /\.action-delete/u);
 });

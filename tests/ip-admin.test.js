@@ -18,7 +18,11 @@ function createDatabase() {
                     return this;
                 },
                 async first() {
-                    if (sql.includes('WHERE network =')) return rule?.network === this.args[0] ? { id: rule.id } : null;
+                    if (sql.includes('WHERE network =')) {
+                        const sameNetwork = rule?.network === this.args[0];
+                        const differentId = !sql.includes('id <>') || rule?.id !== this.args[1];
+                        return sameNetwork && differentId ? { id: rule.id } : null;
+                    }
                     if (sql.includes('WHERE id =')) return rule?.id === this.args[0] ? rule : null;
                     return null;
                 },
@@ -34,6 +38,15 @@ function createDatabase() {
                         network: statement.args[1],
                         reason: statement.args[2],
                         block_level: statement.args[3],
+                    };
+                } else if (statement.sql.includes('UPDATE ip_block_rules')) {
+                    rule = {
+                        ...rule,
+                        network: statement.args[0],
+                        reason: statement.args[1],
+                        block_level: statement.args[2],
+                        updated_by: statement.args[3],
+                        updated_at: statement.args[4],
                     };
                 } else if (statement.sql.includes('DELETE FROM ip_block_rules')) {
                     rule = null;
@@ -59,7 +72,7 @@ function adminRequest(method, body, ip = '203.0.113.10') {
     });
 }
 
-test('IP遮断ルールの追加・削除と監査記録を同じD1バッチで処理する', async () => {
+test('IP遮断ルールの追加・編集・削除と監査記録をD1で処理する', async () => {
     const database = createDatabase();
     const env = { NEWSLETTER_DB: database };
     const admin = { email: 'admin@example.com', subject: 'admin-subject' };
@@ -81,6 +94,36 @@ test('IP遮断ルールの追加・削除と監査記録を同じD1バッチで�
     assert.equal(database.rule.block_level, 'confirmed');
     assert.equal(database.audits.length, 1);
 
+    const updateRequest = new Request(
+        `https://dpi-bot.com/site/ip-admin/api/rules/${created.rule.id}`,
+        {
+            method: 'PUT',
+            headers: {
+                Origin: 'https://dpi-bot.com',
+                'Content-Type': 'application/json',
+                'CF-Connecting-IP': '203.0.113.10',
+                'CF-Ray': 'update-ray-NRT',
+            },
+            body: JSON.stringify({
+                network: '198.51.0.0/16',
+                reason: '対象範囲を拡大',
+                blockLevel: 'suspected',
+            }),
+        },
+    );
+    const updatedResponse = await ipAdminTest.updateRule(
+        updateRequest,
+        env,
+        admin,
+        created.rule.id,
+    );
+    const updated = await updatedResponse.json();
+    assert.equal(updatedResponse.status, 200);
+    assert.equal(updated.rule.network, '198.51.0.0/16');
+    assert.equal(updated.rule.blockLevel, 'suspected');
+    assert.equal(database.rule.reason, '対象範囲を拡大');
+    assert.equal(database.audits.length, 3);
+
     const deleteRequest = new Request(
         `https://dpi-bot.com/site/ip-admin/api/rules/${created.rule.id}`,
         {
@@ -97,9 +140,9 @@ test('IP遮断ルールの追加・削除と監査記録を同じD1バッチで�
     const deletedResponse = await ipAdminTest.deleteRule(deleteRequest, env, admin, created.rule.id);
     const deleted = await deletedResponse.json();
     assert.equal(deletedResponse.status, 200);
-    assert.equal(deleted.deleted.network, '198.51.100.0/24');
+    assert.equal(deleted.deleted.network, '198.51.0.0/16');
     assert.equal(database.rule, null);
-    assert.equal(database.audits.length, 2);
+    assert.equal(database.audits.length, 4);
 });
 
 test('理由を省略すると遮断レベルに応じた既定文を保存する', async () => {

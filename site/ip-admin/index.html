@@ -61,7 +61,10 @@
                     <textarea id="reason" name="reason" rows="4" maxlength="500" placeholder="未入力の場合は、遮断レベルに応じた既定の説明を表示します。"></textarea>
                 </label>
                 <p class="field-help">現在の接続元を含むルールの場合は、登録前に追加確認が表示されます。管理画面は緊急解除のためAccess認証後に限り利用できます。</p>
-                <button id="add-button" class="primary-btn" type="submit">遮断ルールを追加</button>
+                <div class="form-actions">
+                    <button id="add-button" class="primary-btn" type="submit">遮断ルールを追加</button>
+                    <button id="cancel-edit-button" class="secondary-btn" type="button" hidden>編集をキャンセル</button>
+                </div>
             </form>
         </section>
 
