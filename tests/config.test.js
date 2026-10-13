@@ -16,6 +16,7 @@ test('メール配信のSecretをリポジトリ上のvarsへ保存しない', a
         'NEWSLETTER_TOKEN_SECRET',
         'ACCESS_TEAM_DOMAIN',
         'ACCESS_AUD',
+        'ADMIN_EMAILS',
         'MAIL_ADMIN_EMAILS',
     ];
 
@@ -36,5 +37,21 @@ test('D1・Queue・送信元制限・管理画面ルーティングを宣言す�
     assert.equal(config.queues.producers[0].binding, 'NEWSLETTER_QUEUE');
     assert.equal(config.queues.consumers[0].max_concurrency, 1);
     assert.equal(config.queues.consumers[0].dead_letter_queue, 'dpi-newsletter-delivery-dlq');
-    assert.ok(config.assets.run_worker_first.includes('/site/mail-admin/*'));
+    assert.equal(config.assets.run_worker_first, true);
+});
+
+test('遮断IPを平文のvarsへ保存しない', async () => {
+    const configPath = new URL('../wrangler.jsonc', import.meta.url);
+    const config = JSON.parse(await readFile(configPath, 'utf8'));
+
+    assert.equal(Object.hasOwn(config.vars || {}, 'BLOCKED_IPS'), false);
+    assert.equal(Object.hasOwn(config.vars || {}, 'IP_BLOCK_MESSAGE'), false);
+});
+
+test('IP遮断用D1マイグレーションを同梱する', async () => {
+    const migrationPath = new URL('../migrations/0002_ip_blocking.sql', import.meta.url);
+    const migration = await readFile(migrationPath, 'utf8');
+
+    assert.match(migration, /CREATE TABLE IF NOT EXISTS ip_block_rules/u);
+    assert.match(migration, /CREATE TABLE IF NOT EXISTS ip_block_audit/u);
 });

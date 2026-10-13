@@ -16,7 +16,7 @@ export async function authenticateNewsletterAdmin(request, env) {
     const audience = cleanConfigValue(env.ACCESS_AUD);
     const teamDomain = normalizeTeamDomain(env.ACCESS_TEAM_DOMAIN);
     const allowedEmails = new Set(
-        cleanConfigValue(env.MAIL_ADMIN_EMAILS)
+        (cleanConfigValue(env.ADMIN_EMAILS) || cleanConfigValue(env.MAIL_ADMIN_EMAILS))
             .split(',')
             .map((email) => email.trim().toLowerCase())
             .filter(Boolean),
@@ -26,7 +26,7 @@ export async function authenticateNewsletterAdmin(request, env) {
         throw new AccessAuthError(
             503,
             'admin_not_configured',
-            '配信管理画面の認証設定が完了していません。',
+            '管理画面の認証設定が完了していません。',
         );
     }
 
@@ -72,7 +72,7 @@ export async function authenticateNewsletterAdmin(request, env) {
 
         const email = typeof payload.email === 'string' ? payload.email.trim().toLowerCase() : '';
         if (!email || !allowedEmails.has(email)) {
-            throw new AccessAuthError(403, 'admin_not_allowed', 'このアカウントには配信権限がありません。');
+            throw new AccessAuthError(403, 'admin_not_allowed', 'このアカウントには管理権限がありません。');
         }
 
         return { email, subject: typeof payload.sub === 'string' ? payload.sub : '' };
