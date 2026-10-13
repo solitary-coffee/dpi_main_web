@@ -108,24 +108,18 @@ function findMatchingParsedRule(clientIp, rules) {
 }
 
 async function loadDatabaseRules(env) {
-    if (!env.NEWSLETTER_DB?.prepare) return [];
-    const cached = databaseRuleCache.get(env.NEWSLETTER_DB);
+    const database = env.NEWSLETTER_DB || env.IP_BLOCK_DB;
+    if (!database?.prepare) return [];
+    const cached = databaseRuleCache.get(database);
     if (cached?.expiresAt > Date.now()) return cached.rules;
 
     try {
-        let result;
-        try {
-            result = await env.NEWSLETTER_DB.prepare(
-                `SELECT network, reason, block_level FROM ip_block_rules
-                 WHERE enabled = 1 ORDER BY created_at ASC`,
-            ).all();
-        } catch (error) {
-            if (!/block_level|no such column/iu.test(String(error?.message || error))) throw error;
-            result = await env.NEWSLETTER_DB.prepare(
-                `SELECT network, reason FROM ip_block_rules
-                 WHERE enabled = 1 ORDER BY created_at ASC`,
-            ).all();
-        }
+        // SELECT * keeps the reader compatible with both the pre-level schema and
+        // the migrated schema. Missing block_level values are normalized below.
+        const result = await database.prepare(
+            `SELECT * FROM ip_block_rules
+             WHERE enabled = 1 ORDER BY created_at ASC`,
+        ).all();
         const rules = (result?.results || []).flatMap((row) => {
             const parsed = parseNetwork(row?.network);
             if (!parsed) return [];
@@ -135,14 +129,15 @@ async function loadDatabaseRules(env) {
                 blockLevel: normalizeBlockLevel(row?.block_level),
             }];
         });
-        databaseRuleCache.set(env.NEWSLETTER_DB, { expiresAt: Date.now() + DATABASE_CACHE_MS, rules });
+        databaseRuleCache.set(database, { expiresAt: Date.now() + DATABASE_CACHE_MS, rules });
         return rules;
     } catch (error) {
         console.error('IP block rules could not be loaded from D1', {
             errorName: error?.name || 'Error',
             errorCode: error?.code || 'unknown',
+            errorMessage: cleanText(error?.message, 200) || 'unknown',
         });
-        databaseRuleCache.set(env.NEWSLETTER_DB, { expiresAt: Date.now() + DATABASE_CACHE_MS, rules: [] });
+        databaseRuleCache.set(database, { expiresAt: Date.now() + DATABASE_CACHE_MS, rules: [] });
         return [];
     }
 }
