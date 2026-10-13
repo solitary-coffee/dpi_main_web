@@ -32,8 +32,11 @@ test('D1・Queue・送信元制限・管理画面ルーティングを宣言す�
     const noticeBinding = config.send_email.find((binding) => binding.name === 'NOTICE_EMAIL');
 
     assert.deepEqual(noticeBinding.allowed_sender_addresses, ['notice@dpi-bot.com']);
-    assert.equal(config.d1_databases[0].binding, 'NEWSLETTER_DB');
-    assert.equal(Object.hasOwn(config.d1_databases[0], 'database_id'), false);
+    const newsletterDb = config.d1_databases.find((binding) => binding.binding === 'NEWSLETTER_DB');
+    const ipBlockDb = config.d1_databases.find((binding) => binding.binding === 'IP_BLOCK_DB');
+    assert.equal(newsletterDb.database_name, 'dpi-newsletter');
+    assert.equal(ipBlockDb.database_name, 'dpi-newsletter');
+    assert.equal(newsletterDb.database_id, ipBlockDb.database_id);
     assert.equal(config.queues.producers[0].binding, 'NEWSLETTER_QUEUE');
     assert.equal(config.queues.consumers[0].max_concurrency, 1);
     assert.equal(config.queues.consumers[0].dead_letter_queue, 'dpi-newsletter-delivery-dlq');
