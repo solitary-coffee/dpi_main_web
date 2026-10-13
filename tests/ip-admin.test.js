@@ -140,7 +140,7 @@ test('IP遮断ルールの追加・編集・削除と監査記録をD1で処理�
     const deletedResponse = await ipAdminTest.deleteRule(deleteRequest, env, admin, created.rule.id);
     const deleted = await deletedResponse.json();
     assert.equal(deletedResponse.status, 200);
-    assert.equal(deleted.deleted.network, '198.51.100.0/24');
+    assert.equal(deleted.deleted.network, '198.51.0.0/16');
     assert.equal(database.rule, null);
     assert.equal(database.audits.length, 4);
 });
