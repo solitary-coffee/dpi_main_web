@@ -1,7 +1,10 @@
 'use strict';
 
+let editingRuleId = '';
+
 document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('rule-form').addEventListener('submit', submitRule);
+    document.getElementById('cancel-edit-button').addEventListener('click', resetRuleForm);
     document.getElementById('reload-button').addEventListener('click', loadRules);
     loadRules();
 });
@@ -29,30 +32,38 @@ async function submitRule(event) {
     const network = document.getElementById('network').value.trim();
     const reason = document.getElementById('reason').value.trim();
     const blockLevel = document.getElementById('block-level').value;
+    const ruleId = editingRuleId;
+    const isEditing = Boolean(ruleId);
+    const save = (body) => isEditing ? updateRule(ruleId, body) : createRule(body);
     button.disabled = true;
-    setStatus('遮断ルールを登録しています…', 'info');
+    setStatus(isEditing ? '遮断ルールを更新しています…' : '遮断ルールを登録しています…', 'info');
 
     try {
-        await createRule({ network, reason, blockLevel });
-        document.getElementById('rule-form').reset();
+        await save({ network, reason, blockLevel });
+        resetRuleForm();
         await loadRules();
-        setStatus('遮断ルールを登録しました。全拠点への反映には最大約30秒かかります。', 'success');
+        setStatus(
+            isEditing
+                ? '遮断ルールを更新しました。全拠点への反映には最大約30秒かかります。'
+                : '遮断ルールを登録しました。全拠点への反映には最大約30秒かかります。',
+            'success',
+        );
     } catch (error) {
         if (error.code === 'self_block_confirmation_required') {
             const confirmed = window.confirm(
-                `このルールには、現在操作中のIPアドレスも含まれます。\n\n対象: ${network}\n\n通常ページへアクセスできなくなります。Access認証済みのこの管理画面からは解除できます。登録しますか？`,
+                `このルールには、現在操作中のIPアドレスも含まれます。\n\n対象: ${network}\n\n通常ページへアクセスできなくなります。Access認証済みのこの管理画面からは解除できます。保存しますか？`,
             );
             if (confirmed) {
                 try {
-                    await createRule({ network, reason, blockLevel, confirmation: network });
-                    document.getElementById('rule-form').reset();
+                    await save({ network, reason, blockLevel, confirmation: network });
+                    resetRuleForm();
                     await loadRules();
-                    setStatus('現在の接続元を含む遮断ルールを登録しました。', 'success');
+                    setStatus('現在の接続元を含む遮断ルールを保存しました。', 'success');
                 } catch (retryError) {
                     setStatus(retryError.message, 'error');
                 }
             } else {
-                setStatus('登録を取り消しました。', 'info');
+                setStatus('保存を取り消しました。', 'info');
             }
         } else {
             setStatus(error.message, 'error');
@@ -67,6 +78,33 @@ function createRule(body) {
         method: 'POST',
         body: JSON.stringify(body),
     });
+}
+
+function updateRule(ruleId, body) {
+    return adminRequest(`/site/ip-admin/api/rules/${ruleId}`, {
+        method: 'PUT',
+        body: JSON.stringify(body),
+    });
+}
+
+function startEdit(rule) {
+    editingRuleId = rule.id;
+    document.getElementById('network').value = rule.network;
+    document.getElementById('block-level').value = rule.blockLevel;
+    document.getElementById('reason').value = rule.reason;
+    document.getElementById('add-title').textContent = '遮断ルールを編集';
+    document.getElementById('add-button').textContent = '変更を保存';
+    document.getElementById('cancel-edit-button').hidden = false;
+    document.getElementById('rule-form').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    document.getElementById('network').focus({ preventScroll: true });
+}
+
+function resetRuleForm() {
+    editingRuleId = '';
+    document.getElementById('rule-form').reset();
+    document.getElementById('add-title').textContent = '遮断ルールを追加';
+    document.getElementById('add-button').textContent = '遮断ルールを追加';
+    document.getElementById('cancel-edit-button').hidden = true;
 }
 
 function renderRules(rules) {
@@ -84,10 +122,15 @@ function renderRules(rules) {
         title.append(element('span', 'badge active', rule.enabled ? '有効' : '無効'));
         title.append(element('span', `badge level-${rule.blockLevel}`, blockLevelLabel(rule.blockLevel)));
         title.append(element('h3', '', rule.network));
+        const actions = element('div', 'rule-actions');
+        const edit = element('button', 'secondary-btn', '編集');
+        edit.type = 'button';
+        edit.addEventListener('click', () => startEdit(rule));
         const remove = element('button', 'danger-btn', '削除');
         remove.type = 'button';
         remove.addEventListener('click', () => deleteRule(rule, remove));
-        header.append(title, remove);
+        actions.append(edit, remove);
+        header.append(title, actions);
 
         const reason = element('p', 'rule-reason', rule.reason);
         const meta = element(
