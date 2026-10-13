@@ -125,8 +125,9 @@ async function adminApi(request, env, pathname) {
 
     const ruleMatch = pathname.match(/^\/site\/ip-admin\/api\/rules\/([0-9a-f-]{36})$/u);
     if (ruleMatch) {
-        assertMethod(request, ['DELETE']);
+        assertMethod(request, ['PUT', 'DELETE']);
         assertSameOrigin(request);
+        if (request.method === 'PUT') return updateRule(request, env, admin, ruleMatch[1]);
         return deleteRule(request, env, admin, ruleMatch[1]);
     }
 
@@ -219,6 +220,110 @@ async function createRule(request, env, admin) {
             updated_at: now,
         }),
     }, 201);
+}
+
+async function updateRule(request, env, admin, ruleId) {
+    const input = await readJson(request);
+    const parsed = parseNetwork(cleanValue(input.network));
+    if (!parsed) {
+        throw new IpAdminError(
+            400,
+            'IPアドレスまたはCIDRが正しくありません。CIDRはネットワークアドレスで指定してください。',
+            'invalid_network',
+        );
+    }
+    const blockLevel = validateBlockLevel(input.blockLevel);
+    const reason = validateReason(input.reason, blockLevel);
+    const current = await env.NEWSLETTER_DB.prepare(
+        `SELECT id, network, reason, block_level, enabled, created_by, created_at
+         FROM ip_block_rules WHERE id = ?`,
+    ).bind(ruleId).first();
+    if (!current) throw new IpAdminError(404, '指定された遮断ルールはありません。', 'rule_not_found');
+
+    const duplicate = await env.NEWSLETTER_DB.prepare(
+        'SELECT id FROM ip_block_rules WHERE network = ? COLLATE NOCASE AND id <> ?',
+    ).bind(parsed.network, ruleId).first();
+    if (duplicate) {
+        throw new IpAdminError(409, '同じIPアドレスまたはCIDRはすでに登録されています。', 'duplicate_network');
+    }
+
+    const remoteIp = clientIp(request);
+    const selfBlock = remoteIp && ipMatchesNetwork(remoteIp, parsed.network);
+    if (selfBlock && cleanValue(input.confirmation) !== parsed.network) {
+        throw new IpAdminError(
+            409,
+            '変更後の範囲には、現在接続しているIPも含まれます。確認後、もう一度保存してください。',
+            'self_block_confirmation_required',
+        );
+    }
+
+    const now = new Date().toISOString();
+    const rayId = cleanValue(request.headers.get('cf-ray')).slice(0, 128);
+    await env.NEWSLETTER_DB.batch([
+        env.NEWSLETTER_DB.prepare(
+            `UPDATE ip_block_rules
+             SET network = ?, reason = ?, block_level = ?, updated_by = ?, updated_at = ?
+             WHERE id = ?`,
+        ).bind(parsed.network, reason, blockLevel, admin.email, now, ruleId),
+        env.NEWSLETTER_DB.prepare(
+            `INSERT INTO ip_block_audit (
+                id, action, rule_id, network, reason, block_level, actor_email, actor_subject,
+                actor_ip, ray_id, created_at
+             ) VALUES (?, 'delete', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ).bind(
+            crypto.randomUUID(),
+            ruleId,
+            current.network,
+            current.reason,
+            normalizeBlockLevel(current.block_level),
+            admin.email,
+            admin.subject,
+            remoteIp,
+            rayId,
+            now,
+        ),
+        env.NEWSLETTER_DB.prepare(
+            `INSERT INTO ip_block_audit (
+                id, action, rule_id, network, reason, block_level, actor_email, actor_subject,
+                actor_ip, ray_id, created_at
+             ) VALUES (?, 'create', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ).bind(
+            crypto.randomUUID(),
+            ruleId,
+            parsed.network,
+            reason,
+            blockLevel,
+            admin.email,
+            admin.subject,
+            remoteIp,
+            rayId,
+            now,
+        ),
+    ]);
+    invalidateIpBlockRuleCache();
+    console.warn('IP block rule updated', {
+        id: ruleId,
+        previousNetwork: current.network,
+        network: parsed.network,
+        admin: admin.email,
+        rayId,
+    });
+
+    return jsonResponse({
+        success: true,
+        selfBlock,
+        rule: formatRule({
+            id: ruleId,
+            network: parsed.network,
+            reason,
+            block_level: blockLevel,
+            enabled: current.enabled,
+            created_by: current.created_by,
+            created_at: current.created_at,
+            updated_by: admin.email,
+            updated_at: now,
+        }),
+    });
 }
 
 async function deleteRule(request, env, admin, ruleId) {
@@ -429,6 +534,7 @@ function simpleErrorPage(status, message) {
 
 export const __test = Object.freeze({
     createRule,
+    updateRule,
     deleteRule,
     formatAudit,
     formatRule,
