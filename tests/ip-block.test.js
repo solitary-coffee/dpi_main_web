@@ -72,6 +72,7 @@ test('D1へ登録したCIDRを遮断し、Secretと併用できる', async () =>
     const database = {
         prepare(sql) {
             assert.match(sql, /FROM ip_block_rules/u);
+            assert.match(sql, /SELECT \*/u);
             return {
                 async all() {
                     return {
@@ -94,6 +95,32 @@ test('D1へ登録したCIDRを遮断し、Secretと併用できる', async () =>
     assert.match(body, /D1登録ルール/u);
     assert.match(body, /攻撃確定/u);
     assert.match(body, /https:\/\/dpi-bot\.com\/site\/supp\//u);
+});
+
+test('旧スキーマとIP_BLOCK_DB別名でもD1ルールを読み込む', async () => {
+    invalidateIpBlockRuleCache();
+    const database = {
+        prepare(sql) {
+            assert.match(sql, /SELECT \*/u);
+            assert.doesNotMatch(sql, /SELECT\s+network,\s*reason,\s*block_level/iu);
+            return {
+                async all() {
+                    return {
+                        results: [{
+                            network: '203.0.113.10',
+                            reason: '旧スキーマのルール',
+                        }],
+                    };
+                },
+            };
+        },
+    };
+
+    const response = await blockResponseForRequest(request(), { IP_BLOCK_DB: database });
+    assert.equal(response.status, 403);
+    const body = await response.text();
+    assert.match(body, /旧スキーマのルール/u);
+    assert.match(body, /攻撃疑い/u);
 });
 
 test('CIDRはネットワークアドレスだけを受け付ける', () => {
