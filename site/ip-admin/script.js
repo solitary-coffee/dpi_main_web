@@ -28,11 +28,12 @@ async function submitRule(event) {
     const button = document.getElementById('add-button');
     const network = document.getElementById('network').value.trim();
     const reason = document.getElementById('reason').value.trim();
+    const blockLevel = document.getElementById('block-level').value;
     button.disabled = true;
     setStatus('遮断ルールを登録しています…', 'info');
 
     try {
-        await createRule({ network, reason });
+        await createRule({ network, reason, blockLevel });
         document.getElementById('rule-form').reset();
         await loadRules();
         setStatus('遮断ルールを登録しました。全拠点への反映には最大約30秒かかります。', 'success');
@@ -43,7 +44,7 @@ async function submitRule(event) {
             );
             if (confirmed) {
                 try {
-                    await createRule({ network, reason, confirmation: network });
+                    await createRule({ network, reason, blockLevel, confirmation: network });
                     document.getElementById('rule-form').reset();
                     await loadRules();
                     setStatus('現在の接続元を含む遮断ルールを登録しました。', 'success');
@@ -81,6 +82,7 @@ function renderRules(rules) {
         const header = element('div', 'rule-heading');
         const title = document.createElement('div');
         title.append(element('span', 'badge active', rule.enabled ? '有効' : '無効'));
+        title.append(element('span', `badge level-${rule.blockLevel}`, blockLevelLabel(rule.blockLevel)));
         title.append(element('h3', '', rule.network));
         const remove = element('button', 'danger-btn', '削除');
         remove.type = 'button';
@@ -125,7 +127,7 @@ function renderAudit(entries) {
     if (entries.length === 0) {
         const row = document.createElement('tr');
         const cell = element('td', 'empty', '操作履歴はまだありません。');
-        cell.colSpan = 5;
+        cell.colSpan = 6;
         row.append(cell);
         body.append(row);
         return;
@@ -136,12 +138,17 @@ function renderAudit(entries) {
         row.append(
             element('td', '', formatDate(entry.createdAt)),
             element('td', entry.action === 'create' ? 'action-create' : 'action-delete', entry.action === 'create' ? '追加' : '削除'),
+            element('td', '', blockLevelLabel(entry.blockLevel)),
             element('td', 'mono', entry.network),
             element('td', '', entry.actorEmail),
             element('td', 'mono', entry.rayId || '—'),
         );
         body.append(row);
     }
+}
+
+function blockLevelLabel(value) {
+    return value === 'confirmed' ? '攻撃確定' : '攻撃疑い';
 }
 
 async function adminRequest(path, options = {}) {

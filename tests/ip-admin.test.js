@@ -33,6 +33,7 @@ function createDatabase() {
                         id: statement.args[0],
                         network: statement.args[1],
                         reason: statement.args[2],
+                        block_level: statement.args[3],
                     };
                 } else if (statement.sql.includes('DELETE FROM ip_block_rules')) {
                     rule = null;
@@ -64,7 +65,11 @@ test('IP遮断ルールの追加・削除と監査記録を同じD1バッチで�
     const admin = { email: 'admin@example.com', subject: 'admin-subject' };
 
     const createdResponse = await ipAdminTest.createRule(
-        adminRequest('POST', { network: '198.51.100.0/24', reason: '継続的な自動アクセス' }),
+        adminRequest('POST', {
+            network: '198.51.100.0/24',
+            reason: '継続的な自動アクセス',
+            blockLevel: 'confirmed',
+        }),
         env,
         admin,
     );
@@ -72,6 +77,8 @@ test('IP遮断ルールの追加・削除と監査記録を同じD1バッチで�
     assert.equal(createdResponse.status, 201);
     assert.equal(created.rule.network, '198.51.100.0/24');
     assert.equal(database.rule.reason, '継続的な自動アクセス');
+    assert.equal(created.rule.blockLevel, 'confirmed');
+    assert.equal(database.rule.block_level, 'confirmed');
     assert.equal(database.audits.length, 1);
 
     const deleteRequest = new Request(
@@ -93,6 +100,27 @@ test('IP遮断ルールの追加・削除と監査記録を同じD1バッチで�
     assert.equal(deleted.deleted.network, '198.51.100.0/24');
     assert.equal(database.rule, null);
     assert.equal(database.audits.length, 2);
+});
+
+test('理由を省略すると遮断レベルに応じた既定文を保存する', async () => {
+    const database = createDatabase();
+    const response = await ipAdminTest.createRule(
+        adminRequest('POST', { network: '198.51.100.10', reason: '', blockLevel: 'suspected' }),
+        { NEWSLETTER_DB: database },
+        { email: 'admin@example.com', subject: 'admin-subject' },
+    );
+    const created = await response.json();
+    assert.equal(response.status, 201);
+    assert.equal(created.rule.blockLevel, 'suspected');
+    assert.match(created.rule.reason, /不審なアクセス/u);
+    assert.equal(database.rule.reason, created.rule.reason);
+});
+
+test('未定義の遮断レベルは拒否する', () => {
+    assert.throws(
+        () => ipAdminTest.validateBlockLevel('unknown'),
+        (error) => error?.code === 'invalid_block_level' && error?.status === 400,
+    );
 });
 
 test('現在の接続元を含む遮断はネットワーク文字列による再確認を必須にする', async () => {

@@ -1,5 +1,11 @@
 import { AccessAuthError, authenticateNewsletterAdmin } from './access.js';
-import { invalidateIpBlockRuleCache, ipMatchesNetwork, parseNetwork } from './ip-block.js';
+import {
+    defaultReasonForLevel,
+    invalidateIpBlockRuleCache,
+    ipMatchesNetwork,
+    normalizeBlockLevel,
+    parseNetwork,
+} from './ip-block.js';
 
 const MAX_JSON_BYTES = 8 * 1024;
 const MAX_REASON_LENGTH = 500;
@@ -10,6 +16,7 @@ const SCHEMA_STATEMENTS = Object.freeze([
         id TEXT PRIMARY KEY,
         network TEXT NOT NULL UNIQUE COLLATE NOCASE,
         reason TEXT NOT NULL,
+        block_level TEXT NOT NULL DEFAULT 'suspected' CHECK (block_level IN ('suspected', 'confirmed')),
         enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
         created_by TEXT NOT NULL,
         created_at TEXT NOT NULL,
@@ -24,6 +31,7 @@ const SCHEMA_STATEMENTS = Object.freeze([
         rule_id TEXT NOT NULL,
         network TEXT NOT NULL,
         reason TEXT NOT NULL,
+        block_level TEXT NOT NULL DEFAULT 'suspected' CHECK (block_level IN ('suspected', 'confirmed')),
         actor_email TEXT NOT NULL,
         actor_subject TEXT,
         actor_ip TEXT,
@@ -128,11 +136,11 @@ async function adminApi(request, env, pathname) {
 async function listRules(request, env, admin) {
     const [rulesResult, auditResult] = await env.NEWSLETTER_DB.batch([
         env.NEWSLETTER_DB.prepare(
-            `SELECT id, network, reason, enabled, created_by, created_at, updated_by, updated_at
+            `SELECT id, network, reason, block_level, enabled, created_by, created_at, updated_by, updated_at
              FROM ip_block_rules ORDER BY created_at DESC`,
         ),
         env.NEWSLETTER_DB.prepare(
-            `SELECT id, action, rule_id, network, reason, actor_email, actor_ip, ray_id, created_at
+            `SELECT id, action, rule_id, network, reason, block_level, actor_email, actor_ip, ray_id, created_at
              FROM ip_block_audit ORDER BY created_at DESC LIMIT 50`,
         ),
     ]);
@@ -157,7 +165,8 @@ async function createRule(request, env, admin) {
             'invalid_network',
         );
     }
-    const reason = validateReason(input.reason);
+    const blockLevel = validateBlockLevel(input.blockLevel);
+    const reason = validateReason(input.reason, blockLevel);
     const remoteIp = clientIp(request);
     const selfBlock = remoteIp && ipMatchesNetwork(remoteIp, parsed.network);
     if (selfBlock && cleanValue(input.confirmation) !== parsed.network) {
@@ -182,15 +191,15 @@ async function createRule(request, env, admin) {
     await env.NEWSLETTER_DB.batch([
         env.NEWSLETTER_DB.prepare(
             `INSERT INTO ip_block_rules (
-                id, network, reason, enabled, created_by, created_at, updated_by, updated_at
-             ) VALUES (?, ?, ?, 1, ?, ?, ?, ?)`,
-        ).bind(id, parsed.network, reason, admin.email, now, admin.email, now),
+                id, network, reason, block_level, enabled, created_by, created_at, updated_by, updated_at
+             ) VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?)`,
+        ).bind(id, parsed.network, reason, blockLevel, admin.email, now, admin.email, now),
         env.NEWSLETTER_DB.prepare(
             `INSERT INTO ip_block_audit (
-                id, action, rule_id, network, reason, actor_email, actor_subject,
+                id, action, rule_id, network, reason, block_level, actor_email, actor_subject,
                 actor_ip, ray_id, created_at
-             ) VALUES (?, 'create', ?, ?, ?, ?, ?, ?, ?, ?)`,
-        ).bind(auditId, id, parsed.network, reason, admin.email, admin.subject, remoteIp, rayId, now),
+             ) VALUES (?, 'create', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ).bind(auditId, id, parsed.network, reason, blockLevel, admin.email, admin.subject, remoteIp, rayId, now),
     ]);
     invalidateIpBlockRuleCache();
     console.warn('IP block rule created', { id, network: parsed.network, admin: admin.email, rayId });
@@ -202,6 +211,7 @@ async function createRule(request, env, admin) {
             id,
             network: parsed.network,
             reason,
+            block_level: blockLevel,
             enabled: 1,
             created_by: admin.email,
             created_at: now,
@@ -218,7 +228,7 @@ async function deleteRule(request, env, admin, ruleId) {
     }
 
     const rule = await env.NEWSLETTER_DB.prepare(
-        'SELECT id, network, reason FROM ip_block_rules WHERE id = ?',
+        'SELECT id, network, reason, block_level FROM ip_block_rules WHERE id = ?',
     ).bind(ruleId).first();
     if (!rule) throw new IpAdminError(404, '指定された遮断ルールはありません。', 'rule_not_found');
 
@@ -229,14 +239,15 @@ async function deleteRule(request, env, admin, ruleId) {
         env.NEWSLETTER_DB.prepare('DELETE FROM ip_block_rules WHERE id = ?').bind(ruleId),
         env.NEWSLETTER_DB.prepare(
             `INSERT INTO ip_block_audit (
-                id, action, rule_id, network, reason, actor_email, actor_subject,
+                id, action, rule_id, network, reason, block_level, actor_email, actor_subject,
                 actor_ip, ray_id, created_at
-             ) VALUES (?, 'delete', ?, ?, ?, ?, ?, ?, ?, ?)`,
+             ) VALUES (?, 'delete', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         ).bind(
             crypto.randomUUID(),
             ruleId,
             rule.network,
             rule.reason,
+            normalizeBlockLevel(rule.block_level),
             admin.email,
             admin.subject,
             remoteIp,
@@ -322,12 +333,20 @@ async function readJson(request) {
     }
 }
 
-function validateReason(value) {
+function validateBlockLevel(value) {
+    const blockLevel = cleanValue(value) || 'suspected';
+    if (!['suspected', 'confirmed'].includes(blockLevel)) {
+        throw new IpAdminError(400, '遮断レベルを正しく選択してください。', 'invalid_block_level');
+    }
+    return blockLevel;
+}
+
+function validateReason(value, blockLevel = 'suspected') {
     const reason = cleanValue(value).replace(/\r\n?/gu, '\n');
-    if (!reason || reason.length > MAX_REASON_LENGTH || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(reason)) {
+    if (reason.length > MAX_REASON_LENGTH || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(reason)) {
         throw new IpAdminError(400, `理由は${MAX_REASON_LENGTH}文字以内で入力してください。`, 'invalid_reason');
     }
-    return reason;
+    return reason || defaultReasonForLevel(blockLevel);
 }
 
 function formatRule(row) {
@@ -335,6 +354,7 @@ function formatRule(row) {
         id: row.id,
         network: row.network,
         reason: row.reason,
+        blockLevel: normalizeBlockLevel(row.block_level),
         enabled: Number(row.enabled) === 1,
         createdBy: row.created_by,
         createdAt: row.created_at,
@@ -350,6 +370,7 @@ function formatAudit(row) {
         ruleId: row.rule_id,
         network: row.network,
         reason: row.reason,
+        blockLevel: normalizeBlockLevel(row.block_level),
         actorEmail: row.actor_email,
         actorIp: row.actor_ip || '',
         rayId: row.ray_id || '',
@@ -412,4 +433,5 @@ export const __test = Object.freeze({
     formatAudit,
     formatRule,
     validateReason,
+    validateBlockLevel,
 });

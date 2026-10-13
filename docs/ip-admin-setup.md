@@ -15,6 +15,8 @@ npx wrangler d1 migrations apply dpi-newsletter --remote
 - `ip_block_rules`: 有効なIP・CIDRと遮断理由
 - `ip_block_audit`: 追加・削除した管理者、接続元IP、Ray ID、操作日時
 
+既に `0002_ip_blocking.sql` を適用済みの場合も、同じコマンドで `0003_ip_block_levels.sql` が適用され、遮断レベル（攻撃疑い・攻撃確定）が追加されます。
+
 Workerにはテーブルの自動作成処理もありますが、本番適用前にマイグレーションを明示的に実行してください。
 
 ## 2. Cloudflare Accessへ管理画面を追加
