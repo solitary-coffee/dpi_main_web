@@ -63,6 +63,7 @@ input:focus, textarea:focus, select:focus { outline: 3px solid rgba(84, 184, 255
 
 button { padding: 10px 15px; border: 0; border-radius: 7px; font: inherit; font-weight: 750; cursor: pointer; }
 button:disabled { opacity: .55; cursor: not-allowed; }
+.form-actions, .rule-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .primary-btn { justify-self: start; background: #1769aa; color: #fff; }
 .primary-btn:hover:not(:disabled) { background: #2685ca; }
 .secondary-btn { border: 1px solid #7990a8; background: #f7fbff; color: #13243a; }
