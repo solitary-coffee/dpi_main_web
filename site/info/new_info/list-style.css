@@ -160,6 +160,13 @@
 }
 .dpi-row.type-new .status-badge { background-color: #2ecc71; }
 
+/* 配信中 */
+.dpi-row.type-active {
+    border-left-color: #2ecc71;
+    background-color: #fafffc;
+}
+.dpi-row.type-active .status-badge { background-color: #2ecc71; }
+
 
 .ends{
  text-decoration: line-through;   

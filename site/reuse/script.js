@@ -3,7 +3,7 @@ const choiceLabels = Object.freeze({
     yes: '自動', no: '手動', not_applicable: '該当なし',
     unchanged: 'そのまま転載', edited: '編集・加工', other: 'その他',
 });
-const deliveryStatusLabels = Object.freeze({ active: '', adjusting: '（調整中）', ending: '（終了予定）', preparing: '（配信準備中）' });
+const deliveryStatusLabels = Object.freeze({ active: '', adjusting: '（調整中）', ending: '（終了予定）', preparing: '（配信準備中）', ended: '（終了）' });
 
 let session = null;
 let currentChannels = [];
@@ -276,6 +276,7 @@ function deliveryCheckboxGrid(name, selected) {
         const label = document.createElement('label');
         const input = document.createElement('input');
         input.type = 'checkbox'; input.name = name; input.value = type.id; input.checked = selected.includes(type.id);
+        input.disabled = type.status === 'ended' && !input.checked;
         label.append(input, document.createTextNode(`${type.label}${deliveryStatusLabels[type.status] || ''}`));
         grid.append(label);
     }
