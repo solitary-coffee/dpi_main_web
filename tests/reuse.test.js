@@ -13,7 +13,7 @@ test('Discordサーバーは所有者・管理者・サーバー管理権限だ�
 test('二次利用申請の選択肢・同意・入力長を検証する', () => {
     const valid = reuseTest.validateEditableApplicationInput({
         channelType: 5,
-        deliveryTypes: ['緊急地震速報_警報', '地震情報'],
+        deliveryTypes: ['地震情報', '津波情報'],
         serverPublic: 'public',
         channelVisibility: 'role_limited',
         announcementAutomated: 'yes',
@@ -28,12 +28,12 @@ test('二次利用申請の選択肢・同意・入力長を検証する', () =>
         authorized: true,
     });
     assert.equal(valid.email, 'user@example.com');
-    assert.deepEqual(valid.deliveryTypes, ['緊急地震速報_警報', '地震情報']);
+    assert.deepEqual(valid.deliveryTypes, ['地震情報', '津波情報']);
 
     assert.throws(
         () => reuseTest.validateEditableApplicationInput({
             channelType: 0,
-            deliveryTypes: ['緊急地震速報_警報'],
+            deliveryTypes: ['地震情報'],
             serverPublic: 'public',
             channelVisibility: 'public',
             announcementAutomated: 'yes',
@@ -61,16 +61,28 @@ test('アナウンス指定と異なる公開先の自動化設定を申請者�
         announcementAutomated: 'yes',
         publishChannelDifferent: true,
         publishChannelId: '223456789012345678',
-        publishAutomated: 'no',
+        transferAutomated: 'no',
+        destinationPublishAutomated: 'yes',
         deliveryTypes: ['地震情報'],
     }], [
-        { id: '123456789012345678', name: 'source', type: 0 },
-        { id: '223456789012345678', name: 'public', type: 0 },
+        { id: '123456789012345678', name: 'source', type: 5 },
+        { id: '223456789012345678', name: 'public', type: 5 },
     ]);
 
     assert.equal(mappings[0].announcement, true);
     assert.equal(mappings[0].announcementAutomated, 'yes');
-    assert.equal(mappings[0].publishAutomated, 'no');
+    assert.equal(mappings[0].transferAutomated, 'no');
+    assert.equal(mappings[0].destinationPublishAutomated, 'yes');
+
+    assert.throws(
+        () => reuseTest.validateChannelMappings([{
+            channelId: '123456789012345678', announcement: false,
+            announcementAutomated: 'not_applicable', publishChannelDifferent: false,
+            publishChannelId: '', transferAutomated: 'not_applicable',
+            destinationPublishAutomated: 'not_applicable', deliveryTypes: ['地震情報'],
+        }], [{ id: '123456789012345678', name: 'source', type: 5 }]),
+        (error) => error?.code === 'announcement_mismatch',
+    );
 });
 
 test('管理画面から送る個別メールの種別・件名・本文を検証する', () => {
@@ -116,7 +128,11 @@ test('申請画面と管理画面は安全なDOM APIで表示し、審査操作�
     assert.match(adminScript, /\/message/u);
     assert.match(adminScript, /個別メール送信/u);
     assert.doesNotMatch(publicScript, /name = announcementName; input\.value = valueText; input\.disabled = true/u);
-    assert.match(publicScript, /publishAutomated/u);
+    assert.match(publicScript, /transferAutomated/u);
+    assert.match(publicScript, /destinationPublishAutomated/u);
+    assert.match(publicScript, /reviewSubmission/u);
+    assert.match(publicHtml, /id="confirmation-dialog"/u);
+    assert.match(publicHtml, /緊急地震速報は二次利用できません/u);
     assert.match(publicHtml, /id="channel-mappings"/u);
     assert.match(publicHtml, /id="email-confirm"/u);
     assert.match(publicHtml, /notice@dpi-bot\.com/u);
@@ -142,6 +158,9 @@ test('既存D1 bindingを二次利用申請でも利用でき、設定状態を�
 
     assert.equal(body.configured, true);
     assert.ok(body.deliveryTypes.length > 20);
+    for (const denied of ['緊急地震速報_警報', '緊急地震速報', 'EEW震度変化']) {
+        assert.equal(body.deliveryTypes.some((delivery) => delivery.id === denied), false);
+    }
     const officialInfo = await readFile(new URL('../site/info/index.html', import.meta.url), 'utf8');
     for (const delivery of body.deliveryTypes) {
         assert.ok(officialInfo.includes(delivery.applicationName), `${delivery.applicationName} must come from the official delivery page`);

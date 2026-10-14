@@ -618,17 +618,21 @@ function validateChannelMappings(input, availableChannels) {
         if (typeof mapping?.announcement !== 'boolean') {
             throw new ReuseError(400, 'アナウンスチャンネルかどうかを選択してください。', 'invalid_announcement_setting');
         }
-        const announcement = mapping.announcement;
+        const actualAnnouncement = Number(channel.type) === 5;
+        if (mapping.announcement !== actualAnnouncement) {
+            throw new ReuseError(400, 'アナウンスチャンネルの回答がDiscordのチャンネル種別と一致しません。', 'announcement_mismatch');
+        }
+        const announcement = actualAnnouncement;
         const announcementAutomated = enumValue(
             mapping?.announcementAutomated,
             announcement ? ['yes', 'no'] : ['not_applicable'],
             'アナウンス公開の自動化状況',
         );
         const publishChannelDifferent = mapping?.publishChannelDifferent === true;
-        const publishAutomated = enumValue(
-            mapping?.publishAutomated,
+        const transferAutomated = enumValue(
+            mapping?.transferAutomated,
             publishChannelDifferent ? ['yes', 'no'] : ['not_applicable'],
-            '公開先チャンネルへの配信方法',
+            '公開先チャンネルへの転送方法',
         );
         let publishChannel = null;
         if (publishChannelDifferent) {
@@ -639,6 +643,12 @@ function validateChannelMappings(input, availableChannels) {
                 throw new ReuseError(400, '異なる公開先チャンネルを選択してください。', 'publish_channel_same');
             }
         }
+        const destinationIsAnnouncement = Number(publishChannel?.type) === 5;
+        const destinationPublishAutomated = enumValue(
+            mapping?.destinationPublishAutomated,
+            destinationIsAnnouncement ? ['yes', 'no'] : ['not_applicable'],
+            '公開先アナウンスチャンネルの公開方法',
+        );
         return {
             channelId,
             channelName: stringValue(channel.name).slice(0, 100),
@@ -649,7 +659,8 @@ function validateChannelMappings(input, availableChannels) {
             publishChannelId: publishChannel ? stringValue(publishChannel.id) : '',
             publishChannelName: publishChannel ? stringValue(publishChannel.name).slice(0, 100) : '',
             publishChannelType: publishChannel ? Number(publishChannel.type) : null,
-            publishAutomated,
+            transferAutomated,
+            destinationPublishAutomated,
             deliveryTypes: validateDeliveryTypes(mapping?.deliveryTypes),
         };
     });
@@ -671,12 +682,17 @@ function validateResubmittedChannelMappings(input, existing) {
             mapping.announcement ? ['yes', 'no'] : ['not_applicable'],
             'アナウンス公開の自動化状況',
         );
-        const publishAutomated = enumValue(
-            submitted.publishAutomated,
+        const transferAutomated = enumValue(
+            submitted.transferAutomated,
             mapping.publishChannelDifferent ? ['yes', 'no'] : ['not_applicable'],
-            '公開先チャンネルへの配信方法',
+            '公開先チャンネルへの転送方法',
         );
-        return { ...mapping, announcementAutomated, publishAutomated, deliveryTypes: validateDeliveryTypes(submitted.deliveryTypes) };
+        const destinationPublishAutomated = enumValue(
+            submitted.destinationPublishAutomated,
+            mapping.publishChannelType === 5 ? ['yes', 'no'] : ['not_applicable'],
+            '公開先アナウンスチャンネルの公開方法',
+        );
+        return { ...mapping, announcementAutomated, transferAutomated, destinationPublishAutomated, deliveryTypes: validateDeliveryTypes(submitted.deliveryTypes) };
     });
 }
 
@@ -845,7 +861,8 @@ function applicationChannelMappings(item) {
         publishChannelId: stringValue(mapping.publishChannelId),
         publishChannelName: stringValue(mapping.publishChannelName),
         publishChannelType: mapping.publishChannelType == null ? null : Number(mapping.publishChannelType),
-        publishAutomated: stringValue(mapping.publishAutomated) || 'not_applicable',
+        transferAutomated: stringValue(mapping.transferAutomated) || 'not_applicable',
+        destinationPublishAutomated: stringValue(mapping.destinationPublishAutomated) || 'not_applicable',
         deliveryTypes: Array.isArray(mapping.deliveryTypes) ? mapping.deliveryTypes.map(stringValue) : [],
     }));
     return [{
@@ -858,7 +875,8 @@ function applicationChannelMappings(item) {
         publishChannelId: '',
         publishChannelName: '',
         publishChannelType: null,
-        publishAutomated: 'not_applicable',
+        transferAutomated: 'not_applicable',
+        destinationPublishAutomated: 'not_applicable',
         deliveryTypes: parseJsonArray(item.delivery_types),
     }];
 }
@@ -870,7 +888,10 @@ async function sendReceiptEmail(env, application) {
         `配信: ${mapping.deliveryTypes.map((id) => DELIVERY_TYPES[id] || id).join('、')}`,
         ...(mapping.publishChannelDifferent ? [
             `公開先: #${mapping.publishChannelName}`,
-            `公開先への配信: ${mapping.publishAutomated === 'yes' ? '自動' : '手動'}`,
+            `公開先への転送: ${mapping.transferAutomated === 'yes' ? '自動' : '手動'}`,
+            ...(mapping.publishChannelType === 5
+                ? [`公開先での公開: ${mapping.destinationPublishAutomated === 'yes' ? '自動' : '手動'}`]
+                : []),
         ] : []),
     ]);
     const text = [

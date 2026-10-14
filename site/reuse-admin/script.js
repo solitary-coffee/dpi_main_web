@@ -104,7 +104,8 @@ function formatChannelMappings(app) {
         if (mapping.announcement) lines.push(`公開操作: ${choiceLabels[mapping.announcementAutomated] || mapping.announcementAutomated}`);
         if (mapping.publishChannelDifferent) {
             lines.push(`公開先: #${mapping.publishChannelName} (${mapping.publishChannelId})`);
-            lines.push(`公開先への配信: ${choiceLabels[mapping.publishAutomated] || mapping.publishAutomated}`);
+            lines.push(`公開先への転送: ${choiceLabels[mapping.transferAutomated] || mapping.transferAutomated}`);
+            if (mapping.publishChannelType === 5) lines.push(`公開先での公開: ${choiceLabels[mapping.destinationPublishAutomated] || mapping.destinationPublishAutomated}`);
         }
         return lines.join('\n');
     }).join('\n\n');

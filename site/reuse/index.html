@@ -38,6 +38,7 @@
                 <h2>申請について</h2>
                 <p>DPI-Botの配信を別のDiscordサーバーやアナウンスチャンネルで利用する場合は、事前に申請してください。</p>
                 <div class="notice-box">申請先のサーバーを確認するため、Discordアカウントでのログインが必要です。管理権限を確認できるサーバーのみ選択できます。</div>
+                <div class="restriction-box"><strong>緊急地震速報は二次利用できません</strong><p>緊急地震速報の全種類（警報、地震動予報、震度変化を含みます）は、提供APIの利用規約および迅速性・即時性を確保する観点から二次利用をお断りしています。申請対象外のため、配信の選択肢にも表示されません。</p></div>
             </section>
 
             <section id="login-panel" class="section login-panel">
@@ -114,9 +115,23 @@
                         <label class="consent"><input id="consent" type="checkbox" required> Discordユーザー情報、サーバー名・ID、チャンネル名・ID、メールアドレス、申請内容を審査と連絡のために収集・保存することに同意します。</label>
                     </fieldset>
 
-                    <button id="submit-btn" type="submit" class="primary-btn">申請を送信する</button>
+                    <button id="submit-btn" type="submit" class="primary-btn">入力内容を確認する</button>
                 </form>
             </section>
+
+            <dialog id="confirmation-dialog" aria-labelledby="confirmation-title">
+                <div class="confirmation-panel">
+                    <h2 id="confirmation-title">申請内容の最終確認</h2>
+                    <p>内容と注意事項を確認してから送信してください。</p>
+                    <div id="confirmation-errors" class="confirmation-errors hidden"></div>
+                    <div id="confirmation-warnings" class="confirmation-warnings hidden"></div>
+                    <dl id="confirmation-details" class="detail-grid"></dl>
+                    <div class="confirmation-actions">
+                        <button id="confirmation-back" type="button" class="secondary-btn">入力画面に戻る</button>
+                        <button id="confirmation-submit" type="button" class="primary-btn">確認して申請を送信</button>
+                    </div>
+                </div>
+            </dialog>
 
             <section id="result-panel" class="section hidden">
                 <h2>申請状況</h2>
