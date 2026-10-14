@@ -97,6 +97,17 @@ test('既存D1 bindingを二次利用申請でも利用でき、設定状態を�
     });
 });
 
+test('未ログインのセッション確認は通常応答として扱う', async () => {
+    const response = await handleReuseRequest(
+        new Request('https://dpi-bot.com/api/reuse/session'),
+        {},
+    );
+    const body = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(body, { success: true, authenticated: false });
+});
+
 test('二次利用申請のD1 migrationとDiscord OAuth設定を同梱する', async () => {
     const migration = await readFile(new URL('../migrations/0004_reuse_applications.sql', import.meta.url), 'utf8');
     const config = JSON.parse(await readFile(new URL('../wrangler.jsonc', import.meta.url), 'utf8'));

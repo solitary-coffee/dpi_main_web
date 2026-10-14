@@ -58,13 +58,12 @@ async function loadConfigAndSession() {
             );
         }
         renderDeliveryTypes(config.deliveryTypes);
-        try {
-            session = await api('/api/reuse/session');
-            showApplicationForm();
-        } catch (error) {
-            if (error.code !== 'login_required' && error.code !== 'session_expired') throw error;
+        session = await api('/api/reuse/session');
+        if (!session.authenticated) {
             document.getElementById('login-panel').classList.remove('hidden');
+            return;
         }
+        showApplicationForm();
     } catch (error) {
         setStatus(error.message, 'error');
         document.getElementById('discord-login').classList.add('hidden');
