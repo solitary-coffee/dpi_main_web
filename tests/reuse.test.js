@@ -54,6 +54,37 @@ test('二次利用申請の選択肢・同意・入力長を検証する', () =>
     );
 });
 
+test('アナウンス指定と異なる公開先の自動化設定を申請者が選択できる', () => {
+    const mappings = reuseTest.validateChannelMappings([{
+        channelId: '123456789012345678',
+        announcement: true,
+        announcementAutomated: 'yes',
+        publishChannelDifferent: true,
+        publishChannelId: '223456789012345678',
+        publishAutomated: 'no',
+        deliveryTypes: ['地震情報'],
+    }], [
+        { id: '123456789012345678', name: 'source', type: 0 },
+        { id: '223456789012345678', name: 'public', type: 0 },
+    ]);
+
+    assert.equal(mappings[0].announcement, true);
+    assert.equal(mappings[0].announcementAutomated, 'yes');
+    assert.equal(mappings[0].publishAutomated, 'no');
+});
+
+test('管理画面から送る個別メールの種別・件名・本文を検証する', () => {
+    assert.deepEqual(reuseTest.validateAdminMessageInput({
+        category: 'inquiry', subject: '確認事項', message: '公開方法について確認があります。',
+    }), {
+        category: 'inquiry', categoryLabel: '不明点の確認', subject: '確認事項', message: '公開方法について確認があります。',
+    });
+    assert.throws(
+        () => reuseTest.validateAdminMessageInput({ category: 'unknown', subject: '件名', message: '本文' }),
+        (error) => error?.code === 'invalid_choice',
+    );
+});
+
 test('公開用の申請情報ではメールアドレスをマスクする', () => {
     const serialized = reuseTest.serializeApplication({
         id: 'id', reference: 'REUSE-1', status: 'pending', revision: 1,
@@ -82,6 +113,10 @@ test('申請画面と管理画面は安全なDOM APIで表示し、審査操作�
     assert.match(adminScript, /changes_requested/u);
     assert.match(adminScript, /approved/u);
     assert.match(adminScript, /rejected/u);
+    assert.match(adminScript, /\/message/u);
+    assert.match(adminScript, /個別メール送信/u);
+    assert.doesNotMatch(publicScript, /name = announcementName; input\.value = valueText; input\.disabled = true/u);
+    assert.match(publicScript, /publishAutomated/u);
     assert.match(publicHtml, /id="channel-mappings"/u);
     assert.match(publicHtml, /id="email-confirm"/u);
     assert.match(publicHtml, /notice@dpi-bot\.com/u);

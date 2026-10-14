@@ -133,7 +133,8 @@ function addChannelMapping(initial = null) {
     for (const [valueText, labelText] of [['yes', 'はい'], ['no', 'いいえ']]) {
         const label = document.createElement('label');
         const input = document.createElement('input');
-        input.type = 'radio'; input.name = announcementName; input.value = valueText; input.disabled = true;
+        input.type = 'radio'; input.name = announcementName; input.value = valueText;
+        input.addEventListener('change', () => updateAnnouncementControls(card));
         label.append(input, document.createTextNode(labelText)); announcementGroup.append(label);
     }
 
@@ -160,12 +161,25 @@ function addChannelMapping(initial = null) {
     publishSelect.append(option('', '選択してください'));
     for (const channel of currentChannels) publishSelect.append(option(channel.id, `#${channel.name}${channel.announcement ? '（アナウンス）' : ''}`, channel.id === initial?.publishChannelId));
     publishLabel.append(publishSelect);
+    const publishAutomation = element('div', `choice-group publish-automation ${different.checked ? '' : 'hidden'}`);
+    publishAutomation.append(element('span', 'field-label', '公開先チャンネルへの配信は自動化していますか？'));
+    const publishAutomationName = `mapping-publish-automation-${index}`;
+    for (const [valueText, labelText] of [['yes', '自動化している'], ['no', '手動で配信する']]) {
+        const label = document.createElement('label');
+        const input = document.createElement('input');
+        input.type = 'radio'; input.name = publishAutomationName; input.value = valueText;
+        input.checked = initial?.publishAutomated === valueText;
+        label.append(input, document.createTextNode(labelText)); publishAutomation.append(label);
+    }
     different.addEventListener('change', () => {
         publishLabel.classList.toggle('hidden', !different.checked);
+        publishAutomation.classList.toggle('hidden', !different.checked);
         publishSelect.required = different.checked;
         if (!different.checked) publishSelect.value = '';
+        else if (!publishAutomation.querySelector('input:checked')) publishAutomation.querySelector('input[value="no"]').checked = true;
     });
     publishSelect.required = different.checked;
+    if (different.checked && !publishAutomation.querySelector('input:checked')) publishAutomation.querySelector('input[value="no"]').checked = true;
 
     const deliveryField = document.createElement('fieldset');
     deliveryField.className = 'mapping-deliveries';
@@ -176,7 +190,7 @@ function addChannelMapping(initial = null) {
     sourceLink.href = '../info/index.html'; sourceLink.target = '_blank'; sourceLink.rel = 'noopener noreferrer'; sourceLink.textContent = '公式サイトの配信内容一覧';
     source.append(document.createTextNode('選択肢は '), sourceLink, document.createTextNode(' の申請名を使用しています。'));
 
-    card.append(head, channelLabel, announcementGroup, automationGroup, differentLabel, publishLabel, deliveryField, source);
+    card.append(head, channelLabel, announcementGroup, automationGroup, differentLabel, publishLabel, publishAutomation, deliveryField, source);
     channelSelect.addEventListener('change', () => updateMappingChannel(card));
     container.append(card);
     updateMappingChannel(card);
@@ -200,6 +214,11 @@ function updateMappingChannel(card) {
     const announcement = channel?.announcement === true;
     const announcementInput = card.querySelector(`input[value="${announcement ? 'yes' : 'no'}"][name^="mapping-announcement-"]`);
     if (announcementInput) announcementInput.checked = true;
+    updateAnnouncementControls(card);
+}
+
+function updateAnnouncementControls(card) {
+    const announcement = card.querySelector('input[name^="mapping-announcement-"]:checked')?.value === 'yes';
     const automation = card.querySelector('.mapping-automation');
     automation.classList.toggle('hidden', !announcement);
     if (announcement && !automation.querySelector('input:checked')) automation.querySelector('input[value="no"]').checked = true;
@@ -220,14 +239,18 @@ function collectChannelMappings() {
         const different = card.querySelector('.publish-different input').checked;
         const publishChannelId = card.querySelector('.publish-channel select').value;
         if (different && !publishChannelId) throw new Error('公開先チャンネルを選択してください。');
+        const announcement = card.querySelector('input[name^="mapping-announcement-"]:checked')?.value === 'yes';
+        const publishAutomated = different ? (card.querySelector('.publish-automation input:checked')?.value || '') : 'not_applicable';
+        if (different && !publishAutomated) throw new Error('公開先チャンネルへの配信が自動か手動かを選択してください。');
         return {
             channelId: channel.id,
-            announcement: channel.announcement,
-            announcementAutomated: channel.announcement
+            announcement,
+            announcementAutomated: announcement
                 ? (card.querySelector('.mapping-automation input:checked')?.value || '')
                 : 'not_applicable',
             publishChannelDifferent: different,
             publishChannelId: different ? publishChannelId : '',
+            publishAutomated,
             deliveryTypes,
         };
     });
@@ -299,7 +322,10 @@ function formatMapping(mapping, index) {
     const parts = [`設定${index + 1}: #${mapping.channelName}${mapping.announcement ? '（アナウンス）' : ''}`];
     parts.push(`配信: ${mapping.deliveryTypes.map((id) => deliveryLabels[id] || id).join('、')}`);
     if (mapping.announcement) parts.push(`公開操作: ${choiceLabels[mapping.announcementAutomated] || mapping.announcementAutomated}`);
-    if (mapping.publishChannelDifferent) parts.push(`公開先: #${mapping.publishChannelName}`);
+    if (mapping.publishChannelDifferent) {
+        parts.push(`公開先: #${mapping.publishChannelName}`);
+        parts.push(`公開先への配信: ${choiceLabels[mapping.publishAutomated] || mapping.publishAutomated}`);
+    }
     return parts.join('\n');
 }
 
@@ -312,6 +338,7 @@ function renderResubmitForm(app) {
         card.append(element('h4', '', `#${mapping.channelName}${mapping.publishChannelDifferent ? ` → #${mapping.publishChannelName}` : ''}`));
         card.append(deliveryCheckboxGrid(`resubmit-delivery-${index}`, mapping.deliveryTypes));
         if (mapping.announcement) card.append(selectField('公開操作', `resubmit-announcement-${index}`, { yes: '自動', no: '手動' }, mapping.announcementAutomated));
+        if (mapping.publishChannelDifferent) card.append(selectField('公開先への配信', `resubmit-publish-automation-${index}`, { yes: '自動', no: '手動' }, mapping.publishAutomated));
         mappingField.append(card);
     });
     fields.append(
@@ -334,6 +361,7 @@ async function resubmitApplication(event) {
         const channelMappings = managedApplication.channelMappings.map((mapping, index) => ({
             channelId: mapping.channelId, publishChannelId: mapping.publishChannelId,
             announcementAutomated: mapping.announcement ? value(`resubmit-announcement-${index}`) : 'not_applicable',
+            publishAutomated: mapping.publishChannelDifferent ? value(`resubmit-publish-automation-${index}`) : 'not_applicable',
             deliveryTypes: checkedValues(`resubmit-delivery-${index}`),
         }));
         const result = await api(`/api/reuse/manage?token=${encodeURIComponent(managedToken)}`, { method: 'PUT', body: JSON.stringify({
