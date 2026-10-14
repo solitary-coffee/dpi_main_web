@@ -40,10 +40,15 @@
                     <label class="wide-field">名前またはID
                         <input id="query" name="q" type="search" maxlength="120" placeholder="サーバー名・チャンネル名・Discord ID">
                     </label>
-                    <label>配信名
-                        <input id="delivery" name="delivery" type="search" maxlength="100" list="delivery-options" placeholder="例：地震情報">
+                    <div class="delivery-field">
+                        <span class="field-label">配信名（複数可）</span>
+                        <div id="selected-deliveries" class="selected-deliveries" aria-live="polite"></div>
+                        <div class="delivery-input-row">
+                            <input id="delivery-input" type="search" maxlength="100" list="delivery-options" placeholder="例：地震情報">
+                            <button id="add-delivery" type="button">追加</button>
+                        </div>
                         <datalist id="delivery-options"></datalist>
-                    </label>
+                    </div>
                     <label>チャンネル種別
                         <select id="announcement" name="announcement">
                             <option value="all">すべて</option>
@@ -76,6 +81,11 @@
             <div id="status" class="status" role="status" aria-live="polite"></div>
             <section id="source-status" class="source-status" aria-label="データ取得状況"></section>
             <section id="summary" class="summary" aria-label="検索結果概要"></section>
+            <section class="result-actions" aria-label="Discord情報の一括取得">
+                <button id="bulk-discord-button" type="button" disabled>表示中のサーバー・チャンネル情報を一括取得</button>
+                <span id="bulk-discord-progress">検索後に利用できます。</span>
+                <p>種別をまとめて再判定する場合は、チャンネル種別を「すべて」にして検索してから実行してください。</p>
+            </section>
             <section id="results" class="results" aria-label="検索結果">
                 <div class="empty-state"><h2>検索条件を入力してください</h2><p>サーバー名やID、配信名から配信先を確認できます。</p></div>
             </section>
