@@ -66,11 +66,22 @@ test('名前・ID・配信名・アナウンス種別で絞り込める', () => 
     assert.equal(directoryTest.matchesFilters(item, { q: '', delivery: '', announcement: 'no' }), false);
 });
 
+test('申請済み・未申請で絞り込み、申請状況未取得を未申請扱いしない', () => {
+    const applied = { deliveryTypes: [], announcement: false, applicationChecked: true, application: { status: 'approved' } };
+    const notApplied = { deliveryTypes: [], announcement: false, applicationChecked: true, application: null };
+    const unknown = { deliveryTypes: [], announcement: false, applicationChecked: false, application: null };
+    assert.equal(directoryTest.matchesFilters(applied, { q: '', delivery: '', announcement: 'all', application: 'yes' }), true);
+    assert.equal(directoryTest.matchesFilters(applied, { q: '', delivery: '', announcement: 'all', application: 'no' }), false);
+    assert.equal(directoryTest.matchesFilters(notApplied, { q: '', delivery: '', announcement: 'all', application: 'no' }), true);
+    assert.equal(directoryTest.matchesFilters(unknown, { q: '', delivery: '', announcement: 'all', application: 'no' }), false);
+});
+
 test('最大件数は未指定またはallなら全件、数値なら上限内に丸める', () => {
     assert.equal(directoryTest.parseFilters(new URLSearchParams()).limit, null);
     assert.equal(directoryTest.parseFilters(new URLSearchParams({ limit: 'all' })).limit, null);
     assert.equal(directoryTest.parseFilters(new URLSearchParams({ limit: '500' })).limit, 500);
     assert.equal(directoryTest.parseFilters(new URLSearchParams({ limit: '5000' })).limit, 1000);
+    assert.equal(directoryTest.parseFilters(new URLSearchParams({ application: 'yes' })).application, 'yes');
 });
 
 test('Discord権限上書きの主要権限を日本語へ変換する', () => {

@@ -127,7 +127,9 @@ async function searchDirectory(url, env, admin) {
         searchLocalApplications(env, filters),
         searchAwsDirectory(env, filters),
     ]);
+    const applicationChecked = localResult.status.state === 'ready';
     const matchedItems = mergeDirectoryItems([...localResult.items, ...awsResult.items])
+        .map((item) => ({ ...item, applicationChecked }))
         .filter((item) => matchesFilters(item, filters));
     const items = filters.limit == null ? matchedItems : matchedItems.slice(0, filters.limit);
 
@@ -140,6 +142,7 @@ async function searchDirectory(url, env, admin) {
             resultCount: items.length,
             serverCount: new Set(items.map((item) => item.serverId).filter(Boolean)).size,
             channelCount: new Set(items.map((item) => item.channelId).filter(Boolean)).size,
+            applicationCount: items.filter((item) => item.application).length,
         },
         sources: {
             applications: localResult.status,
@@ -152,12 +155,13 @@ function parseFilters(params) {
     const q = cleanString(params.get('q')).slice(0, 120);
     const delivery = cleanString(params.get('delivery')).slice(0, 100);
     const announcement = ['yes', 'no'].includes(params.get('announcement')) ? params.get('announcement') : 'all';
+    const application = ['yes', 'no'].includes(params.get('application')) ? params.get('application') : 'all';
     const rawLimit = cleanString(params.get('limit')).toLowerCase();
     const requestedLimit = Number(rawLimit);
     const limit = !rawLimit || rawLimit === 'all'
         ? null
         : Number.isInteger(requestedLimit) ? Math.min(Math.max(requestedLimit, 1), MAX_LIMITED_RESULTS) : null;
-    return { q, delivery, announcement, limit };
+    return { q, delivery, announcement, application, limit };
 }
 
 async function searchLocalApplications(env, filters) {
@@ -172,8 +176,7 @@ async function searchLocalApplications(env, filters) {
              FROM reuse_applications
              ORDER BY updated_at DESC`,
         ).all();
-        const items = (result.results || []).flatMap(applicationDirectoryItems)
-            .filter((item) => matchesFilters(item, filters));
+        const items = (result.results || []).flatMap(applicationDirectoryItems);
         return { status: { state: 'ready', count: items.length }, items };
     } catch (error) {
         console.error('Local channel directory search failed', { name: error?.name, message: error?.message });
@@ -235,7 +238,8 @@ async function searchAwsDirectory(env, filters) {
     target.searchParams.set('q', filters.q);
     target.searchParams.set('delivery', filters.delivery);
     target.searchParams.set('announcement', filters.announcement);
-    target.searchParams.set('limit', filters.limit == null ? 'all' : String(filters.limit));
+    const requiresCompleteCandidates = filters.announcement !== 'all' || filters.application !== 'all';
+    target.searchParams.set('limit', requiresCompleteCandidates || filters.limit == null ? 'all' : String(filters.limit));
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 8_000);
@@ -313,6 +317,8 @@ function matchesFilters(item, filters) {
     if (filters.delivery && !item.deliveryTypes.some((value) => normalized(value).includes(normalized(filters.delivery)))) return false;
     if (filters.announcement === 'yes' && item.announcement !== true) return false;
     if (filters.announcement === 'no' && item.announcement !== false) return false;
+    if (filters.application === 'yes' && !item.application) return false;
+    if (filters.application === 'no' && (!item.applicationChecked || item.application)) return false;
     if (!filters.q) return true;
     const haystack = [item.serverName, item.serverId, item.channelName, item.channelId, ...item.deliveryTypes]
         .map(normalized).join('\n');
