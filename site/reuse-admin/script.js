@@ -1,5 +1,4 @@
 const statusLabels = Object.freeze({ pending: '審査中', approved: '許可', rejected: '却下', changes_requested: '不備・再申請待ち' });
-const deliveryLabels = Object.freeze({ eew: '緊急地震速報', earthquake: '地震情報', tsunami: '津波情報', weather: '気象情報', volcano: '火山情報', other: 'その他の配信' });
 const choiceLabels = Object.freeze({ public: '公開', private: '非公開・招待制', role_limited: '指定ロールのみ', yes: '自動', no: '手動', not_applicable: '該当なし', unchanged: 'そのまま転載', edited: '編集・加工', other: 'その他' });
 
 let selectedStatus = 'all';
@@ -51,7 +50,9 @@ function renderList(applications) {
         const button = element('button', `application-item ${app.id === selectedId ? 'active' : ''}`);
         button.type = 'button';
         const badge = element('span', `badge ${app.status}`, app.statusLabel);
-        button.append(badge, element('h3', '', `${app.guildName} / #${app.channelName}`), element('p', '', `${app.reference}・第${app.revision}版`), element('p', '', `${app.discordUsername}・${formatDate(app.updatedAt)}`));
+        const mappings = app.channelMappings || [];
+        const channelSummary = mappings.length > 1 ? `#${mappings[0].channelName} ほか${mappings.length - 1}件` : `#${app.channelName}`;
+        button.append(badge, element('h3', '', `${app.guildName} / ${channelSummary}`), element('p', '', `${app.reference}・第${app.revision}版`), element('p', '', `${app.discordUsername}・${formatDate(app.updatedAt)}`));
         button.addEventListener('click', () => loadDetail(app.id));
         container.append(button);
     }
@@ -77,9 +78,8 @@ function renderDetail(app, events) {
     container.append(head);
     const details = [
         ['Discord', `${app.discordUsername} (${app.discordUserId})`],
-        ['サーバー', `${app.guildName} (${app.guildId})`], ['チャンネル', `#${app.channelName} (${app.channelId})`],
-        ['チャンネル種別', app.channelType === 5 ? 'アナウンスチャンネル' : 'テキストチャンネル'],
-        ['二次利用する配信', app.deliveryTypes.map((id) => deliveryLabels[id] || id).join('、')],
+        ['サーバー', `${app.guildName} (${app.guildId})`],
+        ['チャンネル別利用設定', formatChannelMappings(app)],
         ['サーバー公開範囲', choiceLabels[app.serverPublic] || app.serverPublic],
         ['チャンネル公開範囲', choiceLabels[app.channelVisibility] || app.channelVisibility],
         ['アナウンス公開', choiceLabels[app.announcementAutomated] || app.announcementAutomated],
@@ -91,6 +91,21 @@ function renderDetail(app, events) {
     const list = document.createElement('dl'); list.className = 'detail-grid';
     for (const [label, value] of details) list.append(element('dt', '', label), element('dd', '', value));
     container.append(list, reviewBox(app), eventHistory(events));
+}
+
+function formatChannelMappings(app) {
+    const mappings = app.channelMappings || [];
+    if (!mappings.length) return '設定なし';
+    return mappings.map((mapping, index) => {
+        const lines = [
+            `設定${index + 1}: #${mapping.channelName} (${mapping.channelId})`,
+            `種別: ${mapping.announcement ? 'アナウンスチャンネル' : 'テキストチャンネル'}`,
+            `配信: ${mapping.deliveryTypes.join('、')}`,
+        ];
+        if (mapping.announcement) lines.push(`公開操作: ${choiceLabels[mapping.announcementAutomated] || mapping.announcementAutomated}`);
+        if (mapping.publishChannelDifferent) lines.push(`公開先: #${mapping.publishChannelName} (${mapping.publishChannelId})`);
+        return lines.join('\n');
+    }).join('\n\n');
 }
 
 function reviewBox(app) {

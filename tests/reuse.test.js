@@ -13,13 +13,14 @@ test('Discordサーバーは所有者・管理者・サーバー管理権限だ�
 test('二次利用申請の選択肢・同意・入力長を検証する', () => {
     const valid = reuseTest.validateEditableApplicationInput({
         channelType: 5,
-        deliveryTypes: ['eew', 'earthquake'],
+        deliveryTypes: ['緊急地震速報_警報', '地震情報'],
         serverPublic: 'public',
         channelVisibility: 'role_limited',
         announcementAutomated: 'yes',
         reuseMethod: 'edited',
         reuseMethodOther: '',
         email: 'USER@example.com',
+        emailConfirm: 'user@example.com',
         purpose: '防災情報を参加者へ迅速に共有するためです。',
         destinationUrl: 'https://example.com/server',
         notes: '出典を明記します。',
@@ -27,19 +28,29 @@ test('二次利用申請の選択肢・同意・入力長を検証する', () =>
         authorized: true,
     });
     assert.equal(valid.email, 'user@example.com');
-    assert.deepEqual(valid.deliveryTypes, ['eew', 'earthquake']);
+    assert.deepEqual(valid.deliveryTypes, ['緊急地震速報_警報', '地震情報']);
 
     assert.throws(
         () => reuseTest.validateEditableApplicationInput({
             channelType: 0,
-            deliveryTypes: ['eew'],
+            deliveryTypes: ['緊急地震速報_警報'],
             serverPublic: 'public',
             channelVisibility: 'public',
             announcementAutomated: 'yes',
-            reuseMethod: 'unchanged', email: 'user@example.com',
+            reuseMethod: 'unchanged', email: 'user@example.com', emailConfirm: 'user@example.com',
             purpose: '十分な長さの利用目的を記載します。', consent: true, authorized: true,
         }),
         (error) => error?.code === 'invalid_announcement_setting',
+    );
+
+    assert.throws(
+        () => reuseTest.validateEditableApplicationInput({
+            channelType: 0, deliveryTypes: ['地震情報'], serverPublic: 'private',
+            channelVisibility: 'public', announcementAutomated: 'not_applicable', reuseMethod: 'unchanged',
+            email: 'user@example.com', emailConfirm: 'different@example.com',
+            purpose: '十分な長さの利用目的を記載します。', consent: true, authorized: true,
+        }),
+        (error) => error?.code === 'email_mismatch',
     );
 });
 
@@ -48,12 +59,15 @@ test('公開用の申請情報ではメールアドレスをマスクする', ()
         id: 'id', reference: 'REUSE-1', status: 'pending', revision: 1,
         discord_username: 'User', guild_id: '123', guild_name: 'Guild',
         channel_id: '456', channel_name: 'news', channel_type: 5,
-        delivery_types: '["eew"]', server_public: 'public',
+        delivery_types: '["地震情報"]',
+        channel_mappings: '[{"channelId":"456","channelName":"news","channelType":5,"announcement":true,"announcementAutomated":"yes","publishChannelDifferent":true,"publishChannelId":"789","publishChannelName":"public-news","publishChannelType":0,"deliveryTypes":["地震情報"]}]',
+        server_public: 'public',
         channel_visibility: 'public', announcement_automated: 'yes',
         reuse_method: 'unchanged', contact_email: 'person@example.com',
         purpose: 'purpose', created_at: '2026-10-14T00:00:00Z', updated_at: '2026-10-14T00:00:00Z',
     }, false);
     assert.equal(serialized.contactEmail, 'p***@example.com');
+    assert.equal(serialized.channelMappings[0].publishChannelName, 'public-news');
     assert.equal(Object.hasOwn(serialized, 'discordUserId'), false);
 });
 
@@ -68,6 +82,9 @@ test('申請画面と管理画面は安全なDOM APIで表示し、審査操作�
     assert.match(adminScript, /changes_requested/u);
     assert.match(adminScript, /approved/u);
     assert.match(adminScript, /rejected/u);
+    assert.match(publicHtml, /id="channel-mappings"/u);
+    assert.match(publicHtml, /id="email-confirm"/u);
+    assert.match(publicHtml, /notice@dpi-bot\.com/u);
     assert.match(adminHtml, /Cloudflare|二次利用申請管理/u);
     for (const html of [publicHtml, adminHtml]) {
         assert.match(html, /class="page-container"/u);
@@ -89,6 +106,11 @@ test('既存D1 bindingを二次利用申請でも利用でき、設定状態を�
     const body = await response.json();
 
     assert.equal(body.configured, true);
+    assert.ok(body.deliveryTypes.length > 20);
+    const officialInfo = await readFile(new URL('../site/info/index.html', import.meta.url), 'utf8');
+    for (const delivery of body.deliveryTypes) {
+        assert.ok(officialInfo.includes(delivery.applicationName), `${delivery.applicationName} must come from the official delivery page`);
+    }
     assert.deepEqual(body.configuration, {
         database: true,
         discord: true,
@@ -110,9 +132,11 @@ test('未ログインのセッション確認は通常応答として扱う', as
 
 test('二次利用申請のD1 migrationとDiscord OAuth設定を同梱する', async () => {
     const migration = await readFile(new URL('../migrations/0004_reuse_applications.sql', import.meta.url), 'utf8');
+    const mappingMigration = await readFile(new URL('../migrations/0005_reuse_channel_mappings.sql', import.meta.url), 'utf8');
     const config = JSON.parse(await readFile(new URL('../wrangler.jsonc', import.meta.url), 'utf8'));
     assert.match(migration, /CREATE TABLE IF NOT EXISTS reuse_applications/u);
     assert.match(migration, /CREATE TABLE IF NOT EXISTS reuse_application_events/u);
+    assert.match(mappingMigration, /ADD COLUMN channel_mappings/u);
     assert.equal(config.d1_databases.find((item) => item.binding === 'REUSE_DB').database_name, 'dpi-newsletter');
     assert.equal(config.vars.DISCORD_CLIENT_ID, '943752169029505114');
     for (const secret of ['DISCORD_CLIENT_SECRET', 'DISCORD_BOT_TOKEN', 'REUSE_SESSION_SECRET']) {

@@ -59,34 +59,23 @@
                             <select id="guild" required><option value="">選択してください</option></select>
                         </label>
                         <p class="help">Discord上で「サーバー管理」または「管理者」権限を持つサーバーが対象です。</p>
-                        <label>利用するチャンネル
-                            <select id="channel" required disabled><option value="">先にサーバーを選択してください</option></select>
-                        </label>
                         <p id="channel-help" class="help">DPI-Botが確認できるテキスト／アナウンスチャンネルを表示します。</p>
-                    </fieldset>
-
-                    <fieldset>
-                        <legend>二次利用する配信</legend>
-                        <div id="delivery-types" class="check-grid"></div>
+                        <div id="channel-mappings" class="channel-mappings"></div>
+                        <button id="add-channel-mapping" type="button" class="secondary-btn" disabled>利用チャンネルと配信を追加</button>
+                        <p class="help">チャンネルごとに、二次利用する配信を複数選択できます。最大10件まで追加できます。</p>
                     </fieldset>
 
                     <fieldset>
                         <legend>公開範囲と運用方法</legend>
                         <div class="choice-group">
                             <span class="field-label">サーバーは誰でも参加できますか？</span>
-                            <label><input type="radio" name="server-public" value="public" required> 公開サーバー（誰でも参加可能）</label>
-                            <label><input type="radio" name="server-public" value="private"> 非公開・招待制サーバー</label>
+                            <label><input type="radio" name="server-public" value="public" required> 公開サーバー（宣伝サイトなどに招待リンクを公開している場合はこちら）</label>
+                            <label><input type="radio" name="server-public" value="private"> 非公開・招待制サーバー（完全内部利用やDMなどで招待する場合はこちら）</label>
                         </div>
                         <div class="choice-group">
                             <span class="field-label">利用チャンネルは誰でも閲覧できますか？</span>
-                            <label><input type="radio" name="channel-visibility" value="public" required> サーバー参加者なら誰でも閲覧可能</label>
+                            <label><input type="radio" name="channel-visibility" value="public" required> サーバー参加者なら誰でも閲覧可能（メンバーロール付与後に閲覧できる場合を含みます）</label>
                             <label><input type="radio" name="channel-visibility" value="role_limited"> 指定ロールのみ閲覧可能</label>
-                        </div>
-                        <div id="announcement-group" class="choice-group">
-                            <span class="field-label">アナウンスチャンネルの「公開」は自動化していますか？</span>
-                            <label><input type="radio" name="announcement-automated" value="yes"> 自動化している</label>
-                            <label><input type="radio" name="announcement-automated" value="no"> 手動で公開する</label>
-                            <label><input type="radio" name="announcement-automated" value="not_applicable" checked> アナウンスチャンネルではない</label>
                         </div>
                         <div class="choice-group">
                             <span class="field-label">配信内容の利用方法</span>
@@ -104,7 +93,10 @@
                         <label>結果通知先メールアドレス
                             <input id="email" type="email" autocomplete="email" maxlength="254" required>
                         </label>
-                        <p class="help">受付完了、許可、却下、不備による再申請の案内を送信します。</p>
+                        <label>結果通知先メールアドレス（確認）
+                            <input id="email-confirm" type="email" autocomplete="email" maxlength="254" required>
+                        </label>
+                        <p class="help">受付完了、許可、却下、不備による再申請の案内は notice@dpi-bot.com から送信します。受信許可設定を行い、迷惑メールフォルダもご確認ください。</p>
                         <label>利用目的
                             <textarea id="purpose" rows="5" minlength="10" maxlength="2000" required placeholder="どのような利用者へ、何の目的で配信するかを記載してください。"></textarea>
                         </label>
