@@ -82,7 +82,6 @@ function renderDetail(app, events) {
         ['チャンネル別利用設定', formatChannelMappings(app)],
         ['サーバー公開範囲', choiceLabels[app.serverPublic] || app.serverPublic],
         ['チャンネル公開範囲', choiceLabels[app.channelVisibility] || app.channelVisibility],
-        ['アナウンス公開', choiceLabels[app.announcementAutomated] || app.announcementAutomated],
         ['利用方法', `${choiceLabels[app.reuseMethod] || app.reuseMethod}${app.reuseMethodOther ? `: ${app.reuseMethodOther}` : ''}`],
         ['結果通知先', app.contactEmail], ['利用目的', app.purpose],
         ['サーバー案内・公開先', app.destinationUrl || '未入力'], ['補足事項', app.notes || '未入力'],
@@ -90,7 +89,7 @@ function renderDetail(app, events) {
     ];
     const list = document.createElement('dl'); list.className = 'detail-grid';
     for (const [label, value] of details) list.append(element('dt', '', label), element('dd', '', value));
-    container.append(list, reviewBox(app), eventHistory(events));
+    container.append(list, messageBox(app), reviewBox(app), eventHistory(events));
 }
 
 function formatChannelMappings(app) {
@@ -103,9 +102,64 @@ function formatChannelMappings(app) {
             `配信: ${mapping.deliveryTypes.join('、')}`,
         ];
         if (mapping.announcement) lines.push(`公開操作: ${choiceLabels[mapping.announcementAutomated] || mapping.announcementAutomated}`);
-        if (mapping.publishChannelDifferent) lines.push(`公開先: #${mapping.publishChannelName} (${mapping.publishChannelId})`);
+        if (mapping.publishChannelDifferent) {
+            lines.push(`公開先: #${mapping.publishChannelName} (${mapping.publishChannelId})`);
+            lines.push(`公開先への転送: ${choiceLabels[mapping.transferAutomated] || mapping.transferAutomated}`);
+            if (mapping.publishChannelType === 5) lines.push(`公開先での公開: ${choiceLabels[mapping.destinationPublishAutomated] || mapping.destinationPublishAutomated}`);
+        }
         return lines.join('\n');
     }).join('\n\n');
+}
+
+function messageBox(app) {
+    const box = element('section', 'message-box');
+    box.append(element('h3', '', '申請者へ個別メールを送信'));
+    const category = selectControl('連絡種別', 'admin-mail-category', {
+        inquiry: '不明点の確認', correction: '不備の案内', other: 'その他の連絡',
+    });
+    const subject = inputControl('件名', 'admin-mail-subject', `二次利用申請について（${app.reference}）`, 150);
+    const bodyLabel = document.createElement('label');
+    bodyLabel.append(document.createTextNode('本文'));
+    const body = document.createElement('textarea');
+    body.id = 'admin-mail-message'; body.maxLength = 5000;
+    body.placeholder = '確認したい内容や修正してほしい点を入力してください。';
+    bodyLabel.append(body);
+    const send = element('button', 'mail-send', 'この内容でメールを送信'); send.type = 'button';
+    send.addEventListener('click', () => sendMessage(app, send));
+    box.append(category, subject, bodyLabel, send, element('p', 'box-help', `送信先: ${app.contactEmail}／申請状態は変更されません。送信内容は変更履歴へ保存されます。`));
+    return box;
+}
+
+async function sendMessage(app, button) {
+    const category = document.getElementById('admin-mail-category').value;
+    const subject = document.getElementById('admin-mail-subject').value.trim();
+    const message = document.getElementById('admin-mail-message').value.trim();
+    if (!subject || !message) return setStatus('メールの件名と本文を入力してください。', 'error');
+    if (!window.confirm(`${app.contactEmail}へ個別メールを送信しますか？`)) return;
+    button.disabled = true;
+    setStatus('申請者へメールを送信しています…', 'info');
+    try {
+        await api(`/site/reuse-admin/api/applications/${app.id}/message`, {
+            method: 'POST', body: JSON.stringify({ category, subject, message }),
+        });
+        setStatus('申請者へメールを送信しました。', 'success');
+        await loadDetail(app.id);
+    } catch (error) { setStatus(error.message, 'error'); button.disabled = false; }
+}
+
+function selectControl(labelText, id, choices) {
+    const label = document.createElement('label'); label.append(document.createTextNode(labelText));
+    const select = document.createElement('select'); select.id = id;
+    for (const [value, text] of Object.entries(choices)) {
+        const option = document.createElement('option'); option.value = value; option.textContent = text; select.append(option);
+    }
+    label.append(select); return label;
+}
+
+function inputControl(labelText, id, initialValue, maxLength) {
+    const label = document.createElement('label'); label.append(document.createTextNode(labelText));
+    const input = document.createElement('input'); input.id = id; input.type = 'text'; input.value = initialValue; input.maxLength = maxLength;
+    label.append(input); return label;
 }
 
 function reviewBox(app) {
@@ -143,7 +197,7 @@ function eventHistory(events) {
     const section = element('section', 'events'); section.append(element('h3', '', '変更履歴'));
     for (const event of events) {
         const item = element('article', 'event');
-        item.append(element('strong', '', statusLabels[event.event_type] || ({ submitted: '初回申請', resubmitted: '再申請' }[event.event_type] || event.event_type)), element('p', '', `${event.actor}${event.message ? `: ${event.message}` : ''}`), element('time', '', formatDate(event.created_at)));
+        item.append(element('strong', '', statusLabels[event.event_type] || ({ submitted: '初回申請', resubmitted: '再申請', admin_message_sent: '個別メール送信' }[event.event_type] || event.event_type)), element('p', '', `${event.actor}${event.message ? `: ${event.message}` : ''}`), element('time', '', formatDate(event.created_at)));
         section.append(item);
     }
     return section;

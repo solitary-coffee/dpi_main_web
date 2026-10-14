@@ -1,9 +1,6 @@
 // 公式サイト「配信内容の紹介」に掲載している申請名を申請画面でも共通利用する。
 // status: active=配信中, adjusting=調整中, ending=終了予定, preparing=配信準備中
 export const DELIVERY_CATALOG = Object.freeze([
-    ['緊急地震速報_警報', '緊急地震速報（警報）', 'active'],
-    ['緊急地震速報', '緊急地震速報（地震動予報）', 'active'],
-    ['EEW震度変化', '緊急地震速報（地震動予報）[震度変化]', 'active'],
     ['地震情報', '地震情報', 'active'],
     ['津波情報', '津波情報', 'active'],
     ['Hi-net_USGS', '海外・国内地震情報', 'adjusting'],

@@ -12,6 +12,7 @@ let deliveryLabels = Object.create(null);
 let managedToken = '';
 let managedApplication = null;
 let mappingCounter = 0;
+let pendingSubmission = null;
 
 document.addEventListener('DOMContentLoaded', initialize);
 
@@ -40,6 +41,9 @@ function bindEvents() {
     document.getElementById('application-form').addEventListener('submit', submitApplication);
     document.getElementById('logout-btn').addEventListener('click', logout);
     document.getElementById('resubmit-form').addEventListener('submit', resubmitApplication);
+    document.getElementById('confirmation-back').addEventListener('click', closeConfirmation);
+    document.getElementById('confirmation-submit').addEventListener('click', confirmSubmission);
+    document.getElementById('confirmation-dialog').addEventListener('close', () => { pendingSubmission = null; });
     for (const input of document.querySelectorAll('input[name="reuse-method"]')) input.addEventListener('change', toggleReuseOther);
 }
 
@@ -133,7 +137,8 @@ function addChannelMapping(initial = null) {
     for (const [valueText, labelText] of [['yes', 'はい'], ['no', 'いいえ']]) {
         const label = document.createElement('label');
         const input = document.createElement('input');
-        input.type = 'radio'; input.name = announcementName; input.value = valueText; input.disabled = true;
+        input.type = 'radio'; input.name = announcementName; input.value = valueText;
+        input.addEventListener('change', () => updateAnnouncementControls(card));
         label.append(input, document.createTextNode(labelText)); announcementGroup.append(label);
     }
 
@@ -160,11 +165,33 @@ function addChannelMapping(initial = null) {
     publishSelect.append(option('', '選択してください'));
     for (const channel of currentChannels) publishSelect.append(option(channel.id, `#${channel.name}${channel.announcement ? '（アナウンス）' : ''}`, channel.id === initial?.publishChannelId));
     publishLabel.append(publishSelect);
+    const transferAutomation = element('div', `choice-group transfer-automation ${different.checked ? '' : 'hidden'}`);
+    transferAutomation.append(element('span', 'field-label', '利用チャンネルから公開先チャンネルへの転送は自動ですか？'));
+    const transferAutomationName = `mapping-transfer-automation-${index}`;
+    for (const [valueText, labelText] of [['yes', '自動化している'], ['no', '手動で配信する']]) {
+        const label = document.createElement('label');
+        const input = document.createElement('input');
+        input.type = 'radio'; input.name = transferAutomationName; input.value = valueText;
+        input.checked = initial?.transferAutomated === valueText;
+        label.append(input, document.createTextNode(labelText)); transferAutomation.append(label);
+    }
+    const destinationAutomation = element('div', 'choice-group destination-automation hidden');
+    destinationAutomation.append(element('span', 'field-label', '公開先アナウンスチャンネルの「公開」は自動化していますか？'));
+    const destinationAutomationName = `mapping-destination-automation-${index}`;
+    for (const [valueText, labelText] of [['yes', '自動化している'], ['no', '手動で公開する']]) {
+        const label = document.createElement('label');
+        const input = document.createElement('input');
+        input.type = 'radio'; input.name = destinationAutomationName; input.value = valueText;
+        input.checked = initial?.destinationPublishAutomated === valueText;
+        label.append(input, document.createTextNode(labelText)); destinationAutomation.append(label);
+    }
     different.addEventListener('change', () => {
         publishLabel.classList.toggle('hidden', !different.checked);
         publishSelect.required = different.checked;
         if (!different.checked) publishSelect.value = '';
+        updatePublishControls(card);
     });
+    publishSelect.addEventListener('change', () => updatePublishControls(card));
     publishSelect.required = different.checked;
 
     const deliveryField = document.createElement('fieldset');
@@ -176,10 +203,11 @@ function addChannelMapping(initial = null) {
     sourceLink.href = '../info/index.html'; sourceLink.target = '_blank'; sourceLink.rel = 'noopener noreferrer'; sourceLink.textContent = '公式サイトの配信内容一覧';
     source.append(document.createTextNode('選択肢は '), sourceLink, document.createTextNode(' の申請名を使用しています。'));
 
-    card.append(head, channelLabel, announcementGroup, automationGroup, differentLabel, publishLabel, deliveryField, source);
+    card.append(head, channelLabel, announcementGroup, automationGroup, differentLabel, publishLabel, transferAutomation, destinationAutomation, deliveryField, source);
     channelSelect.addEventListener('change', () => updateMappingChannel(card));
     container.append(card);
     updateMappingChannel(card);
+    updatePublishControls(card);
     renumberMappings();
 }
 
@@ -200,9 +228,27 @@ function updateMappingChannel(card) {
     const announcement = channel?.announcement === true;
     const announcementInput = card.querySelector(`input[value="${announcement ? 'yes' : 'no'}"][name^="mapping-announcement-"]`);
     if (announcementInput) announcementInput.checked = true;
+    updateAnnouncementControls(card);
+}
+
+function updateAnnouncementControls(card) {
+    const announcement = card.querySelector('input[name^="mapping-announcement-"]:checked')?.value === 'yes';
     const automation = card.querySelector('.mapping-automation');
     automation.classList.toggle('hidden', !announcement);
     if (announcement && !automation.querySelector('input:checked')) automation.querySelector('input[value="no"]').checked = true;
+}
+
+function updatePublishControls(card) {
+    const different = card.querySelector('.publish-different input').checked;
+    const destination = currentChannels.find((item) => item.id === card.querySelector('.publish-channel select').value);
+    const transfer = card.querySelector('.transfer-automation');
+    const destinationAutomation = card.querySelector('.destination-automation');
+    transfer.classList.toggle('hidden', !different);
+    destinationAutomation.classList.toggle('hidden', !different || destination?.announcement !== true);
+    if (different && !transfer.querySelector('input:checked')) transfer.querySelector('input[value="no"]').checked = true;
+    if (different && destination?.announcement === true && !destinationAutomation.querySelector('input:checked')) {
+        destinationAutomation.querySelector('input[value="no"]').checked = true;
+    }
 }
 
 function renumberMappings() {
@@ -220,14 +266,24 @@ function collectChannelMappings() {
         const different = card.querySelector('.publish-different input').checked;
         const publishChannelId = card.querySelector('.publish-channel select').value;
         if (different && !publishChannelId) throw new Error('公開先チャンネルを選択してください。');
+        const announcement = card.querySelector('input[name^="mapping-announcement-"]:checked')?.value === 'yes';
+        const publishChannel = currentChannels.find((item) => item.id === publishChannelId);
+        const transferAutomated = different ? (card.querySelector('.transfer-automation input:checked')?.value || '') : 'not_applicable';
+        const destinationPublishAutomated = different && publishChannel?.announcement
+            ? (card.querySelector('.destination-automation input:checked')?.value || '')
+            : 'not_applicable';
+        if (different && !transferAutomated) throw new Error('公開先チャンネルへの転送が自動か手動かを選択してください。');
+        if (different && publishChannel?.announcement && !destinationPublishAutomated) throw new Error('公開先での公開操作が自動か手動かを選択してください。');
         return {
             channelId: channel.id,
-            announcement: channel.announcement,
-            announcementAutomated: channel.announcement
+            announcement,
+            announcementAutomated: announcement
                 ? (card.querySelector('.mapping-automation input:checked')?.value || '')
                 : 'not_applicable',
             publishChannelDifferent: different,
             publishChannelId: different ? publishChannelId : '',
+            transferAutomated,
+            destinationPublishAutomated,
             deliveryTypes,
         };
     });
@@ -239,24 +295,121 @@ function toggleReuseOther() {
     document.getElementById('reuse-other').required = other;
 }
 
-async function submitApplication(event) {
+function submitApplication(event) {
     event.preventDefault();
-    const button = document.getElementById('submit-btn');
-    button.disabled = true;
-    setStatus('申請を送信しています…', 'info');
     try {
-        const result = await api('/api/reuse/applications', {
-            method: 'POST', headers: { 'X-Reuse-CSRF': session.csrfToken }, body: JSON.stringify(applicationPayload()),
-        });
-        const url = new URL(location.href); url.search = ''; url.searchParams.set('token', result.manageToken); history.replaceState(null, '', url);
-        document.getElementById('application-panel').classList.add('hidden');
-        document.getElementById('result-panel').classList.remove('hidden');
-        const box = element('div', 'success-box');
-        box.append(element('strong', '', '申請を受け付けました'), element('p', '', `受付番号: ${result.reference}`), element('p', '', result.emailSent
-            ? '確認メールを送信しました。審査結果も同じメールアドレスへお送りします。'
-            : '確認メールを送信できませんでした。この申請状況ページを保存し、必要に応じてsupport@dpi-bot.comへご連絡ください。'));
-        document.getElementById('application-status').replaceChildren(box); setStatus('', '');
+        openConfirmation(applicationPayload(), 'create');
+    } catch (error) { setStatus(error.message, 'error'); }
+}
+
+function openConfirmation(payload, mode) {
+    const review = reviewSubmission(payload, mode);
+    pendingSubmission = { payload, mode };
+    const errors = document.getElementById('confirmation-errors');
+    const warnings = document.getElementById('confirmation-warnings');
+    errors.textContent = review.errors.map((text) => `・${text}`).join('\n');
+    warnings.textContent = review.warnings.map((text) => `・${text}`).join('\n');
+    errors.classList.toggle('hidden', review.errors.length === 0);
+    warnings.classList.toggle('hidden', review.warnings.length === 0);
+    const details = document.getElementById('confirmation-details'); details.replaceChildren();
+    for (const [label, text] of review.details) details.append(element('dt', '', label), element('dd', '', text));
+    const submit = document.getElementById('confirmation-submit');
+    submit.disabled = review.errors.length > 0;
+    submit.textContent = mode === 'create' ? '確認して申請を送信' : '確認して再申請を送信';
+    document.getElementById('confirmation-dialog').showModal();
+}
+
+function reviewSubmission(payload, mode) {
+    const errors = [];
+    const warnings = [];
+    const email = payload.email.trim().toLowerCase();
+    const emailConfirm = payload.emailConfirm.trim().toLowerCase();
+    if (email !== emailConfirm) errors.push('メールアドレスと確認用メールアドレスが一致していません。');
+    const storedMappings = mode === 'resubmit' ? managedApplication.channelMappings : [];
+    const mappingDetails = payload.channelMappings.map((mapping, index) => {
+        const stored = storedMappings[index] || {};
+        const source = mode === 'create'
+            ? currentChannels.find((item) => item.id === mapping.channelId)
+            : { id: stored.channelId, name: stored.channelName, announcement: stored.channelType === 5 };
+        const destination = mapping.publishChannelId
+            ? (mode === 'create'
+                ? currentChannels.find((item) => item.id === mapping.publishChannelId)
+                : { id: stored.publishChannelId, name: stored.publishChannelName, announcement: stored.publishChannelType === 5 })
+            : null;
+        const declaredAnnouncement = mode === 'create' ? mapping.announcement : stored.announcement;
+        if (!source) errors.push(`利用設定${index + 1}の利用チャンネルを確認できません。`);
+        if (source && declaredAnnouncement !== source.announcement) {
+            errors.push(`利用設定${index + 1}のアナウンスチャンネル回答がDiscordのチャンネル種別と一致していません。`);
+        }
+        if (source?.announcement && !['yes', 'no'].includes(mapping.announcementAutomated)) {
+            errors.push(`利用設定${index + 1}の利用チャンネルにおける公開自動化の有無を選択してください。`);
+        }
+        if (mapping.publishChannelDifferent) {
+            if (!destination) errors.push(`利用設定${index + 1}の公開先チャンネルを確認できません。`);
+            if (!['yes', 'no'].includes(mapping.transferAutomated)) errors.push(`利用設定${index + 1}の公開先への転送方法を選択してください。`);
+            if (destination?.announcement && !['yes', 'no'].includes(mapping.destinationPublishAutomated)) {
+                errors.push(`利用設定${index + 1}の公開先における公開自動化の有無を選択してください。`);
+            }
+            if (destination && !destination.announcement) {
+                warnings.push(`利用設定${index + 1}の公開先 #${destination.name} はアナウンスチャンネルではありません。Discordの「公開」機能は利用できません。`);
+            }
+        } else if (source && !source.announcement) {
+            warnings.push(`利用設定${index + 1}は、利用チャンネル #${source.name} がアナウンスチャンネルではなく、別の公開先も指定されていません。公開方法が申請目的に合っているか確認してください。`);
+        }
+        const lines = [
+            `利用: #${source?.name || mapping.channelId}${source?.announcement ? '（アナウンス）' : '（通常チャンネル）'}`,
+            `配信: ${mapping.deliveryTypes.map((id) => deliveryLabels[id] || id).join('、')}`,
+        ];
+        if (source?.announcement) lines.push(`利用チャンネルの公開: ${choiceLabels[mapping.announcementAutomated] || '未選択'}`);
+        if (mapping.publishChannelDifferent) {
+            lines.push(`公開先: #${destination?.name || mapping.publishChannelId}${destination?.announcement ? '（アナウンス）' : '（通常チャンネル）'}`);
+            lines.push(`公開先への転送: ${choiceLabels[mapping.transferAutomated] || '未選択'}`);
+            if (destination?.announcement) lines.push(`公開先での公開: ${choiceLabels[mapping.destinationPublishAutomated] || '未選択'}`);
+        }
+        return `設定${index + 1}\n${lines.join('\n')}`;
+    }).join('\n\n');
+    return {
+        errors, warnings,
+        details: [
+            ['メールアドレス', `${payload.email}\n確認入力: ${payload.emailConfirm}\n照合結果: ${email === emailConfirm ? '一致' : '不一致'}`],
+            ['チャンネル別設定', mappingDetails],
+            ['サーバー公開範囲', choiceLabels[payload.serverPublic] || payload.serverPublic],
+            ['チャンネル公開範囲', choiceLabels[payload.channelVisibility] || payload.channelVisibility],
+            ['利用方法', choiceLabels[payload.reuseMethod] || payload.reuseMethod],
+            ['利用目的', payload.purpose],
+        ],
+    };
+}
+
+function closeConfirmation() {
+    pendingSubmission = null;
+    document.getElementById('confirmation-dialog').close();
+}
+
+async function confirmSubmission() {
+    if (!pendingSubmission) return;
+    const { payload, mode } = pendingSubmission;
+    const button = document.getElementById('confirmation-submit'); button.disabled = true;
+    setStatus(mode === 'create' ? '申請を送信しています…' : '再申請しています…', 'info');
+    try {
+        if (mode === 'create') await sendInitialApplication(payload);
+        else await sendResubmission(payload);
+        closeConfirmation();
     } catch (error) { setStatus(error.message, 'error'); button.disabled = false; }
+}
+
+async function sendInitialApplication(payload) {
+    const result = await api('/api/reuse/applications', {
+        method: 'POST', headers: { 'X-Reuse-CSRF': session.csrfToken }, body: JSON.stringify(payload),
+    });
+    const url = new URL(location.href); url.search = ''; url.searchParams.set('token', result.manageToken); history.replaceState(null, '', url);
+    document.getElementById('application-panel').classList.add('hidden');
+    document.getElementById('result-panel').classList.remove('hidden');
+    const box = element('div', 'success-box');
+    box.append(element('strong', '', '申請を受け付けました'), element('p', '', `受付番号: ${result.reference}`), element('p', '', result.emailSent
+        ? '確認メールを送信しました。審査結果も同じメールアドレスへお送りします。'
+        : '確認メールを送信できませんでした。この申請状況ページを保存し、必要に応じてsupport@dpi-bot.comへご連絡ください。'));
+    document.getElementById('application-status').replaceChildren(box); setStatus('', '');
 }
 
 function applicationPayload() {
@@ -279,6 +432,8 @@ async function loadManagedApplication() {
 
 function renderManagedApplication() {
     document.getElementById('result-panel').classList.remove('hidden');
+    document.getElementById('resubmit-form').classList.add('hidden');
+    document.getElementById('resubmit-fields').replaceChildren();
     const app = managedApplication;
     const container = document.getElementById('application-status'); container.replaceChildren();
     container.append(element('span', `status-badge ${app.status}`, app.statusLabel), element('h3', '', `${app.reference}（第${app.revision}版）`));
@@ -299,7 +454,11 @@ function formatMapping(mapping, index) {
     const parts = [`設定${index + 1}: #${mapping.channelName}${mapping.announcement ? '（アナウンス）' : ''}`];
     parts.push(`配信: ${mapping.deliveryTypes.map((id) => deliveryLabels[id] || id).join('、')}`);
     if (mapping.announcement) parts.push(`公開操作: ${choiceLabels[mapping.announcementAutomated] || mapping.announcementAutomated}`);
-    if (mapping.publishChannelDifferent) parts.push(`公開先: #${mapping.publishChannelName}`);
+    if (mapping.publishChannelDifferent) {
+        parts.push(`公開先: #${mapping.publishChannelName}`);
+        parts.push(`公開先への転送: ${choiceLabels[mapping.transferAutomated] || mapping.transferAutomated}`);
+        if (mapping.publishChannelType === 5) parts.push(`公開先での公開: ${choiceLabels[mapping.destinationPublishAutomated] || mapping.destinationPublishAutomated}`);
+    }
     return parts.join('\n');
 }
 
@@ -312,6 +471,8 @@ function renderResubmitForm(app) {
         card.append(element('h4', '', `#${mapping.channelName}${mapping.publishChannelDifferent ? ` → #${mapping.publishChannelName}` : ''}`));
         card.append(deliveryCheckboxGrid(`resubmit-delivery-${index}`, mapping.deliveryTypes));
         if (mapping.announcement) card.append(selectField('公開操作', `resubmit-announcement-${index}`, { yes: '自動', no: '手動' }, mapping.announcementAutomated));
+        if (mapping.publishChannelDifferent) card.append(selectField('公開先への転送', `resubmit-transfer-automation-${index}`, { yes: '自動', no: '手動' }, mapping.transferAutomated));
+        if (mapping.publishChannelType === 5) card.append(selectField('公開先での公開', `resubmit-destination-automation-${index}`, { yes: '自動', no: '手動' }, mapping.destinationPublishAutomated));
         mappingField.append(card);
     });
     fields.append(
@@ -328,24 +489,33 @@ function renderResubmitForm(app) {
     );
 }
 
-async function resubmitApplication(event) {
-    event.preventDefault(); const button = document.getElementById('resubmit-btn'); button.disabled = true; setStatus('再申請しています…', 'info');
+function resubmitApplication(event) {
+    event.preventDefault();
     try {
         const channelMappings = managedApplication.channelMappings.map((mapping, index) => ({
             channelId: mapping.channelId, publishChannelId: mapping.publishChannelId,
+            announcement: mapping.announcement, publishChannelDifferent: mapping.publishChannelDifferent,
             announcementAutomated: mapping.announcement ? value(`resubmit-announcement-${index}`) : 'not_applicable',
+            transferAutomated: mapping.publishChannelDifferent ? value(`resubmit-transfer-automation-${index}`) : 'not_applicable',
+            destinationPublishAutomated: mapping.publishChannelType === 5 ? value(`resubmit-destination-automation-${index}`) : 'not_applicable',
             deliveryTypes: checkedValues(`resubmit-delivery-${index}`),
         }));
-        const result = await api(`/api/reuse/manage?token=${encodeURIComponent(managedToken)}`, { method: 'PUT', body: JSON.stringify({
+        openConfirmation({
             channelMappings, serverPublic: value('resubmit-server-public'), channelVisibility: value('resubmit-channel-visibility'),
             reuseMethod: value('resubmit-method'), reuseMethodOther: value('resubmit-method-other'),
             email: value('resubmit-email'), emailConfirm: value('resubmit-email-confirm'), purpose: value('resubmit-purpose'),
             destinationUrl: value('resubmit-url'), notes: value('resubmit-notes'),
             authorized: document.getElementById('resubmit-authorized').checked, consent: document.getElementById('resubmit-consent').checked,
-        }) });
-        setStatus(result.emailSent ? `第${result.revision}版として再申請し、確認メールを送信しました。` : `第${result.revision}版として再申請しましたが、確認メールを送信できませんでした。`, result.emailSent ? 'success' : 'error');
-        await loadManagedApplication();
-    } catch (error) { setStatus(error.message, 'error'); button.disabled = false; }
+        }, 'resubmit');
+    } catch (error) { setStatus(error.message, 'error'); }
+}
+
+async function sendResubmission(payload) {
+    const result = await api(`/api/reuse/manage?token=${encodeURIComponent(managedToken)}`, {
+        method: 'PUT', body: JSON.stringify(payload),
+    });
+    setStatus(result.emailSent ? `第${result.revision}版として再申請し、確認メールを送信しました。` : `第${result.revision}版として再申請しましたが、確認メールを送信できませんでした。`, result.emailSent ? 'success' : 'error');
+    await loadManagedApplication();
 }
 
 async function logout() { await api('/api/reuse/logout', { method: 'POST', body: '{}' }); location.href = '/site/reuse/'; }

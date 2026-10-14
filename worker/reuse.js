@@ -391,6 +391,7 @@ async function resubmitApplication(request, env) {
         ...input,
         deliveryTypes: aggregateDeliveryTypes(channelMappings),
         channelType: channelMappings[0].channelType,
+        announcement: channelMappings[0].announcement,
         announcementAutomated: channelMappings[0].announcementAutomated,
     }, existing);
     const now = new Date().toISOString();
@@ -468,6 +469,12 @@ async function handleAdminApi(request, env, pathname) {
         assertSameOrigin(request);
         return reviewApplication(request, env, admin, reviewMatch[1]);
     }
+    const messageMatch = pathname.match(/^\/site\/reuse-admin\/api\/applications\/([0-9a-f-]{36})\/message$/u);
+    if (messageMatch) {
+        assertMethod(request, ['POST']);
+        assertSameOrigin(request);
+        return sendAdminApplicationMessage(request, env, admin, messageMatch[1]);
+    }
     throw new ReuseError(404, '指定された管理APIはありません。', 'not_found');
 }
 
@@ -544,6 +551,34 @@ async function reviewApplication(request, env, admin, id) {
     return jsonResponse({ success: true, status: action, statusLabel: STATUS_LABELS[action] });
 }
 
+async function sendAdminApplicationMessage(request, env, admin, id) {
+    const input = validateAdminMessageInput(await readJson(request));
+    const application = await env.REUSE_DB.prepare('SELECT * FROM reuse_applications WHERE id = ?')
+        .bind(id).first();
+    if (!application) throw new ReuseError(404, '申請が見つかりません。', 'application_not_found');
+
+    await sendAdminMessageEmail(env, application, input);
+    const now = new Date().toISOString();
+    await env.REUSE_DB.prepare(
+        `INSERT INTO reuse_application_events
+            (id, application_id, event_type, actor, message, created_at)
+         VALUES (?, ?, 'admin_message_sent', ?, ?, ?)`,
+    ).bind(
+        crypto.randomUUID(), id, admin.email,
+        `種別: ${input.categoryLabel}\n件名: ${input.subject}\n${input.message}`,
+        now,
+    ).run();
+    return jsonResponse({ success: true, sentAt: now });
+}
+
+function validateAdminMessageInput(input) {
+    const categories = Object.freeze({ inquiry: '不明点の確認', correction: '不備の案内', other: 'その他の連絡' });
+    const category = enumValue(input.category, Object.keys(categories), '連絡種別');
+    const subject = boundedText(input.subject, 1, 150, 'メール件名');
+    const message = boundedText(input.message, 1, 5_000, 'メール本文');
+    return { category, categoryLabel: categories[category], subject, message };
+}
+
 async function validateApplicationInput(input, session, env) {
     const guildId = validateSnowflake(input.guildId, '利用サーバー');
     const guild = findSessionGuild(session, guildId);
@@ -556,6 +591,7 @@ async function validateApplicationInput(input, session, env) {
             ...input,
             deliveryTypes: aggregateDeliveryTypes(channelMappings),
             channelType: channel.channelType,
+            announcement: channel.announcement,
             announcementAutomated: channel.announcementAutomated,
         }),
         guild,
@@ -579,16 +615,25 @@ function validateChannelMappings(input, availableChannels) {
         }
         usedChannels.add(channelId);
 
-        const announcement = Number(channel.type) === 5;
-        if (mapping?.announcement !== announcement) {
-            throw new ReuseError(400, 'アナウンスチャンネルの設定がDiscordと一致しません。', 'announcement_mismatch');
+        if (typeof mapping?.announcement !== 'boolean') {
+            throw new ReuseError(400, 'アナウンスチャンネルかどうかを選択してください。', 'invalid_announcement_setting');
         }
+        const actualAnnouncement = Number(channel.type) === 5;
+        if (mapping.announcement !== actualAnnouncement) {
+            throw new ReuseError(400, 'アナウンスチャンネルの回答がDiscordのチャンネル種別と一致しません。', 'announcement_mismatch');
+        }
+        const announcement = actualAnnouncement;
         const announcementAutomated = enumValue(
             mapping?.announcementAutomated,
             announcement ? ['yes', 'no'] : ['not_applicable'],
             'アナウンス公開の自動化状況',
         );
         const publishChannelDifferent = mapping?.publishChannelDifferent === true;
+        const transferAutomated = enumValue(
+            mapping?.transferAutomated,
+            publishChannelDifferent ? ['yes', 'no'] : ['not_applicable'],
+            '公開先チャンネルへの転送方法',
+        );
         let publishChannel = null;
         if (publishChannelDifferent) {
             const publishChannelId = validateSnowflake(mapping?.publishChannelId, '公開先チャンネル');
@@ -598,6 +643,12 @@ function validateChannelMappings(input, availableChannels) {
                 throw new ReuseError(400, '異なる公開先チャンネルを選択してください。', 'publish_channel_same');
             }
         }
+        const destinationIsAnnouncement = Number(publishChannel?.type) === 5;
+        const destinationPublishAutomated = enumValue(
+            mapping?.destinationPublishAutomated,
+            destinationIsAnnouncement ? ['yes', 'no'] : ['not_applicable'],
+            '公開先アナウンスチャンネルの公開方法',
+        );
         return {
             channelId,
             channelName: stringValue(channel.name).slice(0, 100),
@@ -608,6 +659,8 @@ function validateChannelMappings(input, availableChannels) {
             publishChannelId: publishChannel ? stringValue(publishChannel.id) : '',
             publishChannelName: publishChannel ? stringValue(publishChannel.name).slice(0, 100) : '',
             publishChannelType: publishChannel ? Number(publishChannel.type) : null,
+            transferAutomated,
+            destinationPublishAutomated,
             deliveryTypes: validateDeliveryTypes(mapping?.deliveryTypes),
         };
     });
@@ -629,7 +682,17 @@ function validateResubmittedChannelMappings(input, existing) {
             mapping.announcement ? ['yes', 'no'] : ['not_applicable'],
             'アナウンス公開の自動化状況',
         );
-        return { ...mapping, announcementAutomated, deliveryTypes: validateDeliveryTypes(submitted.deliveryTypes) };
+        const transferAutomated = enumValue(
+            submitted.transferAutomated,
+            mapping.publishChannelDifferent ? ['yes', 'no'] : ['not_applicable'],
+            '公開先チャンネルへの転送方法',
+        );
+        const destinationPublishAutomated = enumValue(
+            submitted.destinationPublishAutomated,
+            mapping.publishChannelType === 5 ? ['yes', 'no'] : ['not_applicable'],
+            '公開先アナウンスチャンネルの公開方法',
+        );
+        return { ...mapping, announcementAutomated, transferAutomated, destinationPublishAutomated, deliveryTypes: validateDeliveryTypes(submitted.deliveryTypes) };
     });
 }
 
@@ -653,7 +716,9 @@ function validateEditableApplicationInput(input, existing = null) {
         ['public', 'role_limited'],
         'チャンネルの公開範囲',
     );
-    const isAnnouncement = Number(existing?.channel_type ?? input.channelType) === 5;
+    const isAnnouncement = typeof input.announcement === 'boolean'
+        ? input.announcement
+        : Number(existing?.channel_type ?? input.channelType) === 5;
     const announcementAutomated = enumValue(
         input.announcementAutomated,
         ['yes', 'no', 'not_applicable'],
@@ -796,6 +861,8 @@ function applicationChannelMappings(item) {
         publishChannelId: stringValue(mapping.publishChannelId),
         publishChannelName: stringValue(mapping.publishChannelName),
         publishChannelType: mapping.publishChannelType == null ? null : Number(mapping.publishChannelType),
+        transferAutomated: stringValue(mapping.transferAutomated) || 'not_applicable',
+        destinationPublishAutomated: stringValue(mapping.destinationPublishAutomated) || 'not_applicable',
         deliveryTypes: Array.isArray(mapping.deliveryTypes) ? mapping.deliveryTypes.map(stringValue) : [],
     }));
     return [{
@@ -808,6 +875,8 @@ function applicationChannelMappings(item) {
         publishChannelId: '',
         publishChannelName: '',
         publishChannelType: null,
+        transferAutomated: 'not_applicable',
+        destinationPublishAutomated: 'not_applicable',
         deliveryTypes: parseJsonArray(item.delivery_types),
     }];
 }
@@ -817,7 +886,13 @@ async function sendReceiptEmail(env, application) {
     const mappingLines = (application.channelMappings || []).flatMap((mapping, index) => [
         `利用設定${index + 1}: #${mapping.channelName}`,
         `配信: ${mapping.deliveryTypes.map((id) => DELIVERY_TYPES[id] || id).join('、')}`,
-        ...(mapping.publishChannelDifferent ? [`公開先: #${mapping.publishChannelName}`] : []),
+        ...(mapping.publishChannelDifferent ? [
+            `公開先: #${mapping.publishChannelName}`,
+            `公開先への転送: ${mapping.transferAutomated === 'yes' ? '自動' : '手動'}`,
+            ...(mapping.publishChannelType === 5
+                ? [`公開先での公開: ${mapping.destinationPublishAutomated === 'yes' ? '自動' : '手動'}`]
+                : []),
+        ] : []),
     ]);
     const text = [
         'DPI-Bot 二次利用申請を受け付けました。', '',
@@ -853,6 +928,20 @@ async function sendResultEmail(env, application) {
         lines.join('\n'),
         'application-result',
     );
+}
+
+async function sendAdminMessageEmail(env, application, input) {
+    const subject = input.subject.startsWith('【DPI-Bot】')
+        ? input.subject
+        : `【DPI-Bot】${input.subject}`;
+    const text = [
+        'DPI-Bot 二次利用申請について、運営からご連絡します。', '',
+        `受付番号: ${application.reference}`,
+        `連絡種別: ${input.categoryLabel}`,
+        '', input.message, '',
+        'このメールへ返信するか、support@dpi-bot.com へご連絡ください。',
+    ].join('\n');
+    await sendReuseEmail(env, application.contact_email, subject, text, 'application-admin-message');
 }
 
 async function sendResubmittedEmail(env, application) {
@@ -1171,5 +1260,7 @@ export const __test = Object.freeze({
     canManageGuild,
     serializeApplication,
     timingSafeEqual,
+    validateAdminMessageInput,
+    validateChannelMappings,
     validateEditableApplicationInput,
 });
