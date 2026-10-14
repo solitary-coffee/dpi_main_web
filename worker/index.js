@@ -2,6 +2,7 @@ import { handleNewsletterQueue, handleNewsletterRequest } from './newsletter.js'
 import { blockResponseForRequest } from './ip-block.js';
 import { handleIpAdminRequest } from './ip-admin.js';
 import { handleReuseRequest } from './reuse.js';
+import { handleChannelDirectoryRequest } from './channel-directory.js';
 
 const TOPICS = Object.freeze({
     bot_issue: 'BOTの不具合',
@@ -45,6 +46,9 @@ export default {
 
         const blockedResponse = await blockResponseForRequest(request, env);
         if (blockedResponse) return blockedResponse;
+
+        const channelDirectoryResponse = await handleChannelDirectoryRequest(request, env);
+        if (channelDirectoryResponse) return channelDirectoryResponse;
 
         const newsletterResponse = await handleNewsletterRequest(request, env, ctx);
         if (newsletterResponse) return newsletterResponse;
