@@ -136,11 +136,20 @@
             <section id="result-panel" class="section hidden">
                 <h2>申請状況</h2>
                 <div id="application-status"></div>
+                <div class="result-actions">
+                    <a class="primary-btn" href="/site/reuse/">別の申請を行う</a>
+                </div>
                 <form id="resubmit-form" class="hidden">
-                    <h3>内容を修正して再申請</h3>
+                    <div class="edit-heading">
+                        <h3 id="resubmit-title">内容を修正して再申請</h3>
+                        <p id="resubmit-description" class="help"></p>
+                    </div>
                     <div id="resubmit-fields"></div>
-                    <label class="consent"><input id="resubmit-authorized" type="checkbox" required> 管理権限と入力内容を再確認しました。</label>
-                    <label class="consent"><input id="resubmit-consent" type="checkbox" required> 情報の収集・保存に同意します。</label>
+                    <fieldset>
+                        <legend>確認と同意</legend>
+                        <label class="consent"><input id="resubmit-authorized" type="checkbox" required> 管理権限と入力内容を再確認しました。</label>
+                        <label class="consent"><input id="resubmit-consent" type="checkbox" required> 情報の収集・保存に同意します。</label>
+                    </fieldset>
                     <button id="resubmit-btn" type="submit" class="primary-btn">再申請する</button>
                 </form>
             </section>

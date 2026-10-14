@@ -14,6 +14,7 @@ const ADMINISTRATOR = 1n << 3n;
 
 const STATUS_LABELS = Object.freeze({
     pending: '審査中',
+    resubmitted: '再申請',
     approved: '許可',
     rejected: '却下',
     changes_requested: '不備・再申請待ち',
@@ -382,8 +383,8 @@ async function managedApplication(request, env) {
 async function resubmitApplication(request, env) {
     assertPublicConfigured(env);
     const existing = await findManagedApplication(request, env);
-    if (existing.status !== 'changes_requested') {
-        throw new ReuseError(409, 'この申請は再申請を受け付ける状態ではありません。', 'not_resubmittable');
+    if (!isApplicationEditable(existing.status)) {
+        throw new ReuseError(409, '審査中の申請は修正できません。審査結果が確定するまでお待ちください。', 'not_resubmittable');
     }
     const input = await readJson(request);
     const channelMappings = validateResubmittedChannelMappings(input.channelMappings, existing);
@@ -396,22 +397,22 @@ async function resubmitApplication(request, env) {
     }, existing);
     const now = new Date().toISOString();
     const revision = Number(existing.revision || 1) + 1;
-    await env.REUSE_DB.batch([
+    const [update] = await env.REUSE_DB.batch([
         env.REUSE_DB.prepare(
             `UPDATE reuse_applications SET
-                status = 'pending', revision = ?, delivery_types = ?, channel_mappings = ?, server_public = ?,
+                status = 'resubmitted', revision = ?, delivery_types = ?, channel_mappings = ?, server_public = ?,
                 channel_visibility = ?, announcement_automated = ?, reuse_method = ?,
                 reuse_method_other = ?, contact_email = ?, purpose = ?, destination_url = ?,
                 notes = ?, admin_message = NULL, reviewed_by = NULL, reviewed_at = NULL,
                 resubmitted_at = ?, updated_at = ?
-             WHERE id = ? AND status = 'changes_requested'`,
+             WHERE id = ? AND status = ?`,
         ).bind(
             revision, JSON.stringify(normalized.deliveryTypes), JSON.stringify(channelMappings),
             normalized.serverPublic,
             normalized.channelVisibility, normalized.announcementAutomated,
             normalized.reuseMethod, normalized.reuseMethodOther, normalized.email,
             normalized.purpose, normalized.destinationUrl, normalized.notes,
-            now, now, existing.id,
+            now, now, existing.id, existing.status,
         ),
         env.REUSE_DB.prepare(
             `INSERT INTO reuse_application_events
@@ -419,13 +420,16 @@ async function resubmitApplication(request, env) {
              VALUES (?, ?, 'resubmitted', ?, NULL, ?)`,
         ).bind(crypto.randomUUID(), existing.id, `discord:${existing.discord_user_id}`, now),
     ]);
+    if (!statementChangedRows(update)) {
+        throw new ReuseError(409, '申請状態が更新されました。画面を再読み込みしてください。', 'application_changed');
+    }
     let emailSent = true;
     try {
         await sendResubmittedEmail(env, { ...existing, ...normalized, revision });
     } catch {
         emailSent = false;
     }
-    return jsonResponse({ success: true, reference: existing.reference, revision, emailSent });
+    return jsonResponse({ success: true, reference: existing.reference, revision, status: 'resubmitted', emailSent });
 }
 
 async function handleProtectedAdminAsset(request, env) {
@@ -486,7 +490,7 @@ async function adminApplicationList(request, env, admin) {
     const statement = status === 'all'
         ? env.REUSE_DB.prepare(
             `SELECT * FROM reuse_applications ORDER BY
-                CASE status WHEN 'pending' THEN 0 WHEN 'changes_requested' THEN 1 ELSE 2 END,
+                CASE status WHEN 'pending' THEN 0 WHEN 'resubmitted' THEN 1 WHEN 'changes_requested' THEN 2 ELSE 3 END,
                 updated_at DESC LIMIT 200`,
         )
         : env.REUSE_DB.prepare(
@@ -816,6 +820,7 @@ function serializeApplication(item, includePrivate) {
         reference: item.reference,
         status: item.status,
         statusLabel: STATUS_LABELS[item.status] || item.status,
+        editable: isApplicationEditable(item.status),
         revision: Number(item.revision || 1),
         discordUsername: item.discord_username,
         guildId: item.guild_id,
@@ -847,6 +852,10 @@ function serializeApplication(item, includePrivate) {
         output.contactEmail = maskEmail(item.contact_email);
     }
     return output;
+}
+
+function isApplicationEditable(status) {
+    return status === 'approved' || status === 'changes_requested';
 }
 
 function applicationChannelMappings(item) {
@@ -953,7 +962,7 @@ async function sendResubmittedEmail(env, application) {
             'DPI-Bot 二次利用申請の再申請を受け付けました。', '',
             `受付番号: ${application.reference}`,
             `申請版: 第${application.revision}版`,
-            '現在の状態: 審査中', '',
+            '現在の状態: 再申請', '',
             '審査が完了すると、このメールアドレスへ結果をお送りします。',
         ].join('\n'),
         'application-resubmitted',
@@ -961,12 +970,13 @@ async function sendResubmittedEmail(env, application) {
 }
 
 async function sendReuseEmail(env, to, subject, text, type) {
+    const signedText = `${text}\n\n${reuseEmailSignature()}`;
     try {
         await env.NOTICE_EMAIL.send({
             to,
             from: { email: clean(env.NOTICE_FROM_EMAIL), name: 'DPI-Bot' },
             subject,
-            text,
+            text: signedText,
             ...(clean(env.NOTICE_REPLY_TO_EMAIL)
                 ? { replyTo: clean(env.NOTICE_REPLY_TO_EMAIL) }
                 : {}),
@@ -984,6 +994,17 @@ async function sendReuseEmail(env, to, subject, text, type) {
         });
         throw new ReuseError(502, 'メール送信に失敗しました。時間をおいて再度お試しください。', 'email_failed');
     }
+}
+
+function reuseEmailSignature() {
+    return [
+        '----------------------------------------',
+        'DPI-Bot 運営',
+        '公式サイト: https://dpi-bot.com/',
+        '公式サポートサーバー: https://discord.gg/qFuZcGUb4K',
+        'お問い合わせ: support@dpi-bot.com',
+        '© 2026 DPI-Bot',
+    ].join('\n');
 }
 
 function manageUrlFor(env, token) {
@@ -1263,4 +1284,6 @@ export const __test = Object.freeze({
     validateAdminMessageInput,
     validateChannelMappings,
     validateEditableApplicationInput,
+    isApplicationEditable,
+    reuseEmailSignature,
 });

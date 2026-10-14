@@ -38,6 +38,13 @@ test('メール配信設定APIはサイトキーだけを返しSecretを公開�
     assert.deepEqual(body.categories.map((category) => category.id), ['maintenance', 'outage', 'update']);
 });
 
+test('送信メールには公式リンクと運営署名を付ける', () => {
+    const signature = newsletterTest.emailSignatureText();
+    assert.match(signature, /https:\/\/dpi-bot\.com\//u);
+    assert.match(signature, /https:\/\/discord\.gg\/qFuZcGUb4K/u);
+    assert.match(signature, /© 2026 DPI-Bot/u);
+});
+
 test('確認リンクのGETはDBを変更せず、POST確認フォームだけを返す', async () => {
     let databaseWasUsed = false;
     const token = 'A'.repeat(43);
@@ -389,10 +396,11 @@ test('複数カテゴリ配信は購読カテゴリが1つでも一致すれば�
 });
 
 test('管理画面はカテゴリチップ・3種類のテンプレート・隔離プレビューを備える', async () => {
-    const [html, script, style] = await Promise.all([
+    const [html, script, style, sharedStyle] = await Promise.all([
         readFile(new URL('../site/mail-admin/index.html', import.meta.url), 'utf8'),
         readFile(new URL('../site/mail-admin/script.js', import.meta.url), 'utf8'),
         readFile(new URL('../site/mail-admin/style.css', import.meta.url), 'utf8'),
+        readFile(new URL('../site/admin-shell.css', import.meta.url), 'utf8'),
     ]);
 
     assert.equal((html.match(/name="campaign-categories"/gu) || []).length, 3);
@@ -406,6 +414,9 @@ test('管理画面はカテゴリチップ・3種類のテンプレート・隔�
     assert.doesNotMatch(script, /\.innerHTML\s*=/u);
     assert.match(style, /background:\s*#444950/iu);
     assert.match(style, /\.category-chip input:checked \+ span/u);
+    assert.match(html, /class="sidebar"/u);
+    assert.match(html, /メール配信管理<\/a>/u);
+    assert.match(sharedStyle, /--admin-sidebar:#343a40/u);
 });
 
 test('IP遮断管理画面は追加・編集・削除・監査表示を備えDOMへHTML文字列を挿入しない', async () => {
@@ -418,6 +429,8 @@ test('IP遮断管理画面は追加・編集・削除・監査表示を備えDOM
     assert.match(html, /id="rule-form"/u);
     assert.match(html, /id="rules-list"/u);
     assert.match(html, /id="audit-list"/u);
+    assert.match(html, /class="sidebar"/u);
+    assert.match(html, /IP遮断管理<\/a>/u);
     assert.match(script, /self_block_confirmation_required/u);
     assert.match(script, /method: 'PUT'/u);
     assert.match(script, /method: 'DELETE'/u);

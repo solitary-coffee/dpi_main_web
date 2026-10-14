@@ -6,25 +6,30 @@
     <meta name="robots" content="noindex,nofollow,noarchive">
     <title>IP遮断管理 | DPI-Bot</title>
     <link rel="stylesheet" href="/site/ip-admin/style.css">
+    <link rel="stylesheet" href="/site/admin-shell.css">
 </head>
-<body>
-    <header class="topbar">
-        <div>
-            <p class="eyebrow">DPI-BOT SECURITY</p>
+<body class="admin-shell">
+    <button id="menu-toggle-btn" type="button" aria-label="メニューを開く"><span></span><span></span><span></span></button>
+    <div class="overlay"></div>
+    <div class="page-container">
+    <nav class="sidebar" aria-label="管理メニュー">
+        <div class="sidebar-header"><h2>管理メニュー</h2></div>
+        <ul>
+            <li><a href="/">公式サイト</a></li>
+            <li><a href="/site/reuse-admin/">二次利用申請管理</a></li>
+            <li><a href="/site/mail-admin/">メール配信管理</a></li>
+            <li><a href="/site/ip-admin/" class="active">IP遮断管理</a></li>
+            <li><a href="/cdn-cgi/access/logout">ログアウト</a></li>
+        </ul>
+    </nav>
+    <main class="main-content">
+        <header>
             <h1>IP遮断管理</h1>
-        </div>
-        <nav class="topbar-actions" aria-label="管理メニュー">
-            <span id="admin-email">認証確認中</span>
-            <a href="/site/reuse-admin/">二次利用申請管理</a>
-            <a href="/site/mail-admin/">メール管理</a>
-            <a href="/cdn-cgi/access/logout">ログアウト</a>
-        </nav>
-    </header>
-
-    <main>
+            <div class="admin-bar"><span id="admin-email">認証確認中</span></div>
+        </header>
         <div id="global-status" class="status" role="status" aria-live="polite"></div>
 
-        <section class="notice" aria-labelledby="security-title">
+        <section class="notice admin-section" aria-labelledby="security-title">
             <div>
                 <p class="eyebrow">CLOUDFLARE ACCESS</p>
                 <h2 id="security-title">認証済み管理者専用</h2>
@@ -37,7 +42,7 @@
             </dl>
         </section>
 
-        <section aria-labelledby="add-title">
+        <section class="admin-section" aria-labelledby="add-title">
             <div class="section-heading">
                 <div>
                     <p class="eyebrow">NEW RULE</p>
@@ -69,7 +74,7 @@
             </form>
         </section>
 
-        <section aria-labelledby="rules-title">
+        <section class="admin-section" aria-labelledby="rules-title">
             <div class="section-heading">
                 <div>
                     <p class="eyebrow">ACTIVE RULES</p>
@@ -80,7 +85,7 @@
             <div id="rules-list" class="card-list"></div>
         </section>
 
-        <section aria-labelledby="audit-title">
+        <section class="admin-section" aria-labelledby="audit-title">
             <div class="section-heading">
                 <div>
                     <p class="eyebrow">AUDIT LOG</p>
@@ -96,7 +101,9 @@
             </div>
         </section>
     </main>
+    </div>
 
+    <script src="../../script.js"></script>
     <script src="/site/ip-admin/script.js" defer></script>
 </body>
 </html>

@@ -1328,9 +1328,11 @@ async function sendConfirmationEmail(email, categories, token, env) {
         confirmationUrl.toString(),
         '',
         'このメールに心当たりがない場合は、何もせず削除してください。登録は完了しません。',
+        '',
+        emailSignatureText(),
     ].join('\n');
     const categoriesHtml = categories.map((category) => `<li>${escapeHtml(CATEGORIES[category])}</li>`).join('');
-    const html = `<!doctype html><html lang="ja"><body style="font-family:sans-serif;line-height:1.7;color:#172033"><h1 style="font-size:22px">DPI-Bot メール配信の登録確認</h1><p>次の情報の配信登録が申請されました。</p><ul>${categoriesHtml}</ul><p><a href="${escapeHtml(confirmationUrl.toString())}" style="display:inline-block;padding:12px 18px;background:#1769aa;color:#fff;text-decoration:none;border-radius:6px">登録内容を確認する</a></p><p>24時間以内に確認画面で「登録を確定する」を押してください。</p><p style="color:#596273">心当たりがない場合は、このメールを削除してください。登録は完了しません。</p></body></html>`;
+    const html = `<!doctype html><html lang="ja"><body style="font-family:sans-serif;line-height:1.7;color:#172033"><h1 style="font-size:22px">DPI-Bot メール配信の登録確認</h1><p>次の情報の配信登録が申請されました。</p><ul>${categoriesHtml}</ul><p><a href="${escapeHtml(confirmationUrl.toString())}" style="display:inline-block;padding:12px 18px;background:#1769aa;color:#fff;text-decoration:none;border-radius:6px">登録内容を確認する</a></p><p>24時間以内に確認画面で「登録を確定する」を押してください。</p><p style="color:#596273">心当たりがない場合は、このメールを削除してください。登録は完了しません。</p>${emailSignatureHtml()}</body></html>`;
 
     await env.NOTICE_EMAIL.send({
         to: email,
@@ -1364,10 +1366,11 @@ function buildCampaignEmail(delivery, unsubscribeToken, env) {
         '',
         '----------------------------------------',
         'このメールはDPI-Botのお知らせメールに登録した方へお送りしています。',
+        emailSignatureText(),
         `配信停止: ${unsubscribeUrl.toString()}`,
     ].join('\n');
     const safeBody = renderMarkdownEmail(delivery.body_text);
-    const html = `<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body style="margin:0;background:#f2f5f8;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#172033"><main style="max-width:680px;margin:0 auto;background:#fff;padding:28px"><p style="color:#1769aa;font-weight:700">${escapeHtml(categoryLabel)}</p><h1 style="font-size:24px;line-height:1.45">${escapeHtml(delivery.subject)}</h1><div style="line-height:1.8;overflow-wrap:anywhere">${safeBody}</div><hr style="margin:32px 0;border:0;border-top:1px solid #d8dee6"><p style="font-size:13px;color:#596273">このメールはDPI-Botのお知らせメールに登録した方へお送りしています。<br><a href="${escapeHtml(unsubscribeUrl.toString())}">すべての配信を停止する</a></p></main></body></html>`;
+    const html = `<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body style="margin:0;background:#f2f5f8;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#172033"><main style="max-width:680px;margin:0 auto;background:#fff;padding:28px"><p style="color:#1769aa;font-weight:700">${escapeHtml(categoryLabel)}</p><h1 style="font-size:24px;line-height:1.45">${escapeHtml(delivery.subject)}</h1><div style="line-height:1.8;overflow-wrap:anywhere">${safeBody}</div><hr style="margin:32px 0;border:0;border-top:1px solid #d8dee6"><p style="font-size:13px;color:#596273">このメールはDPI-Botのお知らせメールに登録した方へお送りしています。</p>${emailSignatureHtml()}<p style="font-size:13px"><a href="${escapeHtml(unsubscribeUrl.toString())}">すべての配信を停止する</a></p></main></body></html>`;
 
     return {
         to: delivery.email,
@@ -1390,6 +1393,20 @@ function buildCampaignEmail(delivery, unsubscribeToken, env) {
             'X-Campaign-ID': delivery.campaign_id,
         },
     };
+}
+
+function emailSignatureText() {
+    return [
+        'DPI-Bot 運営',
+        '公式サイト: https://dpi-bot.com/',
+        '公式サポートサーバー: https://discord.gg/qFuZcGUb4K',
+        'お問い合わせ: support@dpi-bot.com',
+        '© 2026 DPI-Bot',
+    ].join('\n');
+}
+
+function emailSignatureHtml() {
+    return '<p style="margin-top:24px;padding-top:16px;border-top:1px solid #d8dee6;font-size:13px;color:#596273"><strong>DPI-Bot 運営</strong><br><a href="https://dpi-bot.com/">公式サイト</a><br><a href="https://discord.gg/qFuZcGUb4K">公式サポートサーバー</a><br><a href="mailto:support@dpi-bot.com">support@dpi-bot.com</a><br>© 2026 DPI-Bot</p>';
 }
 
 async function createUnsubscribeToken(subscriber, secret) {
@@ -1647,6 +1664,7 @@ function stringValue(value) {
 export const __test = Object.freeze({
     adminSummary,
     buildCampaignEmail,
+    emailSignatureText,
     constantTimeEqual,
     createUnsubscribeToken,
     escapeHtml,

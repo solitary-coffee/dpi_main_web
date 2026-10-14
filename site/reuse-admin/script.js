@@ -1,4 +1,4 @@
-const statusLabels = Object.freeze({ pending: '審査中', approved: '許可', rejected: '却下', changes_requested: '不備・再申請待ち' });
+const statusLabels = Object.freeze({ pending: '審査中', resubmitted: '再申請', approved: '許可', rejected: '却下', changes_requested: '不備・再申請待ち' });
 const choiceLabels = Object.freeze({ public: '公開', private: '非公開・招待制', role_limited: '指定ロールのみ', yes: '自動', no: '手動', not_applicable: '該当なし', unchanged: 'そのまま転載', edited: '編集・加工', other: 'その他' });
 const MAIL_TEMPLATES = Object.freeze({
     inquiry: Object.freeze({ category: 'inquiry', subject: '二次利用申請について確認事項があります', message: '申請内容について確認したい点があります。\n\n【確認事項】\n・\n\nお手数ですが、このメールへ返信してご回答ください。' }),
@@ -46,8 +46,8 @@ function renderStats(counts) {
     const container = document.getElementById('stats');
     container.replaceChildren();
     const items = [
-        ['審査中', counts.pending || 0], ['再申請待ち', counts.changes_requested || 0],
-        ['許可', counts.approved || 0], ['却下', counts.rejected || 0],
+        ['審査中', counts.pending || 0], ['再申請', counts.resubmitted || 0],
+        ['再申請待ち', counts.changes_requested || 0], ['許可', counts.approved || 0], ['却下', counts.rejected || 0],
     ];
     for (const [label, count] of items) {
         const card = element('article', 'stat');
