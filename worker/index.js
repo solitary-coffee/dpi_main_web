@@ -1,6 +1,7 @@
 import { handleNewsletterQueue, handleNewsletterRequest } from './newsletter.js';
 import { blockResponseForRequest } from './ip-block.js';
 import { handleIpAdminRequest } from './ip-admin.js';
+import { handleReuseRequest } from './reuse.js';
 
 const TOPICS = Object.freeze({
     bot_issue: 'BOTの不具合',
@@ -47,6 +48,9 @@ export default {
 
         const newsletterResponse = await handleNewsletterRequest(request, env, ctx);
         if (newsletterResponse) return newsletterResponse;
+
+        const reuseResponse = await handleReuseRequest(request, env);
+        if (reuseResponse) return reuseResponse;
 
         if (pathname === '/api/contact/config' && request.method === 'GET') {
             return contactConfig(env);
