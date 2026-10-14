@@ -67,6 +67,7 @@
     "NOTICE_REPLY_TO_EMAIL": "support@dpi-bot.com",
     "NEWSLETTER_PUBLIC_ORIGIN": "https://dpi-bot.com",
     "REUSE_PUBLIC_ORIGIN": "https://dpi-bot.com",
+    "DISCORD_CLIENT_ID": "943752169029505114",
     "DISCORD_REDIRECT_URI": "https://dpi-bot.com/api/reuse/oauth/callback",
     "NEWSLETTER_CONSENT_VERSION": "2026-08-29"
   },

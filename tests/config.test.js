@@ -9,7 +9,7 @@ test('CONTACT_TO_EMAILを平文のvarsへ保存しない', async () => {
     assert.equal(Object.hasOwn(config.vars || {}, 'CONTACT_TO_EMAIL'), false);
 });
 
-test('メール配信のSecretをリポジトリ上のvarsへ保存しない', async () => {
+test('メール配信・認証のSecretをリポジトリ上のvarsへ保存しない', async () => {
     const configPath = new URL('../wrangler.jsonc', import.meta.url);
     const config = JSON.parse(await readFile(configPath, 'utf8'));
     const secretNames = [
@@ -18,7 +18,6 @@ test('メール配信のSecretをリポジトリ上のvarsへ保存しない', a
         'ACCESS_AUD',
         'ADMIN_EMAILS',
         'MAIL_ADMIN_EMAILS',
-        'DISCORD_CLIENT_ID',
         'DISCORD_CLIENT_SECRET',
         'DISCORD_BOT_TOKEN',
         'REUSE_SESSION_SECRET',
