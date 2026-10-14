@@ -41,7 +41,22 @@ function bindEvents() {
 async function loadConfigAndSession() {
     try {
         const config = await api('/api/reuse/config');
-        if (!config.configured) throw new Error('二次利用申請フォームは現在設定中です。');
+        if (!config.configured) {
+            const labels = {
+                database: '申請データベース',
+                discord: 'Discord連携',
+                session: 'セッション保護',
+                email: '結果メール送信',
+            };
+            const incomplete = Object.entries(config.configuration || {})
+                .filter(([, ready]) => !ready)
+                .map(([key]) => labels[key] || key);
+            throw new Error(
+                incomplete.length
+                    ? `二次利用申請フォームの設定が不足しています（${incomplete.join('・')}）。`
+                    : '二次利用申請フォームは現在設定中です。',
+            );
+        }
         renderDeliveryTypes(config.deliveryTypes);
         try {
             session = await api('/api/reuse/session');
