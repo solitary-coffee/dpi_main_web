@@ -48,7 +48,14 @@
                         <select id="announcement" name="announcement">
                             <option value="all">すべて</option>
                             <option value="yes">アナウンスチャンネル</option>
-                            <option value="no">通常チャンネル</option>
+                            <option value="no">テキストチャンネル</option>
+                        </select>
+                    </label>
+                    <label>二次利用申請
+                        <select id="application" name="application">
+                            <option value="all">すべて</option>
+                            <option value="yes">申請済み</option>
+                            <option value="no">未申請</option>
                         </select>
                     </label>
                     <label>最大件数
@@ -63,7 +70,7 @@
                     </label>
                     <button id="search-button" type="submit">検索する</button>
                 </form>
-                <p class="search-help">最大件数を選択しない場合は全件取得します。Webhook URLや認証情報は表示しません。</p>
+                <p class="search-help">チャンネル種別・申請の有無で絞り込めます。最大件数を選択しない場合は全件取得します。Webhook URLや認証情報は表示しません。</p>
             </section>
 
             <div id="status" class="status" role="status" aria-live="polite"></div>

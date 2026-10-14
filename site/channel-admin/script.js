@@ -1,6 +1,7 @@
 const sourceLabels = Object.freeze({ applications: '二次利用申請', aws: 'AWS保存データ' });
 const sourceStateLabels = Object.freeze({ ready: '取得済み', error: '取得エラー', not_configured: '未設定', unavailable: '利用不可' });
 const visibilityLabels = Object.freeze({ public: 'サーバー参加者が閲覧可能', role_limited: '指定ロールのみ閲覧可能' });
+const applicationStatusLabels = Object.freeze({ pending: '審査中', resubmitted: '再申請', approved: '許可', rejected: '却下', changes_requested: '不備・再申請待ち' });
 
 document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('search-form').addEventListener('submit', (event) => {
@@ -18,6 +19,7 @@ async function search() {
             q: document.getElementById('query').value.trim(),
             delivery: document.getElementById('delivery').value.trim(),
             announcement: document.getElementById('announcement').value,
+            application: document.getElementById('application').value,
             limit: document.getElementById('limit').value || 'all',
         });
         const result = await api(`/site/channel-admin/api/search?${params}`);
@@ -48,7 +50,7 @@ function renderSources(sources) {
 function renderSummary(summary) {
     const container = document.getElementById('summary');
     container.replaceChildren();
-    const items = [['検索結果', summary.resultCount], ['サーバー', summary.serverCount], ['チャンネル', summary.channelCount]];
+    const items = [['検索結果', summary.resultCount], ['サーバー', summary.serverCount], ['チャンネル', summary.channelCount], ['申請済み', summary.applicationCount]];
     for (const [label, value] of items) {
         const card = element('article', 'summary-card');
         card.append(element('span', '', label), element('strong', '', String(value || 0)));
@@ -90,8 +92,16 @@ function renderChannelCard(item) {
     title.append(element('p', '', `Channel ID: ${item.channelId || '未取得'}`));
     const badges = element('div', 'badges');
     if (item.announcement === true) badges.append(element('span', 'badge announcement', 'アナウンス'));
-    else if (item.announcement === false) badges.append(element('span', 'badge', '通常チャンネル'));
+    else if (item.announcement === false) badges.append(element('span', 'badge', 'テキストチャンネル'));
     else badges.append(element('span', 'badge', '種別未取得'));
+    if (item.application) {
+        const status = applicationStatusLabels[item.application.status] || item.application.status || '状態未取得';
+        badges.append(element('span', 'badge application', `申請済み・${status}`));
+    } else if (item.applicationChecked) {
+        badges.append(element('span', 'badge not-applied', '未申請'));
+    } else {
+        badges.append(element('span', 'badge application-unknown', '申請状況未取得'));
+    }
     for (const source of item.sources || []) badges.append(element('span', 'badge source', source === 'aws' ? 'AWS' : '申請'));
     if (item.serverId && item.channelId) {
         const refresh = element('button', 'discord-refresh', 'Discord情報を取得');
@@ -107,7 +117,7 @@ function renderChannelCard(item) {
     appendField(list, '閲覧範囲・権限', item.permissionSummary || visibilityLabels[item.visibility] || '未取得', 'permission-summary');
     appendField(list, 'チャンネル種別', channelTypeLabel(item), 'channel-type');
     appendField(list, '最終更新', item.updatedAt ? formatDate(item.updatedAt) : '未取得');
-    if (item.application) appendField(list, '申請番号', `${item.application.reference}（${item.application.status}）`);
+    if (item.application) appendField(list, '申請番号', `${item.application.reference}（${applicationStatusLabels[item.application.status] || item.application.status}）`);
     if (item.serverPublic) appendField(list, 'サーバー公開範囲', item.serverPublic === 'public' ? '公開' : '非公開・招待制');
     card.append(list);
 
