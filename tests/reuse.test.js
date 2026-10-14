@@ -112,6 +112,17 @@ test('公開用の申請情報ではメールアドレスをマスクする', ()
     assert.equal(serialized.contactEmail, 'p***@example.com');
     assert.equal(serialized.channelMappings[0].publishChannelName, 'public-news');
     assert.equal(Object.hasOwn(serialized, 'discordUserId'), false);
+    assert.equal(serialized.editable, false);
+});
+
+test('許可後と不備対応時だけ編集でき、再申請状態と署名を定義する', () => {
+    assert.equal(reuseTest.isApplicationEditable('approved'), true);
+    assert.equal(reuseTest.isApplicationEditable('changes_requested'), true);
+    assert.equal(reuseTest.isApplicationEditable('pending'), false);
+    assert.equal(reuseTest.isApplicationEditable('resubmitted'), false);
+    assert.match(reuseTest.reuseEmailSignature(), /https:\/\/dpi-bot\.com\//u);
+    assert.match(reuseTest.reuseEmailSignature(), /https:\/\/discord\.gg\/qFuZcGUb4K/u);
+    assert.match(reuseTest.reuseEmailSignature(), /© 2026 DPI-Bot/u);
 });
 
 test('申請画面と管理画面は安全なDOM APIで表示し、審査操作を備える', async () => {
@@ -127,6 +138,9 @@ test('申請画面と管理画面は安全なDOM APIで表示し、審査操作�
     assert.match(adminScript, /rejected/u);
     assert.match(adminScript, /\/message/u);
     assert.match(adminScript, /個別メール送信/u);
+    assert.match(adminScript, /MAIL_TEMPLATES/u);
+    assert.match(adminScript, /REVIEW_TEMPLATES/u);
+    assert.match(adminScript, /openAdminConfirmation/u);
     assert.doesNotMatch(publicScript, /name = announcementName; input\.value = valueText; input\.disabled = true/u);
     assert.match(publicScript, /transferAutomated/u);
     assert.match(publicScript, /destinationPublishAutomated/u);
@@ -136,7 +150,11 @@ test('申請画面と管理画面は安全なDOM APIで表示し、審査操作�
     assert.match(publicHtml, /id="channel-mappings"/u);
     assert.match(publicHtml, /id="email-confirm"/u);
     assert.match(publicHtml, /notice@dpi-bot\.com/u);
+    assert.match(publicHtml, /別の申請を行う/u);
+    assert.match(publicScript, /app\.editable/u);
+    assert.match(publicScript, /\['pending', 'resubmitted'\]/u);
     assert.match(adminHtml, /Cloudflare|二次利用申請管理/u);
+    assert.match(adminHtml, /id="admin-confirmation-dialog"/u);
     for (const html of [publicHtml, adminHtml]) {
         assert.match(html, /class="page-container"/u);
         assert.match(html, /class="sidebar/u);

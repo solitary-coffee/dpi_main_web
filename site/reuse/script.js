@@ -447,7 +447,12 @@ function renderManagedApplication() {
         ['公開先URL', app.destinationUrl || '未入力'], ['補足', app.notes || '未入力'], ['更新日時', formatDate(app.updatedAt)],
     ];
     for (const [label, text] of details) list.append(element('dt', '', label), element('dd', '', text));
-    container.append(list); if (app.status === 'changes_requested') renderResubmitForm(app);
+    container.append(list);
+    if (app.editable) {
+        renderResubmitForm(app);
+    } else if (['pending', 'resubmitted'].includes(app.status)) {
+        container.append(element('p', 'edit-state-note', 'この申請は審査中のため修正できません。審査結果が確定するまでお待ちください。'));
+    }
 }
 
 function formatMapping(mapping, index) {
@@ -465,28 +470,66 @@ function formatMapping(mapping, index) {
 function renderResubmitForm(app) {
     const form = document.getElementById('resubmit-form'); form.classList.remove('hidden');
     const fields = document.getElementById('resubmit-fields'); fields.replaceChildren();
-    const mappingField = document.createElement('fieldset'); mappingField.append(element('legend', '', 'チャンネル別の配信設定'));
+    const approvedEdit = app.status === 'approved';
+    document.getElementById('resubmit-title').textContent = approvedEdit ? '許可済みの申請内容を編集' : '内容を修正して再申請';
+    document.getElementById('resubmit-description').textContent = approvedEdit
+        ? '変更内容を送信すると状態は「再申請」となり、変更後の内容について再度審査を行います。'
+        : '管理者からの案内を確認し、申請画面と同じ項目を修正して再申請してください。';
+    document.getElementById('resubmit-btn').textContent = approvedEdit ? '変更内容を確認する' : '再申請内容を確認する';
+    const mappingField = document.createElement('fieldset');
+    mappingField.append(element('legend', '', '利用先'));
+    mappingField.append(element('p', 'help', '申請済みのチャンネルごとに、配信内容と公開方法を修正できます。チャンネル自体を変更する場合は別の申請を行ってください。'));
     app.channelMappings.forEach((mapping, index) => {
-        const card = element('section', 'resubmit-mapping');
-        card.append(element('h4', '', `#${mapping.channelName}${mapping.publishChannelDifferent ? ` → #${mapping.publishChannelName}` : ''}`));
-        card.append(deliveryCheckboxGrid(`resubmit-delivery-${index}`, mapping.deliveryTypes));
-        if (mapping.announcement) card.append(selectField('公開操作', `resubmit-announcement-${index}`, { yes: '自動', no: '手動' }, mapping.announcementAutomated));
-        if (mapping.publishChannelDifferent) card.append(selectField('公開先への転送', `resubmit-transfer-automation-${index}`, { yes: '自動', no: '手動' }, mapping.transferAutomated));
-        if (mapping.publishChannelType === 5) card.append(selectField('公開先での公開', `resubmit-destination-automation-${index}`, { yes: '自動', no: '手動' }, mapping.destinationPublishAutomated));
+        const card = element('section', 'mapping-card resubmit-mapping');
+        const heading = element('div', 'mapping-head');
+        heading.append(element('h3', '', `設定${index + 1}: #${mapping.channelName}${mapping.publishChannelDifferent ? ` → #${mapping.publishChannelName}` : ''}`));
+        card.append(heading, deliveryCheckboxGrid(`resubmit-delivery-${index}`, mapping.deliveryTypes));
+        if (mapping.announcement) card.append(radioGroup('利用チャンネルでの公開操作', `resubmit-announcement-${index}`, { yes: '自動', no: '手動' }, mapping.announcementAutomated));
+        if (mapping.publishChannelDifferent) card.append(radioGroup('公開先チャンネルへの転送', `resubmit-transfer-automation-${index}`, { yes: '自動', no: '手動' }, mapping.transferAutomated));
+        if (mapping.publishChannelType === 5) card.append(radioGroup('公開先での公開操作', `resubmit-destination-automation-${index}`, { yes: '自動', no: '手動' }, mapping.destinationPublishAutomated));
         mappingField.append(card);
     });
-    fields.append(
-        mappingField,
-        selectField('サーバー公開範囲', 'resubmit-server-public', { public: '公開サーバー', private: '非公開・招待制' }, app.serverPublic),
-        selectField('チャンネル公開範囲', 'resubmit-channel-visibility', { public: '誰でも閲覧可能', role_limited: '指定ロールのみ' }, app.channelVisibility),
-        selectField('利用方法', 'resubmit-method', { unchanged: 'そのまま転載', edited: '編集・加工', other: 'その他' }, app.reuseMethod),
+    const operationField = document.createElement('fieldset');
+    operationField.append(
+        element('legend', '', '公開範囲と運用方法'),
+        radioGroup('サーバーは誰でも参加できますか？', 'resubmit-server-public', {
+            public: '公開サーバー（宣伝サイトなどに招待リンクを公開している場合はこちら）',
+            private: '非公開・招待制サーバー（完全内部利用やDMなどで招待する場合はこちら）',
+        }, app.serverPublic),
+        radioGroup('利用チャンネルは誰でも閲覧できますか？', 'resubmit-channel-visibility', {
+            public: 'サーバー参加者なら誰でも閲覧可能（メンバーロール付与後に閲覧できる場合を含みます）',
+            role_limited: '指定ロールのみ閲覧可能',
+        }, app.channelVisibility),
+        radioGroup('配信内容の利用方法', 'resubmit-method', {
+            unchanged: '内容をそのまま転載する', edited: '一部を編集・加工して利用する', other: 'その他',
+        }, app.reuseMethod),
         textAreaField('その他の利用方法', 'resubmit-method-other', app.reuseMethodOther, 500),
+    );
+    const contactField = document.createElement('fieldset');
+    contactField.append(
+        element('legend', '', '連絡先と利用目的'),
         inputField('結果通知先メールアドレス', 'resubmit-email', '', 'email'),
         inputField('結果通知先メールアドレス（確認）', 'resubmit-email-confirm', '', 'email'),
+        element('p', 'help', '結果は notice@dpi-bot.com から送信します。受信許可設定と迷惑メールフォルダをご確認ください。'),
         textAreaField('利用目的', 'resubmit-purpose', app.purpose, 2000),
-        inputField('サーバー案内・公開先URL', 'resubmit-url', app.destinationUrl, 'url'),
-        textAreaField('補足事項', 'resubmit-notes', app.notes, 2000),
+        inputField('サーバー案内・公開先URL（任意）', 'resubmit-url', app.destinationUrl, 'url'),
+        textAreaField('補足事項（任意）', 'resubmit-notes', app.notes, 2000),
     );
+    fields.append(
+        mappingField,
+        operationField,
+        contactField,
+    );
+    document.querySelectorAll('input[name="resubmit-method"]').forEach((input) => input.addEventListener('change', toggleResubmitOther));
+    toggleResubmitOther();
+}
+
+function toggleResubmitOther() {
+    const field = document.getElementById('resubmit-method-other')?.closest('label');
+    if (!field) return;
+    const other = checkedValue('resubmit-method') === 'other';
+    field.classList.toggle('hidden', !other);
+    document.getElementById('resubmit-method-other').required = other;
 }
 
 function resubmitApplication(event) {
@@ -495,14 +538,14 @@ function resubmitApplication(event) {
         const channelMappings = managedApplication.channelMappings.map((mapping, index) => ({
             channelId: mapping.channelId, publishChannelId: mapping.publishChannelId,
             announcement: mapping.announcement, publishChannelDifferent: mapping.publishChannelDifferent,
-            announcementAutomated: mapping.announcement ? value(`resubmit-announcement-${index}`) : 'not_applicable',
-            transferAutomated: mapping.publishChannelDifferent ? value(`resubmit-transfer-automation-${index}`) : 'not_applicable',
-            destinationPublishAutomated: mapping.publishChannelType === 5 ? value(`resubmit-destination-automation-${index}`) : 'not_applicable',
+            announcementAutomated: mapping.announcement ? checkedValue(`resubmit-announcement-${index}`) : 'not_applicable',
+            transferAutomated: mapping.publishChannelDifferent ? checkedValue(`resubmit-transfer-automation-${index}`) : 'not_applicable',
+            destinationPublishAutomated: mapping.publishChannelType === 5 ? checkedValue(`resubmit-destination-automation-${index}`) : 'not_applicable',
             deliveryTypes: checkedValues(`resubmit-delivery-${index}`),
         }));
         openConfirmation({
-            channelMappings, serverPublic: value('resubmit-server-public'), channelVisibility: value('resubmit-channel-visibility'),
-            reuseMethod: value('resubmit-method'), reuseMethodOther: value('resubmit-method-other'),
+            channelMappings, serverPublic: checkedValue('resubmit-server-public'), channelVisibility: checkedValue('resubmit-channel-visibility'),
+            reuseMethod: checkedValue('resubmit-method'), reuseMethodOther: value('resubmit-method-other'),
             email: value('resubmit-email'), emailConfirm: value('resubmit-email-confirm'), purpose: value('resubmit-purpose'),
             destinationUrl: value('resubmit-url'), notes: value('resubmit-notes'),
             authorized: document.getElementById('resubmit-authorized').checked, consent: document.getElementById('resubmit-consent').checked,
@@ -528,5 +571,6 @@ function element(tag, className, text = '') { const item = document.createElemen
 function setStatus(message, type) { const item = document.getElementById('global-status'); item.textContent = message; item.className = `form-status ${message ? type : ''}`; }
 function formatDate(valueText) { const date = new Date(valueText); return Number.isNaN(date.getTime()) ? valueText : date.toLocaleString('ja-JP'); }
 function selectField(labelText, id, choices, selected) { const label = document.createElement('label'); label.append(document.createTextNode(labelText)); const select = document.createElement('select'); select.id = id; select.required = true; for (const [choice, text] of Object.entries(choices)) select.append(option(choice, text, choice === selected)); label.append(select); return label; }
+function radioGroup(labelText, name, choices, selected) { const group = element('div', 'choice-group'); group.append(element('span', 'field-label', labelText)); for (const [choice, text] of Object.entries(choices)) { const label = document.createElement('label'); const input = document.createElement('input'); input.type = 'radio'; input.name = name; input.value = choice; input.required = true; input.checked = choice === selected; label.append(input, document.createTextNode(` ${text}`)); group.append(label); } return group; }
 function inputField(labelText, id, initial, type) { const label = document.createElement('label'); label.append(document.createTextNode(labelText)); const input = document.createElement('input'); input.id = id; input.type = type; input.value = initial || ''; input.required = type === 'email'; input.maxLength = type === 'email' ? 254 : 500; label.append(input); return label; }
 function textAreaField(labelText, id, initial, maxLength) { const label = document.createElement('label'); label.append(document.createTextNode(labelText)); const textarea = document.createElement('textarea'); textarea.id = id; textarea.rows = 4; textarea.maxLength = maxLength; textarea.value = initial || ''; if (id === 'resubmit-purpose') { textarea.required = true; textarea.minLength = 10; } label.append(textarea); return label; }
