@@ -246,10 +246,25 @@ async function completeDiscordOAuth(request, env) {
 }
 
 async function sessionDetails(request, env) {
-    assertDatabaseConfigured(env);
-    const session = await requireSession(request, env);
+    const rawToken = readCookie(request, 'dpi_reuse_session');
+    if (!rawToken || rawToken.length > 200) {
+        return jsonResponse({ success: true, authenticated: false });
+    }
+
+    await ensureDatabase(env);
+    const session = await env.REUSE_DB.prepare(
+        'SELECT * FROM reuse_sessions WHERE token_hash = ? AND expires_at >= ?',
+    ).bind(await sha256(rawToken), Date.now()).first();
+    if (!session) {
+        return jsonResponse(
+            { success: true, authenticated: false, reason: 'session_expired' },
+            200,
+            { 'Set-Cookie': clearCookie('dpi_reuse_session') },
+        );
+    }
     return jsonResponse({
         success: true,
+        authenticated: true,
         user: {
             id: session.discord_user_id,
             username: session.discord_username,
