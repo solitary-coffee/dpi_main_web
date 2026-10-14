@@ -46,6 +46,9 @@ class ReuseError extends Error {
 }
 
 export async function handleReuseRequest(request, env) {
+    // Git連携デプロイで新しい別名bindingの反映が遅れた場合も、同じD1を指す
+    // 既存bindingを利用して申請機能を継続できるようにする。
+    env = normalizeReuseEnvironment(env);
     const url = new URL(request.url);
     const pathname = url.pathname.replace(/\/+$/, '') || '/';
     const isPublicApi = pathname === '/api/reuse' || pathname.startsWith('/api/reuse/');
@@ -108,6 +111,16 @@ function reuseConfig(env) {
     return jsonResponse({
         success: true,
         configured: missing.length === 0,
+        configuration: {
+            database: Boolean(env.REUSE_DB),
+            discord: Boolean(
+                clean(env.DISCORD_CLIENT_ID)
+                && clean(env.DISCORD_CLIENT_SECRET)
+                && clean(env.DISCORD_BOT_TOKEN)
+            ),
+            session: Boolean(clean(env.REUSE_SESSION_SECRET)),
+            email: Boolean(env.NOTICE_EMAIL && clean(env.NOTICE_FROM_EMAIL)),
+        },
         loginUrl: '/api/reuse/oauth/start',
         deliveryTypes: Object.entries(DELIVERY_TYPES).map(([id, label]) => ({ id, label })),
     });
@@ -800,6 +813,13 @@ function publicConfigurationMissing(env) {
         ['NOTICE_EMAIL', env.NOTICE_EMAIL],
         ['NOTICE_FROM_EMAIL', clean(env.NOTICE_FROM_EMAIL)],
     ].filter(([, value]) => !value).map(([name]) => name);
+}
+
+function normalizeReuseEnvironment(env) {
+    if (env.REUSE_DB || (!env.NEWSLETTER_DB && !env.IP_BLOCK_DB)) return env;
+    const normalized = Object.create(env);
+    normalized.REUSE_DB = env.NEWSLETTER_DB || env.IP_BLOCK_DB;
+    return normalized;
 }
 
 function assertDatabaseConfigured(env) {

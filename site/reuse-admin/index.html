@@ -9,25 +9,41 @@
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <header class="topbar">
-        <div><p class="eyebrow">DPI-Bot</p><h1>二次利用申請管理</h1></div>
-        <div class="top-actions"><span id="admin-email"></span><a href="/site/mail-admin/">メール配信管理</a><a href="/site/ip-admin/">IP遮断管理</a><button id="refresh-btn" type="button">更新</button></div>
-    </header>
-    <main>
-        <div id="status" class="status" role="alert" aria-live="assertive"></div>
-        <section class="stats" id="stats"></section>
-        <section class="filters" aria-label="絞り込み">
-            <button type="button" data-status="all" class="active">すべて</button>
-            <button type="button" data-status="pending">審査中</button>
-            <button type="button" data-status="changes_requested">再申請待ち</button>
-            <button type="button" data-status="approved">許可</button>
-            <button type="button" data-status="rejected">却下</button>
-        </section>
-        <div class="workspace">
-            <section id="application-list" class="application-list" aria-label="申請一覧"></section>
-            <section id="detail" class="detail empty"><p>一覧から申請を選択してください。</p></section>
-        </div>
-    </main>
+    <button id="menu-toggle-btn" type="button" aria-label="メニューを開く"><span></span><span></span><span></span></button>
+    <div class="overlay"></div>
+    <div class="page-container">
+        <nav class="sidebar" aria-label="管理メニュー">
+            <div class="sidebar-header"><h2>管理メニュー</h2></div>
+            <ul>
+                <li><a href="/">公式サイト</a></li>
+                <li><a href="/site/reuse-admin/" class="active">二次利用申請管理</a></li>
+                <li><a href="/site/mail-admin/">メール配信管理</a></li>
+                <li><a href="/site/ip-admin/">IP遮断管理</a></li>
+                <li><a href="/cdn-cgi/access/logout">ログアウト</a></li>
+            </ul>
+        </nav>
+
+        <main class="main-content">
+            <header>
+                <h1>二次利用申請管理</h1>
+                <div class="admin-bar"><span id="admin-email"></span><button id="refresh-btn" type="button">最新情報に更新</button></div>
+            </header>
+            <div id="status" class="status" role="alert" aria-live="assertive"></div>
+            <section class="stats" id="stats" aria-label="申請件数"></section>
+            <section class="filters" aria-label="絞り込み">
+                <button type="button" data-status="all" class="active">すべて</button>
+                <button type="button" data-status="pending">審査中</button>
+                <button type="button" data-status="changes_requested">再申請待ち</button>
+                <button type="button" data-status="approved">許可</button>
+                <button type="button" data-status="rejected">却下</button>
+            </section>
+            <div class="workspace">
+                <section id="application-list" class="application-list" aria-label="申請一覧"></section>
+                <section id="detail" class="detail empty"><p>一覧から申請を選択してください。</p></section>
+            </div>
+        </main>
+    </div>
+    <script src="../../script.js"></script>
     <script src="script.js"></script>
 </body>
 </html>
