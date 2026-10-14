@@ -51,9 +51,19 @@
                             <option value="no">通常チャンネル</option>
                         </select>
                     </label>
+                    <label>最大件数
+                        <select id="limit" name="limit">
+                            <option value="all" selected>全件</option>
+                            <option value="50">50件</option>
+                            <option value="100">100件</option>
+                            <option value="200">200件</option>
+                            <option value="500">500件</option>
+                            <option value="1000">1,000件</option>
+                        </select>
+                    </label>
                     <button id="search-button" type="submit">検索する</button>
                 </form>
-                <p class="search-help">何も入力せず検索すると、取得できる配信先を一覧表示します。Webhook URLや認証情報は表示しません。</p>
+                <p class="search-help">最大件数を選択しない場合は全件取得します。Webhook URLや認証情報は表示しません。</p>
             </section>
 
             <div id="status" class="status" role="status" aria-live="polite"></div>

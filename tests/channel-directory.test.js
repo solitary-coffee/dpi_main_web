@@ -66,6 +66,13 @@ test('名前・ID・配信名・アナウンス種別で絞り込める', () => 
     assert.equal(directoryTest.matchesFilters(item, { q: '', delivery: '', announcement: 'no' }), false);
 });
 
+test('最大件数は未指定またはallなら全件、数値なら上限内に丸める', () => {
+    assert.equal(directoryTest.parseFilters(new URLSearchParams()).limit, null);
+    assert.equal(directoryTest.parseFilters(new URLSearchParams({ limit: 'all' })).limit, null);
+    assert.equal(directoryTest.parseFilters(new URLSearchParams({ limit: '500' })).limit, 500);
+    assert.equal(directoryTest.parseFilters(new URLSearchParams({ limit: '5000' })).limit, 1000);
+});
+
 test('Discord権限上書きの主要権限を日本語へ変換する', () => {
     const viewAndSend = String((1n << 10n) | (1n << 11n));
     const overwrites = directoryTest.normalizePermissionOverwrites([

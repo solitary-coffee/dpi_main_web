@@ -18,7 +18,7 @@ async function search() {
             q: document.getElementById('query').value.trim(),
             delivery: document.getElementById('delivery').value.trim(),
             announcement: document.getElementById('announcement').value,
-            limit: '100',
+            limit: document.getElementById('limit').value || 'all',
         });
         const result = await api(`/site/channel-admin/api/search?${params}`);
         document.getElementById('admin-email').textContent = result.admin;

@@ -6,8 +6,7 @@ const JSON_HEADERS = Object.freeze({
     'X-Content-Type-Options': 'nosniff',
     'Content-Security-Policy': "default-src 'none'; frame-ancestors 'none'",
 });
-const MAX_LOCAL_ROWS = 1_000;
-const MAX_RESULTS = 200;
+const MAX_LIMITED_RESULTS = 1_000;
 
 class DirectoryError extends Error {
     constructor(status, code, message) {
@@ -128,9 +127,9 @@ async function searchDirectory(url, env, admin) {
         searchLocalApplications(env, filters),
         searchAwsDirectory(env, filters),
     ]);
-    const items = mergeDirectoryItems([...localResult.items, ...awsResult.items])
-        .filter((item) => matchesFilters(item, filters))
-        .slice(0, filters.limit);
+    const matchedItems = mergeDirectoryItems([...localResult.items, ...awsResult.items])
+        .filter((item) => matchesFilters(item, filters));
+    const items = filters.limit == null ? matchedItems : matchedItems.slice(0, filters.limit);
 
     return jsonResponse({
         success: true,
@@ -153,8 +152,11 @@ function parseFilters(params) {
     const q = cleanString(params.get('q')).slice(0, 120);
     const delivery = cleanString(params.get('delivery')).slice(0, 100);
     const announcement = ['yes', 'no'].includes(params.get('announcement')) ? params.get('announcement') : 'all';
-    const requestedLimit = Number(params.get('limit') || 50);
-    const limit = Number.isInteger(requestedLimit) ? Math.min(Math.max(requestedLimit, 1), MAX_RESULTS) : 50;
+    const rawLimit = cleanString(params.get('limit')).toLowerCase();
+    const requestedLimit = Number(rawLimit);
+    const limit = !rawLimit || rawLimit === 'all'
+        ? null
+        : Number.isInteger(requestedLimit) ? Math.min(Math.max(requestedLimit, 1), MAX_LIMITED_RESULTS) : null;
     return { q, delivery, announcement, limit };
 }
 
@@ -168,9 +170,8 @@ async function searchLocalApplications(env, filters) {
                     channel_type, delivery_types, channel_mappings, server_public,
                     channel_visibility, updated_at
              FROM reuse_applications
-             ORDER BY updated_at DESC
-             LIMIT ?`,
-        ).bind(MAX_LOCAL_ROWS).all();
+             ORDER BY updated_at DESC`,
+        ).all();
         const items = (result.results || []).flatMap(applicationDirectoryItems)
             .filter((item) => matchesFilters(item, filters));
         return { status: { state: 'ready', count: items.length }, items };
@@ -234,7 +235,7 @@ async function searchAwsDirectory(env, filters) {
     target.searchParams.set('q', filters.q);
     target.searchParams.set('delivery', filters.delivery);
     target.searchParams.set('announcement', filters.announcement);
-    target.searchParams.set('limit', String(filters.limit));
+    target.searchParams.set('limit', filters.limit == null ? 'all' : String(filters.limit));
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 8_000);
