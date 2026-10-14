@@ -164,8 +164,8 @@ h3 {
     display: block;
 }
 .link-card:hover {
-    background-color: #fff;
-    border-color: #ccc;
+    background-color: #3f454b;
+    border-color: #3498db;
 }
 .link-card h3 {
     margin-top: 0;
