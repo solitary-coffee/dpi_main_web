@@ -21,6 +21,8 @@ test('メール配信・認証のSecretをリポジトリ上のvarsへ保存し�
         'DISCORD_CLIENT_SECRET',
         'DISCORD_BOT_TOKEN',
         'REUSE_SESSION_SECRET',
+        'AWS_CHANNEL_DIRECTORY_URL',
+        'AWS_CHANNEL_DIRECTORY_TOKEN',
     ];
 
     for (const name of secretNames) {

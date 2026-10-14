@@ -1,0 +1,40 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: DPI-Bot administrator channel directory read API
+
+Parameters:
+  DirectoryApiToken:
+    Type: String
+    NoEcho: true
+    MinLength: 32
+  TableName:
+    Type: String
+    Default: EarthquakeData
+
+Resources:
+  ChannelDirectoryFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: dpi-channel-directory-api
+      Description: Read-only administrator search API for DPI-Bot delivery destinations
+      Runtime: python3.13
+      Architectures:
+        - arm64
+      Handler: lambda_function.lambda_handler
+      CodeUri: .
+      MemorySize: 256
+      Timeout: 15
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref TableName
+          DIRECTORY_API_TOKEN: !Ref DirectoryApiToken
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref TableName
+      FunctionUrlConfig:
+        AuthType: NONE
+
+Outputs:
+  ChannelDirectoryUrl:
+    Description: Configure this URL as AWS_CHANNEL_DIRECTORY_URL in the Cloudflare Worker.
+    Value: !GetAtt ChannelDirectoryFunctionUrl.FunctionUrl

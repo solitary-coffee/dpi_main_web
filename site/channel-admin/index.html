@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="robots" content="noindex,nofollow">
+    <title>配信先検索 - DPI-Bot</title>
+    <link rel="icon" href="../../img/dpi.png" type="image/png">
+    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="../admin-shell.css">
+</head>
+<body class="admin-shell">
+    <button id="menu-toggle-btn" type="button" aria-label="メニューを開く"><span></span><span></span><span></span></button>
+    <div class="overlay"></div>
+    <div class="page-container">
+        <nav class="sidebar" aria-label="管理メニュー">
+            <div class="sidebar-header"><h2>管理メニュー</h2></div>
+            <ul>
+                <li><a href="/">公式サイト</a></li>
+                <li><a href="/site/channel-admin/" class="active">配信先検索</a></li>
+                <li><a href="/site/reuse-admin/">二次利用申請管理</a></li>
+                <li><a href="/site/mail-admin/">メール配信管理</a></li>
+                <li><a href="/site/ip-admin/">IP遮断管理</a></li>
+                <li><a href="/cdn-cgi/access/logout">ログアウト</a></li>
+            </ul>
+        </nav>
+
+        <main class="main-content">
+            <header>
+                <h1>配信先検索</h1>
+                <div class="admin-bar"><span id="admin-email"></span></div>
+            </header>
+
+            <section class="admin-section search-panel" aria-labelledby="search-title">
+                <div class="section-heading">
+                    <div><p class="eyebrow">SERVER &amp; CHANNEL DIRECTORY</p><h2 id="search-title">サーバー・チャンネルを検索</h2></div>
+                    <p>サーバー名、チャンネル名、各ID、配信名から横断検索できます。</p>
+                </div>
+                <form id="search-form" class="search-form">
+                    <label class="wide-field">名前またはID
+                        <input id="query" name="q" type="search" maxlength="120" placeholder="サーバー名・チャンネル名・Discord ID">
+                    </label>
+                    <label>配信名
+                        <input id="delivery" name="delivery" type="search" maxlength="100" list="delivery-options" placeholder="例：地震情報">
+                        <datalist id="delivery-options"></datalist>
+                    </label>
+                    <label>チャンネル種別
+                        <select id="announcement" name="announcement">
+                            <option value="all">すべて</option>
+                            <option value="yes">アナウンスチャンネル</option>
+                            <option value="no">通常チャンネル</option>
+                        </select>
+                    </label>
+                    <button id="search-button" type="submit">検索する</button>
+                </form>
+                <p class="search-help">何も入力せず検索すると、取得できる配信先を一覧表示します。Webhook URLや認証情報は表示しません。</p>
+            </section>
+
+            <div id="status" class="status" role="status" aria-live="polite"></div>
+            <section id="source-status" class="source-status" aria-label="データ取得状況"></section>
+            <section id="summary" class="summary" aria-label="検索結果概要"></section>
+            <section id="results" class="results" aria-label="検索結果">
+                <div class="empty-state"><h2>検索条件を入力してください</h2><p>サーバー名やID、配信名から配信先を確認できます。</p></div>
+            </section>
+        </main>
+    </div>
+    <script src="../../script.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>
