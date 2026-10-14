@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="robots" content="index,follow">
+    <title>二次利用申請 - DPI-Bot</title>
+    <link rel="icon" href="../../img/dpi.png" type="image/png">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <header class="hero">
+        <a class="brand" href="/">DPI-Bot</a>
+        <div class="hero-inner">
+            <p class="eyebrow">SECONDARY USE APPLICATION</p>
+            <h1>二次利用申請</h1>
+            <p>DPI-Botの配信をDiscordの別サーバーやアナウンスチャンネルで利用する場合の申請ページです。</p>
+        </div>
+    </header>
+
+    <main>
+        <div id="global-status" class="status" role="alert" aria-live="assertive"></div>
+
+        <section id="login-panel" class="card login-card">
+            <div>
+                <p class="eyebrow">STEP 1</p>
+                <h2>Discordでログイン</h2>
+                <p>申請先のサーバーを確認するため、Discordアカウントでログインしてください。管理権限を確認できるサーバーだけを表示します。</p>
+            </div>
+            <a id="discord-login" class="discord-btn" href="/api/reuse/oauth/start">Discordでログイン</a>
+        </section>
+
+        <section id="application-panel" class="card hidden">
+            <div class="account-row">
+                <div>
+                    <p class="eyebrow">SIGNED IN</p>
+                    <h2 id="account-name"></h2>
+                </div>
+                <button id="logout-btn" type="button" class="secondary-btn">ログアウト</button>
+            </div>
+
+            <form id="application-form">
+                <fieldset>
+                    <legend>利用先</legend>
+                    <label>利用するサーバー
+                        <select id="guild" required><option value="">選択してください</option></select>
+                    </label>
+                    <p class="help">Discord上で「サーバー管理」または「管理者」権限を持つサーバーが対象です。</p>
+                    <label>利用するチャンネル
+                        <select id="channel" required disabled><option value="">先にサーバーを選択してください</option></select>
+                    </label>
+                    <p id="channel-help" class="help">DPI-Botが確認できるテキスト／アナウンスチャンネルを表示します。</p>
+                </fieldset>
+
+                <fieldset>
+                    <legend>二次利用する配信</legend>
+                    <div id="delivery-types" class="check-grid"></div>
+                </fieldset>
+
+                <fieldset>
+                    <legend>公開範囲と運用方法</legend>
+                    <div class="choice-group">
+                        <span class="field-label">サーバーは誰でも参加できますか？</span>
+                        <label><input type="radio" name="server-public" value="public" required> 公開サーバー（誰でも参加可能）</label>
+                        <label><input type="radio" name="server-public" value="private"> 非公開・招待制サーバー</label>
+                    </div>
+                    <div class="choice-group">
+                        <span class="field-label">利用チャンネルは誰でも閲覧できますか？</span>
+                        <label><input type="radio" name="channel-visibility" value="public" required> サーバー参加者なら誰でも閲覧可能</label>
+                        <label><input type="radio" name="channel-visibility" value="role_limited"> 指定ロールのみ閲覧可能</label>
+                    </div>
+                    <div id="announcement-group" class="choice-group">
+                        <span class="field-label">アナウンスチャンネルの「公開」は自動化していますか？</span>
+                        <label><input type="radio" name="announcement-automated" value="yes"> 自動化している</label>
+                        <label><input type="radio" name="announcement-automated" value="no"> 手動で公開する</label>
+                        <label><input type="radio" name="announcement-automated" value="not_applicable" checked> アナウンスチャンネルではない</label>
+                    </div>
+                    <div class="choice-group">
+                        <span class="field-label">配信内容の利用方法</span>
+                        <label><input type="radio" name="reuse-method" value="unchanged" required> 内容をそのまま転載する</label>
+                        <label><input type="radio" name="reuse-method" value="edited"> 一部を編集・加工して利用する</label>
+                        <label><input type="radio" name="reuse-method" value="other"> その他</label>
+                    </div>
+                    <label id="reuse-other-wrap" class="hidden">その他の利用方法
+                        <textarea id="reuse-other" rows="3" maxlength="500"></textarea>
+                    </label>
+                </fieldset>
+
+                <fieldset>
+                    <legend>連絡先と利用目的</legend>
+                    <label>結果通知先メールアドレス
+                        <input id="email" type="email" autocomplete="email" maxlength="254" required>
+                    </label>
+                    <p class="help">受付完了、許可、却下、不備による再申請の案内を送信します。</p>
+                    <label>利用目的
+                        <textarea id="purpose" rows="5" minlength="10" maxlength="2000" required placeholder="どのような利用者へ、何の目的で配信するかを記載してください。"></textarea>
+                    </label>
+                    <label>サーバー案内・公開先URL（任意）
+                        <input id="destination-url" type="url" maxlength="500" placeholder="https://...">
+                    </label>
+                    <label>補足事項（任意）
+                        <textarea id="notes" rows="4" maxlength="2000" placeholder="編集方法、配信頻度、運用体制など"></textarea>
+                    </label>
+                </fieldset>
+
+                <fieldset>
+                    <legend>確認と同意</legend>
+                    <label class="consent"><input id="authorized" type="checkbox" required> 私は申請先サーバー・チャンネルを管理する権限を持っています。</label>
+                    <label class="consent"><input id="consent" type="checkbox" required> Discordユーザー情報、サーバー名・ID、チャンネル名・ID、メールアドレス、申請内容を審査と連絡のために収集・保存することに同意します。</label>
+                </fieldset>
+
+                <button id="submit-btn" type="submit" class="primary-btn">申請を送信する</button>
+            </form>
+        </section>
+
+        <section id="result-panel" class="card hidden">
+            <p class="eyebrow">APPLICATION STATUS</p>
+            <h2>申請状況</h2>
+            <div id="application-status"></div>
+            <form id="resubmit-form" class="hidden">
+                <h3>内容を修正して再申請</h3>
+                <div id="resubmit-fields"></div>
+                <label class="consent"><input id="resubmit-authorized" type="checkbox" required> 管理権限と入力内容を再確認しました。</label>
+                <label class="consent"><input id="resubmit-consent" type="checkbox" required> 情報の収集・保存に同意します。</label>
+                <button id="resubmit-btn" type="submit" class="primary-btn">再申請する</button>
+            </form>
+        </section>
+    </main>
+
+    <footer><a href="/terms/policy.html">プライバシーポリシー</a><span>お問い合わせ: support@dpi-bot.com</span></footer>
+    <script src="script.js"></script>
+</body>
+</html>

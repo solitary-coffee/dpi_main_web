@@ -31,6 +31,12 @@
       "database_name": "dpi-newsletter",
       "database_id": "8c0bbd9c-e3ac-4298-baa4-e98439882d3b",
       "migrations_dir": "migrations"
+    },
+    {
+      "binding": "REUSE_DB",
+      "database_name": "dpi-newsletter",
+      "database_id": "8c0bbd9c-e3ac-4298-baa4-e98439882d3b",
+      "migrations_dir": "migrations"
     }
   ],
 
@@ -60,6 +66,8 @@
     "NOTICE_FROM_EMAIL": "notice@dpi-bot.com",
     "NOTICE_REPLY_TO_EMAIL": "support@dpi-bot.com",
     "NEWSLETTER_PUBLIC_ORIGIN": "https://dpi-bot.com",
+    "REUSE_PUBLIC_ORIGIN": "https://dpi-bot.com",
+    "DISCORD_REDIRECT_URI": "https://dpi-bot.com/api/reuse/oauth/callback",
     "NEWSLETTER_CONSENT_VERSION": "2026-08-29"
   },
 

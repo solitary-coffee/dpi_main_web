@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="robots" content="noindex,nofollow">
+    <title>二次利用申請管理 - DPI-Bot</title>
+    <link rel="icon" href="../../img/dpi.png" type="image/png">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <header class="topbar">
+        <div><p class="eyebrow">DPI-Bot</p><h1>二次利用申請管理</h1></div>
+        <div class="top-actions"><span id="admin-email"></span><a href="/site/mail-admin/">メール配信管理</a><a href="/site/ip-admin/">IP遮断管理</a><button id="refresh-btn" type="button">更新</button></div>
+    </header>
+    <main>
+        <div id="status" class="status" role="alert" aria-live="assertive"></div>
+        <section class="stats" id="stats"></section>
+        <section class="filters" aria-label="絞り込み">
+            <button type="button" data-status="all" class="active">すべて</button>
+            <button type="button" data-status="pending">審査中</button>
+            <button type="button" data-status="changes_requested">再申請待ち</button>
+            <button type="button" data-status="approved">許可</button>
+            <button type="button" data-status="rejected">却下</button>
+        </section>
+        <div class="workspace">
+            <section id="application-list" class="application-list" aria-label="申請一覧"></section>
+            <section id="detail" class="detail empty"><p>一覧から申請を選択してください。</p></section>
+        </div>
+    </main>
+    <script src="script.js"></script>
+</body>
+</html>
