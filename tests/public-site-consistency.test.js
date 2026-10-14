@@ -55,14 +55,21 @@ test('公開ページの左メニューは同じ項目と順序を使用する',
 
 test('配信一覧と申請用カタログの状態が一致する', async () => {
     const html = await readFile(path.join(root, 'site/info/index.html'), 'utf8');
-    const activeIds = ['大雨警戒レベル', '土砂警戒レベル', '高潮警戒レベル', '暴風、暴風雪警報・注意報', '波浪警報・注意報', '大雪警報・注意報', 'その他注意報', '時系列予想', '全国分通報', '気象防災速報', '線状降水帯', '顕著な大雪', '気象解説', '気象解説[潮位]'];
+    const activeIds = ['大雨警戒レベル', '土砂警戒レベル', '高潮警戒レベル', '暴風、暴風雪警報・注意報', '波浪警報・注意報', '大雪警報・注意報', 'その他注意報', '気象防災速報', '線状降水帯', '顕著な大雪', '気象解説', '気象解説[潮位]'];
+    const adjustingIds = ['時系列予想', '全国分通報'];
     const endedIds = ['大雨危険度通知', '土砂災害危険度', '洪水害危険度', '浸水害危険度'];
     const statuses = Object.fromEntries(DELIVERY_CATALOG.map((item) => [item.id, item.status]));
 
     for (const id of activeIds) assert.equal(statuses[id], 'active', id);
+    for (const id of adjustingIds) assert.equal(statuses[id], 'adjusting', id);
     for (const id of endedIds) assert.equal(statuses[id], 'ended', id);
     assert.doesNotMatch(html, /class="content-card is-disabled"/u);
     assert.equal((html.match(/class="content-card is-abolished"/gu) || []).length, 7);
+
+    const changes = await readFile(path.join(root, 'site/info/new_info/index.html'), 'utf8');
+    for (const label of ['気象警報・注意報時系列予想', '全国集約通報']) {
+        assert.match(changes, new RegExp(`調整中[\\s\\S]{0,250}${label}`, 'u'), label);
+    }
 
     const endedDetail = await Promise.all(['ooam.html', 'kikend.html'].map((name) =>
         readFile(path.join(root, 'site/info/deta', name), 'utf8')));
