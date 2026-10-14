@@ -18,6 +18,8 @@ const STATUS_LABELS = Object.freeze({
     approved: '許可',
     rejected: '却下',
     changes_requested: '不備・再申請待ち',
+    stop_requested: '利用停止申請中',
+    stopped: '利用停止',
 });
 
 const JSON_HEADERS = Object.freeze({
@@ -82,9 +84,23 @@ export async function handleReuseRequest(request, env) {
             return guildChannels(request, env);
         }
         if (pathname === '/api/reuse/applications') {
+            assertMethod(request, ['GET', 'POST']);
+            if (request.method === 'POST') assertSameOrigin(request);
+            return request.method === 'GET'
+                ? userApplicationList(request, env)
+                : createApplication(request, env);
+        }
+        const userApplicationMatch = pathname.match(/^\/api\/reuse\/applications\/([0-9a-f-]{36})$/u);
+        if (userApplicationMatch) {
+            assertMethod(request, ['PUT']);
+            assertSameOrigin(request);
+            return resubmitApplication(request, env, userApplicationMatch[1]);
+        }
+        const stopApplicationMatch = pathname.match(/^\/api\/reuse\/applications\/([0-9a-f-]{36})\/stop$/u);
+        if (stopApplicationMatch) {
             assertMethod(request, ['POST']);
             assertSameOrigin(request);
-            return createApplication(request, env);
+            return requestApplicationStop(request, env, stopApplicationMatch[1]);
         }
         if (pathname === '/api/reuse/manage') {
             assertMethod(request, ['GET', 'PUT']);
@@ -374,40 +390,64 @@ async function createApplication(request, env) {
     return jsonResponse({ success: true, reference, manageToken, emailSent }, 201);
 }
 
+async function userApplicationList(request, env) {
+    const session = await requireSession(request, env);
+    const result = await env.REUSE_DB.prepare(
+        'SELECT * FROM reuse_applications WHERE discord_user_id = ? ORDER BY updated_at DESC LIMIT 200',
+    ).bind(session.discord_user_id).all();
+    return jsonResponse({
+        success: true,
+        applications: (result.results || []).map((item) => serializeApplication(item, true)),
+    });
+}
+
 async function managedApplication(request, env) {
     assertDatabaseConfigured(env);
     const application = await findManagedApplication(request, env);
     return jsonResponse({ success: true, application: serializeApplication(application, false) });
 }
 
-async function resubmitApplication(request, env) {
+async function resubmitApplication(request, env, applicationId = '') {
     assertPublicConfigured(env);
-    const existing = await findManagedApplication(request, env);
+    const session = await requireSession(request, env);
+    assertCsrf(request, session);
+    const existing = applicationId
+        ? await findUserApplication(env, session, applicationId)
+        : await findManagedApplication(request, env);
+    if (existing.discord_user_id !== session.discord_user_id) {
+        throw new ReuseError(403, 'この申請を編集する権限を確認できません。', 'application_not_owned');
+    }
     if (!isApplicationEditable(existing.status)) {
         throw new ReuseError(409, '審査中の申請は修正できません。審査結果が確定するまでお待ちください。', 'not_resubmittable');
     }
     const input = await readJson(request);
-    const channelMappings = validateResubmittedChannelMappings(input.channelMappings, existing);
+    const guild = findSessionGuild(session, existing.guild_id);
+    if (!guild) throw new ReuseError(403, '申請先サーバーの管理権限を確認できません。', 'guild_not_allowed');
+    const availableChannels = await fetchGuildChannels(existing.guild_id, env);
+    const channelMappings = validateChannelMappings(input.channelMappings, availableChannels);
+    const primaryChannel = channelMappings[0];
     const normalized = validateEditableApplicationInput({
         ...input,
         deliveryTypes: aggregateDeliveryTypes(channelMappings),
-        channelType: channelMappings[0].channelType,
-        announcement: channelMappings[0].announcement,
-        announcementAutomated: channelMappings[0].announcementAutomated,
+        channelType: primaryChannel.channelType,
+        announcement: primaryChannel.announcement,
+        announcementAutomated: primaryChannel.announcementAutomated,
     }, existing);
     const now = new Date().toISOString();
     const revision = Number(existing.revision || 1) + 1;
     const [update] = await env.REUSE_DB.batch([
         env.REUSE_DB.prepare(
             `UPDATE reuse_applications SET
-                status = 'resubmitted', revision = ?, delivery_types = ?, channel_mappings = ?, server_public = ?,
+                status = 'resubmitted', revision = ?, channel_id = ?, channel_name = ?, channel_type = ?,
+                delivery_types = ?, channel_mappings = ?, server_public = ?,
                 channel_visibility = ?, announcement_automated = ?, reuse_method = ?,
                 reuse_method_other = ?, contact_email = ?, purpose = ?, destination_url = ?,
                 notes = ?, admin_message = NULL, reviewed_by = NULL, reviewed_at = NULL,
                 resubmitted_at = ?, updated_at = ?
              WHERE id = ? AND status = ?`,
         ).bind(
-            revision, JSON.stringify(normalized.deliveryTypes), JSON.stringify(channelMappings),
+            revision, primaryChannel.channelId, primaryChannel.channelName, primaryChannel.channelType,
+            JSON.stringify(normalized.deliveryTypes), JSON.stringify(channelMappings),
             normalized.serverPublic,
             normalized.channelVisibility, normalized.announcementAutomated,
             normalized.reuseMethod, normalized.reuseMethodOther, normalized.email,
@@ -430,6 +470,40 @@ async function resubmitApplication(request, env) {
         emailSent = false;
     }
     return jsonResponse({ success: true, reference: existing.reference, revision, status: 'resubmitted', emailSent });
+}
+
+async function requestApplicationStop(request, env, applicationId) {
+    assertPublicConfigured(env);
+    const session = await requireSession(request, env);
+    assertCsrf(request, session);
+    const application = await findUserApplication(env, session, applicationId);
+    if (application.status !== 'approved') {
+        throw new ReuseError(409, '利用停止を申請できるのは許可済みの申請だけです。', 'stop_not_allowed');
+    }
+    const input = await readJson(request);
+    const reason = boundedText(input.reason, 5, 1_000, '利用停止理由');
+    const now = new Date().toISOString();
+    const [update] = await env.REUSE_DB.batch([
+        env.REUSE_DB.prepare(
+            `UPDATE reuse_applications SET status = 'stop_requested', updated_at = ?
+             WHERE id = ? AND discord_user_id = ? AND status = 'approved'`,
+        ).bind(now, application.id, session.discord_user_id),
+        env.REUSE_DB.prepare(
+            `INSERT INTO reuse_application_events
+                (id, application_id, event_type, actor, message, created_at)
+             VALUES (?, ?, 'stop_requested', ?, ?, ?)`,
+        ).bind(crypto.randomUUID(), application.id, `discord:${session.discord_user_id}`, reason, now),
+    ]);
+    if (!statementChangedRows(update)) {
+        throw new ReuseError(409, '申請状態が更新されました。画面を再読み込みしてください。', 'application_changed');
+    }
+    let emailSent = true;
+    try {
+        await sendStopRequestedEmail(env, application, reason);
+    } catch {
+        emailSent = false;
+    }
+    return jsonResponse({ success: true, status: 'stop_requested', statusLabel: STATUS_LABELS.stop_requested, emailSent });
 }
 
 async function handleProtectedAdminAsset(request, env) {
@@ -490,7 +564,7 @@ async function adminApplicationList(request, env, admin) {
     const statement = status === 'all'
         ? env.REUSE_DB.prepare(
             `SELECT * FROM reuse_applications ORDER BY
-                CASE status WHEN 'pending' THEN 0 WHEN 'resubmitted' THEN 1 WHEN 'changes_requested' THEN 2 ELSE 3 END,
+                CASE status WHEN 'pending' THEN 0 WHEN 'resubmitted' THEN 1 WHEN 'stop_requested' THEN 2 WHEN 'changes_requested' THEN 3 ELSE 4 END,
                 updated_at DESC LIMIT 200`,
         )
         : env.REUSE_DB.prepare(
@@ -527,13 +601,16 @@ async function adminApplicationDetail(env, admin, id) {
 async function reviewApplication(request, env, admin, id) {
     const input = await readJson(request);
     const action = stringValue(input.action);
-    if (!['approved', 'rejected', 'changes_requested'].includes(action)) {
+    if (!['approved', 'rejected', 'changes_requested', 'stopped'].includes(action)) {
         throw new ReuseError(400, '審査結果の指定が正しくありません。', 'invalid_review_action');
     }
     const message = boundedText(input.message, 1, 2_000, '申請者へのメッセージ');
     const application = await env.REUSE_DB.prepare('SELECT * FROM reuse_applications WHERE id = ?')
         .bind(id).first();
     if (!application) throw new ReuseError(404, '申請が見つかりません。', 'application_not_found');
+    if (action === 'stopped' && application.status !== 'stop_requested') {
+        throw new ReuseError(409, '利用停止申請中の申請だけを停止確定できます。', 'invalid_review_transition');
+    }
 
     const now = new Date().toISOString();
     const manageToken = randomToken(32);
@@ -670,36 +747,6 @@ function validateChannelMappings(input, availableChannels) {
     });
 }
 
-function validateResubmittedChannelMappings(input, existing) {
-    const stored = applicationChannelMappings(existing);
-    if (!Array.isArray(input) || input.length !== stored.length) {
-        throw new ReuseError(400, 'チャンネル別の配信設定を確認してください。', 'invalid_channel_mappings');
-    }
-    return stored.map((mapping, index) => {
-        const submitted = input[index] || {};
-        if (stringValue(submitted.channelId) !== mapping.channelId
-            || stringValue(submitted.publishChannelId) !== mapping.publishChannelId) {
-            throw new ReuseError(400, '再申請ではチャンネルを変更できません。', 'channel_mapping_changed');
-        }
-        const announcementAutomated = enumValue(
-            submitted.announcementAutomated,
-            mapping.announcement ? ['yes', 'no'] : ['not_applicable'],
-            'アナウンス公開の自動化状況',
-        );
-        const transferAutomated = enumValue(
-            submitted.transferAutomated,
-            mapping.publishChannelDifferent ? ['yes', 'no'] : ['not_applicable'],
-            '公開先チャンネルへの転送方法',
-        );
-        const destinationPublishAutomated = enumValue(
-            submitted.destinationPublishAutomated,
-            mapping.publishChannelType === 5 ? ['yes', 'no'] : ['not_applicable'],
-            '公開先アナウンスチャンネルの公開方法',
-        );
-        return { ...mapping, announcementAutomated, transferAutomated, destinationPublishAutomated, deliveryTypes: validateDeliveryTypes(submitted.deliveryTypes) };
-    });
-}
-
 function validateDeliveryTypes(input) {
     const values = Array.isArray(input) ? [...new Set(input.map(stringValue))] : [];
     if (values.length === 0 || values.some((item) => !Object.hasOwn(DELIVERY_TYPES, item))) {
@@ -813,6 +860,14 @@ async function findManagedApplication(request, env) {
     return application;
 }
 
+async function findUserApplication(env, session, applicationId) {
+    const application = await env.REUSE_DB.prepare(
+        'SELECT * FROM reuse_applications WHERE id = ? AND discord_user_id = ?',
+    ).bind(applicationId, session.discord_user_id).first();
+    if (!application) throw new ReuseError(404, '申請情報が見つかりません。', 'application_not_found');
+    return application;
+}
+
 function serializeApplication(item, includePrivate) {
     const channelMappings = applicationChannelMappings(item);
     const output = {
@@ -855,7 +910,7 @@ function serializeApplication(item, includePrivate) {
 }
 
 function isApplicationEditable(status) {
-    return status === 'approved' || status === 'changes_requested';
+    return ['approved', 'changes_requested', 'rejected', 'stopped'].includes(status);
 }
 
 function applicationChannelMappings(item) {
@@ -966,6 +1021,22 @@ async function sendResubmittedEmail(env, application) {
             '審査が完了すると、このメールアドレスへ結果をお送りします。',
         ].join('\n'),
         'application-resubmitted',
+    );
+}
+
+async function sendStopRequestedEmail(env, application, reason) {
+    await sendReuseEmail(
+        env,
+        application.contact_email,
+        `【DPI-Bot】二次利用の停止申請受付 ${application.reference}`,
+        [
+            'DPI-Bot 二次利用の停止申請を受け付けました。', '',
+            `受付番号: ${application.reference}`,
+            '現在の状態: 利用停止申請中', '',
+            '利用停止理由', reason, '',
+            '運営が確認後、結果をこのメールアドレスへお送りします。',
+        ].join('\n'),
+        'application-stop-requested',
     );
 }
 
