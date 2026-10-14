@@ -60,10 +60,20 @@ test('名前・ID・配信名・アナウンス種別で絞り込める', () => 
         channelId: '223456789012345678', channelName: '地震速報',
         deliveryTypes: ['地震情報'], announcement: true,
     };
-    assert.equal(directoryTest.matchesFilters(item, { q: 'dpi', delivery: '', announcement: 'all' }), true);
-    assert.equal(directoryTest.matchesFilters(item, { q: '223456789012345678', delivery: '', announcement: 'all' }), true);
-    assert.equal(directoryTest.matchesFilters(item, { q: '', delivery: '地震', announcement: 'yes' }), true);
-    assert.equal(directoryTest.matchesFilters(item, { q: '', delivery: '', announcement: 'no' }), false);
+    assert.equal(directoryTest.matchesFilters(item, { q: 'dpi', deliveries: [], announcement: 'all' }), true);
+    assert.equal(directoryTest.matchesFilters(item, { q: '223456789012345678', deliveries: [], announcement: 'all' }), true);
+    assert.equal(directoryTest.matchesFilters(item, { q: '', deliveries: ['地震', '津波'], announcement: 'yes' }), true);
+    assert.equal(directoryTest.matchesFilters(item, { q: '', deliveries: [], announcement: 'no' }), false);
+});
+
+test('申請済み・未申請で絞り込み、申請状況未取得を未申請扱いしない', () => {
+    const applied = { deliveryTypes: [], announcement: false, applicationChecked: true, application: { status: 'approved' } };
+    const notApplied = { deliveryTypes: [], announcement: false, applicationChecked: true, application: null };
+    const unknown = { deliveryTypes: [], announcement: false, applicationChecked: false, application: null };
+    assert.equal(directoryTest.matchesFilters(applied, { q: '', delivery: '', announcement: 'all', application: 'yes' }), true);
+    assert.equal(directoryTest.matchesFilters(applied, { q: '', delivery: '', announcement: 'all', application: 'no' }), false);
+    assert.equal(directoryTest.matchesFilters(notApplied, { q: '', delivery: '', announcement: 'all', application: 'no' }), true);
+    assert.equal(directoryTest.matchesFilters(unknown, { q: '', delivery: '', announcement: 'all', application: 'no' }), false);
 });
 
 test('最大件数は未指定またはallなら全件、数値なら上限内に丸める', () => {
@@ -71,6 +81,19 @@ test('最大件数は未指定またはallなら全件、数値なら上限内�
     assert.equal(directoryTest.parseFilters(new URLSearchParams({ limit: 'all' })).limit, null);
     assert.equal(directoryTest.parseFilters(new URLSearchParams({ limit: '500' })).limit, 500);
     assert.equal(directoryTest.parseFilters(new URLSearchParams({ limit: '5000' })).limit, 1000);
+    assert.equal(directoryTest.parseFilters(new URLSearchParams({ application: 'yes' })).application, 'yes');
+});
+
+test('配信名を複数指定して重複を除き、いずれかに一致すれば対象にする', () => {
+    const params = new URLSearchParams();
+    params.append('delivery', '地震情報');
+    params.append('delivery', '津波情報、地震情報');
+    const filters = directoryTest.parseFilters(params);
+    assert.deepEqual(filters.deliveries, ['地震情報', '津波情報']);
+    assert.equal(directoryTest.matchesFilters(
+        { deliveryTypes: ['津波情報'], announcement: false },
+        { ...filters, q: '', announcement: 'all', application: 'all' },
+    ), true);
 });
 
 test('Discord権限上書きの主要権限を日本語へ変換する', () => {
@@ -82,4 +105,19 @@ test('Discord権限上書きの主要権限を日本語へ変換する', () => {
     assert.equal(overwrites[0].targetType, 'role');
     assert.deepEqual(overwrites[0].allow, ['チャンネルを見る', 'メッセージを送信']);
     assert.deepEqual(overwrites[0].deny, []);
+});
+
+test('Discordサーバーのチャンネル一覧からテキストとアナウンスを正しく判定する', () => {
+    const channels = directoryTest.normalizeDiscordGuildChannels([
+        { id: '223456789012345678', name: '通常', type: 0, permission_overwrites: [] },
+        { id: '323456789012345678', name: '告知', type: 5, permission_overwrites: [] },
+        { id: '423456789012345678', name: '音声', type: 2, permission_overwrites: [] },
+    ], {
+        guildId: '123456789012345678', serverName: 'DPI', memberCount: 100, onlineCount: 20,
+        fetchedAt: '2026-10-14T10:00:00.000Z',
+    });
+    assert.equal(channels.length, 2);
+    assert.equal(channels[0].announcement, false);
+    assert.equal(channels[1].announcement, true);
+    assert.equal(channels[1].channelType, 5);
 });

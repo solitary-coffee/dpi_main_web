@@ -26,6 +26,12 @@ export async function handleChannelDirectoryRequest(request, env) {
     try {
         const admin = await authenticateNewsletterAdmin(request, env);
         if (pathname !== '/site/channel-admin/api/search') {
+            if (pathname === '/site/channel-admin/api/discord/guild') {
+                if (request.method !== 'GET') {
+                    return jsonResponse({ success: false, code: 'method_not_allowed', message: '許可されていない操作です。' }, 405, { Allow: 'GET' });
+                }
+                return await fetchDiscordGuildMetadata(url, env, admin);
+            }
             if (pathname === '/site/channel-admin/api/discord') {
                 if (request.method !== 'GET') {
                     return jsonResponse({ success: false, code: 'method_not_allowed', message: '許可されていない操作です。' }, 405, { Allow: 'GET' });
@@ -45,6 +51,63 @@ export async function handleChannelDirectoryRequest(request, env) {
         console.error('Channel directory request failed', { name: error?.name, message: error?.message });
         return jsonResponse({ success: false, code: 'internal_error', message: '検索処理中にエラーが発生しました。' }, 500);
     }
+}
+
+async function fetchDiscordGuildMetadata(url, env, admin) {
+    const guildId = discordId(url.searchParams.get('guild_id'));
+    const token = cleanString(env.DISCORD_BOT_TOKEN);
+    if (!guildId) throw new DirectoryError(400, 'invalid_discord_id', 'サーバーIDを確認してください。');
+    if (!token) throw new DirectoryError(503, 'discord_not_configured', 'Discord情報取得の設定が完了していません。');
+
+    const headers = { Accept: 'application/json', Authorization: `Bot ${token}`, 'User-Agent': 'DPI-Bot-Channel-Directory/1.0' };
+    const [guildResponse, channelsResponse] = await Promise.all([
+        fetch(`https://discord.com/api/v10/guilds/${guildId}?with_counts=true`, { headers }),
+        fetch(`https://discord.com/api/v10/guilds/${guildId}/channels`, { headers }),
+    ]);
+    if (!guildResponse.ok || !channelsResponse.ok) {
+        const status = guildResponse.status === 429 || channelsResponse.status === 429 ? 429 : 502;
+        const message = status === 429
+            ? 'Discord APIの取得上限に達しました。しばらく待って再試行してください。'
+            : 'Discordからサーバー・チャンネル情報を取得できませんでした。';
+        throw new DirectoryError(status, 'discord_guild_fetch_failed', message);
+    }
+
+    const [guild, rawChannels] = await Promise.all([guildResponse.json(), channelsResponse.json()]);
+    if (cleanString(guild.id) !== guildId || !Array.isArray(rawChannels)) {
+        throw new DirectoryError(409, 'discord_resource_mismatch', '取得したDiscord情報が検索対象と一致しません。');
+    }
+    const fetchedAt = new Date().toISOString();
+    const memberCount = finiteNumber(guild.approximate_member_count ?? guild.member_count);
+    const onlineCount = finiteNumber(guild.approximate_presence_count);
+    const serverName = cleanString(guild.name).slice(0, 100);
+    const channels = normalizeDiscordGuildChannels(rawChannels, { guildId, serverName, memberCount, onlineCount, fetchedAt });
+
+    console.log('Discord guild metadata read', { guildId, admin: admin.email, channelCount: channels.length });
+    return jsonResponse({
+        success: true,
+        server: { serverId: guildId, serverName, memberCount, onlineCount, fetchedAt },
+        channels,
+    });
+}
+
+function normalizeDiscordGuildChannels(rawChannels, { guildId, serverName, memberCount, onlineCount, fetchedAt }) {
+    if (!Array.isArray(rawChannels)) return [];
+    return rawChannels.slice(0, 1_000).filter((channel) => [0, 5].includes(Number(channel?.type))).map((channel) => {
+        const permissionOverwrites = normalizePermissionOverwrites(channel.permission_overwrites);
+        return {
+            serverId: guildId,
+            serverName,
+            channelId: discordId(channel.id),
+            channelName: cleanString(channel.name).slice(0, 100),
+            channelType: finiteNumber(channel.type),
+            announcement: Number(channel.type) === 5,
+            memberCount,
+            onlineCount,
+            permissionSummary: permissionOverwrites.length ? `権限上書き ${permissionOverwrites.length}件` : '権限上書きなし',
+            permissionOverwrites,
+            fetchedAt,
+        };
+    }).filter((channel) => channel.channelId);
 }
 
 async function fetchDiscordMetadata(url, env, admin) {
@@ -127,7 +190,9 @@ async function searchDirectory(url, env, admin) {
         searchLocalApplications(env, filters),
         searchAwsDirectory(env, filters),
     ]);
+    const applicationChecked = localResult.status.state === 'ready';
     const matchedItems = mergeDirectoryItems([...localResult.items, ...awsResult.items])
+        .map((item) => ({ ...item, applicationChecked }))
         .filter((item) => matchesFilters(item, filters));
     const items = filters.limit == null ? matchedItems : matchedItems.slice(0, filters.limit);
 
@@ -140,6 +205,7 @@ async function searchDirectory(url, env, admin) {
             resultCount: items.length,
             serverCount: new Set(items.map((item) => item.serverId).filter(Boolean)).size,
             channelCount: new Set(items.map((item) => item.channelId).filter(Boolean)).size,
+            applicationCount: items.filter((item) => item.application).length,
         },
         sources: {
             applications: localResult.status,
@@ -150,14 +216,18 @@ async function searchDirectory(url, env, admin) {
 
 function parseFilters(params) {
     const q = cleanString(params.get('q')).slice(0, 120);
-    const delivery = cleanString(params.get('delivery')).slice(0, 100);
+    const deliveries = [...new Set(params.getAll('delivery')
+        .flatMap((value) => cleanString(value).split(/[,、\n]/u))
+        .map((value) => cleanString(value).slice(0, 100))
+        .filter(Boolean))].slice(0, 20);
     const announcement = ['yes', 'no'].includes(params.get('announcement')) ? params.get('announcement') : 'all';
+    const application = ['yes', 'no'].includes(params.get('application')) ? params.get('application') : 'all';
     const rawLimit = cleanString(params.get('limit')).toLowerCase();
     const requestedLimit = Number(rawLimit);
     const limit = !rawLimit || rawLimit === 'all'
         ? null
         : Number.isInteger(requestedLimit) ? Math.min(Math.max(requestedLimit, 1), MAX_LIMITED_RESULTS) : null;
-    return { q, delivery, announcement, limit };
+    return { q, deliveries, announcement, application, limit };
 }
 
 async function searchLocalApplications(env, filters) {
@@ -172,8 +242,7 @@ async function searchLocalApplications(env, filters) {
              FROM reuse_applications
              ORDER BY updated_at DESC`,
         ).all();
-        const items = (result.results || []).flatMap(applicationDirectoryItems)
-            .filter((item) => matchesFilters(item, filters));
+        const items = (result.results || []).flatMap(applicationDirectoryItems);
         return { status: { state: 'ready', count: items.length }, items };
     } catch (error) {
         console.error('Local channel directory search failed', { name: error?.name, message: error?.message });
@@ -233,9 +302,12 @@ async function searchAwsDirectory(env, filters) {
         return { status: { state: 'error', message: 'AWS検索APIはHTTPS URLで設定してください。' }, items: [] };
     }
     target.searchParams.set('q', filters.q);
-    target.searchParams.set('delivery', filters.delivery);
+    target.searchParams.set('delivery', filters.deliveries.length === 1 ? filters.deliveries[0] : '');
     target.searchParams.set('announcement', filters.announcement);
-    target.searchParams.set('limit', filters.limit == null ? 'all' : String(filters.limit));
+    const requiresCompleteCandidates = filters.deliveries.length > 1
+        || filters.announcement !== 'all'
+        || filters.application !== 'all';
+    target.searchParams.set('limit', requiresCompleteCandidates || filters.limit == null ? 'all' : String(filters.limit));
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 8_000);
@@ -310,9 +382,12 @@ function mergeDirectoryItems(items) {
 }
 
 function matchesFilters(item, filters) {
-    if (filters.delivery && !item.deliveryTypes.some((value) => normalized(value).includes(normalized(filters.delivery)))) return false;
+    const deliveries = filters.deliveries || (filters.delivery ? [filters.delivery] : []);
+    if (deliveries.length && !deliveries.some((filter) => item.deliveryTypes.some((value) => normalized(value).includes(normalized(filter))))) return false;
     if (filters.announcement === 'yes' && item.announcement !== true) return false;
     if (filters.announcement === 'no' && item.announcement !== false) return false;
+    if (filters.application === 'yes' && !item.application) return false;
+    if (filters.application === 'no' && (!item.applicationChecked || item.application)) return false;
     if (!filters.q) return true;
     const haystack = [item.serverName, item.serverId, item.channelName, item.channelId, ...item.deliveryTypes]
         .map(normalized).join('\n');
@@ -370,6 +445,7 @@ export const __test = Object.freeze({
     applicationDirectoryItems,
     matchesFilters,
     mergeDirectoryItems,
+    normalizeDiscordGuildChannels,
     normalizeExternalItem,
     normalizePermissionOverwrites,
     parseFilters,

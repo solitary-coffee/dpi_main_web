@@ -40,15 +40,27 @@
                     <label class="wide-field">名前またはID
                         <input id="query" name="q" type="search" maxlength="120" placeholder="サーバー名・チャンネル名・Discord ID">
                     </label>
-                    <label>配信名
-                        <input id="delivery" name="delivery" type="search" maxlength="100" list="delivery-options" placeholder="例：地震情報">
+                    <div class="delivery-field">
+                        <span class="field-label">配信名（複数可）</span>
+                        <div id="selected-deliveries" class="selected-deliveries" aria-live="polite"></div>
+                        <div class="delivery-input-row">
+                            <input id="delivery-input" type="search" maxlength="100" list="delivery-options" placeholder="例：地震情報">
+                            <button id="add-delivery" type="button">追加</button>
+                        </div>
                         <datalist id="delivery-options"></datalist>
-                    </label>
+                    </div>
                     <label>チャンネル種別
                         <select id="announcement" name="announcement">
                             <option value="all">すべて</option>
                             <option value="yes">アナウンスチャンネル</option>
-                            <option value="no">通常チャンネル</option>
+                            <option value="no">テキストチャンネル</option>
+                        </select>
+                    </label>
+                    <label>二次利用申請
+                        <select id="application" name="application">
+                            <option value="all">すべて</option>
+                            <option value="yes">申請済み</option>
+                            <option value="no">未申請</option>
                         </select>
                     </label>
                     <label>最大件数
@@ -63,12 +75,17 @@
                     </label>
                     <button id="search-button" type="submit">検索する</button>
                 </form>
-                <p class="search-help">最大件数を選択しない場合は全件取得します。Webhook URLや認証情報は表示しません。</p>
+                <p class="search-help">チャンネル種別・申請の有無で絞り込めます。一括取得後は、Discordから取得した最新のサーバー名・チャンネル名・種別も検索に使用します。最大件数を選択しない場合は全件表示します。Webhook URLや認証情報は表示しません。</p>
             </section>
 
             <div id="status" class="status" role="status" aria-live="polite"></div>
             <section id="source-status" class="source-status" aria-label="データ取得状況"></section>
             <section id="summary" class="summary" aria-label="検索結果概要"></section>
+            <section class="result-actions" aria-label="Discord情報の一括取得">
+                <button id="bulk-discord-button" type="button" disabled>表示中のサーバー・チャンネル情報を一括取得</button>
+                <span id="bulk-discord-progress">検索後に利用できます。</span>
+                <p>種別をまとめて再判定する場合は、チャンネル種別を「すべて」にして検索してから実行してください。取得できないサーバーはスキップして次のサーバーを処理します。</p>
+            </section>
             <section id="results" class="results" aria-label="検索結果">
                 <div class="empty-state"><h2>検索条件を入力してください</h2><p>サーバー名やID、配信名から配信先を確認できます。</p></div>
             </section>
