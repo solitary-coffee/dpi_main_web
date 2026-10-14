@@ -8,16 +8,22 @@
 
 OAuth2では `identify` と `guilds` のみを要求します。申請者のDiscordアクセストークンは保存しません。チャンネル一覧は、DPI-BotのBot Tokenを使い、Botが参加しているサーバーから取得します。
 
-## Cloudflare Secrets
+## Cloudflare ランタイム設定
 
-次の値をCloudflare Worker `main-dpi`へSecretとして登録します。
+`DISCORD_CLIENT_ID` は公開識別子のため、`wrangler.jsonc` の `vars` に登録済みです。
+
+次の3項目は値をリポジトリへ保存せず、Cloudflare Worker `main-dpi` の
+**プロダクション → ランタイム変数とシークレット**へSecretとして登録します。
 
 ```bash
-npx wrangler secret put DISCORD_CLIENT_ID
 npx wrangler secret put DISCORD_CLIENT_SECRET
 npx wrangler secret put DISCORD_BOT_TOKEN
 npx wrangler secret put REUSE_SESSION_SECRET
 ```
+
+Cloudflareダッシュボードのビルド用「変数とシークレット」ではなく、Worker実行時に
+参照できる「ランタイム変数とシークレット」へ登録してください。Secretの値は
+`wrangler.jsonc`、GitHub、ビルドログへ記載しません。
 
 `REUSE_SESSION_SECRET`には32バイト以上のランダム値を設定してください。例:
 
