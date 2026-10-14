@@ -53,7 +53,16 @@
                     <button id="logout-btn" type="button" class="secondary-btn">ログアウト</button>
                 </div>
 
-                <form id="application-form">
+                <section class="application-dashboard" aria-labelledby="my-applications-title">
+                    <div class="dashboard-heading">
+                        <div><h2 id="my-applications-title">申請一覧</h2><p>このDiscordアカウントで申請した内容をすべて確認できます。</p></div>
+                        <button id="new-application-btn" type="button" class="primary-btn">新しい申請を行う</button>
+                    </div>
+                    <div id="my-applications" class="my-applications" aria-live="polite"></div>
+                </section>
+
+                <form id="application-form" class="hidden">
+                    <div class="form-heading"><h2>新しい申請</h2><button id="cancel-new-application" type="button" class="secondary-btn">一覧に戻る</button></div>
                     <fieldset>
                         <legend>利用先</legend>
                         <label>利用するサーバー
@@ -137,7 +146,9 @@
                 <h2>申請状況</h2>
                 <div id="application-status"></div>
                 <div class="result-actions">
-                    <a class="primary-btn" href="/site/reuse/">別の申請を行う</a>
+                    <button id="back-to-applications" type="button" class="secondary-btn">申請一覧に戻る</button>
+                    <button id="stop-application-btn" type="button" class="danger-btn hidden">利用停止を申請する</button>
+                    <button id="another-application-btn" type="button" class="primary-btn">別の申請を行う</button>
                 </div>
                 <form id="resubmit-form" class="hidden">
                     <div class="edit-heading">
@@ -153,6 +164,20 @@
                     <button id="resubmit-btn" type="submit" class="primary-btn">再申請する</button>
                 </form>
             </section>
+
+            <dialog id="stop-dialog" aria-labelledby="stop-dialog-title">
+                <form id="stop-form" class="confirmation-panel">
+                    <h2 id="stop-dialog-title">利用停止申請の確認</h2>
+                    <p>許可済みの二次利用を停止する申請を運営へ送信します。停止理由を入力してください。</p>
+                    <label>利用停止理由
+                        <textarea id="stop-reason" rows="5" minlength="5" maxlength="1000" required></textarea>
+                    </label>
+                    <div class="confirmation-actions">
+                        <button id="stop-cancel" type="button" class="secondary-btn">戻る</button>
+                        <button type="submit" class="danger-btn">確認して利用停止を申請</button>
+                    </div>
+                </form>
+            </dialog>
 
             <section class="section contact"><h2>お問い合わせ</h2><p>申請について不明な点がある場合は <a href="mailto:support@dpi-bot.com">support@dpi-bot.com</a> までご連絡ください。</p></section>
         </main>

@@ -1,4 +1,4 @@
-const statusLabels = Object.freeze({ pending: '審査中', resubmitted: '再申請', approved: '許可', rejected: '却下', changes_requested: '不備・再申請待ち' });
+const statusLabels = Object.freeze({ pending: '審査中', resubmitted: '再申請', approved: '許可', rejected: '却下', changes_requested: '不備・再申請待ち', stop_requested: '利用停止申請中', stopped: '利用停止' });
 const choiceLabels = Object.freeze({ public: '公開', private: '非公開・招待制', role_limited: '指定ロールのみ', yes: '自動', no: '手動', not_applicable: '該当なし', unchanged: 'そのまま転載', edited: '編集・加工', other: 'その他' });
 const MAIL_TEMPLATES = Object.freeze({
     inquiry: Object.freeze({ category: 'inquiry', subject: '二次利用申請について確認事項があります', message: '申請内容について確認したい点があります。\n\n【確認事項】\n・\n\nお手数ですが、このメールへ返信してご回答ください。' }),
@@ -9,6 +9,7 @@ const REVIEW_TEMPLATES = Object.freeze({
     approved: '申請内容を確認しました。\n\n審査の結果、二次利用を許可します。\n今後、利用チャンネル・公開方法・配信内容に変更がある場合は、あらためてご連絡ください。',
     changes_requested: '申請内容を確認しましたが、確認または修正が必要な点があります。\n\n【確認・修正事項】\n・\n\n申請状況ページから内容を修正し、再申請をお願いします。',
     rejected: '申請内容を確認しました。\n\n審査の結果、今回は二次利用を許可できません。\nご不明な点がある場合は、support@dpi-bot.com までお問い合わせください。',
+    stopped: '利用停止申請を確認しました。\n\n申請内容に基づき、二次利用の停止を確定しました。\nこれまでのご利用ありがとうございました。',
 });
 
 let selectedStatus = 'all';
@@ -48,6 +49,7 @@ function renderStats(counts) {
     const items = [
         ['審査中', counts.pending || 0], ['再申請', counts.resubmitted || 0],
         ['再申請待ち', counts.changes_requested || 0], ['許可', counts.approved || 0], ['却下', counts.rejected || 0],
+        ['停止申請中', counts.stop_requested || 0], ['利用停止', counts.stopped || 0],
     ];
     for (const [label, count] of items) {
         const card = element('article', 'stat');
@@ -118,6 +120,7 @@ function formatChannelMappings(app) {
         if (mapping.announcement) lines.push(`公開操作: ${choiceLabels[mapping.announcementAutomated] || mapping.announcementAutomated}`);
         if (mapping.publishChannelDifferent) {
             lines.push(`公開先: #${mapping.publishChannelName} (${mapping.publishChannelId})`);
+            lines.push(`公開先の種別: ${mapping.publishChannelType === 5 ? 'アナウンスチャンネル' : 'テキストチャンネル'}`);
             lines.push(`公開先への転送: ${choiceLabels[mapping.transferAutomated] || mapping.transferAutomated}`);
             if (mapping.publishChannelType === 5) lines.push(`公開先での公開: ${choiceLabels[mapping.destinationPublishAutomated] || mapping.destinationPublishAutomated}`);
         }
@@ -194,16 +197,19 @@ function inputControl(labelText, id, initialValue, maxLength) {
 function reviewBox(app) {
     const box = element('section', 'review-box');
     box.append(element('h3', '', '審査結果を通知'));
-    const template = selectControl('定型文', 'review-template', {
-        custom: '定型文を選択してください', approved: '許可', changes_requested: '不備・再申請を依頼', rejected: '却下',
-    });
+    const templateChoices = app.status === 'stop_requested'
+        ? { custom: '定型文を選択してください', stopped: '利用停止を確定', approved: '利用継続' }
+        : { custom: '定型文を選択してください', approved: '許可', changes_requested: '不備・再申請を依頼', rejected: '却下' };
+    const template = selectControl('定型文', 'review-template', templateChoices);
     const label = document.createElement('label');
     label.append(document.createTextNode('申請者へのメッセージ'));
     const textarea = document.createElement('textarea'); textarea.id = 'review-message'; textarea.maxLength = 2000; textarea.required = true; textarea.value = app.adminMessage || '';
     label.append(textarea); box.append(label);
     template.querySelector('select').addEventListener('change', () => applyReviewTemplate());
     const actions = element('div', 'review-actions');
-    const options = [['approved', '許可する', 'approve'], ['changes_requested', '不備・再申請を依頼', 'changes'], ['rejected', '却下する', 'reject']];
+    const options = app.status === 'stop_requested'
+        ? [['stopped', '利用停止を確定', 'reject'], ['approved', '利用を継続', 'approve']]
+        : [['approved', '許可する', 'approve'], ['changes_requested', '不備・再申請を依頼', 'changes'], ['rejected', '却下する', 'reject']];
     for (const [action, text, className] of options) {
         const button = element('button', className, text); button.type = 'button';
         button.addEventListener('click', () => review(app, action, button)); actions.append(button);
@@ -271,7 +277,7 @@ function eventHistory(events) {
     const section = element('section', 'events'); section.append(element('h3', '', '変更履歴'));
     for (const event of events) {
         const item = element('article', 'event');
-        item.append(element('strong', '', statusLabels[event.event_type] || ({ submitted: '初回申請', resubmitted: '再申請', admin_message_sent: '個別メール送信' }[event.event_type] || event.event_type)), element('p', '', `${event.actor}${event.message ? `: ${event.message}` : ''}`), element('time', '', formatDate(event.created_at)));
+        item.append(element('strong', '', statusLabels[event.event_type] || ({ submitted: '初回申請', resubmitted: '再申請', admin_message_sent: '個別メール送信', stop_requested: '利用停止申請' }[event.event_type] || event.event_type)), element('p', '', `${event.actor}${event.message ? `: ${event.message}` : ''}`), element('time', '', formatDate(event.created_at)));
         section.append(item);
     }
     return section;
