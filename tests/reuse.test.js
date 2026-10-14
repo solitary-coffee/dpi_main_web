@@ -103,6 +103,7 @@ test('二次利用申請のD1 migrationとDiscord OAuth設定を同梱する', a
     assert.match(migration, /CREATE TABLE IF NOT EXISTS reuse_applications/u);
     assert.match(migration, /CREATE TABLE IF NOT EXISTS reuse_application_events/u);
     assert.equal(config.d1_databases.find((item) => item.binding === 'REUSE_DB').database_name, 'dpi-newsletter');
+    assert.equal(config.vars.DISCORD_CLIENT_ID, '943752169029505114');
     for (const secret of ['DISCORD_CLIENT_SECRET', 'DISCORD_BOT_TOKEN', 'REUSE_SESSION_SECRET']) {
         assert.equal(Object.hasOwn(config.vars || {}, secret), false, `${secret} must not be committed`);
     }
