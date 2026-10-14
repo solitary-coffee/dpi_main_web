@@ -41,6 +41,18 @@
                 <section id="application-list" class="application-list" aria-label="申請一覧"></section>
                 <section id="detail" class="detail empty"><p>一覧から申請を選択してください。</p></section>
             </div>
+            <dialog id="admin-confirmation-dialog" aria-labelledby="admin-confirmation-title">
+                <div class="admin-confirmation-panel">
+                    <h2 id="admin-confirmation-title">送信内容の確認</h2>
+                    <p id="admin-confirmation-summary"></p>
+                    <dl id="admin-confirmation-details" class="detail-grid"></dl>
+                    <section class="admin-confirmation-message"><h3>送信するメッセージ</h3><pre id="admin-confirmation-message"></pre></section>
+                    <div class="admin-confirmation-actions">
+                        <button id="admin-confirmation-cancel" type="button">修正する</button>
+                        <button id="admin-confirmation-submit" type="button">内容を確認して送信</button>
+                    </div>
+                </div>
+            </dialog>
         </main>
     </div>
     <script src="../../script.js"></script>

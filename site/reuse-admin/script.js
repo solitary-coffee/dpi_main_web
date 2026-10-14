@@ -1,11 +1,25 @@
 const statusLabels = Object.freeze({ pending: '審査中', approved: '許可', rejected: '却下', changes_requested: '不備・再申請待ち' });
 const choiceLabels = Object.freeze({ public: '公開', private: '非公開・招待制', role_limited: '指定ロールのみ', yes: '自動', no: '手動', not_applicable: '該当なし', unchanged: 'そのまま転載', edited: '編集・加工', other: 'その他' });
+const MAIL_TEMPLATES = Object.freeze({
+    inquiry: Object.freeze({ category: 'inquiry', subject: '二次利用申請について確認事項があります', message: '申請内容について確認したい点があります。\n\n【確認事項】\n・\n\nお手数ですが、このメールへ返信してご回答ください。' }),
+    correction: Object.freeze({ category: 'correction', subject: '二次利用申請の内容確認・修正のお願い', message: '申請内容に確認または修正が必要な点があります。\n\n【確認・修正事項】\n・\n\n内容をご確認のうえ、このメールへ返信してください。' }),
+    reminder: Object.freeze({ category: 'other', subject: '二次利用申請についてのご連絡', message: '二次利用申請について、運営からご連絡します。\n\n【ご案内】\n・\n\nご不明な点があれば、このメールへ返信してください。' }),
+});
+const REVIEW_TEMPLATES = Object.freeze({
+    approved: '申請内容を確認しました。\n\n審査の結果、二次利用を許可します。\n今後、利用チャンネル・公開方法・配信内容に変更がある場合は、あらためてご連絡ください。',
+    changes_requested: '申請内容を確認しましたが、確認または修正が必要な点があります。\n\n【確認・修正事項】\n・\n\n申請状況ページから内容を修正し、再申請をお願いします。',
+    rejected: '申請内容を確認しました。\n\n審査の結果、今回は二次利用を許可できません。\nご不明な点がある場合は、support@dpi-bot.com までお問い合わせください。',
+});
 
 let selectedStatus = 'all';
 let selectedId = '';
+let pendingAdminAction = null;
 
 document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('refresh-btn').addEventListener('click', loadApplications);
+    document.getElementById('admin-confirmation-cancel').addEventListener('click', closeAdminConfirmation);
+    document.getElementById('admin-confirmation-submit').addEventListener('click', confirmAdminAction);
+    document.getElementById('admin-confirmation-dialog').addEventListener('close', () => { pendingAdminAction = null; });
     for (const button of document.querySelectorAll('[data-status]')) {
         button.addEventListener('click', () => {
             selectedStatus = button.dataset.status;
@@ -117,6 +131,9 @@ function messageBox(app) {
     const category = selectControl('連絡種別', 'admin-mail-category', {
         inquiry: '不明点の確認', correction: '不備の案内', other: 'その他の連絡',
     });
+    const template = selectControl('定型文', 'admin-mail-template', {
+        custom: '定型文を選択してください', inquiry: '不明点の確認', correction: '不備の案内', reminder: '一般的なご案内',
+    });
     const subject = inputControl('件名', 'admin-mail-subject', `二次利用申請について（${app.reference}）`, 150);
     const bodyLabel = document.createElement('label');
     bodyLabel.append(document.createTextNode('本文'));
@@ -124,27 +141,39 @@ function messageBox(app) {
     body.id = 'admin-mail-message'; body.maxLength = 5000;
     body.placeholder = '確認したい内容や修正してほしい点を入力してください。';
     bodyLabel.append(body);
-    const send = element('button', 'mail-send', 'この内容でメールを送信'); send.type = 'button';
+    template.querySelector('select').addEventListener('change', () => applyMailTemplate());
+    const send = element('button', 'mail-send', '送信内容を確認する'); send.type = 'button';
     send.addEventListener('click', () => sendMessage(app, send));
-    box.append(category, subject, bodyLabel, send, element('p', 'box-help', `送信先: ${app.contactEmail}／申請状態は変更されません。送信内容は変更履歴へ保存されます。`));
+    box.append(category, template, subject, bodyLabel, send, element('p', 'box-help', `送信先: ${app.contactEmail}／申請状態は変更されません。送信内容は変更履歴へ保存されます。`));
     return box;
 }
 
-async function sendMessage(app, button) {
+function applyMailTemplate() {
+    const template = MAIL_TEMPLATES[document.getElementById('admin-mail-template').value];
+    if (!template) return;
+    document.getElementById('admin-mail-category').value = template.category;
+    document.getElementById('admin-mail-subject').value = template.subject;
+    document.getElementById('admin-mail-message').value = template.message;
+}
+
+function sendMessage(app, button) {
     const category = document.getElementById('admin-mail-category').value;
     const subject = document.getElementById('admin-mail-subject').value.trim();
     const message = document.getElementById('admin-mail-message').value.trim();
     if (!subject || !message) return setStatus('メールの件名と本文を入力してください。', 'error');
-    if (!window.confirm(`${app.contactEmail}へ個別メールを送信しますか？`)) return;
-    button.disabled = true;
+    openAdminConfirmation({ kind: 'message', app, button, category, subject, message });
+}
+
+async function executeMessage(action) {
+    action.button.disabled = true;
     setStatus('申請者へメールを送信しています…', 'info');
     try {
-        await api(`/site/reuse-admin/api/applications/${app.id}/message`, {
-            method: 'POST', body: JSON.stringify({ category, subject, message }),
+        await api(`/site/reuse-admin/api/applications/${action.app.id}/message`, {
+            method: 'POST', body: JSON.stringify({ category: action.category, subject: action.subject, message: action.message }),
         });
         setStatus('申請者へメールを送信しました。', 'success');
-        await loadDetail(app.id);
-    } catch (error) { setStatus(error.message, 'error'); button.disabled = false; }
+        await loadDetail(action.app.id);
+    } catch (error) { setStatus(error.message, 'error'); action.button.disabled = false; }
 }
 
 function selectControl(labelText, id, choices) {
@@ -165,32 +194,77 @@ function inputControl(labelText, id, initialValue, maxLength) {
 function reviewBox(app) {
     const box = element('section', 'review-box');
     box.append(element('h3', '', '審査結果を通知'));
+    const template = selectControl('定型文', 'review-template', {
+        custom: '定型文を選択してください', approved: '許可', changes_requested: '不備・再申請を依頼', rejected: '却下',
+    });
     const label = document.createElement('label');
     label.append(document.createTextNode('申請者へのメッセージ'));
     const textarea = document.createElement('textarea'); textarea.id = 'review-message'; textarea.maxLength = 2000; textarea.required = true; textarea.value = app.adminMessage || '';
     label.append(textarea); box.append(label);
+    template.querySelector('select').addEventListener('change', () => applyReviewTemplate());
     const actions = element('div', 'review-actions');
     const options = [['approved', '許可する', 'approve'], ['changes_requested', '不備・再申請を依頼', 'changes'], ['rejected', '却下する', 'reject']];
     for (const [action, text, className] of options) {
         const button = element('button', className, text); button.type = 'button';
         button.addEventListener('click', () => review(app, action, button)); actions.append(button);
     }
-    box.append(actions, element('p', '', '操作すると申請者へ結果メールが送信されます。再申請依頼では、新しい申請状況URLも送信します。'));
+    box.append(template, actions, element('p', '', '操作すると確認画面を表示します。確認後、申請状態の更新と結果メール送信を行います。再申請依頼では、新しい申請状況URLも送信します。'));
     return box;
 }
 
-async function review(app, action, button) {
+function applyReviewTemplate() {
+    const template = REVIEW_TEMPLATES[document.getElementById('review-template').value];
+    if (template) document.getElementById('review-message').value = template;
+}
+
+function review(app, action, button) {
     const message = document.getElementById('review-message').value.trim();
     if (!message) return setStatus('申請者へのメッセージを入力してください。', 'error');
-    const label = statusLabels[action];
-    if (!window.confirm(`${app.reference}を「${label}」として確定し、結果メールを送信しますか？`)) return;
-    button.disabled = true;
+    openAdminConfirmation({ kind: 'review', app, button, action, message });
+}
+
+async function executeReview(action) {
+    action.button.disabled = true;
+    const label = statusLabels[action.action];
     setStatus('審査結果を保存し、メールを送信しています…', 'info');
     try {
-        await api(`/site/reuse-admin/api/applications/${app.id}/review`, { method: 'POST', body: JSON.stringify({ action, message }) });
+        await api(`/site/reuse-admin/api/applications/${action.app.id}/review`, { method: 'POST', body: JSON.stringify({ action: action.action, message: action.message }) });
         setStatus(`審査結果「${label}」を保存し、メールを送信しました。`, 'success');
         await loadApplications();
-    } catch (error) { setStatus(error.message, 'error'); button.disabled = false; }
+    } catch (error) { setStatus(error.message, 'error'); action.button.disabled = false; }
+}
+
+function openAdminConfirmation(action) {
+    pendingAdminAction = action;
+    const isMessage = action.kind === 'message';
+    document.getElementById('admin-confirmation-title').textContent = isMessage ? '個別メール送信の確認' : '審査結果通知の確認';
+    document.getElementById('admin-confirmation-summary').textContent = isMessage
+        ? '以下の内容を申請者へ送信します。'
+        : '以下の内容で審査結果を確定し、申請者へ結果メールを送信します。';
+    const details = document.getElementById('admin-confirmation-details'); details.replaceChildren();
+    const items = isMessage
+        ? [['送信先', action.app.contactEmail], ['連絡種別', document.getElementById('admin-mail-category').selectedOptions[0].textContent], ['件名', action.subject]]
+        : [['受付番号', action.app.reference], ['審査結果', statusLabels[action.action]], ['送信先', action.app.contactEmail]];
+    for (const [label, value] of items) details.append(element('dt', '', label), element('dd', '', value));
+    document.getElementById('admin-confirmation-message').textContent = action.message;
+    const submit = document.getElementById('admin-confirmation-submit');
+    submit.disabled = false;
+    submit.textContent = isMessage ? '内容を確認して送信' : '内容を確認して確定・送信';
+    document.getElementById('admin-confirmation-dialog').showModal();
+}
+
+function closeAdminConfirmation() {
+    pendingAdminAction = null;
+    document.getElementById('admin-confirmation-dialog').close();
+}
+
+async function confirmAdminAction() {
+    const action = pendingAdminAction;
+    if (!action) return;
+    document.getElementById('admin-confirmation-submit').disabled = true;
+    document.getElementById('admin-confirmation-dialog').close();
+    if (action.kind === 'message') await executeMessage(action);
+    else await executeReview(action);
 }
 
 function eventHistory(events) {

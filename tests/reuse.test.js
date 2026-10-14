@@ -127,6 +127,9 @@ test('申請画面と管理画面は安全なDOM APIで表示し、審査操作�
     assert.match(adminScript, /rejected/u);
     assert.match(adminScript, /\/message/u);
     assert.match(adminScript, /個別メール送信/u);
+    assert.match(adminScript, /MAIL_TEMPLATES/u);
+    assert.match(adminScript, /REVIEW_TEMPLATES/u);
+    assert.match(adminScript, /openAdminConfirmation/u);
     assert.doesNotMatch(publicScript, /name = announcementName; input\.value = valueText; input\.disabled = true/u);
     assert.match(publicScript, /transferAutomated/u);
     assert.match(publicScript, /destinationPublishAutomated/u);
@@ -137,6 +140,7 @@ test('申請画面と管理画面は安全なDOM APIで表示し、審査操作�
     assert.match(publicHtml, /id="email-confirm"/u);
     assert.match(publicHtml, /notice@dpi-bot\.com/u);
     assert.match(adminHtml, /Cloudflare|二次利用申請管理/u);
+    assert.match(adminHtml, /id="admin-confirmation-dialog"/u);
     for (const html of [publicHtml, adminHtml]) {
         assert.match(html, /class="page-container"/u);
         assert.match(html, /class="sidebar/u);
