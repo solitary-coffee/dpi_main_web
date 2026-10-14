@@ -9,7 +9,7 @@ from botocore.config import Config
 
 TABLE_NAME = os.environ.get("TABLE_NAME", "EarthquakeData").strip()
 API_TOKEN = os.environ.get("DIRECTORY_API_TOKEN", "").strip()
-MAX_RESULTS = 200
+MAX_LIMITED_RESULTS = 1000
 SNOWFLAKE_LENGTHS = {17, 18, 19, 20}
 RESERVED_FIELDS = {"id", "Ch_Name", "app", "time", "URL", "url"}
 
@@ -34,8 +34,7 @@ def lambda_handler(event, context):
     params = event.get("queryStringParameters") or {}
     query = _clean(params.get("q"), 120).casefold()
     delivery = _clean(params.get("delivery"), 100).casefold()
-    requested_limit = _integer(params.get("limit"), 50)
-    limit = min(max(requested_limit, 1), MAX_RESULTS)
+    limit = _parse_limit(params.get("limit"))
 
     entries = _load_directory()
     matched = []
@@ -53,7 +52,7 @@ def lambda_handler(event, context):
             if not any(query in value.casefold() for value in values if value):
                 continue
         matched.append(entry)
-        if len(matched) >= limit:
+        if limit is not None and len(matched) >= limit:
             break
 
     return _response(200, {
@@ -162,6 +161,14 @@ def _integer(value, default):
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+def _parse_limit(value):
+    text = _clean(value, 20).casefold()
+    if not text or text == "all":
+        return None
+    requested = _integer(text, MAX_LIMITED_RESULTS)
+    return min(max(requested, 1), MAX_LIMITED_RESULTS)
 
 
 def _response(status, body, headers=None):

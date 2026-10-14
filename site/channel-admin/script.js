@@ -18,7 +18,7 @@ async function search() {
             q: document.getElementById('query').value.trim(),
             delivery: document.getElementById('delivery').value.trim(),
             announcement: document.getElementById('announcement').value,
-            limit: '100',
+            limit: document.getElementById('limit').value || 'all',
         });
         const result = await api(`/site/channel-admin/api/search?${params}`);
         document.getElementById('admin-email').textContent = result.admin;
@@ -65,44 +65,75 @@ function renderResults(items) {
         return container.append(empty);
     }
 
-    for (const item of items) {
-        const card = element('article', 'result-card');
-        const head = element('div', 'result-head');
-        const title = document.createElement('div');
-        title.append(element('h2', '', `${item.serverName || 'サーバー名未取得'} / #${item.channelName || 'チャンネル名未取得'}`));
-        title.append(element('p', '', `Server ID: ${item.serverId || '未取得'} ・ Channel ID: ${item.channelId || '未取得'}`));
-        const badges = element('div', 'badges');
-        if (item.announcement === true) badges.append(element('span', 'badge announcement', 'アナウンス'));
-        else if (item.announcement === false) badges.append(element('span', 'badge', '通常チャンネル'));
-        else badges.append(element('span', 'badge', '種別未取得'));
-        for (const source of item.sources || []) badges.append(element('span', 'badge source', source === 'aws' ? 'AWS' : '申請'));
-        if (item.serverId && item.channelId) {
-            const refresh = element('button', 'discord-refresh', 'Discord情報を取得');
-            refresh.type = 'button';
-            refresh.addEventListener('click', () => loadDiscordMetadata(item, card, refresh));
-            badges.append(refresh);
-        }
-        head.append(title, badges);
-        card.append(head);
+    for (const group of groupItemsByServerName(items)) {
+        const server = element('section', 'server-group');
+        const serverHead = element('div', 'server-group-head');
+        const serverTitle = document.createElement('div');
+        serverTitle.append(element('h2', '', group.serverName));
+        const serverIds = [...new Set(group.items.map((item) => item.serverId).filter(Boolean))];
+        serverTitle.append(element('p', '', `${serverIds.length === 1 ? 'Server ID' : 'Server IDs'}: ${serverIds.length ? serverIds.join(' / ') : '未取得'}`));
+        serverHead.append(serverTitle, element('span', 'channel-count', `${group.items.length}チャンネル`));
+        server.append(serverHead);
 
-        const list = element('dl', 'result-grid');
-        appendField(list, 'ユーザー数', item.memberCount == null ? '未取得' : `${Number(item.memberCount).toLocaleString('ja-JP')}人`, 'member-count');
-        appendField(list, '閲覧範囲・権限', item.permissionSummary || visibilityLabels[item.visibility] || '未取得', 'permission-summary');
-        appendField(list, 'チャンネル種別', channelTypeLabel(item), 'channel-type');
-        appendField(list, '最終更新', item.updatedAt ? formatDate(item.updatedAt) : '未取得');
-        if (item.application) appendField(list, '申請番号', `${item.application.reference}（${item.application.status}）`);
-        if (item.serverPublic) appendField(list, 'サーバー公開範囲', item.serverPublic === 'public' ? '公開' : '非公開・招待制');
-        card.append(list);
-
-        const deliveries = element('div', 'delivery-list');
-        if ((item.deliveryTypes || []).length) {
-            for (const delivery of item.deliveryTypes) deliveries.append(element('span', 'delivery-chip', delivery));
-        } else {
-            deliveries.append(element('span', 'delivery-chip', '配信名未取得'));
-        }
-        card.append(deliveries);
-        container.append(card);
+        const channels = element('div', 'server-channels');
+        for (const item of group.items) channels.append(renderChannelCard(item));
+        server.append(channels);
+        container.append(server);
     }
+}
+
+function renderChannelCard(item) {
+    const card = element('article', 'result-card channel-card');
+    const head = element('div', 'result-head');
+    const title = document.createElement('div');
+    title.append(element('h3', '', `#${item.channelName || 'チャンネル名未取得'}`));
+    title.append(element('p', '', `Channel ID: ${item.channelId || '未取得'}`));
+    const badges = element('div', 'badges');
+    if (item.announcement === true) badges.append(element('span', 'badge announcement', 'アナウンス'));
+    else if (item.announcement === false) badges.append(element('span', 'badge', '通常チャンネル'));
+    else badges.append(element('span', 'badge', '種別未取得'));
+    for (const source of item.sources || []) badges.append(element('span', 'badge source', source === 'aws' ? 'AWS' : '申請'));
+    if (item.serverId && item.channelId) {
+        const refresh = element('button', 'discord-refresh', 'Discord情報を取得');
+        refresh.type = 'button';
+        refresh.addEventListener('click', () => loadDiscordMetadata(item, card, refresh));
+        badges.append(refresh);
+    }
+    head.append(title, badges);
+    card.append(head);
+
+    const list = element('dl', 'result-grid');
+    appendField(list, 'ユーザー数', item.memberCount == null ? '未取得' : `${Number(item.memberCount).toLocaleString('ja-JP')}人`, 'member-count');
+    appendField(list, '閲覧範囲・権限', item.permissionSummary || visibilityLabels[item.visibility] || '未取得', 'permission-summary');
+    appendField(list, 'チャンネル種別', channelTypeLabel(item), 'channel-type');
+    appendField(list, '最終更新', item.updatedAt ? formatDate(item.updatedAt) : '未取得');
+    if (item.application) appendField(list, '申請番号', `${item.application.reference}（${item.application.status}）`);
+    if (item.serverPublic) appendField(list, 'サーバー公開範囲', item.serverPublic === 'public' ? '公開' : '非公開・招待制');
+    card.append(list);
+
+    const deliveries = element('div', 'delivery-list');
+    if ((item.deliveryTypes || []).length) {
+        for (const delivery of item.deliveryTypes) deliveries.append(element('span', 'delivery-chip', delivery));
+    } else {
+        deliveries.append(element('span', 'delivery-chip', '配信名未取得'));
+    }
+    card.append(deliveries);
+    return card;
+}
+
+function groupItemsByServerName(items) {
+    const groups = new Map();
+    for (const item of items) {
+        const serverName = String(item.serverName || '').trim() || 'サーバー名未取得';
+        const serverId = String(item.serverId || '').trim();
+        const key = serverId
+            ? `id:${serverId}`
+            : `name:${serverName.normalize('NFKC').toLocaleLowerCase('ja')}`;
+        const group = groups.get(key) || { serverName, items: [] };
+        group.items.push(item);
+        groups.set(key, group);
+    }
+    return [...groups.values()];
 }
 
 function appendField(list, label, value, key = '') {
