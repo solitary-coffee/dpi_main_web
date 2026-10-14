@@ -3,6 +3,7 @@ const sourceStateLabels = Object.freeze({ ready: '取得済み', error: '取得�
 const visibilityLabels = Object.freeze({ public: 'サーバー参加者が閲覧可能', role_limited: '指定ロールのみ閲覧可能' });
 const applicationStatusLabels = Object.freeze({ pending: '審査中', resubmitted: '再申請', approved: '許可', rejected: '却下', changes_requested: '不備・再申請待ち' });
 let selectedDeliveries = [];
+let directoryItems = [];
 let currentItems = [];
 const discordChannelCache = new Map();
 const discordServerCache = new Map();
@@ -29,20 +30,18 @@ async function search() {
     setStatus('保存データを検索しています…', 'info');
     try {
         addDeliveryFromInput();
-        const params = new URLSearchParams({
-            q: document.getElementById('query').value.trim(),
-            announcement: document.getElementById('announcement').value,
-            application: document.getElementById('application').value,
-            limit: document.getElementById('limit').value || 'all',
-        });
-        for (const delivery of selectedDeliveries) params.append('delivery', delivery);
+        // Discordから取得した補正後の名前・種別でも検索できるよう、候補は全件受け取り、
+        // キャッシュを重ねた後に画面側で検索条件と最大件数を適用する。
+        const params = new URLSearchParams({ q: '', announcement: 'all', application: 'all', limit: 'all' });
         const result = await api(`/site/channel-admin/api/search?${params}`);
-        currentItems = applyCachedDiscordMetadata(result.items || []).filter(matchesSelectedChannelType);
+        directoryItems = result.items || [];
+        const enrichedItems = applyCachedDiscordMetadata(directoryItems);
+        currentItems = filterDirectoryItems(enrichedItems);
         document.getElementById('admin-email').textContent = result.admin;
         renderSources(result.sources);
         renderSummary(summarizeItems(currentItems));
         renderResults(currentItems);
-        updateDeliveryOptions(currentItems);
+        updateDeliveryOptions(enrichedItems);
         updateBulkDiscordButton();
         setStatus(currentItems.length ? '' : '条件に一致する配信先はありませんでした。', currentItems.length ? '' : 'info');
     } catch (error) {
@@ -271,19 +270,25 @@ async function loadAllDiscordMetadata() {
             succeeded += 1;
         } catch (error) {
             failures.push(`${serverId}: ${error.message}`);
-            if (error.message.includes('取得上限')) break;
         }
         if (index < serverIds.length - 1) await delay(250);
     }
 
-    currentItems = applyCachedDiscordMetadata(currentItems).filter(matchesSelectedChannelType);
+    const enrichedItems = applyCachedDiscordMetadata(directoryItems);
+    currentItems = filterDirectoryItems(enrichedItems);
     renderSummary(summarizeItems(currentItems));
     renderResults(currentItems);
-    button.disabled = false;
+    updateDeliveryOptions(enrichedItems);
+    updateBulkDiscordButton();
     progress.textContent = failures.length
-        ? `${succeeded}/${serverIds.length}サーバーを更新しました（${failures.length}件失敗）。`
+        ? `${succeeded}/${serverIds.length}サーバーを更新しました（${failures.length}件は取得できなかったためスキップ）。`
         : `${succeeded}サーバーの情報を更新しました。`;
-    setStatus(failures.length ? failures[0] : 'Discordからサーバー・チャンネル情報を一括取得しました。', failures.length ? 'error' : 'info');
+    setStatus(
+        failures.length
+            ? `取得できないサーバーをスキップして処理を完了しました。最初の失敗: ${failures[0]}`
+            : 'Discordからサーバー・チャンネル情報を一括取得し、検索データへ反映しました。',
+        failures.length ? 'error' : 'info',
+    );
 }
 
 function cacheDiscordGuildMetadata(server, channels) {
@@ -323,11 +328,25 @@ function applyCachedDiscordMetadata(items) {
     });
 }
 
-function matchesSelectedChannelType(item) {
-    const selected = document.getElementById('announcement').value;
-    if (selected === 'yes') return item.announcement === true;
-    if (selected === 'no') return item.announcement === false;
-    return true;
+function filterDirectoryItems(items) {
+    const query = normalized(document.getElementById('query').value);
+    const announcement = document.getElementById('announcement').value;
+    const application = document.getElementById('application').value;
+    const limitValue = document.getElementById('limit').value;
+    const limit = limitValue === 'all' ? null : Number(limitValue);
+    const filtered = items.filter((item) => {
+        if (selectedDeliveries.length && !selectedDeliveries.some((filter) =>
+            (item.deliveryTypes || []).some((value) => normalized(value).includes(normalized(filter))))) return false;
+        if (announcement === 'yes' && item.announcement !== true) return false;
+        if (announcement === 'no' && item.announcement !== false) return false;
+        if (application === 'yes' && !item.application) return false;
+        if (application === 'no' && (!item.applicationChecked || item.application)) return false;
+        if (!query) return true;
+        const haystack = [item.serverName, item.serverId, item.channelName, item.channelId, ...(item.deliveryTypes || [])]
+            .map(normalized).join('\n');
+        return haystack.includes(query);
+    });
+    return limit == null || !Number.isFinite(limit) ? filtered : filtered.slice(0, limit);
 }
 
 function summarizeItems(items) {
@@ -347,6 +366,10 @@ function channelTypeLabel(item) {
     if (item.announcement === true || item.channelType === 5) return 'アナウンスチャンネル';
     if (item.channelType === 0) return 'テキストチャンネル';
     return item.channelType == null ? '未取得' : `Discord種別 ${item.channelType}`;
+}
+
+function normalized(value) {
+    return String(value ?? '').trim().normalize('NFKC').toLocaleLowerCase('ja');
 }
 
 function updateDeliveryOptions(items) {
