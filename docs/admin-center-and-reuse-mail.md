@@ -5,12 +5,17 @@
 ## 追加される管理機能
 
 - `/site/admin-center/`
+  - 二次利用申請、購読者、メール配信、IP遮断、AWS・自宅サーバー・EC2・XML配信の概要
+  - 詳細確認と操作は用途別の管理タブへ移動
+- `/site/system-admin/`
   - Cloudflare Worker、D1、Queue、Email Routing、Accessの設定状態
-  - 二次利用申請、購読者、メール配信、IP遮断、管理操作履歴
   - AWS Lambda、API Gateway、SQS/DLQ、DynamoDB、CloudWatch Alarm/Logs、CloudFormation、バックアップEC2
   - 東京・大阪の自宅サーバー最終ハートビートと稼働判定
   - 自動監視・通常固定・フェイルオーバー固定の現在モード表示と手動切替
+  - 管理操作、二次利用申請、IP遮断の最近の履歴
+- `/site/ec2-admin/`
   - `dpi:backup-managed=true` のバックアップEC2に限定した起動・停止・再起動
+- `/site/xml-admin/`
   - 気象庁XMLの安全なプレビュー、現在の配信枠選択、東京・大阪ingestへの署名付き配信
   - AWS登録先と許可済み二次利用チャンネルの配信枠別件数
 - `/site/mail-admin/`（お知らせ一括配信）

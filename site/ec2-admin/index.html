@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="robots" content="noindex,nofollow">
+    <title>EC2管理 - DPI-Bot</title>
+    <link rel="icon" href="../../img/dpi.png" type="image/png">
+    <link rel="stylesheet" href="../admin-shell.css">
+    <link rel="stylesheet" href="../admin-center/style.css">
+</head>
+<body class="admin-shell" data-admin-page="ec2">
+    <button id="menu-toggle-btn" type="button" aria-label="メニューを開く"><span></span><span></span><span></span></button>
+    <div class="overlay"></div>
+    <div class="page-container">
+        <nav class="sidebar" aria-label="管理メニュー">
+            <div class="sidebar-header"><h2>管理メニュー</h2></div>
+            <ul>
+                <li><a href="/">公式サイト</a></li>
+                <li><a href="/site/admin-center/">統合管理センター</a></li>
+                <li><a href="/site/system-admin/">システム運用</a></li>
+                <li><a href="/site/ec2-admin/" class="active">EC2管理</a></li>
+                <li><a href="/site/xml-admin/">XML配信</a></li>
+                <li><a href="/site/channel-admin/">配信先検索</a></li>
+                <li><a href="/site/reuse-admin/">二次利用申請管理</a></li>
+                <li><a href="/site/mail-admin/">メール配信管理</a></li>
+                <li><a href="/site/ip-admin/">IP遮断管理</a></li>
+                <li><a href="/cdn-cgi/access/logout">ログアウト</a></li>
+            </ul>
+        </nav>
+        <main class="main-content">
+            <header class="topbar">
+                <div><p class="eyebrow">BACKUP COMPUTE</p><h1>EC2管理</h1></div>
+                <div class="admin-bar"><span id="admin-email"></span><button id="refresh-btn" type="button">最新情報に更新</button></div>
+            </header>
+            <div id="global-status" class="status" role="alert" aria-live="assertive"></div>
+            <section aria-labelledby="ec2-title">
+                <div class="section-heading"><div><p class="eyebrow">INSTANCES</p><h2 id="ec2-title">バックアップEC2</h2></div><time id="fetched-at"></time></div>
+                <p class="section-description">DPI-Bot管理対象タグが付いたEC2の状態を確認し、起動・停止・再起動を実行できます。</p>
+                <div class="table-wrap"><table><thead><tr><th>リージョン</th><th>名前 / ID</th><th>役割</th><th>現在</th><th>通常時</th><th>操作</th></tr></thead><tbody id="ec2-rows"></tbody></table></div>
+            </section>
+        </main>
+    </div>
+    <script src="../../script.js"></script>
+    <script src="../admin-center/script.js"></script>
+</body>
+</html>

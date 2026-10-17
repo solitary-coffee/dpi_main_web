@@ -17,6 +17,13 @@ section { margin-top: 24px; padding: 24px; border: 1px solid #59616b; border-rad
 .metric-card { display: flex; min-height: 100px; flex-direction: column; justify-content: space-between; padding: 16px; border: 1px solid #5d6772; border-radius: 8px; background: #333940; color: inherit; text-decoration: none; }
 .metric-card strong { margin-top: 12px; color: #8acaff; font-size: 2rem; }.metric-card:hover { border-color: #75bfff; }
 .quick-links { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 16px; }.quick-link { padding: 8px 11px; border-radius: 6px; background: #163c5b; color: #dff1ff; text-decoration: none; }
+.feature-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(235px, 1fr)); gap: 12px; }
+.feature-card { display: grid; min-height: 165px; gap: 8px; padding: 17px; border: 1px solid #5d6772; border-radius: 8px; background: #333940; color: inherit; text-decoration: none; }
+.feature-card:hover { border-color: #75bfff; background: #383f47; }
+.feature-card .feature-title { color: #c8d0d8; font-size: .85rem; font-weight: 800; }
+.feature-card strong { color: #8acaff; font-size: 1.35rem; }
+.feature-card small { color: #c8d0d8; }
+.feature-card .feature-link { align-self: end; color: #9dd3ff; font-size: .82rem; font-weight: 700; }
 .system-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(245px, 1fr)); gap: 14px; }.system-card { padding: 17px; border-radius: 8px; background: #333940; }.system-card h3 { margin-bottom: 13px; }
 dl { display: grid; grid-template-columns: minmax(110px, 1fr) auto; gap: 9px 14px; margin: 0; }dt { color: #c8d0d8; }dd { margin: 0; font-weight: 700; text-align: right; }
 .table-wrap { overflow-x: auto; }table { width: 100%; border-collapse: collapse; }th, td { padding: 11px; border-bottom: 1px solid #505963; text-align: left; vertical-align: top; }th { color: #9dd3ff; font-size: .82rem; }.empty { color: #c8d0d8; text-align: center; }
@@ -33,5 +40,6 @@ button:disabled { cursor: not-allowed; opacity: .45; }.danger-button { backgroun
 .region-modes { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 10px; }.region-mode { display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; padding: 13px; border-radius: 7px; background: #333940; }.region-mode span { color: #9dd3ff; font-weight: 800; text-align: right; }.region-mode small, .region-mode time { grid-column: 1 / -1; color: #c8d0d8; }
 .block-code { display: block; margin-top: 5px; color: #b9c3cc; font-size: .75rem; }.ec2-actions { display: flex; min-width: 185px; gap: 6px; }.state { font-weight: 800; }.state-running { color: #78dea6; }.state-stopped { color: #ffb0a9; }
 .xml-preview { padding: 16px; border: 1px solid #5d6772; border-radius: 8px; background: #333940; }.xml-preview h3 { margin-bottom: 12px; }
+.section-description { margin: -7px 0 18px; color: #c8d0d8; }
 @media (max-width: 680px) { .main-content { width: min(100% - 20px, 1180px); padding-top: 18px; }.topbar, .section-heading { align-items: flex-start; flex-direction: column; }section { padding: 18px 14px; } }
 @media (max-width: 820px) { .control-form, .xml-form { grid-template-columns: 1fr; }.wide { grid-column: auto; } }

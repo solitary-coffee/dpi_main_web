@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 import { handleAdminCenterRequest, __test as adminCenter } from '../worker/admin-center.js';
@@ -10,7 +11,7 @@ const env = {
     NOTICE_REPLY_TO_EMAIL: 'support@dpi-bot.com',
 };
 
-test('統合管理画面の末尾スラッシュは自分自身へリダイレクトしない', async () => {
+test('分割した運用管理画面をAccess認証で保護し末尾スラッシュを正規化する', async () => {
     const { privateKey, publicKey } = await crypto.subtle.generateKey(
         { name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' },
         true,
@@ -28,15 +29,47 @@ test('統合管理画面の末尾スラッシュは自分自身へリダイレ�
     };
     try {
         const headers = { 'cf-access-jwt-assertion': token };
-        const canonical = await handleAdminCenterRequest(new Request('https://dpi-bot.com/site/admin-center/', { headers }), adminEnv);
-        assert.equal(canonical.status, 200);
-        assert.equal(await canonical.text(), 'admin page');
+        for (const root of ['/site/admin-center', '/site/system-admin', '/site/ec2-admin', '/site/xml-admin']) {
+            const canonical = await handleAdminCenterRequest(new Request(`https://dpi-bot.com${root}/`, { headers }), adminEnv);
+            assert.equal(canonical.status, 200, root);
+            assert.equal(await canonical.text(), 'admin page', root);
 
-        const missingSlash = await handleAdminCenterRequest(new Request('https://dpi-bot.com/site/admin-center', { headers }), adminEnv);
-        assert.equal(missingSlash.status, 308);
-        assert.equal(missingSlash.headers.get('location'), 'https://dpi-bot.com/site/admin-center/');
+            const missingSlash = await handleAdminCenterRequest(new Request(`https://dpi-bot.com${root}`, { headers }), adminEnv);
+            assert.equal(missingSlash.status, 308, root);
+            assert.equal(missingSlash.headers.get('location'), `https://dpi-bot.com${root}/`, root);
+        }
     } finally {
         globalThis.fetch = originalFetch;
+    }
+});
+
+test('統合管理センターは概要だけを表示し操作は専用タブへ分離する', async () => {
+    const [overview, system, ec2, xml] = await Promise.all([
+        readFile(new URL('../site/admin-center/index.html', import.meta.url), 'utf8'),
+        readFile(new URL('../site/system-admin/index.html', import.meta.url), 'utf8'),
+        readFile(new URL('../site/ec2-admin/index.html', import.meta.url), 'utf8'),
+        readFile(new URL('../site/xml-admin/index.html', import.meta.url), 'utf8'),
+    ]);
+    assert.match(overview, /id="operation-overview"/u);
+    assert.doesNotMatch(overview, /id="mode-form"|id="ec2-rows"|id="xml-form"/u);
+    assert.match(system, /id="system-panels"[\s\S]*id="mode-form"[\s\S]*id="audit-rows"/u);
+    assert.match(ec2, /id="ec2-rows"/u);
+    assert.match(xml, /id="xml-form"[\s\S]*id="delivery-slots"/u);
+    for (const html of [overview, system, ec2, xml]) {
+        assert.match(html, /\/site\/system-admin\//u);
+        assert.match(html, /\/site\/ec2-admin\//u);
+        assert.match(html, /\/site\/xml-admin\//u);
+    }
+});
+
+test('すべての管理画面から用途別タブへ移動できる', async () => {
+    const pages = ['admin-center', 'system-admin', 'ec2-admin', 'xml-admin', 'channel-admin', 'reuse-admin', 'mail-admin', 'ip-admin'];
+    const expected = ['/site/admin-center/', '/site/system-admin/', '/site/ec2-admin/', '/site/xml-admin/', '/site/channel-admin/', '/site/reuse-admin/', '/site/mail-admin/', '/site/ip-admin/'];
+    for (const page of pages) {
+        const html = await readFile(new URL(`../site/${page}/index.html`, import.meta.url), 'utf8');
+        const sidebar = html.match(/<nav class="sidebar"[\s\S]*?<ul>([\s\S]*?)<\/ul>/u)?.[1] || '';
+        const links = [...sidebar.matchAll(/<a href="([^"]+)"/gu)].map((match) => match[1]);
+        assert.deepEqual(links.filter((href) => href.startsWith('/site/')), expected, page);
     }
 });
 

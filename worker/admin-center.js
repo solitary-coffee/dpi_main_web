@@ -9,6 +9,13 @@ const JSON_HEADERS = Object.freeze({
     'Content-Security-Policy': "default-src 'none'; frame-ancestors 'none'; base-uri 'none'",
 });
 
+const ADMIN_ASSET_ROOTS = Object.freeze([
+    '/site/admin-center',
+    '/site/system-admin',
+    '/site/ec2-admin',
+    '/site/xml-admin',
+]);
+
 class AdminCenterError extends Error {
     constructor(status, message, code) {
         super(message);
@@ -24,7 +31,8 @@ export async function handleAdminCenterRequest(request, env) {
     const isSummaryApi = pathname === '/site/admin-center/api/summary';
     const isActionApi = pathname === '/site/admin-center/api/action';
     const isApi = isSummaryApi || isActionApi;
-    const isAsset = !isApi && (pathname === '/site/admin-center' || pathname.startsWith('/site/admin-center/'));
+    const assetRoot = !isApi ? ADMIN_ASSET_ROOTS.find((root) => pathname === root || pathname.startsWith(`${root}/`)) : null;
+    const isAsset = Boolean(assetRoot);
     if (!isApi && !isAsset) return null;
 
     try {
@@ -47,8 +55,8 @@ export async function handleAdminCenterRequest(request, env) {
         // Use the original URL here. `pathname` above has trailing slashes removed
         // for route matching, so checking it would also redirect the already
         // canonical `/site/admin-center/` URL back to itself forever.
-        if (url.pathname === '/site/admin-center') {
-            url.pathname = '/site/admin-center/';
+        if (assetRoot && url.pathname === assetRoot) {
+            url.pathname = `${assetRoot}/`;
             return new Response(null, { status: 308, headers: { Location: url.toString(), 'Cache-Control': 'no-store' } });
         }
         const asset = await env.ASSETS.fetch(request);
@@ -114,6 +122,9 @@ async function systemSummary(env, admin) {
         aws,
         deliveryCatalog: DELIVERY_CATALOG,
         links: [
+            { label: 'システム運用', href: '/site/system-admin/' },
+            { label: 'EC2管理', href: '/site/ec2-admin/' },
+            { label: 'XML配信', href: '/site/xml-admin/' },
             { label: '二次利用申請管理', href: '/site/reuse-admin/' },
             { label: 'お知らせ一括配信', href: '/site/mail-admin/' },
             { label: '配信先検索', href: '/site/channel-admin/' },
