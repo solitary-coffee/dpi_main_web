@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { handleAdminCenterRequest } from '../worker/admin-center.js';
 import { __test as newsletter } from '../worker/newsletter.js';
 
 const env = {
@@ -8,6 +9,51 @@ const env = {
     NOTICE_FROM_EMAIL: 'notice@dpi-bot.com',
     NOTICE_REPLY_TO_EMAIL: 'support@dpi-bot.com',
 };
+
+test('統合管理画面の末尾スラッシュは自分自身へリダイレクトしない', async () => {
+    const { privateKey, publicKey } = await crypto.subtle.generateKey(
+        { name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' },
+        true,
+        ['sign', 'verify'],
+    );
+    const publicJwk = await crypto.subtle.exportKey('jwk', publicKey);
+    const token = await accessToken(privateKey);
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => Response.json({ keys: [{ ...publicJwk, kid: 'test-key' }] });
+    const adminEnv = {
+        ACCESS_AUD: 'test-audience',
+        ACCESS_TEAM_DOMAIN: 'https://test-team.cloudflareaccess.com',
+        ADMIN_EMAILS: 'admin@example.com',
+        ASSETS: { fetch: async () => new Response('admin page', { headers: { 'Content-Type': 'text/html' } }) },
+    };
+    try {
+        const headers = { 'cf-access-jwt-assertion': token };
+        const canonical = await handleAdminCenterRequest(new Request('https://dpi-bot.com/site/admin-center/', { headers }), adminEnv);
+        assert.equal(canonical.status, 200);
+        assert.equal(await canonical.text(), 'admin page');
+
+        const missingSlash = await handleAdminCenterRequest(new Request('https://dpi-bot.com/site/admin-center', { headers }), adminEnv);
+        assert.equal(missingSlash.status, 308);
+        assert.equal(missingSlash.headers.get('location'), 'https://dpi-bot.com/site/admin-center/');
+    } finally {
+        globalThis.fetch = originalFetch;
+    }
+});
+
+async function accessToken(privateKey) {
+    const encode = (value) => Buffer.from(JSON.stringify(value)).toString('base64url');
+    const now = Math.floor(Date.now() / 1_000);
+    const signingInput = `${encode({ alg: 'RS256', kid: 'test-key' })}.${encode({
+        iss: 'https://test-team.cloudflareaccess.com',
+        aud: 'test-audience',
+        email: 'admin@example.com',
+        sub: 'admin-subject',
+        iat: now,
+        exp: now + 300,
+    })}`;
+    const signature = await crypto.subtle.sign('RSASSA-PKCS1-v1_5', privateKey, Buffer.from(signingInput));
+    return `${signingInput}.${Buffer.from(signature).toString('base64url')}`;
+}
 
 test('二次利用者向けメールは選択した配信枠と管理導線を表示する', () => {
     const mail = newsletter.buildCampaignEmail({

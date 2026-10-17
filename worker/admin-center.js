@@ -36,7 +36,10 @@ export async function handleAdminCenterRequest(request, env) {
         if (!['GET', 'HEAD'].includes(request.method)) {
             throw new AdminCenterError(405, '許可されていない操作です。', 'method_not_allowed');
         }
-        if (pathname === '/site/admin-center') {
+        // Use the original URL here. `pathname` above has trailing slashes removed
+        // for route matching, so checking it would also redirect the already
+        // canonical `/site/admin-center/` URL back to itself forever.
+        if (url.pathname === '/site/admin-center') {
             url.pathname = '/site/admin-center/';
             return new Response(null, { status: 308, headers: { Location: url.toString(), 'Cache-Control': 'no-store' } });
         }
