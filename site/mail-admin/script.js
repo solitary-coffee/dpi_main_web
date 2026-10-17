@@ -12,6 +12,12 @@ const statusLabels = Object.freeze({
     cancelled: '取消済み',
 });
 
+const recipientGroupLabels = Object.freeze({
+    subscribers: 'お知らせ購読者',
+    reuse_approved: '許可済み二次利用者',
+    discord_approved: '許可済みDiscordサーバー',
+});
+
 const campaignTemplates = Object.freeze({
     maintenance: Object.freeze({
         subject: '【メンテナンス情報】DPI-Bot メンテナンスのお知らせ',
@@ -64,6 +70,8 @@ let summaryState = null;
 let previewObjectUrl = '';
 let previewTimer = null;
 let previewRequestId = 0;
+let audienceTimer = null;
+let audienceRequestId = 0;
 
 document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('refresh-btn').addEventListener('click', loadSummary);
@@ -77,6 +85,15 @@ document.addEventListener('DOMContentLoaded', function() {
             scheduleEmailPreview();
         });
     }
+    for (const input of document.querySelectorAll('input[name="campaign-recipient-groups"]')) {
+        input.addEventListener('change', function() {
+            updateServerSelectorVisibility();
+            scheduleRecipientPreview();
+            scheduleEmailPreview();
+        });
+    }
+    document.getElementById('select-all-servers').addEventListener('click', () => setAllServers(true));
+    document.getElementById('clear-all-servers').addEventListener('click', () => setAllServers(false));
     for (const button of document.querySelectorAll('[data-template]')) {
         button.addEventListener('click', () => applyTemplate(button.dataset.template));
     }
@@ -90,16 +107,19 @@ async function loadSummary() {
         const summary = await adminRequest('/site/mail-admin/api/summary');
         summaryState = summary;
         document.getElementById('admin-email').textContent = summary.admin;
-        renderSubscriberStats(summary.subscribers);
+        renderSubscriberStats(summary.subscribers, summary.reuseUsers);
+        renderDeliverySlots(summary.deliveryCatalog);
+        renderApprovedServers(summary.approvedServers || []);
         renderCampaigns(summary.campaigns);
-        updateRecipientPreview();
+        updateServerSelectorVisibility();
+        scheduleRecipientPreview(0);
         setStatus('', '');
     } catch (error) {
         setStatus(error.message, 'error');
     }
 }
 
-function renderSubscriberStats(subscribers) {
+function renderSubscriberStats(subscribers, reuseUsers) {
     const container = document.getElementById('subscriber-stats');
     container.replaceChildren();
     const items = [
@@ -110,12 +130,58 @@ function renderSubscriberStats(subscribers) {
         ['メンテナンス', subscribers.categories.maintenance],
         ['障害・重要情報', subscribers.categories.outage],
         ['アップデート', subscribers.categories.update],
+        ['許可済み二次利用者', reuseUsers?.approved || 0],
     ];
     for (const [label, value] of items) {
         const card = element('article', 'stat-card');
         card.append(element('span', 'stat-label', label));
         card.append(element('strong', 'stat-value', String(value)));
         container.append(card);
+    }
+}
+
+function renderDeliverySlots(catalog) {
+    const container = document.getElementById('delivery-slots');
+    const previous = new Set(selectedDeliverySlots());
+    container.replaceChildren();
+    for (const slot of catalog || []) {
+        const label = element('label', 'delivery-slot');
+        const input = document.createElement('input');
+        input.type = 'checkbox';
+        input.name = 'campaign-delivery-slots';
+        input.value = slot.id;
+        input.checked = previous.has(slot.id) || (previous.size === 0 && slot.id === 'DPI_Bot通知');
+        input.addEventListener('change', function() {
+            scheduleRecipientPreview();
+            scheduleEmailPreview();
+        });
+        const text = element('span', '', slot.label);
+        text.append(element('small', `slot-status ${slot.status}`, slot.status));
+        label.append(input, text);
+        container.append(label);
+    }
+}
+
+function renderApprovedServers(servers) {
+    const container = document.getElementById('approved-servers');
+    const previous = new Set(selectedServerIds());
+    container.replaceChildren();
+    if (!servers.length) {
+        container.append(element('p', 'empty', '許可済みの配信先サーバーはありません。'));
+        return;
+    }
+    for (const server of servers) {
+        const label = element('label', 'delivery-slot');
+        const input = document.createElement('input');
+        input.type = 'checkbox';
+        input.name = 'campaign-server-ids';
+        input.value = server.id;
+        input.checked = previous.has(server.id);
+        input.addEventListener('change', () => scheduleRecipientPreview());
+        const text = element('span', '', server.name || server.id);
+        text.append(element('small', 'slot-status active', `${server.channelCount}ch`));
+        label.append(input, text);
+        container.append(label);
     }
 }
 
@@ -134,6 +200,9 @@ function renderCampaigns(campaigns) {
         const badges = element('div', 'badges');
         for (const category of campaignCategories(campaign)) {
             badges.append(element('span', 'badge category', categoryLabels[category] || category));
+        }
+        for (const group of campaign.recipientGroups || ['subscribers']) {
+            badges.append(element('span', 'badge audience', recipientGroupLabels[group] || group));
         }
         badges.append(element('span', `badge status ${campaign.status}`, statusLabels[campaign.status] || campaign.status));
         titleWrap.append(badges, element('h3', '', campaign.subject));
@@ -159,6 +228,12 @@ function renderCampaigns(campaigns) {
         card.append(metrics);
 
         const meta = element('p', 'campaign-meta', `ID: ${campaign.id} / 作成: ${campaign.createdBy}`);
+        const slots = (campaign.deliverySlots || []).map(deliverySlotLabel).join('・');
+        if (slots) meta.append(document.createElement('br'), document.createTextNode(`対象配信枠: ${slots}`));
+        if (campaign.targetServerIds?.length) {
+            const servers = campaign.targetServerIds.map(serverLabel).join('・');
+            meta.append(document.createElement('br'), document.createTextNode(`Discord配信先: ${servers}`));
+        }
         card.append(meta);
 
         const actions = element('div', 'campaign-actions');
@@ -191,16 +266,25 @@ async function createCampaign(event) {
     try {
         const categories = selectedCampaignCategories();
         if (categories.length === 0) throw new Error('配信カテゴリを1つ以上選択してください。');
+        const recipientGroups = selectedRecipientGroups();
+        const deliverySlots = selectedDeliverySlots();
+        const targetServerIds = selectedServerIds();
+        if (recipientGroups.length === 0) throw new Error('送信先を1つ以上選択してください。');
+        if (deliverySlots.length === 0) throw new Error('対象配信枠を1つ以上選択してください。');
         const result = await adminRequest('/site/mail-admin/api/campaigns', {
             method: 'POST',
             body: JSON.stringify({
                 categories,
+                recipientGroups,
+                deliverySlots,
+                targetServerIds,
                 subject: document.getElementById('subject').value,
                 body: document.getElementById('body').value,
             }),
         });
         document.getElementById('campaign-form').reset();
-        updateRecipientPreview();
+        ensureDefaultSelections();
+        scheduleRecipientPreview(0);
         clearEmailPreview();
         setStatus(`下書きを保存しました。配信ID: ${result.campaign.id}`, 'success');
         await loadSummary();
@@ -212,9 +296,21 @@ async function createCampaign(event) {
 }
 
 async function sendCampaign(campaign, button) {
-    const count = audienceCount(campaignCategories(campaign));
+    let count = '不明';
+    try {
+        const audience = await audiencePreview(
+            campaignCategories(campaign),
+            campaign.recipientGroups,
+            campaign.deliverySlots,
+            campaign.targetServerIds,
+        );
+        count = audience.count;
+    } catch (error) {
+        setStatus(error.message, 'error');
+        return;
+    }
     const confirmed = window.confirm(
-        `「${campaign.subject}」を${count}件の購読者へ配信開始します。\n\n配信開始後、すでに送信されたメールは取り消せません。`,
+        `「${campaign.subject}」を${count}件へ配信開始します。\n\n配信開始後、すでに送信されたメールやDiscord投稿は取り消せません。`,
     );
     if (!confirmed) return;
 
@@ -250,20 +346,86 @@ async function cancelCampaign(campaign, button) {
     }
 }
 
-function updateRecipientPreview() {
+function scheduleRecipientPreview(delay = 250) {
+    window.clearTimeout(audienceTimer);
+    audienceTimer = window.setTimeout(updateRecipientPreview, delay);
+}
+
+async function updateRecipientPreview() {
     const categories = selectedCampaignCategories();
+    const recipientGroups = selectedRecipientGroups();
+    const deliverySlots = selectedDeliverySlots();
+    const targetServerIds = selectedServerIds();
     const preview = document.getElementById('recipient-preview');
-    if (categories.length === 0 || !summaryState) {
-        preview.textContent = 'カテゴリを1つ以上選ぶと現在の対象件数を表示します。';
+    if (categories.length === 0 || recipientGroups.length === 0 || deliverySlots.length === 0 || !summaryState) {
+        preview.textContent = 'カテゴリ・送信先・配信枠をそれぞれ1つ以上選択してください。';
         return;
     }
-    const count = audienceCount(categories);
-    preview.textContent = `現在の配信対象: ${count}件（実際の対象は配信開始時に再計算されます）`;
+    const requestId = ++audienceRequestId;
+    preview.textContent = '現在の配信対象を計算中…';
+    try {
+        const result = await audiencePreview(categories, recipientGroups, deliverySlots, targetServerIds);
+        if (requestId !== audienceRequestId) return;
+        const parts = [];
+        if (result.byKind?.subscriber) parts.push(`購読者 ${result.byKind.subscriber}件`);
+        if (result.byKind?.reuse_approved) parts.push(`二次利用者 ${result.byKind.reuse_approved}件`);
+        if (result.byKind?.discord_approved) parts.push(`Discordチャンネル ${result.byKind.discord_approved}件`);
+        preview.textContent = `現在の配信対象: ${result.count}件${parts.length ? `（${parts.join(' / ')}）` : ''}。配信開始時に再計算します。`;
+    } catch (error) {
+        if (requestId === audienceRequestId) preview.textContent = error.message;
+    }
 }
 
 function selectedCampaignCategories() {
     return Array.from(document.querySelectorAll('input[name="campaign-categories"]:checked'))
         .map((input) => input.value);
+}
+
+function selectedRecipientGroups() {
+    return Array.from(document.querySelectorAll('input[name="campaign-recipient-groups"]:checked'))
+        .map((input) => input.value);
+}
+
+function selectedDeliverySlots() {
+    return Array.from(document.querySelectorAll('input[name="campaign-delivery-slots"]:checked'))
+        .map((input) => input.value);
+}
+
+function selectedServerIds() {
+    return Array.from(document.querySelectorAll('input[name="campaign-server-ids"]:checked'))
+        .map((input) => input.value);
+}
+
+function updateServerSelectorVisibility() {
+    const enabled = selectedRecipientGroups().includes('discord_approved');
+    document.getElementById('server-selector').hidden = !enabled;
+}
+
+function setAllServers(checked) {
+    for (const input of document.querySelectorAll('input[name="campaign-server-ids"]')) input.checked = checked;
+    scheduleRecipientPreview(0);
+}
+
+function ensureDefaultSelections() {
+    const subscribers = document.querySelector('input[name="campaign-recipient-groups"][value="subscribers"]');
+    const notices = document.querySelector('input[name="campaign-delivery-slots"][value="DPI_Bot通知"]');
+    if (subscribers) subscribers.checked = true;
+    if (notices) notices.checked = true;
+}
+
+function deliverySlotLabel(id) {
+    return summaryState?.deliveryCatalog?.find((slot) => slot.id === id)?.label || id;
+}
+
+function serverLabel(id) {
+    return summaryState?.approvedServers?.find((server) => server.id === id)?.name || id;
+}
+
+function audiencePreview(categories, recipientGroups, deliverySlots, targetServerIds = selectedServerIds()) {
+    return adminRequest('/site/mail-admin/api/audience-preview', {
+        method: 'POST',
+        body: JSON.stringify({ categories, recipientGroups, deliverySlots, targetServerIds }),
+    });
 }
 
 function campaignCategories(campaign) {
@@ -294,7 +456,7 @@ function applyTemplate(templateId) {
     if (categoryInput) categoryInput.checked = true;
     subject.value = template.subject;
     body.value = template.body;
-    updateRecipientPreview();
+    scheduleRecipientPreview(0);
     scheduleEmailPreview(0);
 }
 
@@ -306,10 +468,13 @@ function scheduleEmailPreview(delay = 600) {
 async function updateEmailPreview() {
     window.clearTimeout(previewTimer);
     const categories = selectedCampaignCategories();
+    const recipientGroups = selectedRecipientGroups();
+    const deliverySlots = selectedDeliverySlots();
+    const targetServerIds = selectedServerIds();
     const subject = document.getElementById('subject').value.trim();
     const body = document.getElementById('body').value.trim();
     const status = document.getElementById('preview-status');
-    if (categories.length === 0 || !subject || !body) {
+    if (categories.length === 0 || recipientGroups.length === 0 || deliverySlots.length === 0 || !subject || !body) {
         status.textContent = 'カテゴリ・件名・本文を入力するとプレビューできます。';
         clearEmailPreview(false);
         return;
@@ -320,7 +485,7 @@ async function updateEmailPreview() {
     try {
         const result = await adminRequest('/site/mail-admin/api/preview', {
             method: 'POST',
-            body: JSON.stringify({ categories, subject, body }),
+            body: JSON.stringify({ categories, recipientGroups, deliverySlots, targetServerIds, subject, body }),
         });
         if (requestId !== previewRequestId) return;
         revokePreviewUrl();
@@ -384,3 +549,4 @@ function formatDate(value) {
         ? new Intl.DateTimeFormat('ja-JP', { dateStyle: 'medium', timeStyle: 'short' }).format(date)
         : '';
 }
+

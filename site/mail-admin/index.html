@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="robots" content="noindex,nofollow">
-    <title>メール配信管理 - DPI-Bot</title>
+    <title>お知らせ一括配信管理 - DPI-Bot</title>
     <link rel="icon" href="../../img/dpi.png" type="image/png">
     <link rel="stylesheet" href="style.css">
     <link rel="stylesheet" href="../admin-shell.css">
@@ -17,7 +17,8 @@
         <div class="sidebar-header"><h2>管理メニュー</h2></div>
         <ul>
             <li><a href="/">公式サイト</a></li>
-                <li><a href="/site/channel-admin/">配信先検索</a></li>
+            <li><a href="/site/admin-center/">統合管理センター</a></li>
+            <li><a href="/site/channel-admin/">配信先検索</a></li>
             <li><a href="/site/reuse-admin/">二次利用申請管理</a></li>
             <li><a href="/site/mail-admin/" class="active">メール配信管理</a></li>
             <li><a href="/site/ip-admin/">IP遮断管理</a></li>
@@ -26,7 +27,7 @@
     </nav>
     <main class="main-content">
         <header>
-            <h1>メール配信管理</h1>
+            <h1>お知らせ一括配信管理</h1>
             <div class="admin-bar"><span id="admin-email"></span><button id="refresh-btn" type="button" class="secondary-btn">最新情報に更新</button></div>
         </header>
         <div id="global-status" class="status" role="alert" aria-live="assertive"></div>
@@ -63,6 +64,38 @@
                     </div>
                     <p class="field-help">チップを押すと追加・解除できます。複数カテゴリの登録者にも同じメールは1通だけ送信されます。</p>
                 </fieldset>
+                <fieldset class="category-selector">
+                    <legend>送信先（1つ以上）</legend>
+                    <div class="category-chips">
+                        <label class="category-chip">
+                            <input type="checkbox" name="campaign-recipient-groups" value="subscribers" checked>
+                            <span>お知らせメール購読者</span>
+                        </label>
+                        <label class="category-chip">
+                            <input type="checkbox" name="campaign-recipient-groups" value="reuse_approved">
+                            <span>許可済み二次利用者</span>
+                        </label>
+                        <label class="category-chip">
+                            <input type="checkbox" name="campaign-recipient-groups" value="discord_approved">
+                            <span>許可済みDiscordサーバー</span>
+                        </label>
+                    </div>
+                    <p class="field-help">メールとDiscordを同じ下書きから一括配信できます。二次利用者は許可中の申請だけを対象にし、重複メールは1通にまとめます。</p>
+                </fieldset>
+                <fieldset class="category-selector">
+                    <legend>対象配信枠（1つ以上）</legend>
+                    <div id="delivery-slots" class="delivery-slots" aria-live="polite"></div>
+                    <p class="field-help">現在の配信枠から選択します。「運営からのお知らせ」は許可済み二次利用者全体を対象にします。</p>
+                </fieldset>
+                <fieldset id="server-selector" class="category-selector" hidden>
+                    <legend>Discord配信先サーバー（1つ以上）</legend>
+                    <div class="selector-actions">
+                        <button id="select-all-servers" type="button" class="secondary-btn">すべて選択</button>
+                        <button id="clear-all-servers" type="button" class="secondary-btn">すべて解除</button>
+                    </div>
+                    <div id="approved-servers" class="delivery-slots" aria-live="polite"></div>
+                    <p class="field-help">許可済みの二次利用申請に登録されたサーバーだけを表示します。さらに上で選択した配信枠に一致するチャンネルへ送信します。</p>
+                </fieldset>
                 <div class="template-selector">
                     <span class="field-label">テンプレート</span>
                     <div class="template-buttons">
@@ -83,7 +116,7 @@
                 <p class="field-help markdown-help">
                     使用可能: <code># 見出し</code>、<code>**太字**</code>、<code>*斜体*</code>、<code>- リスト</code>、<code>&gt; 引用</code>、<code>`コード`</code>、<code>[リンク](https://...)</code>。HTMLと画像埋め込みは無効です。
                 </p>
-                <p id="recipient-preview" class="recipient-preview">カテゴリを1つ以上選ぶと現在の対象件数を表示します。</p>
+                <p id="recipient-preview" class="recipient-preview">カテゴリ・送信先・配信枠を選ぶと現在の対象件数を表示します。</p>
                 <div class="preview-toolbar">
                     <strong>メールプレビュー</strong>
                     <button id="preview-btn" type="button" class="secondary-btn">プレビューを更新</button>
@@ -97,7 +130,7 @@
         <section class="admin-section" aria-labelledby="history-title">
             <div class="section-heading">
                 <div><p class="eyebrow">CAMPAIGNS</p><h2 id="history-title">配信履歴</h2></div>
-                <p>開始後はQueueへ1件ずつ登録されます。途中で取り消した場合、未送信分をスキップします。</p>
+                <p>メールとDiscordの送信先をQueueへ1件ずつ登録します。途中で取り消した場合、未送信分をスキップします。</p>
             </div>
             <div id="campaign-list" class="campaign-list"></div>
         </section>
@@ -108,3 +141,4 @@
     <script src="script.js"></script>
 </body>
 </html>
+

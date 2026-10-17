@@ -68,7 +68,6 @@
     "NEWSLETTER_PUBLIC_ORIGIN": "https://dpi-bot.com",
     "REUSE_PUBLIC_ORIGIN": "https://dpi-bot.com",
     "DISCORD_CLIENT_ID": "943752169029505114",
-    "MAIL_ADMIN_EMAILS": "kikukazu.kk0226@gmail.com,jr226toritetu@gmail.com,aki.2009.taka@gmail.com,kazuma1112.mainmail@gmail.com",
     "DISCORD_REDIRECT_URI": "https://dpi-bot.com/api/reuse/oauth/callback",
     "NEWSLETTER_CONSENT_VERSION": "2026-08-29"
   },
@@ -89,3 +88,4 @@
     }
   }
 }
+

@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="robots" content="noindex,nofollow">
+    <title>統合管理センター - DPI-Bot</title>
+    <link rel="icon" href="../../img/dpi.png" type="image/png">
+    <link rel="stylesheet" href="../admin-shell.css">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body class="admin-shell">
+    <button id="menu-toggle-btn" type="button" aria-label="メニューを開く"><span></span><span></span><span></span></button>
+    <div class="overlay"></div>
+    <div class="page-container">
+        <nav class="sidebar" aria-label="管理メニュー">
+            <div class="sidebar-header"><h2>管理メニュー</h2></div>
+            <ul>
+                <li><a href="/">公式サイト</a></li>
+                <li><a href="/site/admin-center/" class="active">統合管理センター</a></li>
+                <li><a href="/site/channel-admin/">配信先検索</a></li>
+                <li><a href="/site/reuse-admin/">二次利用申請管理</a></li>
+                <li><a href="/site/mail-admin/">メール配信管理</a></li>
+                <li><a href="/site/ip-admin/">IP遮断管理</a></li>
+                <li><a href="/cdn-cgi/access/logout">ログアウト</a></li>
+            </ul>
+        </nav>
+        <main class="main-content">
+            <header class="topbar">
+                <div><p class="eyebrow">OPERATIONS</p><h1>統合管理センター</h1></div>
+                <div class="admin-bar"><span id="admin-email"></span><button id="refresh-btn" type="button">最新情報に更新</button></div>
+            </header>
+            <div id="global-status" class="status" role="alert" aria-live="assertive"></div>
+
+            <section aria-labelledby="overview-title">
+                <div class="section-heading"><div><p class="eyebrow">OVERVIEW</p><h2 id="overview-title">運用サマリー</h2></div><time id="fetched-at"></time></div>
+                <div id="overview-cards" class="metric-grid"></div>
+                <div id="quick-links" class="quick-links"></div>
+            </section>
+
+            <section aria-labelledby="infra-title">
+                <div class="section-heading"><div><p class="eyebrow">INFRASTRUCTURE</p><h2 id="infra-title">システム状態</h2></div><p>AWS・Cloudflare・自宅サーバー連携を読み取り専用で表示します。</p></div>
+                <div id="system-panels" class="system-grid"></div>
+            </section>
+
+            <section aria-labelledby="audit-title">
+                <div class="section-heading"><div><p class="eyebrow">AUDIT</p><h2 id="audit-title">最近の管理操作・遮断</h2></div></div>
+                <div class="table-wrap"><table><thead><tr><th>日時</th><th>種別</th><th>内容</th><th>実行者</th></tr></thead><tbody id="audit-rows"></tbody></table></div>
+            </section>
+
+            <section aria-labelledby="slots-title">
+                <div class="section-heading"><div><p class="eyebrow">DELIVERY SLOTS</p><h2 id="slots-title">現在の配信枠</h2></div><p>メール配信画面で同じ一覧から対象を選択できます。</p></div>
+                <div id="delivery-slots" class="slot-grid"></div>
+            </section>
+        </main>
+    </div>
+    <script src="../../script.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>
