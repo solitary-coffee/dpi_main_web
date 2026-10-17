@@ -14,6 +14,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
 import boto3
+from boto3.dynamodb.conditions import Attr
 from botocore.config import Config
 
 
@@ -29,6 +30,8 @@ INGEST_ENDPOINTS = [url.strip() for url in os.environ.get("INGEST_ENDPOINTS", ""
 INGEST_HMAC_PARAMETER = os.environ.get("INGEST_HMAC_PARAMETER", "").strip()
 MAX_LIMITED_RESULTS = 1000
 MAX_XML_BYTES = 1_500_000
+MAX_ADMIN_BODY_BYTES = 2_200_000
+MAX_DISCORD_IMAGE_BYTES = 1_250_000
 SNOWFLAKE_LENGTHS = {17, 18, 19, 20}
 RESERVED_FIELDS = {"id", "Ch_Name", "app", "time", "URL", "url"}
 MANAGED_INSTANCE_TAG = "dpi:backup-managed"
@@ -121,7 +124,7 @@ def _json_body(event):
     raw = event.get("body") or ""
     if event.get("isBase64Encoded"):
         raw = b64decode(raw).decode("utf-8")
-    if len(raw.encode("utf-8")) > MAX_XML_BYTES + 64_000:
+    if len(raw.encode("utf-8")) > MAX_ADMIN_BODY_BYTES:
         raise ValueError("送信データが大きすぎます。")
     try:
         body = json.loads(raw)
@@ -147,6 +150,10 @@ def _handle_action(body):
         result = _xml_preview(body)
     elif action == "xml-dispatch":
         result = _xml_dispatch(body, actor, request_id)
+    elif action == "discord-announcement-preview":
+        result = _discord_announcement_preview(body)
+    elif action == "discord-announcement":
+        result = _discord_announcement(body, actor, request_id)
     else:
         raise ValueError("指定された管理操作はありません。")
 
@@ -840,6 +847,275 @@ def _reconcile_instances_for_mode(mode):
 def _xml_preview(body):
     xml_text = _xml_text(body)
     return {"preview": _parse_xml_summary(xml_text), "bytes": len(xml_text.encode("utf-8"))}
+
+
+def _discord_announcement_preview(body):
+    delivery_slots = _announcement_delivery_slots(body)
+    server_ids = _announcement_server_ids(body)
+    targets, by_delivery = _load_announcement_targets(delivery_slots, server_ids)
+    return {
+        "targetCount": len(targets),
+        "byDelivery": by_delivery,
+        "serverFilterApplied": bool(server_ids),
+    }
+
+
+def _discord_announcement(body, actor, request_id):
+    if not hmac.compare_digest(_clean(body.get("confirmation"), 100), request_id):
+        raise ValueError("配信確認が一致しません。")
+    delivery_slots = _announcement_delivery_slots(body)
+    server_ids = _announcement_server_ids(body)
+    subject = _clean(body.get("subject"), 121)
+    message = str(body.get("body") or "").strip()
+    delivery_format = _clean(body.get("deliveryFormat"), 20).casefold() or "message"
+    embed_color = _integer(body.get("embedColor"), 0x5865F2)
+    image_url = _clean(body.get("imageUrl"), 2048)
+    image_alt = _clean(body.get("imageAlt"), 1024)
+    image_name = _safe_image_name(body.get("imageName"), body.get("imageType"))
+    image_type = _clean(body.get("imageType"), 50).casefold()
+    image_bytes = _decode_announcement_image(body.get("imageBase64"), image_type)
+    if not subject or len(subject) > 120 or re.search(r"[\r\n\x00-\x1f\x7f]", subject):
+        raise ValueError("件名は改行なしの120文字以内で入力してください。")
+    if delivery_format not in {"message", "embed"}:
+        raise ValueError("Discordの送信形式を確認してください。")
+    if not message or len(message) > 4096:
+        raise ValueError("本文は4,096文字以内で入力してください。")
+    if not 0 <= embed_color <= 0xFFFFFF:
+        raise ValueError("Embed色を確認してください。")
+    if image_url and (not _valid_https_url(image_url) or image_bytes):
+        raise ValueError("画像URLと画像ファイルはどちらか一方だけ指定してください。")
+    if delivery_format == "message" and len(f"**{subject}**\n\n{message}" + (f"\n\n{image_url}" if image_url else "")) > 2000:
+        raise ValueError("通常メッセージは2,000文字以内にしてください。")
+
+    targets, by_delivery = _load_announcement_targets(delivery_slots, server_ids)
+    if not targets:
+        raise ValueError("選択した配信枠に有効なWebhookがありません。")
+    state_table = _dynamodb.Table(STATE_TABLE_NAME) if STATE_TABLE_NAME else None
+    operation_key = f"ADMIN#DISCORD_ANNOUNCEMENT#{request_id}"
+    if state_table:
+        existing = state_table.get_item(Key={"pk": operation_key}).get("Item", {})
+        if existing.get("status") == "completed":
+            return _announcement_result(existing, by_delivery, reused=True)
+        if existing.get("status") == "failed":
+            state_table.delete_item(Key={"pk": operation_key})
+        try:
+            state_table.put_item(
+                Item={"pk": operation_key, "status": "sending", "actor": actor, "created_at": int(time.time()), "expires_at": int(time.time()) + 604800},
+                ConditionExpression=Attr("pk").not_exists(),
+            )
+        except state_table.meta.client.exceptions.ConditionalCheckFailedException:
+            raise ValueError("この配信は現在処理中です。完了後に更新してください。") from None
+
+    payload = _discord_webhook_payload(subject, message, delivery_format, embed_color, image_url, image_name if image_bytes else "", image_alt)
+    def deliver(url):
+        return _post_discord_webhook(url, payload, image_bytes, image_name, image_type)
+    try:
+        with ThreadPoolExecutor(max_workers=min(100, len(targets))) as executor:
+            results = list(executor.map(deliver, targets))
+        sent_count = sum(1 for result in results if result)
+        failed_count = len(results) - sent_count
+        completed = int(time.time())
+        if state_table:
+            state_table.update_item(
+                Key={"pk": operation_key},
+                UpdateExpression="SET #status = :status, target_count = :targets, sent_count = :sent, failed_count = :failed, completed_at = :completed",
+                ExpressionAttributeNames={"#status": "status"},
+                ExpressionAttributeValues={":status": "completed", ":targets": len(targets), ":sent": sent_count, ":failed": failed_count, ":completed": completed},
+            )
+        _audit_operation(actor, "discord.announcement", request_id, {
+            "delivery_slots": delivery_slots,
+            "server_filter_count": len(server_ids),
+            "target_count": len(targets),
+            "sent_count": sent_count,
+            "failed_count": failed_count,
+        })
+        return {
+            "message": "Discordお知らせの配信処理が完了しました。",
+            "targetCount": len(targets),
+            "sentCount": sent_count,
+            "failedCount": failed_count,
+            "byDelivery": by_delivery,
+        }
+    except Exception:
+        if state_table:
+            state_table.update_item(
+                Key={"pk": operation_key},
+                UpdateExpression="SET #status = :status, failed_at = :failed",
+                ExpressionAttributeNames={"#status": "status"},
+                ExpressionAttributeValues={":status": "failed", ":failed": int(time.time())},
+            )
+        raise
+
+
+def _announcement_result(item, by_delivery, reused=False):
+    return {
+        "message": "Discordお知らせはすでに配信済みです。" if reused else "Discordお知らせの配信処理が完了しました。",
+        "targetCount": _integer(item.get("target_count"), 0),
+        "sentCount": _integer(item.get("sent_count"), 0),
+        "failedCount": _integer(item.get("failed_count"), 0),
+        "byDelivery": by_delivery,
+        "reused": reused,
+    }
+
+
+def _announcement_delivery_slots(body):
+    slots = []
+    values = body.get("deliverySlots") or []
+    if not isinstance(values, list):
+        raise ValueError("配信枠を確認してください。")
+    for value in values:
+        normalized = _normalize_delivery_name(value)
+        if normalized and normalized not in slots:
+            slots.append(normalized)
+    if not slots or len(slots) > 100:
+        raise ValueError("配信枠を1つ以上選択してください。")
+    return slots
+
+
+def _announcement_server_ids(body):
+    values = body.get("targetServerIds") or []
+    if not isinstance(values, list) or len(values) > 500:
+        raise ValueError("配信先サーバーを確認してください。")
+    result = []
+    for value in values:
+        server_id = _clean(value, 30)
+        if not re.fullmatch(r"\d{17,20}", server_id):
+            raise ValueError("配信先サーバーを確認してください。")
+        if server_id not in result:
+            result.append(server_id)
+    return result
+
+
+def _load_announcement_targets(delivery_slots, server_ids):
+    selected_slots = set(delivery_slots)
+    selected_servers = set(server_ids)
+    targets = []
+    seen = set()
+    by_delivery_urls = {slot: set() for slot in delivery_slots}
+    paginator = _table.meta.client.get_paginator("scan")
+    for page in paginator.paginate(TableName=TABLE_NAME):
+        for record in page.get("Items", []):
+            record_servers = {
+                _clean(key, 30) for key in record
+                if _clean(key, 30).isdigit() and len(_clean(key, 30)) in SNOWFLAKE_LENGTHS
+            }
+            if selected_servers and not selected_servers.intersection(record_servers):
+                continue
+            record_slots = {_normalize_delivery_name(value) for value in _string_list(record.get("app"), 100)}
+            matched_slots = selected_slots.intersection(record_slots)
+            if not matched_slots:
+                continue
+            for candidate in [*_string_list(record.get("URL"), 100), *_string_list(record.get("url"), 100)]:
+                if not _valid_discord_webhook_url(candidate):
+                    continue
+                for slot in matched_slots:
+                    by_delivery_urls[slot].add(candidate)
+                if candidate not in seen:
+                    seen.add(candidate)
+                    targets.append(candidate)
+    return targets, {slot: len(urls) for slot, urls in by_delivery_urls.items()}
+
+
+def _discord_webhook_payload(subject, message, delivery_format, color, image_url, image_name, image_alt):
+    payload = {"allowed_mentions": {"parse": []}}
+    attachment_url = f"attachment://{image_name}" if image_name else ""
+    if delivery_format == "embed":
+        embed = {"title": subject, "description": message, "color": color, "footer": {"text": "DPI-Bot 運営"}}
+        if attachment_url or image_url:
+            embed["image"] = {"url": attachment_url or image_url}
+        payload["embeds"] = [embed]
+    else:
+        payload["content"] = f"**{subject}**\n\n{message}" + (f"\n\n{image_url}" if image_url else "")
+    if image_name:
+        attachment = {"id": 0, "filename": image_name}
+        if image_alt:
+            attachment["description"] = image_alt
+        payload["attachments"] = [attachment]
+    return payload
+
+
+def _post_discord_webhook(url, payload, image_bytes, image_name, image_type):
+    endpoint = f"{url}{'&' if '?' in url else '?'}wait=true"
+    headers = {"User-Agent": "DPI-Bot-Admin-Announcement/2.0"}
+    if image_bytes:
+        boundary = f"dpi-{uuid.uuid4().hex}"
+        body = _multipart_discord_body(boundary, payload, image_bytes, image_name, image_type)
+        headers["Content-Type"] = f"multipart/form-data; boundary={boundary}"
+    else:
+        body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+    for attempt in range(2):
+        request = urllib.request.Request(endpoint, data=body, method="POST", headers=headers)
+        try:
+            with urllib.request.urlopen(request, timeout=6) as response:
+                return 200 <= response.status < 300
+        except urllib.error.HTTPError as error:
+            if attempt == 0 and (error.code == 429 or error.code >= 500):
+                time.sleep(min(2.0, max(0.1, float(error.headers.get("Retry-After", "0.5") or 0.5))))
+                continue
+            return False
+        except (urllib.error.URLError, TimeoutError, ValueError):
+            if attempt == 0:
+                continue
+            return False
+    return False
+
+
+def _multipart_discord_body(boundary, payload, image_bytes, image_name, image_type):
+    prefix = (
+        f"--{boundary}\r\nContent-Disposition: form-data; name=\"payload_json\"\r\n"
+        f"Content-Type: application/json\r\n\r\n{json.dumps(payload, ensure_ascii=False, separators=(',', ':'))}\r\n"
+        f"--{boundary}\r\nContent-Disposition: form-data; name=\"files[0]\"; filename=\"{image_name}\"\r\n"
+        f"Content-Type: {image_type}\r\n\r\n"
+    ).encode("utf-8")
+    return prefix + image_bytes + f"\r\n--{boundary}--\r\n".encode("ascii")
+
+
+def _decode_announcement_image(value, image_type):
+    if not value:
+        return b""
+    if image_type not in {"image/png", "image/jpeg", "image/gif", "image/webp"}:
+        raise ValueError("画像形式を確認してください。")
+    try:
+        data = b64decode(str(value), validate=True)
+    except (ValueError, TypeError):
+        raise ValueError("画像データを確認してください。") from None
+    if not data or len(data) > MAX_DISCORD_IMAGE_BYTES or not _valid_image_signature(data, image_type):
+        raise ValueError("画像はPNG・JPEG・GIF・WebPのいずれかで、1.25MB以内にしてください。")
+    return data
+
+
+def _valid_image_signature(data, image_type):
+    return {
+        "image/png": data.startswith(b"\x89PNG\r\n\x1a\n"),
+        "image/jpeg": data.startswith(b"\xff\xd8\xff"),
+        "image/gif": data.startswith((b"GIF87a", b"GIF89a")),
+        "image/webp": len(data) >= 12 and data[:4] == b"RIFF" and data[8:12] == b"WEBP",
+    }.get(image_type, False)
+
+
+def _safe_image_name(value, image_type):
+    name = re.sub(r"[^A-Za-z0-9._-]+", "_", _clean(value, 100))
+    extension = {"image/png": ".png", "image/jpeg": ".jpg", "image/gif": ".gif", "image/webp": ".webp"}.get(_clean(image_type, 50).casefold(), ".bin")
+    return name if "." in name else f"announcement{extension}"
+
+
+def _valid_https_url(value):
+    try:
+        parsed = urllib.parse.urlparse(value)
+        return parsed.scheme == "https" and bool(parsed.hostname) and not parsed.username and not parsed.password
+    except (TypeError, ValueError):
+        return False
+
+
+def _valid_discord_webhook_url(value):
+    try:
+        parsed = urllib.parse.urlparse(value)
+        if parsed.scheme != "https" or parsed.hostname not in {"discord.com", "discordapp.com", "canary.discord.com", "ptb.discord.com"}:
+            return False
+        return bool(re.fullmatch(r"/api(?:/v\d+)?/webhooks/\d{17,20}/[A-Za-z0-9._-]+/?", parsed.path)) and not parsed.username and not parsed.password
+    except (TypeError, ValueError):
+        return False
 
 
 def _xml_dispatch(body, actor, request_id):
