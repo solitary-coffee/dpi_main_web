@@ -144,15 +144,18 @@ export async function handleNewsletterRequest(request, env, ctx) {
     const url = new URL(request.url);
     const pathname = url.pathname.replace(/\/+$/, '') || '/';
     const isNewsletterApi = pathname === '/api/newsletter' || pathname.startsWith('/api/newsletter/');
-    const isAdminApi = pathname === '/site/mail-admin/api' || pathname.startsWith('/site/mail-admin/api/');
+    const isMailAdminApi = pathname === '/site/mail-admin/api' || pathname.startsWith('/site/mail-admin/api/');
+    const isDiscordAdminApi = pathname === '/site/discord-admin/api' || pathname.startsWith('/site/discord-admin/api/');
+    const isAdminApi = isMailAdminApi || isDiscordAdminApi;
     const isAdminAsset = !isAdminApi
-        && (pathname === '/site/mail-admin' || pathname.startsWith('/site/mail-admin/'));
+        && (pathname === '/site/mail-admin' || pathname.startsWith('/site/mail-admin/')
+            || pathname === '/site/discord-admin' || pathname.startsWith('/site/discord-admin/'));
 
     if (!isNewsletterApi && !isAdminApi && !isAdminAsset) return null;
 
     try {
         if (isAdminAsset) return await handleProtectedAdminAsset(request, env);
-        if (isAdminApi) return await handleAdminApi(request, env, pathname);
+        if (isAdminApi) return await handleAdminApi(request, env, pathname, isDiscordAdminApi ? 'discord' : 'mail');
 
         if (pathname === '/api/newsletter/config') {
             assertMethod(request, ['GET']);
@@ -435,8 +438,8 @@ async function handleProtectedAdminAsset(request, env) {
     await authenticateNewsletterAdmin(request, env);
 
     const url = new URL(request.url);
-    if (url.pathname === '/site/mail-admin') {
-        url.pathname = '/site/mail-admin/';
+    if (url.pathname === '/site/mail-admin' || url.pathname === '/site/discord-admin') {
+        url.pathname = `${url.pathname}/`;
         return new Response(null, {
             status: 308,
             headers: {
@@ -465,48 +468,54 @@ async function handleProtectedAdminAsset(request, env) {
     });
 }
 
-async function handleAdminApi(request, env, pathname) {
+async function handleAdminApi(request, env, pathname, surface) {
     const admin = await authenticateNewsletterAdmin(request, env);
     assertDatabaseConfigured(env);
     await ensureSchema(env);
+    const basePath = surface === 'discord' ? '/site/discord-admin/api' : '/site/mail-admin/api';
 
-    if (pathname === '/site/mail-admin/api/summary') {
+    if (pathname === `${basePath}/summary`) {
         assertMethod(request, ['GET']);
-        return adminSummary(env, admin);
+        return adminSummary(env, admin, surface);
     }
 
-    if (pathname === '/site/mail-admin/api/preview') {
+    if (pathname === `${basePath}/preview`) {
         assertMethod(request, ['POST']);
         assertSameOrigin(request);
-        return previewCampaign(request, env);
+        return previewCampaign(request, env, surface);
     }
 
-    if (pathname === '/site/mail-admin/api/audience-preview') {
+    if (pathname === `${basePath}/audience-preview`) {
         assertMethod(request, ['POST']);
         assertSameOrigin(request);
-        return previewAudience(request, env);
+        return previewAudience(request, env, surface);
     }
 
-    if (pathname === '/site/mail-admin/api/campaigns') {
+    if (pathname === `${basePath}/campaigns`) {
         assertMethod(request, ['POST']);
         assertSameOrigin(request);
-        return createCampaign(request, env, admin);
+        return createCampaign(request, env, admin, surface);
     }
 
-    const actionMatch = pathname.match(/^\/site\/mail-admin\/api\/campaigns\/([0-9a-f-]{36})\/(send|cancel)$/u);
+    const actionMatch = pathname.startsWith(`${basePath}/campaigns/`)
+        ? pathname.slice(basePath.length).match(/^\/campaigns\/([0-9a-f-]{36})\/(send|cancel)$/u)
+        : null;
     if (actionMatch) {
         assertMethod(request, ['POST']);
         assertSameOrigin(request);
         const [, campaignId, action] = actionMatch;
         return action === 'send'
-            ? queueCampaign(request, env, campaignId, admin)
-            : cancelCampaign(request, env, campaignId, admin);
+            ? queueCampaign(request, env, campaignId, admin, surface)
+            : cancelCampaign(request, env, campaignId, admin, surface);
     }
 
     throw new NewsletterError(404, '指定された管理APIはありません。', 'not_found');
 }
 
-async function adminSummary(env, admin) {
+async function adminSummary(env, admin, surface = 'mail') {
+    const campaignFilter = surface === 'discord'
+        ? "instr(',' || c.recipient_groups || ',', ',discord_approved,') > 0"
+        : "(instr(',' || c.recipient_groups || ',', ',subscribers,') > 0 OR instr(',' || c.recipient_groups || ',', ',reuse_approved,') > 0)";
     const [statusRows, categoryRows, campaignRows, reuseRows, serverRows] = await env.NEWSLETTER_DB.batch([
         env.NEWSLETTER_DB.prepare(
             `SELECT status, COUNT(*) AS count FROM newsletter_subscribers
@@ -548,6 +557,7 @@ async function adminSummary(env, admin) {
                 SUM(CASE WHEN d.status IN ('pending', 'queued', 'retry', 'sending') THEN 1 ELSE 0 END) AS remaining_count
              FROM newsletter_campaigns c
              LEFT JOIN newsletter_deliveries d ON d.campaign_id = c.id
+             WHERE ${campaignFilter}
              GROUP BY c.id
              ORDER BY c.created_at DESC
              LIMIT 30`,
@@ -580,6 +590,7 @@ async function adminSummary(env, admin) {
     );
     return jsonResponse({
         success: true,
+        surface,
         admin: admin.email,
         subscribers: {
             active: statuses.active || 0,
@@ -613,7 +624,7 @@ async function adminSummary(env, admin) {
     });
 }
 
-async function createCampaign(request, env, admin) {
+async function createCampaign(request, env, admin, surface = 'mail') {
     const input = await readJson(request, MAX_JSON_BYTES);
     const subject = validateCampaignSubject(input.subject);
     const bodyText = validateCampaignBody(input.body);
@@ -621,7 +632,7 @@ async function createCampaign(request, env, admin) {
         ? validateCategories(input.categories)
         : [validateSingleCategory(input.category)];
     const category = serializeCategories(categories);
-    const recipientGroups = validateRecipientGroups(input.recipientGroups);
+    const recipientGroups = validateSurfaceRecipientGroups(input.recipientGroups, surface);
     const deliverySlots = validateDeliverySlots(input.deliverySlots);
     const targetServerIds = validateTargetServerIds(input.targetServerIds, recipientGroups);
     validateDiscordAnnouncement(subject, bodyText, recipientGroups);
@@ -671,12 +682,12 @@ async function createCampaign(request, env, admin) {
     }, 201);
 }
 
-async function previewCampaign(request, env) {
+async function previewCampaign(request, env, surface = 'mail') {
     const input = await readJson(request, MAX_JSON_BYTES);
     const subject = validateCampaignSubject(input.subject);
     const bodyText = validateCampaignBody(input.body);
     const categories = validateCategories(input.categories);
-    const recipientGroups = validateRecipientGroups(input.recipientGroups);
+    const recipientGroups = validateSurfaceRecipientGroups(input.recipientGroups, surface);
     const deliverySlots = validateDeliverySlots(input.deliverySlots);
     validateTargetServerIds(input.targetServerIds, recipientGroups);
     validateDiscordAnnouncement(subject, bodyText, recipientGroups);
@@ -694,13 +705,14 @@ async function previewCampaign(request, env) {
         success: true,
         html: previewMail.html,
         text: previewMail.text,
+        discord: surface === 'discord' ? { content: `**${subject}**\n\n${bodyText}` } : null,
     });
 }
 
-async function previewAudience(request, env) {
+async function previewAudience(request, env, surface = 'mail') {
     const input = await readJson(request, MAX_FORM_BYTES);
     const categories = validateCategories(input.categories);
-    const recipientGroups = validateRecipientGroups(input.recipientGroups);
+    const recipientGroups = validateSurfaceRecipientGroups(input.recipientGroups, surface);
     const deliverySlots = validateDeliverySlots(input.deliverySlots);
     const targetServerIds = validateTargetServerIds(input.targetServerIds, recipientGroups);
     const recipients = await loadCampaignRecipients(env, {
@@ -715,7 +727,7 @@ async function previewAudience(request, env) {
     return jsonResponse({ success: true, count: recipients.length, byKind });
 }
 
-async function queueCampaign(request, env, campaignId, admin) {
+async function queueCampaign(request, env, campaignId, admin, surface = 'mail') {
     if (!env.NEWSLETTER_QUEUE || typeof env.NEWSLETTER_QUEUE.sendBatch !== 'function') {
         throw new NewsletterError(503, '配信Queueが設定されていません。', 'queue_not_configured');
     }
@@ -730,6 +742,7 @@ async function queueCampaign(request, env, campaignId, admin) {
          FROM newsletter_campaigns WHERE id = ?`,
     ).bind(campaignId).first();
     if (!campaign) throw new NewsletterError(404, '配信データが見つかりません。', 'campaign_not_found');
+    assertCampaignSurface(campaign, surface);
     if (!['draft', 'queuing'].includes(campaign.status)) {
         throw new NewsletterError(409, 'この配信は開始済みか、取り消されています。', 'campaign_not_sendable');
     }
@@ -824,11 +837,17 @@ async function queueCampaign(request, env, campaignId, admin) {
     return jsonResponse({ success: true, campaignId, queued });
 }
 
-async function cancelCampaign(request, env, campaignId, admin) {
+async function cancelCampaign(request, env, campaignId, admin, surface = 'mail') {
     const input = await readJson(request, MAX_FORM_BYTES);
     if (input.confirmation !== campaignId) {
         throw new NewsletterError(400, '取消確認が一致しません。', 'campaign_confirmation_mismatch');
     }
+
+    const campaign = await env.NEWSLETTER_DB.prepare(
+        'SELECT recipient_groups FROM newsletter_campaigns WHERE id = ?',
+    ).bind(campaignId).first();
+    if (!campaign) throw new NewsletterError(404, '配信データが見つかりません。', 'campaign_not_found');
+    assertCampaignSurface(campaign, surface);
 
     const now = new Date().toISOString();
     const campaignResult = await env.NEWSLETTER_DB.prepare(
@@ -1377,6 +1396,27 @@ function validateRecipientGroups(input) {
     }
     if (selected.size === 0) throw new NewsletterError(400, '配信対象を1つ以上選択してください。', 'invalid_recipient_groups');
     return RECIPIENT_GROUP_ORDER.filter((group) => selected.has(group));
+}
+
+function validateSurfaceRecipientGroups(input, surface) {
+    const groups = validateRecipientGroups(input);
+    const allowed = surface === 'discord'
+        ? groups.length === 1 && groups[0] === 'discord_approved'
+        : groups.every((group) => group !== 'discord_approved');
+    if (!allowed) {
+        throw new NewsletterError(
+            400,
+            surface === 'discord'
+                ? 'Discord配信の送信先は許可済みDiscordサーバーのみです。'
+                : 'Discordへの送信はDiscordお知らせ管理から行ってください。',
+            'recipient_surface_mismatch',
+        );
+    }
+    return groups;
+}
+
+function assertCampaignSurface(campaign, surface) {
+    validateSurfaceRecipientGroups(parseCsv(campaign.recipient_groups), surface);
 }
 
 function validateDeliverySlots(input) {
@@ -2132,6 +2172,7 @@ export const __test = Object.freeze({
     validateCategories,
     validateDeliverySlots,
     validateRecipientGroups,
+    validateSurfaceRecipientGroups,
     validateTargetServerIds,
     verifyUnsubscribeToken,
 });
