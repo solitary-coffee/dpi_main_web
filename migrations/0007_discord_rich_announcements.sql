@@ -18,3 +18,9 @@ ALTER TABLE newsletter_campaigns
 
 ALTER TABLE newsletter_campaigns
     ADD COLUMN image_alt TEXT;
+
+ALTER TABLE newsletter_campaigns
+    ADD COLUMN external_sent_count INTEGER NOT NULL DEFAULT 0;
+
+ALTER TABLE newsletter_campaigns
+    ADD COLUMN external_failed_count INTEGER NOT NULL DEFAULT 0;
