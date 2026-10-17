@@ -1,0 +1,7 @@
+.admin-bar select { width: auto; min-height: 38px; padding: 0 .65rem; }
+.table-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; }
+th, td { padding: .75rem; border-bottom: 1px solid #505963; text-align: left; white-space: nowrap; }
+th { color: #9dd3ff; font-size: .82rem; }
+.number { font-variant-numeric: tabular-nums; text-align: right; }
+.error-value { color: #b91c1c; font-weight: 700; }

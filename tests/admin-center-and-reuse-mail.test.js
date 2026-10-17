@@ -29,7 +29,7 @@ test('分割した運用管理画面をAccess認証で保護し末尾スラッ�
     };
     try {
         const headers = { 'cf-access-jwt-assertion': token };
-        for (const root of ['/site/admin-center', '/site/system-admin', '/site/ec2-admin', '/site/xml-admin', '/site/status-admin']) {
+        for (const root of ['/site/admin-center', '/site/system-admin', '/site/ec2-admin', '/site/xml-admin', '/site/status-admin', '/site/delivery-admin']) {
             const canonical = await handleAdminCenterRequest(new Request(`https://dpi-bot.com${root}/`, { headers }), adminEnv);
             assert.equal(canonical.status, 200, root);
             assert.equal(await canonical.text(), 'admin page', root);
@@ -63,8 +63,8 @@ test('統合管理センターは概要だけを表示し操作は専用タブ�
 });
 
 test('すべての管理画面から用途別タブへ移動できる', async () => {
-    const pages = ['admin-center', 'system-admin', 'ec2-admin', 'xml-admin', 'status-admin', 'channel-admin', 'reuse-admin', 'mail-admin', 'ip-admin'];
-    const expected = ['/site/admin-center/', '/site/system-admin/', '/site/ec2-admin/', '/site/xml-admin/', '/site/status-admin/', '/site/channel-admin/', '/site/reuse-admin/', '/site/mail-admin/', '/site/ip-admin/'];
+    const pages = ['admin-center', 'system-admin', 'ec2-admin', 'xml-admin', 'status-admin', 'delivery-admin', 'channel-admin', 'reuse-admin', 'mail-admin', 'discord-admin', 'ip-admin'];
+    const expected = ['/site/admin-center/', '/site/system-admin/', '/site/ec2-admin/', '/site/xml-admin/', '/site/status-admin/', '/site/delivery-admin/', '/site/channel-admin/', '/site/reuse-admin/', '/site/mail-admin/', '/site/discord-admin/', '/site/ip-admin/'];
     for (const page of pages) {
         const html = await readFile(new URL(`../site/${page}/index.html`, import.meta.url), 'utf8');
         const sidebar = html.match(/<nav class="sidebar"[\s\S]*?<ul>([\s\S]*?)<\/ul>/u)?.[1] || '';
@@ -191,6 +191,29 @@ test('送信先と配信枠はサーバー側の許可リストで検証する',
     assert.throws(() => newsletter.validateRecipientGroups(['unknown']), /正しく/u);
     assert.throws(() => newsletter.validateDeliverySlots(['unknown']), /正しく/u);
     assert.throws(() => newsletter.validateTargetServerIds([], ['discord_approved']), /1つ以上/u);
+});
+
+test('メールとDiscordの管理APIは送信先を相互に混在させない', () => {
+    assert.deepEqual(newsletter.validateSurfaceRecipientGroups(['subscribers', 'reuse_approved'], 'mail'), ['subscribers', 'reuse_approved']);
+    assert.deepEqual(newsletter.validateSurfaceRecipientGroups(['discord_approved'], 'discord'), ['discord_approved']);
+    assert.throws(() => newsletter.validateSurfaceRecipientGroups(['discord_approved'], 'mail'), /Discordお知らせ管理/u);
+    assert.throws(() => newsletter.validateSurfaceRecipientGroups(['subscribers'], 'discord'), /Discord配信/u);
+});
+
+test('Discordお知らせ画面と配信統計画面を専用タブとして提供する', async () => {
+    const [discordHtml, discordScript, deliveryHtml, deliveryScript] = await Promise.all([
+        readFile(new URL('../site/discord-admin/index.html', import.meta.url), 'utf8'),
+        readFile(new URL('../site/discord-admin/script.js', import.meta.url), 'utf8'),
+        readFile(new URL('../site/delivery-admin/index.html', import.meta.url), 'utf8'),
+        readFile(new URL('../site/delivery-admin/script.js', import.meta.url), 'utf8'),
+    ]);
+    assert.match(discordHtml, /Discordお知らせ管理/u);
+    assert.match(discordScript, /recipientGroups: \['discord_approved'\]/u);
+    assert.match(discordScript, /\/site\/discord-admin\/api\/campaigns/u);
+    assert.match(deliveryHtml, /緊急地震速報|情報種別ごとの配信数/u);
+    assert.match(deliveryScript, /\/site\/delivery-admin\/api\/summary/u);
+    assert.doesNotMatch(discordScript, /innerHTML/u);
+    assert.doesNotMatch(deliveryScript, /innerHTML/u);
 });
 
 test('Discord配信は選択サーバーと現在の配信枠に一致する許可済みチャンネルだけを対象にする', async () => {

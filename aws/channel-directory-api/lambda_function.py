@@ -22,6 +22,7 @@ API_TOKEN = os.environ.get("DIRECTORY_API_TOKEN", "").strip()
 HOME_SERVER_TABLE_NAME = os.environ.get("HOME_SERVER_TABLE_NAME", "").strip()
 MONITORED_TABLE_NAMES = [name.strip() for name in os.environ.get("MONITORED_TABLE_NAMES", TABLE_NAME).split(",") if name.strip()]
 STATE_TABLE_NAME = os.environ.get("STATE_TABLE_NAME", HOME_SERVER_TABLE_NAME or "DPI-BackupFleetState-v51").strip()
+DELIVERY_MONITOR_TABLE_NAME = os.environ.get("DELIVERY_MONITOR_TABLE_NAME", "DPI-DeliveryMonitor-v1").strip()
 OPERATING_REGIONS = [name.strip() for name in os.environ.get("OPERATING_REGIONS", "ap-northeast-1,ap-northeast-3").split(",") if name.strip()]
 AUTO_MONITOR_FUNCTION = os.environ.get("AUTO_MONITOR_FUNCTION", "dpi-backup-auto-failover-monitor").strip()
 INGEST_ENDPOINTS = [url.strip() for url in os.environ.get("INGEST_ENDPOINTS", "").split(",") if url.strip()]
@@ -48,6 +49,7 @@ _dynamodb = boto3.resource(
 _table = _dynamodb.Table(TABLE_NAME)
 _cache = {"expires_at": 0.0, "items": []}
 _system_cache = {"expires_at": 0.0, "value": None}
+_delivery_statistics_cache = {}
 _secret_cache = {"expires_at": 0.0, "value": None}
 
 
@@ -68,10 +70,20 @@ def lambda_handler(event, context):
         return _response(405, {"success": False, "message": "許可されていない操作です。"}, {"Allow": "GET, POST"})
 
     params = event.get("queryStringParameters") or {}
-    if _clean(params.get("view"), 30).casefold() == "system":
+    view = _clean(params.get("view"), 30).casefold()
+    if view == "system":
         return _response(200, {
             "success": True,
             "system": _load_system_summary(),
+            "observedAt": datetime.now(tz=timezone.utc).isoformat(),
+        })
+    if view == "delivery-stats":
+        period = _clean(params.get("period"), 10).casefold() or "24h"
+        if period not in {"24h", "7d", "all"}:
+            return _response(400, {"success": False, "message": "集計期間を確認してください。"})
+        return _response(200, {
+            "success": True,
+            "statistics": _load_delivery_statistics(period),
             "observedAt": datetime.now(tz=timezone.utc).isoformat(),
         })
     query = _clean(params.get("q"), 120).casefold()
@@ -197,6 +209,102 @@ def _load_system_summary():
     _system_cache["value"] = summary
     _system_cache["expires_at"] = now + 20
     return summary
+
+
+def _load_delivery_statistics(period):
+    now = int(datetime.now(tz=timezone.utc).timestamp())
+    cached = _delivery_statistics_cache.get(period)
+    if cached and cached["expires_at"] > now:
+        return cached["value"]
+
+    cutoff = {"24h": now - 86400, "7d": now - 7 * 86400, "all": 0}[period]
+    table = _dynamodb.Table(DELIVERY_MONITOR_TABLE_NAME)
+    scan_args = {
+        "ProjectionExpression": "#kind, deliveryId, generation, eventType, updatedEpoch, targetCount, normalCount, errorCount, excludedErrorCount, seriousErrorCount, ownerRegion, workerMaxSeconds, latencyMaxMs, logsCollected",
+        "ExpressionAttributeNames": {"#kind": "kind"},
+    }
+    latest_by_delivery = {}
+    while True:
+        page = table.scan(**scan_args)
+        for item in page.get("Items", []):
+            if item.get("kind") != "delivery":
+                continue
+            updated = _integer(item.get("updatedEpoch"), 0)
+            if updated < cutoff:
+                continue
+            delivery_id = _clean(item.get("deliveryId"), 200)
+            if not delivery_id:
+                continue
+            current = latest_by_delivery.get(delivery_id)
+            generation = _integer(item.get("generation"), 0)
+            if current is None or (generation, updated) > (
+                _integer(current.get("generation"), 0),
+                _integer(current.get("updatedEpoch"), 0),
+            ):
+                latest_by_delivery[delivery_id] = item
+        last_key = page.get("LastEvaluatedKey")
+        if not last_key:
+            break
+        scan_args["ExclusiveStartKey"] = last_key
+
+    rows = sorted(latest_by_delivery.values(), key=lambda item: _integer(item.get("updatedEpoch"), 0), reverse=True)
+    totals = _empty_delivery_totals()
+    by_type = {}
+    regions = {}
+    for item in rows:
+        event_type = _clean(item.get("eventType"), 40).casefold() or "unknown"
+        bucket = by_type.setdefault(event_type, _empty_delivery_totals())
+        _add_delivery_totals(totals, item)
+        _add_delivery_totals(bucket, item)
+        region = _clean(item.get("ownerRegion"), 40) or "unknown"
+        regions[region] = regions.get(region, 0) + 1
+
+    timestamps = [_integer(item.get("updatedEpoch"), 0) for item in rows if _integer(item.get("updatedEpoch"), 0) > 0]
+    value = {
+        "period": period,
+        "retentionNote": "監視テーブルの保持期間内（現在は約7日）のデータを集計します。",
+        "source": {"region": os.environ.get("AWS_REGION", ""), "table": DELIVERY_MONITOR_TABLE_NAME},
+        "coverage": {
+            "oldestEpoch": min(timestamps) if timestamps else None,
+            "latestEpoch": max(timestamps) if timestamps else None,
+        },
+        "totals": totals,
+        "byEventType": [{"eventType": key, **counts} for key, counts in sorted(by_type.items())],
+        "byRegion": regions,
+        "recent": [_delivery_stat_row(item) for item in rows[:50]],
+    }
+    _delivery_statistics_cache[period] = {"expires_at": now + 45, "value": value}
+    return value
+
+
+def _empty_delivery_totals():
+    return {"events": 0, "targets": 0, "normal": 0, "errors": 0, "excludedErrors": 0, "seriousErrors": 0, "maxWorkerSeconds": 0, "maxLatencyMs": 0}
+
+
+def _add_delivery_totals(totals, item):
+    totals["events"] += 1
+    totals["targets"] += _integer(item.get("targetCount"), 0)
+    totals["normal"] += _integer(item.get("normalCount"), 0)
+    totals["errors"] += _integer(item.get("errorCount"), 0)
+    totals["excludedErrors"] += _integer(item.get("excludedErrorCount"), 0)
+    totals["seriousErrors"] += _integer(item.get("seriousErrorCount"), 0)
+    totals["maxWorkerSeconds"] = max(totals["maxWorkerSeconds"], _integer(item.get("workerMaxSeconds"), 0))
+    latency_values = [_integer(value, 0) for value in (item.get("latencyMaxMs") or {}).values()]
+    totals["maxLatencyMs"] = max(totals["maxLatencyMs"], max(latency_values, default=0))
+
+
+def _delivery_stat_row(item):
+    return {
+        "eventType": _clean(item.get("eventType"), 40).casefold() or "unknown",
+        "updatedEpoch": _integer(item.get("updatedEpoch"), 0),
+        "generation": _integer(item.get("generation"), 0),
+        "targets": _integer(item.get("targetCount"), 0),
+        "normal": _integer(item.get("normalCount"), 0),
+        "errors": _integer(item.get("errorCount"), 0),
+        "seriousErrors": _integer(item.get("seriousErrorCount"), 0),
+        "ownerRegion": _clean(item.get("ownerRegion"), 40),
+        "logsCollected": bool(item.get("logsCollected")),
+    }
 
 
 def _client(service, region=None):

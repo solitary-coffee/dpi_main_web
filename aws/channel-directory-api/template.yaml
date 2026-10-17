@@ -21,6 +21,10 @@ Parameters:
   StateTableName:
     Type: String
     Default: DPI-BackupFleetState-v51
+  DeliveryMonitorTableName:
+    Type: String
+    Default: DPI-DeliveryMonitor-v1
+    Description: Read-only delivery aggregation source used by the administrator dashboard.
   OperatingRegions:
     Type: String
     Default: ap-northeast-1,ap-northeast-3
@@ -55,6 +59,7 @@ Resources:
           MONITORED_TABLE_NAMES: !Ref MonitoredTableNames
           HOME_SERVER_TABLE_NAME: !Ref HomeServerTableName
           STATE_TABLE_NAME: !Ref StateTableName
+          DELIVERY_MONITOR_TABLE_NAME: !Ref DeliveryMonitorTableName
           OPERATING_REGIONS: !Ref OperatingRegions
           AUTO_MONITOR_FUNCTION: !Ref AutoMonitorFunction
           INGEST_ENDPOINTS: !Ref IngestEndpoints
@@ -90,6 +95,12 @@ Resources:
               Resource:
                 - !Sub arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${TableName}
                 - !Sub arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${StateTableName}
+            - Sid: ReadDeliveryMonitor
+              Effect: Allow
+              Action:
+                - dynamodb:Scan
+                - dynamodb:DescribeTable
+              Resource: !Sub arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${DeliveryMonitorTableName}
             - Sid: ControlManagedBackupInstances
               Effect: Allow
               Action:

@@ -15,6 +15,7 @@ const ADMIN_ASSET_ROOTS = Object.freeze([
     '/site/ec2-admin',
     '/site/xml-admin',
     '/site/status-admin',
+    '/site/delivery-admin',
 ]);
 
 class AdminCenterError extends Error {
@@ -31,7 +32,8 @@ export async function handleAdminCenterRequest(request, env) {
     const pathname = url.pathname.replace(/\/+$/, '') || '/';
     const isSummaryApi = pathname === '/site/admin-center/api/summary';
     const isActionApi = pathname === '/site/admin-center/api/action';
-    const isApi = isSummaryApi || isActionApi;
+    const isDeliveryStatsApi = pathname === '/site/delivery-admin/api/summary';
+    const isApi = isSummaryApi || isActionApi || isDeliveryStatsApi;
     const assetRoot = !isApi ? ADMIN_ASSET_ROOTS.find((root) => pathname === root || pathname.startsWith(`${root}/`)) : null;
     const isAsset = Boolean(assetRoot);
     if (!isApi && !isAsset) return null;
@@ -49,6 +51,12 @@ export async function handleAdminCenterRequest(request, env) {
                 return jsonResponse({ success: false, message: '許可されていない操作です。' }, 405, { Allow: 'POST' });
             }
             return await proxyAwsAction(request, env, admin);
+        }
+        if (isDeliveryStatsApi) {
+            if (request.method !== 'GET') {
+                return jsonResponse({ success: false, message: '許可されていない操作です。' }, 405, { Allow: 'GET' });
+            }
+            return await proxyDeliveryStatistics(url, env, admin);
         }
         if (!['GET', 'HEAD'].includes(request.method)) {
             throw new AdminCenterError(405, '許可されていない操作です。', 'method_not_allowed');
@@ -127,8 +135,10 @@ async function systemSummary(env, admin) {
             { label: 'EC2管理', href: '/site/ec2-admin/' },
             { label: 'XML配信', href: '/site/xml-admin/' },
             { label: 'ステータス管理', href: '/site/status-admin/' },
+            { label: '配信統計', href: '/site/delivery-admin/' },
             { label: '二次利用申請管理', href: '/site/reuse-admin/' },
             { label: 'お知らせ一括配信', href: '/site/mail-admin/' },
+            { label: 'Discordお知らせ', href: '/site/discord-admin/' },
             { label: '配信先検索', href: '/site/channel-admin/' },
             { label: 'IP遮断管理', href: '/site/ip-admin/' },
         ],
@@ -307,6 +317,41 @@ async function fetchAwsSummary(env) {
         return { configured: true, available: true, ...body.system, observedAt: body.observedAt || null };
     } catch (error) {
         return { configured: true, available: false, message: error?.name === 'AbortError' ? 'AWS連携がタイムアウトしました。' : 'AWS連携に失敗しました。' };
+    } finally {
+        clearTimeout(timeout);
+    }
+}
+
+async function proxyDeliveryStatistics(requestUrl, env, admin) {
+    const period = clean(requestUrl.searchParams.get('period')) || '24h';
+    if (!['24h', '7d', 'all'].includes(period)) {
+        throw new AdminCenterError(400, '集計期間を確認してください。', 'invalid_period');
+    }
+    const endpoint = clean(env.AWS_CHANNEL_DIRECTORY_URL);
+    const token = clean(env.AWS_CHANNEL_DIRECTORY_TOKEN);
+    if (!endpoint || !token) throw new AdminCenterError(503, 'AWS連携が未設定です。', 'aws_not_configured');
+    let url;
+    try {
+        url = new URL(endpoint);
+        if (url.protocol !== 'https:') throw new Error('invalid_protocol');
+    } catch {
+        throw new AdminCenterError(503, 'AWS連携URLが不正です。', 'aws_invalid_url');
+    }
+    url.search = '';
+    url.searchParams.set('view', 'delivery-stats');
+    url.searchParams.set('period', period);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 20_000);
+    try {
+        const response = await fetch(url, { headers: { Accept: 'application/json', Authorization: `Bearer ${token}` }, signal: controller.signal });
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok || body.success !== true) {
+            throw new AdminCenterError(502, body.message || `AWS配信統計の取得に失敗しました（HTTP ${response.status}）。`, 'aws_delivery_stats_failed');
+        }
+        return jsonResponse({ ...body, admin: admin.email });
+    } catch (error) {
+        if (error instanceof AdminCenterError) throw error;
+        throw new AdminCenterError(502, error?.name === 'AbortError' ? 'AWS配信統計がタイムアウトしました。' : 'AWS配信統計に接続できませんでした。', 'aws_delivery_stats_unavailable');
     } finally {
         clearTimeout(timeout);
     }

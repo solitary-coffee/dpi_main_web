@@ -15,7 +15,6 @@ const statusLabels = Object.freeze({
 const recipientGroupLabels = Object.freeze({
     subscribers: 'お知らせ購読者',
     reuse_approved: '許可済み二次利用者',
-    discord_approved: '許可済みDiscordサーバー',
 });
 
 const campaignTemplates = Object.freeze({
@@ -87,13 +86,10 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     for (const input of document.querySelectorAll('input[name="campaign-recipient-groups"]')) {
         input.addEventListener('change', function() {
-            updateServerSelectorVisibility();
             scheduleRecipientPreview();
             scheduleEmailPreview();
         });
     }
-    document.getElementById('select-all-servers').addEventListener('click', () => setAllServers(true));
-    document.getElementById('clear-all-servers').addEventListener('click', () => setAllServers(false));
     for (const button of document.querySelectorAll('[data-template]')) {
         button.addEventListener('click', () => applyTemplate(button.dataset.template));
     }
@@ -109,9 +105,7 @@ async function loadSummary() {
         document.getElementById('admin-email').textContent = summary.admin;
         renderSubscriberStats(summary.subscribers, summary.reuseUsers);
         renderDeliverySlots(summary.deliveryCatalog);
-        renderApprovedServers(summary.approvedServers || []);
         renderCampaigns(summary.campaigns);
-        updateServerSelectorVisibility();
         scheduleRecipientPreview(0);
         setStatus('', '');
     } catch (error) {
@@ -162,29 +156,6 @@ function renderDeliverySlots(catalog) {
     }
 }
 
-function renderApprovedServers(servers) {
-    const container = document.getElementById('approved-servers');
-    const previous = new Set(selectedServerIds());
-    container.replaceChildren();
-    if (!servers.length) {
-        container.append(element('p', 'empty', '許可済みの配信先サーバーはありません。'));
-        return;
-    }
-    for (const server of servers) {
-        const label = element('label', 'delivery-slot');
-        const input = document.createElement('input');
-        input.type = 'checkbox';
-        input.name = 'campaign-server-ids';
-        input.value = server.id;
-        input.checked = previous.has(server.id);
-        input.addEventListener('change', () => scheduleRecipientPreview());
-        const text = element('span', '', server.name || server.id);
-        text.append(element('small', 'slot-status active', `${server.channelCount}ch`));
-        label.append(input, text);
-        container.append(label);
-    }
-}
-
 function renderCampaigns(campaigns) {
     const container = document.getElementById('campaign-list');
     container.replaceChildren();
@@ -230,10 +201,6 @@ function renderCampaigns(campaigns) {
         const meta = element('p', 'campaign-meta', `ID: ${campaign.id} / 作成: ${campaign.createdBy}`);
         const slots = (campaign.deliverySlots || []).map(deliverySlotLabel).join('・');
         if (slots) meta.append(document.createElement('br'), document.createTextNode(`対象配信枠: ${slots}`));
-        if (campaign.targetServerIds?.length) {
-            const servers = campaign.targetServerIds.map(serverLabel).join('・');
-            meta.append(document.createElement('br'), document.createTextNode(`Discord配信先: ${servers}`));
-        }
         card.append(meta);
 
         const actions = element('div', 'campaign-actions');
@@ -310,7 +277,7 @@ async function sendCampaign(campaign, button) {
         return;
     }
     const confirmed = window.confirm(
-        `「${campaign.subject}」を${count}件へ配信開始します。\n\n配信開始後、すでに送信されたメールやDiscord投稿は取り消せません。`,
+        `「${campaign.subject}」を${count}件へ配信開始します。\n\n配信開始後、すでに送信されたメールは取り消せません。`,
     );
     if (!confirmed) return;
 
@@ -369,7 +336,6 @@ async function updateRecipientPreview() {
         const parts = [];
         if (result.byKind?.subscriber) parts.push(`購読者 ${result.byKind.subscriber}件`);
         if (result.byKind?.reuse_approved) parts.push(`二次利用者 ${result.byKind.reuse_approved}件`);
-        if (result.byKind?.discord_approved) parts.push(`Discordチャンネル ${result.byKind.discord_approved}件`);
         preview.textContent = `現在の配信対象: ${result.count}件${parts.length ? `（${parts.join(' / ')}）` : ''}。配信開始時に再計算します。`;
     } catch (error) {
         if (requestId === audienceRequestId) preview.textContent = error.message;
@@ -392,18 +358,7 @@ function selectedDeliverySlots() {
 }
 
 function selectedServerIds() {
-    return Array.from(document.querySelectorAll('input[name="campaign-server-ids"]:checked'))
-        .map((input) => input.value);
-}
-
-function updateServerSelectorVisibility() {
-    const enabled = selectedRecipientGroups().includes('discord_approved');
-    document.getElementById('server-selector').hidden = !enabled;
-}
-
-function setAllServers(checked) {
-    for (const input of document.querySelectorAll('input[name="campaign-server-ids"]')) input.checked = checked;
-    scheduleRecipientPreview(0);
+    return [];
 }
 
 function ensureDefaultSelections() {
@@ -415,10 +370,6 @@ function ensureDefaultSelections() {
 
 function deliverySlotLabel(id) {
     return summaryState?.deliveryCatalog?.find((slot) => slot.id === id)?.label || id;
-}
-
-function serverLabel(id) {
-    return summaryState?.approvedServers?.find((server) => server.id === id)?.name || id;
 }
 
 function audiencePreview(categories, recipientGroups, deliverySlots, targetServerIds = selectedServerIds()) {

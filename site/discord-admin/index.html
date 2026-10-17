@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="robots" content="noindex,nofollow">
+    <title>Discordお知らせ管理 - DPI-Bot</title>
+    <link rel="icon" href="../../img/dpi.png" type="image/png">
+    <link rel="stylesheet" href="../mail-admin/style.css">
+    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="../admin-shell.css">
+</head>
+<body class="admin-shell">
+    <button id="menu-toggle-btn" type="button" aria-label="メニューを開く"><span></span><span></span><span></span></button>
+    <div class="overlay"></div>
+    <div class="page-container">
+    <nav class="sidebar" aria-label="管理メニュー">
+        <div class="sidebar-header"><h2>管理メニュー</h2></div>
+        <ul>
+            <li><a href="/">公式サイト</a></li>
+            <li><a href="/site/admin-center/">統合管理センター</a></li>
+            <li><a href="/site/system-admin/">システム運用</a></li>
+            <li><a href="/site/ec2-admin/">EC2管理</a></li>
+            <li><a href="/site/xml-admin/">XML配信</a></li>
+            <li><a href="/site/status-admin/">ステータス管理</a></li>
+            <li><a href="/site/delivery-admin/">配信統計</a></li>
+            <li><a href="/site/channel-admin/">配信先検索</a></li>
+            <li><a href="/site/reuse-admin/">二次利用申請管理</a></li>
+            <li><a href="/site/mail-admin/">メール配信管理</a></li>
+            <li><a href="/site/discord-admin/" class="active">Discordお知らせ管理</a></li>
+            <li><a href="/site/ip-admin/">IP遮断管理</a></li>
+            <li><a href="/cdn-cgi/access/logout">ログアウト</a></li>
+        </ul>
+    </nav>
+    <main class="main-content">
+        <header><h1>Discordお知らせ管理</h1><div class="admin-bar"><span id="admin-email"></span><button id="refresh-btn" type="button" class="secondary-btn">最新情報に更新</button></div></header>
+        <div id="global-status" class="status" role="alert" aria-live="assertive"></div>
+
+        <section class="admin-section" aria-labelledby="discord-summary-title">
+            <div class="section-heading"><div><p class="eyebrow">DESTINATIONS</p><h2 id="discord-summary-title">Discord配信先</h2></div><p>許可済み二次利用申請のチャンネルだけを対象にします。</p></div>
+            <div id="discord-stats" class="stats-grid"></div>
+        </section>
+
+        <section class="admin-section" aria-labelledby="compose-title">
+            <div class="section-heading"><div><p class="eyebrow">COMPOSE</p><h2 id="compose-title">新しいDiscordお知らせ</h2></div><p>メールとは別の下書き・履歴として管理します。</p></div>
+            <form id="campaign-form" class="campaign-form">
+                <fieldset class="category-selector"><legend>お知らせカテゴリ</legend><div class="category-chips">
+                    <label class="category-chip"><input type="checkbox" name="campaign-categories" value="maintenance"><span>メンテナンス情報</span></label>
+                    <label class="category-chip"><input type="checkbox" name="campaign-categories" value="outage"><span>障害・重要情報</span></label>
+                    <label class="category-chip"><input type="checkbox" name="campaign-categories" value="update"><span>アップデート情報</span></label>
+                </div></fieldset>
+                <fieldset class="category-selector"><legend>対象配信枠</legend><div id="delivery-slots" class="delivery-slots"></div></fieldset>
+                <fieldset class="category-selector"><legend>送信先サーバー</legend><div class="selector-actions"><button id="select-all-servers" type="button" class="secondary-btn">すべて選択</button><button id="clear-all-servers" type="button" class="secondary-btn">すべて解除</button></div><div id="approved-servers" class="delivery-slots"></div></fieldset>
+                <label>件名（120文字以内）<input id="subject" type="text" maxlength="120" required></label>
+                <label>本文（件名と合わせてDiscordの2,000文字以内）<textarea id="body" rows="10" maxlength="1850" required></textarea></label>
+                <p id="recipient-preview" class="recipient-preview">カテゴリ・配信枠・サーバーを選ぶと対象チャンネル数を表示します。</p>
+                <div class="preview-toolbar"><strong>Discordプレビュー</strong><button id="preview-btn" type="button" class="secondary-btn">プレビューを更新</button></div>
+                <article class="discord-preview"><strong id="preview-subject">件名</strong><p id="preview-body">本文を入力してください。</p></article>
+                <button id="save-btn" type="submit" class="primary-btn">下書きを保存</button>
+            </form>
+        </section>
+
+        <section class="admin-section" aria-labelledby="history-title"><div class="section-heading"><div><p class="eyebrow">CAMPAIGNS</p><h2 id="history-title">Discord配信履歴</h2></div><p>開始後も、未送信分は取り消せます。</p></div><div id="campaign-list" class="campaign-list"></div></section>
+    </main></div>
+    <script src="../../script.js"></script><script src="script.js"></script>
+</body>
+</html>

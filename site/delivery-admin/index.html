@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="robots" content="noindex,nofollow">
+    <title>配信統計 - DPI-Bot</title><link rel="icon" href="../../img/dpi.png" type="image/png"><link rel="stylesheet" href="../admin-center/style.css"><link rel="stylesheet" href="style.css"><link rel="stylesheet" href="../admin-shell.css">
+</head>
+<body class="admin-shell"><button id="menu-toggle-btn" type="button" aria-label="メニューを開く"><span></span><span></span><span></span></button><div class="overlay"></div><div class="page-container">
+<nav class="sidebar" aria-label="管理メニュー"><div class="sidebar-header"><h2>管理メニュー</h2></div><ul>
+    <li><a href="/">公式サイト</a></li><li><a href="/site/admin-center/">統合管理センター</a></li><li><a href="/site/system-admin/">システム運用</a></li><li><a href="/site/ec2-admin/">EC2管理</a></li><li><a href="/site/xml-admin/">XML配信</a></li><li><a href="/site/status-admin/">ステータス管理</a></li><li><a href="/site/delivery-admin/" class="active">配信統計</a></li><li><a href="/site/channel-admin/">配信先検索</a></li><li><a href="/site/reuse-admin/">二次利用申請管理</a></li><li><a href="/site/mail-admin/">メール配信管理</a></li><li><a href="/site/discord-admin/">Discordお知らせ管理</a></li><li><a href="/site/ip-admin/">IP遮断管理</a></li><li><a href="/cdn-cgi/access/logout">ログアウト</a></li>
+</ul></nav>
+<main class="main-content"><header><h1>配信統計</h1><div class="admin-bar"><span id="admin-email"></span><select id="period" aria-label="集計期間"><option value="24h">過去24時間</option><option value="7d">過去7日</option><option value="all">保持期間すべて</option></select><button id="refresh-btn" type="button" class="secondary-btn">最新情報に更新</button></div></header>
+<div id="global-status" class="status" role="alert" aria-live="assertive"></div>
+<section class="admin-section"><div class="section-heading"><div><p class="eyebrow">OVERVIEW</p><h2>配信サマリー</h2></div><p id="coverage"></p></div><div id="totals" class="metric-grid"></div></section>
+<section class="admin-section"><div class="section-heading"><div><p class="eyebrow">EVENT TYPES</p><h2>情報種別ごとの配信数</h2></div><p>再試行世代は最新世代のみを集計します。</p></div><div class="table-wrap"><table><thead><tr><th>情報種別</th><th>イベント</th><th>配信対象</th><th>正常</th><th>エラー</th><th>重大</th><th>最大遅延</th></tr></thead><tbody id="event-types"></tbody></table></div></section>
+<section class="admin-section"><div class="section-heading"><div><p class="eyebrow">REGIONS</p><h2>処理リージョン</h2></div></div><div id="regions" class="metric-grid"></div></section>
+<section class="admin-section"><div class="section-heading"><div><p class="eyebrow">RECENT</p><h2>最近の配信</h2></div><p id="retention-note"></p></div><div class="table-wrap"><table><thead><tr><th>更新日時</th><th>種別</th><th>リージョン</th><th>対象</th><th>正常</th><th>エラー</th><th>ログ</th></tr></thead><tbody id="recent"></tbody></table></div></section>
+</main></div><script src="../../script.js"></script><script src="script.js"></script></body></html>
