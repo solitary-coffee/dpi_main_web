@@ -19,6 +19,7 @@ async function loadSummary() {
         const data = await response.json().catch(() => ({}));
         if (!response.ok || data.success !== true) throw new Error(data.message || `取得に失敗しました（HTTP ${response.status}）。`);
         render(data);
+        await loadStatuspageOverview();
         setStatus('', '');
     } catch (error) {
         setStatus(error.message, 'error');
@@ -79,6 +80,7 @@ function renderOperationOverview(local, cloudflare, aws, catalog) {
         { title: 'システム運用', value: modeName, detail: aws?.available ? `AWS警報 ${aws.alarms?.active ?? '—'}件 / Cloudflare ${cloudflare?.worker || '—'}` : (aws?.message || 'AWS情報を取得できません'), href: '/site/system-admin/' },
         { title: '自宅サーバー', value: home?.available ? `正常 ${home.healthy ?? 0}台` : '取得不可', detail: home?.available ? `異常・期限切れ ${home.unhealthy ?? 0}台` : (home?.error || '状態を確認できません'), href: '/site/system-admin/' },
         { title: 'EC2管理', value: backup?.available ? `${runningInstances}/${backup.count ?? 0}台 稼働` : '取得不可', detail: 'バックアップEC2の詳細・操作', href: '/site/ec2-admin/' },
+        { key: 'statuspage', title: 'ステータス管理', value: '読込中…', detail: '稼働状況・インシデント・メンテナンス', href: '/site/status-admin/' },
         { title: 'XML配信', value: `${activeSlots}配信枠`, detail: `AWS配信先 ${aws?.deliveryDirectory?.channels ?? '—'}チャンネル`, href: '/site/xml-admin/' },
         { title: '配信先', value: `${aws?.deliveryDirectory?.servers ?? '—'}サーバー`, detail: '登録チャンネル・配信名を検索', href: '/site/channel-admin/' },
         { title: '最近の運用履歴', value: `${auditCount}件`, detail: '管理操作・申請・遮断の履歴', href: '/site/system-admin/#audit-title' },
@@ -86,9 +88,34 @@ function renderOperationOverview(local, cloudflare, aws, catalog) {
     container.replaceChildren(...items.map((item) => {
         const card = element('a', 'feature-card');
         card.href = item.href;
+        if (item.key) card.id = `${item.key}-overview`;
         card.append(element('span', 'feature-title', item.title), element('strong', '', String(item.value)), element('small', '', item.detail), element('span', 'feature-link', '詳細を開く →'));
         return card;
     }));
+}
+
+async function loadStatuspageOverview() {
+    const card = document.getElementById('statuspage-overview');
+    if (!card) return;
+    const value = card.querySelector('strong');
+    const detail = card.querySelector('small');
+    try {
+        const response = await fetch('/site/status-admin/api/summary', { credentials: 'same-origin', headers: { Accept: 'application/json' } });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || data.success !== true) throw new Error(data.message || '取得失敗');
+        if (!data.configured) {
+            value.textContent = 'API未設定';
+            detail.textContent = data.message || 'Statuspage API連携を設定してください';
+            return;
+        }
+        const affected = (data.components || []).filter((component) => !component.group && component.status !== 'operational').length;
+        const activeIncidents = (data.incidents || []).filter((incident) => incident.status !== 'resolved').length;
+        value.textContent = affected ? `影響あり ${affected}件` : '正常稼働';
+        detail.textContent = `対応中インシデント ${activeIncidents}件 / 予定メンテナンス ${(data.maintenances || []).length}件`;
+    } catch (error) {
+        value.textContent = '取得不可';
+        detail.textContent = error.message;
+    }
 }
 
 function renderLinks(links) {
@@ -153,23 +180,51 @@ function renderMode(mode) {
 }
 
 function renderEc2(backup) {
-    const body = document.getElementById('ec2-rows');
-    if (!body) return;
-    body.replaceChildren();
+    const container = document.getElementById('ec2-rows');
+    if (!container) return;
+    container.replaceChildren();
     const instances = backup?.available ? (backup.instances || []) : [];
+    const summary = document.getElementById('ec2-summary');
+    if (summary) {
+        const healthy = instances.filter((instance) => instance.instanceStatus === 'ok' && instance.systemStatus === 'ok').length;
+        const metrics = [
+            ['管理対象', instances.length],
+            ['稼働中', instances.filter((instance) => instance.state === 'running').length],
+            ['停止中', instances.filter((instance) => instance.state === 'stopped').length],
+            ['チェック正常', healthy],
+        ];
+        summary.replaceChildren(...metrics.map(([label, number]) => {
+            const card = element('article', 'metric-card compact');
+            card.append(element('span', '', label), element('strong', '', String(number)));
+            return card;
+        }));
+    }
     if (!instances.length) {
-        const row = document.createElement('tr');
-        const cell = element('td', 'empty', backup?.error ? `取得できません（${backup.error}）` : '管理対象EC2はありません。');
-        cell.colSpan = 6;
-        row.append(cell);
-        body.append(row);
+        container.append(element('p', 'empty', backup?.error ? `取得できません（${backup.error}）` : '管理対象EC2はありません。'));
         return;
     }
     for (const instance of instances) {
-        const row = document.createElement('tr');
-        const identity = element('td');
-        identity.append(element('strong', '', instance.name), element('code', 'block-code', instance.instanceId));
-        const actions = element('td', 'ec2-actions');
+        const card = element('article', 'ec2-card');
+        const heading = element('div', 'ec2-heading');
+        const identity = element('div');
+        identity.append(element('span', 'eyebrow', `${instance.region} / ${instance.availabilityZone || 'AZ不明'}`), element('h3', '', instance.name || instance.instanceId), element('code', 'block-code', instance.instanceId));
+        heading.append(identity, element('span', `component-status status-${instance.state}`, instance.state || 'unknown'));
+        const details = element('dl', 'ec2-details');
+        const securityGroups = (instance.securityGroups || []).map((group) => `${group.name || '名称なし'} (${group.id})`).join(', ') || '—';
+        const rows = [
+            ['役割', instance.backupRole || '—'], ['通常時', instance.normalState || '—'],
+            ['インスタンスタイプ', instance.instanceType || '—'], ['AMI', instance.imageId || '—'],
+            ['OS / Platform', instance.platformDetails || '—'], ['アーキテクチャ', instance.architecture || '—'],
+            ['インスタンスチェック', healthLabel(instance.instanceStatus)], ['システムチェック', healthLabel(instance.systemStatus)],
+            ['モニタリング', instance.monitoringState || '—'], ['EBS最適化', instance.ebsOptimized ? '有効' : '無効'],
+            ['ルートデバイス', instance.rootDeviceType || '—'], ['仮想化方式', instance.virtualizationType || '—'],
+            ['プライベートIP', instance.privateIpAddress || '—'], ['パブリックIP', instance.publicIpAddress || '—'],
+            ['VPC / Subnet', `${instance.vpcId || '—'} / ${instance.subnetId || '—'}`],
+            ['セキュリティグループ', securityGroups], ['ボリューム', (instance.volumeIds || []).join(', ') || '—'],
+            ['起動日時', formatDate(instance.launchTime)],
+        ];
+        for (const [key, value] of rows) details.append(element('dt', '', key), element('dd', '', String(value)));
+        const actions = element('div', 'ec2-actions');
         for (const [operation, label] of [['start', '起動'], ['stop', '停止'], ['reboot', '再起動']]) {
             const button = element('button', operation === 'stop' ? 'small danger-button' : 'small', label);
             button.type = 'button';
@@ -177,9 +232,13 @@ function renderEc2(backup) {
             button.addEventListener('click', () => controlEc2(instance, operation, button));
             actions.append(button);
         }
-        row.append(element('td', '', instance.region), identity, element('td', '', instance.backupRole), element('td', `state state-${instance.state}`, instance.state), element('td', '', instance.normalState), actions);
-        body.append(row);
+        card.append(heading, details, actions);
+        container.append(card);
     }
+}
+
+function healthLabel(value) {
+    return ({ ok: '正常', impaired: '異常', initializing: '初期化中', insufficient_data: 'データ不足', not_applicable: '対象外' }[value] || value || '未取得');
 }
 
 async function changeSystemMode(event) {

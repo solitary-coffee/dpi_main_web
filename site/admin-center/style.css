@@ -41,5 +41,39 @@ button:disabled { cursor: not-allowed; opacity: .45; }.danger-button { backgroun
 .block-code { display: block; margin-top: 5px; color: #b9c3cc; font-size: .75rem; }.ec2-actions { display: flex; min-width: 185px; gap: 6px; }.state { font-weight: 800; }.state-running { color: #78dea6; }.state-stopped { color: #ffb0a9; }
 .xml-preview { padding: 16px; border: 1px solid #5d6772; border-radius: 8px; background: #333940; }.xml-preview h3 { margin-bottom: 12px; }
 .section-description { margin: -7px 0 18px; color: #c8d0d8; }
+.button-link { display: inline-flex; align-items: center; padding: 9px 12px; border: 1px solid #5d6772; border-radius: 6px; color: #dff1ff; text-decoration: none; }
+.secondary-button { background: #4c5661; }
+.danger-button { background: #a82c25; }
+.muted { color: #c8d0d8; }
+.metric-card.compact { min-height: 72px; margin-bottom: 16px; }
+.ec2-grid, .component-grid, .record-list { display: grid; gap: 14px; margin-top: 16px; }
+.ec2-grid { grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); }
+.ec2-card, .component-card, .record-card { padding: 18px; border: 1px solid #5d6772; border-radius: 8px; background: #333940; }
+.ec2-heading, .component-heading, .record-heading, .record-actions, .component-controls, .action-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.ec2-heading h3, .record-heading h3 { margin-bottom: 2px; }
+.ec2-details { grid-template-columns: minmax(125px, .8fr) minmax(150px, 1.4fr); margin-top: 18px; }
+.ec2-details dd { overflow-wrap: anywhere; }
+.ec2-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
+.component-status { display: inline-flex; flex: 0 0 auto; padding: 4px 8px; border-radius: 999px; background: #59616b; color: #fff; font-size: .75rem; font-weight: 800; }
+.status-operational, .status-running, .status-ok, .status-resolved, .status-completed { background: #17633f; color: #dff6e9; }
+.status-degraded_performance, .status-investigating, .status-scheduled, .status-initializing { background: #765a13; color: #fff4cf; }
+.status-partial_outage, .status-identified, .status-monitoring, .status-in_progress, .status-verifying { background: #8a4717; color: #fff0dd; }
+.status-major_outage, .status-impaired, .status-stopped { background: #822b26; color: #ffe4e1; }
+.status-under_maintenance { background: #54418d; color: #efe9ff; }
+.component-heading small { display: block; margin-top: 5px; color: #c8d0d8; }
+.component-controls { justify-content: flex-start; flex-wrap: wrap; margin-top: 14px; }
+.statuspage-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 15px; }
+.statuspage-form label { display: grid; gap: 6px; color: #dce3ea; font-weight: 700; }
+.statuspage-form input, .statuspage-form select, .statuspage-form textarea, .component-controls select { box-sizing: border-box; width: 100%; padding: 10px; border: 1px solid #66717c; border-radius: 6px; background: #20252a; color: #fff; font: inherit; }
+.statuspage-form .wide { grid-column: 1 / -1; }
+.statuspage-form fieldset { margin: 0; padding: 14px; border: 1px solid #59616b; border-radius: 7px; }
+.component-checks, .option-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 9px; }
+.component-check, .checkbox-label { display: flex !important; align-items: center; gap: 8px !important; font-weight: 500 !important; }
+.component-check input, .checkbox-label input { width: auto; }
+.record-list { grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+.record-meta { display: flex; flex-wrap: wrap; gap: 8px 16px; color: #c8d0d8; font-size: .82rem; }
+.record-body { margin: 14px 0; white-space: pre-wrap; }
+.record-actions { justify-content: flex-end; }
+.configuration-notice { border-color: #a07818; background: #4b3a13; }
 @media (max-width: 680px) { .main-content { width: min(100% - 20px, 1180px); padding-top: 18px; }.topbar, .section-heading { align-items: flex-start; flex-direction: column; }section { padding: 18px 14px; } }
-@media (max-width: 820px) { .control-form, .xml-form { grid-template-columns: 1fr; }.wide { grid-column: auto; } }
+@media (max-width: 820px) { .control-form, .xml-form, .statuspage-form { grid-template-columns: 1fr; }.wide, .statuspage-form .wide { grid-column: auto; }.ec2-grid { grid-template-columns: 1fr; } }

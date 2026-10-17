@@ -11,6 +11,7 @@ const excluded = new Set([
     'site/system-admin/index.html',
     'site/ec2-admin/index.html',
     'site/xml-admin/index.html',
+    'site/status-admin/index.html',
     'site/channel-admin/index.html',
     'site/ip-admin/index.html',
     'site/mail-admin/index.html',

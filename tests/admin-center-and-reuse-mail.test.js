@@ -29,7 +29,7 @@ test('分割した運用管理画面をAccess認証で保護し末尾スラッ�
     };
     try {
         const headers = { 'cf-access-jwt-assertion': token };
-        for (const root of ['/site/admin-center', '/site/system-admin', '/site/ec2-admin', '/site/xml-admin']) {
+        for (const root of ['/site/admin-center', '/site/system-admin', '/site/ec2-admin', '/site/xml-admin', '/site/status-admin']) {
             const canonical = await handleAdminCenterRequest(new Request(`https://dpi-bot.com${root}/`, { headers }), adminEnv);
             assert.equal(canonical.status, 200, root);
             assert.equal(await canonical.text(), 'admin page', root);
@@ -63,8 +63,8 @@ test('統合管理センターは概要だけを表示し操作は専用タブ�
 });
 
 test('すべての管理画面から用途別タブへ移動できる', async () => {
-    const pages = ['admin-center', 'system-admin', 'ec2-admin', 'xml-admin', 'channel-admin', 'reuse-admin', 'mail-admin', 'ip-admin'];
-    const expected = ['/site/admin-center/', '/site/system-admin/', '/site/ec2-admin/', '/site/xml-admin/', '/site/channel-admin/', '/site/reuse-admin/', '/site/mail-admin/', '/site/ip-admin/'];
+    const pages = ['admin-center', 'system-admin', 'ec2-admin', 'xml-admin', 'status-admin', 'channel-admin', 'reuse-admin', 'mail-admin', 'ip-admin'];
+    const expected = ['/site/admin-center/', '/site/system-admin/', '/site/ec2-admin/', '/site/xml-admin/', '/site/status-admin/', '/site/channel-admin/', '/site/reuse-admin/', '/site/mail-admin/', '/site/ip-admin/'];
     for (const page of pages) {
         const html = await readFile(new URL(`../site/${page}/index.html`, import.meta.url), 'utf8');
         const sidebar = html.match(/<nav class="sidebar"[\s\S]*?<ul>([\s\S]*?)<\/ul>/u)?.[1] || '';

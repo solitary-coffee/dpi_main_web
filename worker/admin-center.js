@@ -14,6 +14,7 @@ const ADMIN_ASSET_ROOTS = Object.freeze([
     '/site/system-admin',
     '/site/ec2-admin',
     '/site/xml-admin',
+    '/site/status-admin',
 ]);
 
 class AdminCenterError extends Error {
@@ -125,6 +126,7 @@ async function systemSummary(env, admin) {
             { label: 'システム運用', href: '/site/system-admin/' },
             { label: 'EC2管理', href: '/site/ec2-admin/' },
             { label: 'XML配信', href: '/site/xml-admin/' },
+            { label: 'ステータス管理', href: '/site/status-admin/' },
             { label: '二次利用申請管理', href: '/site/reuse-admin/' },
             { label: 'お知らせ一括配信', href: '/site/mail-admin/' },
             { label: '配信先検索', href: '/site/channel-admin/' },

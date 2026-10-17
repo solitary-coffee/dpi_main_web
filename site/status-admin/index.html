@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="robots" content="noindex,nofollow">
+    <title>ステータス管理 - DPI-Bot</title>
+    <link rel="icon" href="../../img/dpi.png" type="image/png">
+    <link rel="stylesheet" href="../admin-shell.css">
+    <link rel="stylesheet" href="../admin-center/style.css">
+</head>
+<body class="admin-shell">
+    <button id="menu-toggle-btn" type="button" aria-label="メニューを開く"><span></span><span></span><span></span></button>
+    <div class="overlay"></div>
+    <div class="page-container">
+        <nav class="sidebar" aria-label="管理メニュー">
+            <div class="sidebar-header"><h2>管理メニュー</h2></div>
+            <ul>
+                <li><a href="/">公式サイト</a></li>
+                <li><a href="/site/admin-center/">統合管理センター</a></li>
+                <li><a href="/site/system-admin/">システム運用</a></li>
+                <li><a href="/site/ec2-admin/">EC2管理</a></li>
+                <li><a href="/site/xml-admin/">XML配信</a></li>
+                <li><a href="/site/status-admin/" class="active">ステータス管理</a></li>
+                <li><a href="/site/channel-admin/">配信先検索</a></li>
+                <li><a href="/site/reuse-admin/">二次利用申請管理</a></li>
+                <li><a href="/site/mail-admin/">メール配信管理</a></li>
+                <li><a href="/site/ip-admin/">IP遮断管理</a></li>
+                <li><a href="/cdn-cgi/access/logout">ログアウト</a></li>
+            </ul>
+        </nav>
+        <main class="main-content">
+            <header class="topbar">
+                <div><p class="eyebrow">ATLASSIAN STATUSPAGE</p><h1>ステータス管理</h1></div>
+                <div class="admin-bar"><span id="admin-email"></span><a id="public-status-link" class="button-link" href="https://coffeebousai.statuspage.io/" target="_blank" rel="noopener">公開ページ</a><button id="refresh-btn" type="button">最新情報に更新</button></div>
+            </header>
+            <div id="global-status" class="status" role="alert" aria-live="assertive"></div>
+            <section id="configuration-notice" class="configuration-notice" hidden></section>
+
+            <section aria-labelledby="component-title">
+                <div class="section-heading"><div><p class="eyebrow">COMPONENTS</p><h2 id="component-title">各システムの稼働状況</h2></div><time id="fetched-at"></time></div>
+                <p class="section-description">コンポーネントごとに、正常稼働・パフォーマンス低下・部分停止・重大障害・メンテナンス中を設定できます。</p>
+                <div id="component-summary" class="metric-grid"></div>
+                <div id="component-list" class="component-grid"></div>
+            </section>
+
+            <section aria-labelledby="incident-form-title">
+                <div class="section-heading"><div><p class="eyebrow">INCIDENT</p><h2 id="incident-form-title">インシデントの作成・更新</h2></div><button id="incident-reset" type="button" class="secondary-button">新規入力へ戻す</button></div>
+                <form id="incident-form" class="statuspage-form">
+                    <input id="incident-id" type="hidden">
+                    <label>名称<input id="incident-name" maxlength="200" required></label>
+                    <label>進行状況<select id="incident-status" required><option value="investigating">調査中</option><option value="identified">原因特定</option><option value="monitoring">監視中</option><option value="resolved">解決済み</option></select></label>
+                    <label>影響度<select id="incident-impact"><option value="none">自動判定</option><option value="minor">軽微</option><option value="major">大規模</option><option value="critical">重大</option></select></label>
+                    <label>対象の状態<select id="incident-component-status"><option value="degraded_performance">パフォーマンス低下</option><option value="partial_outage">部分停止</option><option value="major_outage">重大障害</option><option value="operational">正常稼働</option></select></label>
+                    <label class="wide">更新内容<textarea id="incident-body" rows="5" maxlength="2000" required></textarea></label>
+                    <fieldset class="wide"><legend>影響するコンポーネント</legend><div id="incident-components" class="component-checks"></div></fieldset>
+                    <label class="checkbox-label wide"><input id="incident-notify" type="checkbox">購読者へ通知する</label>
+                    <label class="wide">確認入力<input id="incident-confirmation" autocomplete="off" required><small id="incident-confirm-hint">「CREATE INCIDENT」と入力してください。</small></label>
+                    <div class="wide action-row"><button id="incident-submit" type="submit" class="danger-button">インシデントを作成</button></div>
+                </form>
+            </section>
+
+            <section aria-labelledby="incident-list-title">
+                <div class="section-heading"><div><p class="eyebrow">INCIDENT HISTORY</p><h2 id="incident-list-title">インシデント一覧</h2></div></div>
+                <div id="incident-list" class="record-list"></div>
+            </section>
+
+            <section aria-labelledby="maintenance-form-title">
+                <div class="section-heading"><div><p class="eyebrow">MAINTENANCE</p><h2 id="maintenance-form-title">メンテナンスの作成・更新</h2></div><button id="maintenance-reset" type="button" class="secondary-button">新規入力へ戻す</button></div>
+                <form id="maintenance-form" class="statuspage-form">
+                    <input id="maintenance-id" type="hidden">
+                    <label>名称<input id="maintenance-name" maxlength="200" required></label>
+                    <label>進行状況<select id="maintenance-status" required><option value="scheduled">予定</option><option value="in_progress">実施中</option><option value="verifying">確認中</option><option value="completed">完了</option></select></label>
+                    <label>開始日時<input id="maintenance-start" type="datetime-local" required></label>
+                    <label>終了日時<input id="maintenance-end" type="datetime-local" required></label>
+                    <label>対象の状態<select id="maintenance-component-status"><option value="under_maintenance">メンテナンス中</option><option value="operational">正常稼働</option><option value="degraded_performance">パフォーマンス低下</option><option value="partial_outage">部分停止</option><option value="major_outage">重大障害</option></select></label>
+                    <label class="wide">案内内容<textarea id="maintenance-body" rows="5" maxlength="2000" required></textarea></label>
+                    <fieldset class="wide"><legend>対象コンポーネント</legend><div id="maintenance-components" class="component-checks"></div></fieldset>
+                    <div class="wide option-grid">
+                        <label class="checkbox-label"><input id="maintenance-notify" type="checkbox">作成・更新時に通知</label>
+                        <label class="checkbox-label"><input id="maintenance-remind" type="checkbox">開始前に通知</label>
+                        <label class="checkbox-label"><input id="maintenance-auto-start" type="checkbox">開始時に実施中へ変更</label>
+                        <label class="checkbox-label"><input id="maintenance-auto-complete" type="checkbox">終了時に完了へ変更</label>
+                        <label class="checkbox-label"><input id="maintenance-auto-state" type="checkbox">開始時に対象をメンテナンス中へ変更</label>
+                        <label class="checkbox-label"><input id="maintenance-auto-operational" type="checkbox">終了時に対象を正常へ戻す</label>
+                        <label class="checkbox-label"><input id="maintenance-notify-start" type="checkbox">開始時に通知</label>
+                        <label class="checkbox-label"><input id="maintenance-notify-end" type="checkbox">終了時に通知</label>
+                    </div>
+                    <label class="wide">確認入力<input id="maintenance-confirmation" autocomplete="off" required><small id="maintenance-confirm-hint">「CREATE MAINTENANCE」と入力してください。</small></label>
+                    <div class="wide action-row"><button id="maintenance-submit" type="submit" class="danger-button">メンテナンスを作成</button></div>
+                </form>
+            </section>
+
+            <section aria-labelledby="maintenance-list-title">
+                <div class="section-heading"><div><p class="eyebrow">MAINTENANCE LIST</p><h2 id="maintenance-list-title">メンテナンス一覧</h2></div></div>
+                <div id="maintenance-list" class="record-list"></div>
+            </section>
+        </main>
+    </div>
+    <script src="../../script.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>

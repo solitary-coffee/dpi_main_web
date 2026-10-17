@@ -21,6 +21,7 @@
                 <li><a href="/site/system-admin/">システム運用</a></li>
                 <li><a href="/site/ec2-admin/" class="active">EC2管理</a></li>
                 <li><a href="/site/xml-admin/">XML配信</a></li>
+                <li><a href="/site/status-admin/">ステータス管理</a></li>
                 <li><a href="/site/channel-admin/">配信先検索</a></li>
                 <li><a href="/site/reuse-admin/">二次利用申請管理</a></li>
                 <li><a href="/site/mail-admin/">メール配信管理</a></li>
@@ -36,8 +37,9 @@
             <div id="global-status" class="status" role="alert" aria-live="assertive"></div>
             <section aria-labelledby="ec2-title">
                 <div class="section-heading"><div><p class="eyebrow">INSTANCES</p><h2 id="ec2-title">バックアップEC2</h2></div><time id="fetched-at"></time></div>
-                <p class="section-description">DPI-Bot管理対象タグが付いたEC2の状態を確認し、起動・停止・再起動を実行できます。</p>
-                <div class="table-wrap"><table><thead><tr><th>リージョン</th><th>名前 / ID</th><th>役割</th><th>現在</th><th>通常時</th><th>操作</th></tr></thead><tbody id="ec2-rows"></tbody></table></div>
+                <p class="section-description">DPI-Bot管理対象タグが付いたEC2について、インスタンス・システムチェック、ネットワーク、セキュリティグループ、ボリュームを確認し、起動・停止・再起動を実行できます。</p>
+                <div id="ec2-summary" class="metric-grid"></div>
+                <div id="ec2-rows" class="ec2-grid"></div>
             </section>
         </main>
     </div>

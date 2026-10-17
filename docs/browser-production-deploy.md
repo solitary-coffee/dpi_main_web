@@ -27,6 +27,7 @@ Cloudflare Dashboardで次を開く。
 | `DISCORD_BOT_TOKEN` | 許可済みサーバーへのお知らせ投稿 |
 | `AWS_CHANNEL_DIRECTORY_URL` | AWS配信先・運用情報APIのURL |
 | `AWS_CHANNEL_DIRECTORY_TOKEN` | 上記APIのBearer token |
+| `STATUSPAGE_API_KEY` | Atlassian Statuspageの管理APIキー |
 
 既存の `ACCESS_AUD`、`ACCESS_TEAM_DOMAIN`、メール配信、reCAPTCHA、Discord OAuthのSecretもそのまま維持する。
 
@@ -78,5 +79,11 @@ Cloudflare Accessでログインし、次を確認する。
 5. 最初は管理用のテスト対象だけを選び、配信後の送信数・失敗数・ログを確認
 6. EC2は状態表示を確認してから管理対象の1台で起動・停止ボタンの確認入力までを確認
 7. XMLはテスト電文を読み込み、プレビュー内容と配信枠件数を確認する。実配信が不要な場合は「XMLを配信」を押さない
+8. `https://dpi-bot.com/site/status-admin/` でコンポーネント、インシデント、メンテナンスを確認する。最初はコンポーネント状態を変更せず一覧取得だけを確認する
+
+Cloudflare AccessのSelf-hosted applicationには、ほかの管理画面と同じポリシーで次の2パスを追加する。
+
+- `https://dpi-bot.com/site/status-admin`
+- `https://dpi-bot.com/site/status-admin/*`
 
 管理操作はすべて上記Web画面から行う。日常運用でCloudflareやAWSのコンソールを開く必要はない。
