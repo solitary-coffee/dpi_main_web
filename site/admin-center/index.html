@@ -39,8 +39,38 @@
             </section>
 
             <section aria-labelledby="infra-title">
-                <div class="section-heading"><div><p class="eyebrow">INFRASTRUCTURE</p><h2 id="infra-title">システム状態</h2></div><p>AWS・Cloudflare・自宅サーバー連携を読み取り専用で表示します。</p></div>
+                <div class="section-heading"><div><p class="eyebrow">INFRASTRUCTURE</p><h2 id="infra-title">システム状態</h2></div><p>AWS・Cloudflare・自宅サーバーの現在値を表示します。</p></div>
                 <div id="system-panels" class="system-grid"></div>
+            </section>
+
+            <section aria-labelledby="mode-title">
+                <div class="section-heading"><div><p class="eyebrow">SYSTEM MODE</p><h2 id="mode-title">システムモード</h2></div><p>自動監視、通常固定、フェイルオーバー固定を切り替えます。</p></div>
+                <div id="mode-current" class="mode-current"></div>
+                <form id="mode-form" class="control-form">
+                    <label>変更後のモード<select id="mode-select" required><option value="automatic">自動監視</option><option value="normal">通常固定</option><option value="failover">フェイルオーバー固定</option></select></label>
+                    <label>変更理由<input id="mode-reason" type="text" maxlength="300" placeholder="手動変更時は4文字以上"></label>
+                    <label>確認入力<input id="mode-confirmation" type="text" autocomplete="off" required><small id="mode-confirm-hint"></small></label>
+                    <button type="submit" class="danger-button">モードを変更</button>
+                </form>
+            </section>
+
+            <section aria-labelledby="ec2-title">
+                <div class="section-heading"><div><p class="eyebrow">BACKUP COMPUTE</p><h2 id="ec2-title">バックアップEC2</h2></div><p>DPI-Bot管理対象タグが付いたEC2だけを操作できます。</p></div>
+                <div class="table-wrap"><table><thead><tr><th>リージョン</th><th>名前 / ID</th><th>役割</th><th>現在</th><th>通常時</th><th>操作</th></tr></thead><tbody id="ec2-rows"></tbody></table></div>
+            </section>
+
+            <section aria-labelledby="xml-title">
+                <div class="section-heading"><div><p class="eyebrow">XML DISPATCH</p><h2 id="xml-title">XML読み込み・配信</h2></div><p>内容をプレビューしてから、現在の配信枠を選んで配信します。</p></div>
+                <form id="xml-form" class="xml-form">
+                    <label>XMLファイル（最大1.5MB）<input id="xml-file" type="file" accept=".xml,application/xml,text/xml"></label>
+                    <label class="wide">XML本文<textarea id="xml-content" rows="9" spellcheck="false" required></textarea></label>
+                    <label>配信枠<select id="xml-slot" required></select></label>
+                    <label>既存の配信経路<select id="xml-route" required><option value="">選択してください</option><option value="eew">eew（緊急地震速報）</option><option value="zisin">zisin（地震情報）</option><option value="tunami">tunami（津波情報）</option><option value="keiho">keiho（警報・注意報）</option><option value="sub">sub（補助情報）</option><option value="eew_sind">eew_sind（推定震度）</option><option value="kisyo">kisyo（気象情報）</option><option value="kisyo2">kisyo2（気象情報2）</option><option value="kazan">kazan（火山情報）</option></select></label>
+                    <div class="wide action-row"><button id="xml-preview-btn" type="button">XMLを確認</button></div>
+                    <div id="xml-preview" class="xml-preview wide" hidden></div>
+                    <label class="wide">配信確認<input id="xml-confirmation" type="text" autocomplete="off" required><small id="xml-confirm-hint"></small></label>
+                    <div class="wide action-row"><button id="xml-send-btn" type="submit" class="danger-button" disabled>XMLを配信</button></div>
+                </form>
             </section>
 
             <section aria-labelledby="audit-title">
@@ -49,7 +79,7 @@
             </section>
 
             <section aria-labelledby="slots-title">
-                <div class="section-heading"><div><p class="eyebrow">DELIVERY SLOTS</p><h2 id="slots-title">現在の配信枠</h2></div><p>メール配信画面で同じ一覧から対象を選択できます。</p></div>
+                <div class="section-heading"><div><p class="eyebrow">DELIVERY SLOTS</p><h2 id="slots-title">現在の配信枠</h2></div><p>AWS登録チャンネル数と許可済み二次利用チャンネル数を表示します。</p></div>
                 <div id="delivery-slots" class="slot-grid"></div>
             </section>
         </main>
