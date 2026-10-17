@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: DPI-Bot administrator channel directory read API
+Description: DPI-Bot administrator operations and channel directory API
 
 Parameters:
   DirectoryApiToken:
@@ -16,28 +16,49 @@ Parameters:
     Description: Comma-separated DynamoDB table names shown in the administrator system summary.
   HomeServerTableName:
     Type: String
-    Default: ''
-    Description: Optional DynamoDB heartbeat table for home servers.
+    Default: DPI-BackupFleetState-v51
+    Description: DynamoDB heartbeat and failover state table for home servers.
+  StateTableName:
+    Type: String
+    Default: DPI-BackupFleetState-v51
+  OperatingRegions:
+    Type: String
+    Default: ap-northeast-1,ap-northeast-3
+  AutoMonitorFunction:
+    Type: String
+    Default: dpi-backup-auto-failover-monitor
+  IngestEndpoints:
+    Type: String
+    Default: https://1ar64nf0ma.execute-api.ap-northeast-1.amazonaws.com/ingest,https://2xoazilkij.execute-api.ap-northeast-3.amazonaws.com/ingest
+    Description: Comma-separated signed ingest endpoints. The identical delivery ID is sent to each endpoint for deduplication.
+  IngestHmacParameter:
+    Type: String
+    Default: /dpi-bot/final-backup/hmac-secret
 
 Resources:
   ChannelDirectoryFunction:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: dpi-channel-directory-api
-      Description: Read-only administrator search API for DPI-Bot delivery destinations
+      Description: Administrator status, controlled operations, XML dispatch, and delivery destination API
       Runtime: python3.13
       Architectures:
         - arm64
       Handler: lambda_function.lambda_handler
       CodeUri: .
-      MemorySize: 384
-      Timeout: 25
+      MemorySize: 512
+      Timeout: 40
       Environment:
         Variables:
           TABLE_NAME: !Ref TableName
           DIRECTORY_API_TOKEN: !Ref DirectoryApiToken
           MONITORED_TABLE_NAMES: !Ref MonitoredTableNames
           HOME_SERVER_TABLE_NAME: !Ref HomeServerTableName
+          STATE_TABLE_NAME: !Ref StateTableName
+          OPERATING_REGIONS: !Ref OperatingRegions
+          AUTO_MONITOR_FUNCTION: !Ref AutoMonitorFunction
+          INGEST_ENDPOINTS: !Ref IngestEndpoints
+          INGEST_HMAC_PARAMETER: !Ref IngestHmacParameter
       Policies:
         - DynamoDBReadPolicy:
             TableName: !Ref TableName
@@ -56,11 +77,52 @@ Resources:
                 - ec2:DescribeInstances
                 - cloudformation:DescribeStacks
               Resource: '*'
-            - Sid: ReadConfiguredHeartbeatTables
+            - Sid: ReadAndWriteOperationalState
               Effect: Allow
               Action:
+                - dynamodb:GetItem
                 - dynamodb:Scan
-              Resource: !Sub arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/*
+                - dynamodb:PutItem
+                - dynamodb:UpdateItem
+                - dynamodb:DeleteItem
+              Resource:
+                - !Sub arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${TableName}
+                - !Sub arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${StateTableName}
+            - Sid: ControlManagedBackupInstances
+              Effect: Allow
+              Action:
+                - ec2:StartInstances
+                - ec2:StopInstances
+                - ec2:RebootInstances
+              Resource:
+                - !Sub arn:${AWS::Partition}:ec2:ap-northeast-1:${AWS::AccountId}:instance/*
+                - !Sub arn:${AWS::Partition}:ec2:ap-northeast-3:${AWS::AccountId}:instance/*
+              Condition:
+                StringEquals:
+                  ec2:ResourceTag/dpi:backup-managed: 'true'
+            - Sid: ControlAutoFailoverMonitor
+              Effect: Allow
+              Action:
+                - lambda:GetFunctionConcurrency
+                - lambda:PutFunctionConcurrency
+                - lambda:DeleteFunctionConcurrency
+                - lambda:InvokeFunction
+              Resource:
+                - !Sub arn:${AWS::Partition}:lambda:ap-northeast-1:${AWS::AccountId}:function:${AutoMonitorFunction}
+                - !Sub arn:${AWS::Partition}:lambda:ap-northeast-3:${AWS::AccountId}:function:${AutoMonitorFunction}
+            - Sid: ReadIngestSigningParameter
+              Effect: Allow
+              Action:
+                - ssm:GetParameter
+              Resource: !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${IngestHmacParameter}
+            - Sid: DecryptIngestSigningParameter
+              Effect: Allow
+              Action:
+                - kms:Decrypt
+              Resource: !Sub arn:${AWS::Partition}:kms:${AWS::Region}:${AWS::AccountId}:key/*
+              Condition:
+                StringEquals:
+                  kms:ViaService: !Sub ssm.${AWS::Region}.amazonaws.com
       FunctionUrlConfig:
         AuthType: NONE
 

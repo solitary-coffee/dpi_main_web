@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { handleAdminCenterRequest } from '../worker/admin-center.js';
+import { handleAdminCenterRequest, __test as adminCenter } from '../worker/admin-center.js';
 import { __test as newsletter } from '../worker/newsletter.js';
 
 const env = {
@@ -41,10 +41,14 @@ test('統合管理画面の末尾スラッシュは自分自身へリダイレ�
 });
 
 async function accessToken(privateKey) {
+    return accessTokenFor(privateKey, 'https://test-team.cloudflareaccess.com');
+}
+
+async function accessTokenFor(privateKey, issuer) {
     const encode = (value) => Buffer.from(JSON.stringify(value)).toString('base64url');
     const now = Math.floor(Date.now() / 1_000);
     const signingInput = `${encode({ alg: 'RS256', kid: 'test-key' })}.${encode({
-        iss: 'https://test-team.cloudflareaccess.com',
+        iss: issuer,
         aud: 'test-audience',
         email: 'admin@example.com',
         sub: 'admin-subject',
@@ -71,6 +75,64 @@ test('二次利用者向けメールは選択した配信枠と管理導線を�
     assert.match(mail.html, /\/site\/reuse\//u);
     assert.equal(mail.headers['List-Unsubscribe'], undefined);
     assert.equal(mail.headers['List-Subscribe'], undefined);
+});
+
+test('管理センターは許可済み二次利用の配信枠件数をチャンネル単位で集計する', () => {
+    const counts = adminCenter.countApprovedDeliverySlots([
+        {
+            delivery_types: '["地震情報"]',
+            channel_mappings: JSON.stringify([
+                { channelId: '1', deliveryTypes: ['地震情報', '津波情報'] },
+                { channelId: '2', deliveryTypes: ['地震情報'] },
+            ]),
+        },
+        { delivery_types: '["台風情報"]', channel_mappings: '[]' },
+    ]);
+    assert.deepEqual(counts, { 地震情報: 2, 津波情報: 1, 台風情報: 1 });
+});
+
+test('管理操作APIはAccessの管理者をAWSへ引き継ぎ監査記録を残す', async () => {
+    const { privateKey, publicKey } = await crypto.subtle.generateKey(
+        { name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' },
+        true,
+        ['sign', 'verify'],
+    );
+    const publicJwk = await crypto.subtle.exportKey('jwk', publicKey);
+    const teamDomain = 'https://action-test.cloudflareaccess.com';
+    const token = await accessTokenFor(privateKey, teamDomain);
+    const originalFetch = globalThis.fetch;
+    let forwarded;
+    let auditBind;
+    globalThis.fetch = async (url, options = {}) => {
+        if (String(url).startsWith(teamDomain)) return Response.json({ keys: [{ ...publicJwk, kid: 'test-key' }] });
+        forwarded = { url: String(url), options, body: JSON.parse(options.body) };
+        return Response.json({ success: true, message: 'accepted', requestId: forwarded.body.requestId });
+    };
+    const database = {
+        prepare() {
+            return {
+                bind(...values) { auditBind = values; return this; },
+                async run() { return { success: true }; },
+            };
+        },
+    };
+    try {
+        const response = await handleAdminCenterRequest(new Request('https://dpi-bot.com/site/admin-center/api/action', {
+            method: 'POST',
+            headers: { 'cf-access-jwt-assertion': token, 'content-type': 'application/json', origin: 'https://dpi-bot.com' },
+            body: JSON.stringify({ action: 'ec2', actor: 'forged@example.com', region: 'ap-northeast-1', instanceId: 'i-0123456789abcdef0', operation: 'start', confirmation: 'start:i-0123456789abcdef0' }),
+        }), {
+            ACCESS_AUD: 'test-audience', ACCESS_TEAM_DOMAIN: teamDomain, ADMIN_EMAILS: 'admin@example.com',
+            AWS_CHANNEL_DIRECTORY_URL: 'https://example.lambda-url.ap-northeast-1.on.aws/', AWS_CHANNEL_DIRECTORY_TOKEN: 'aws-token', NEWSLETTER_DB: database,
+        });
+        assert.equal(response.status, 200);
+        assert.equal(forwarded.body.actor, 'admin@example.com');
+        assert.equal(forwarded.options.headers.Authorization, 'Bearer aws-token');
+        assert.equal(auditBind[1], 'admin@example.com');
+        assert.equal(auditBind[2], 'aws.ec2');
+    } finally {
+        globalThis.fetch = originalFetch;
+    }
 });
 
 test('購読者向けメールは配信停止ヘッダーを維持する', () => {
