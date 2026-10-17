@@ -75,6 +75,7 @@ Resources:
                 - cloudwatch:DescribeAlarms
                 - logs:DescribeLogGroups
                 - ec2:DescribeInstances
+                - cloudformation:ListStacks
                 - cloudformation:DescribeStacks
               Resource: '*'
             - Sid: ReadAndWriteOperationalState
