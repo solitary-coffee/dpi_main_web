@@ -8,6 +8,9 @@ import { DELIVERY_CATALOG } from '../worker/delivery-catalog.js';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const excluded = new Set([
     'site/admin-center/index.html',
+    'site/system-admin/index.html',
+    'site/ec2-admin/index.html',
+    'site/xml-admin/index.html',
     'site/channel-admin/index.html',
     'site/ip-admin/index.html',
     'site/mail-admin/index.html',

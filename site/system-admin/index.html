@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="robots" content="noindex,nofollow">
+    <title>システム運用 - DPI-Bot</title>
+    <link rel="icon" href="../../img/dpi.png" type="image/png">
+    <link rel="stylesheet" href="../admin-shell.css">
+    <link rel="stylesheet" href="../admin-center/style.css">
+</head>
+<body class="admin-shell" data-admin-page="system">
+    <button id="menu-toggle-btn" type="button" aria-label="メニューを開く"><span></span><span></span><span></span></button>
+    <div class="overlay"></div>
+    <div class="page-container">
+        <nav class="sidebar" aria-label="管理メニュー">
+            <div class="sidebar-header"><h2>管理メニュー</h2></div>
+            <ul>
+                <li><a href="/">公式サイト</a></li>
+                <li><a href="/site/admin-center/">統合管理センター</a></li>
+                <li><a href="/site/system-admin/" class="active">システム運用</a></li>
+                <li><a href="/site/ec2-admin/">EC2管理</a></li>
+                <li><a href="/site/xml-admin/">XML配信</a></li>
+                <li><a href="/site/channel-admin/">配信先検索</a></li>
+                <li><a href="/site/reuse-admin/">二次利用申請管理</a></li>
+                <li><a href="/site/mail-admin/">メール配信管理</a></li>
+                <li><a href="/site/ip-admin/">IP遮断管理</a></li>
+                <li><a href="/cdn-cgi/access/logout">ログアウト</a></li>
+            </ul>
+        </nav>
+        <main class="main-content">
+            <header class="topbar">
+                <div><p class="eyebrow">SYSTEM OPERATIONS</p><h1>システム運用</h1></div>
+                <div class="admin-bar"><span id="admin-email"></span><button id="refresh-btn" type="button">最新情報に更新</button></div>
+            </header>
+            <div id="global-status" class="status" role="alert" aria-live="assertive"></div>
+
+            <section aria-labelledby="infra-title">
+                <div class="section-heading"><div><p class="eyebrow">INFRASTRUCTURE</p><h2 id="infra-title">システム状態</h2></div><time id="fetched-at"></time></div>
+                <p class="section-description">AWS・Cloudflare・自宅サーバーの現在値を表示します。</p>
+                <div id="system-panels" class="system-grid"></div>
+            </section>
+
+            <section aria-labelledby="mode-title">
+                <div class="section-heading"><div><p class="eyebrow">SYSTEM MODE</p><h2 id="mode-title">システムモード</h2></div><p>自動監視、通常固定、フェイルオーバー固定を切り替えます。</p></div>
+                <div id="mode-current" class="mode-current"></div>
+                <form id="mode-form" class="control-form">
+                    <label>変更後のモード<select id="mode-select" required><option value="automatic">自動監視</option><option value="normal">通常固定</option><option value="failover">フェイルオーバー固定</option></select></label>
+                    <label>変更理由<input id="mode-reason" type="text" maxlength="300" placeholder="手動変更時は4文字以上"></label>
+                    <label>確認入力<input id="mode-confirmation" type="text" autocomplete="off" required><small id="mode-confirm-hint"></small></label>
+                    <button type="submit" class="danger-button">モードを変更</button>
+                </form>
+            </section>
+
+            <section aria-labelledby="audit-title">
+                <div class="section-heading"><div><p class="eyebrow">AUDIT</p><h2 id="audit-title">最近の管理操作・遮断</h2></div></div>
+                <div class="table-wrap"><table><thead><tr><th>日時</th><th>種別</th><th>内容</th><th>実行者</th></tr></thead><tbody id="audit-rows"></tbody></table></div>
+            </section>
+        </main>
+    </div>
+    <script src="../../script.js"></script>
+    <script src="../admin-center/script.js"></script>
+</body>
+</html>

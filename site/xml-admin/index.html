@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="robots" content="noindex,nofollow">
+    <title>XML配信 - DPI-Bot</title>
+    <link rel="icon" href="../../img/dpi.png" type="image/png">
+    <link rel="stylesheet" href="../admin-shell.css">
+    <link rel="stylesheet" href="../admin-center/style.css">
+</head>
+<body class="admin-shell" data-admin-page="xml">
+    <button id="menu-toggle-btn" type="button" aria-label="メニューを開く"><span></span><span></span><span></span></button>
+    <div class="overlay"></div>
+    <div class="page-container">
+        <nav class="sidebar" aria-label="管理メニュー">
+            <div class="sidebar-header"><h2>管理メニュー</h2></div>
+            <ul>
+                <li><a href="/">公式サイト</a></li>
+                <li><a href="/site/admin-center/">統合管理センター</a></li>
+                <li><a href="/site/system-admin/">システム運用</a></li>
+                <li><a href="/site/ec2-admin/">EC2管理</a></li>
+                <li><a href="/site/xml-admin/" class="active">XML配信</a></li>
+                <li><a href="/site/channel-admin/">配信先検索</a></li>
+                <li><a href="/site/reuse-admin/">二次利用申請管理</a></li>
+                <li><a href="/site/mail-admin/">メール配信管理</a></li>
+                <li><a href="/site/ip-admin/">IP遮断管理</a></li>
+                <li><a href="/cdn-cgi/access/logout">ログアウト</a></li>
+            </ul>
+        </nav>
+        <main class="main-content">
+            <header class="topbar">
+                <div><p class="eyebrow">XML DISPATCH</p><h1>XML配信</h1></div>
+                <div class="admin-bar"><span id="admin-email"></span><button id="refresh-btn" type="button">最新情報に更新</button></div>
+            </header>
+            <div id="global-status" class="status" role="alert" aria-live="assertive"></div>
+
+            <section aria-labelledby="xml-title">
+                <div class="section-heading"><div><p class="eyebrow">DISPATCH</p><h2 id="xml-title">XML読み込み・配信</h2></div><time id="fetched-at"></time></div>
+                <p class="section-description">内容をプレビューしてから、現在の配信枠を選んで配信します。</p>
+                <form id="xml-form" class="xml-form">
+                    <label>XMLファイル（最大1.5MB）<input id="xml-file" type="file" accept=".xml,application/xml,text/xml"></label>
+                    <label class="wide">XML本文<textarea id="xml-content" rows="9" spellcheck="false" required></textarea></label>
+                    <label>配信枠<select id="xml-slot" required></select></label>
+                    <label>既存の配信経路<select id="xml-route" required><option value="">選択してください</option><option value="eew">eew（緊急地震速報）</option><option value="zisin">zisin（地震情報）</option><option value="tunami">tunami（津波情報）</option><option value="keiho">keiho（警報・注意報）</option><option value="sub">sub（補助情報）</option><option value="eew_sind">eew_sind（推定震度）</option><option value="kisyo">kisyo（気象情報）</option><option value="kisyo2">kisyo2（気象情報2）</option><option value="kazan">kazan（火山情報）</option></select></label>
+                    <div class="wide action-row"><button id="xml-preview-btn" type="button">XMLを確認</button></div>
+                    <div id="xml-preview" class="xml-preview wide" hidden></div>
+                    <label class="wide">配信確認<input id="xml-confirmation" type="text" autocomplete="off" required><small id="xml-confirm-hint"></small></label>
+                    <div class="wide action-row"><button id="xml-send-btn" type="submit" class="danger-button" disabled>XMLを配信</button></div>
+                </form>
+            </section>
+
+            <section aria-labelledby="slots-title">
+                <div class="section-heading"><div><p class="eyebrow">DELIVERY SLOTS</p><h2 id="slots-title">現在の配信枠</h2></div><p>AWS登録チャンネル数と許可済み二次利用チャンネル数を表示します。</p></div>
+                <div id="delivery-slots" class="slot-grid"></div>
+            </section>
+        </main>
+    </div>
+    <script src="../../script.js"></script>
+    <script src="../admin-center/script.js"></script>
+</body>
+</html>

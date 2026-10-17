@@ -1,14 +1,14 @@
 let xmlPreviewValid = false;
 
 document.addEventListener('DOMContentLoaded', function() {
-    document.getElementById('refresh-btn').addEventListener('click', loadSummary);
-    document.getElementById('mode-form').addEventListener('submit', changeSystemMode);
-    document.getElementById('mode-select').addEventListener('change', updateModeHint);
-    document.getElementById('xml-file').addEventListener('change', loadXmlFile);
-    document.getElementById('xml-preview-btn').addEventListener('click', previewXml);
-    document.getElementById('xml-form').addEventListener('submit', dispatchXml);
-    for (const id of ['xml-content', 'xml-slot', 'xml-route']) document.getElementById(id).addEventListener('input', invalidateXmlPreview);
-    updateModeHint();
+    document.getElementById('refresh-btn')?.addEventListener('click', loadSummary);
+    document.getElementById('mode-form')?.addEventListener('submit', changeSystemMode);
+    document.getElementById('mode-select')?.addEventListener('change', updateModeHint);
+    document.getElementById('xml-file')?.addEventListener('change', loadXmlFile);
+    document.getElementById('xml-preview-btn')?.addEventListener('click', previewXml);
+    document.getElementById('xml-form')?.addEventListener('submit', dispatchXml);
+    for (const id of ['xml-content', 'xml-slot', 'xml-route']) document.getElementById(id)?.addEventListener('input', invalidateXmlPreview);
+    if (document.getElementById('mode-form')) updateModeHint();
     loadSummary();
 });
 
@@ -26,9 +26,12 @@ async function loadSummary() {
 }
 
 function render(data) {
-    document.getElementById('admin-email').textContent = data.admin;
-    document.getElementById('fetched-at').textContent = `更新: ${formatDate(data.fetchedAt)}`;
+    const adminEmail = document.getElementById('admin-email');
+    const fetchedAt = document.getElementById('fetched-at');
+    if (adminEmail) adminEmail.textContent = data.admin;
+    if (fetchedAt) fetchedAt.textContent = `更新: ${formatDate(data.fetchedAt)}`;
     renderOverview(data.local, data.aws);
+    renderOperationOverview(data.local, data.cloudflare, data.aws, data.deliveryCatalog);
     renderLinks(data.links);
     renderSystems(data.cloudflare, data.aws);
     renderMode(data.aws?.systemMode);
@@ -39,14 +42,15 @@ function render(data) {
 }
 
 function renderOverview(local, aws) {
+    const container = document.getElementById('overview-cards');
+    if (!container) return;
     const pending = Number(local.reuseApplications.pending || 0) + Number(local.reuseApplications.resubmitted || 0) + Number(local.reuseApplications.stop_requested || 0);
     const sending = Number(local.campaigns.sending || 0) + Number(local.campaigns.queuing || 0);
     const items = [
         ['要対応の二次利用申請', pending, '/site/reuse-admin/'], ['許可済み二次利用', local.reuseApplications.approved || 0, '/site/reuse-admin/'],
         ['配信中のメール', sending, '/site/mail-admin/'], ['有効な購読者', local.subscribers.active || 0, '/site/mail-admin/'],
-        ['有効なIP遮断', local.activeBlocks.length, '/site/ip-admin/'], ['AWSアラーム', aws.available ? (aws.alarms?.active || 0) : '—', null],
+        ['有効なIP遮断', local.activeBlocks.length, '/site/ip-admin/'], ['AWSアラーム', aws.available ? (aws.alarms?.active || 0) : '—', '/site/system-admin/'],
     ];
-    const container = document.getElementById('overview-cards');
     container.replaceChildren(...items.map(([label, value, href]) => {
         const card = element(href ? 'a' : 'article', 'metric-card');
         if (href) card.href = href;
@@ -55,8 +59,41 @@ function renderOverview(local, aws) {
     }));
 }
 
+function renderOperationOverview(local, cloudflare, aws, catalog) {
+    const container = document.getElementById('operation-overview');
+    if (!container) return;
+    const mode = aws?.systemMode;
+    const modeName = mode?.available
+        ? ({ automatic: '自動監視', normal: '通常固定', failover: 'フェイルオーバー固定' }[mode.controlMode] || mode.controlMode)
+        : '取得不可';
+    const home = aws?.homeServers;
+    const backup = aws?.backupInstances;
+    const runningInstances = backup?.available
+        ? (backup.instances || []).filter((instance) => instance.state === 'running').length
+        : null;
+    const awsSlots = aws?.deliveryDirectory?.byType || {};
+    const endedSlots = new Set((catalog || []).filter((slot) => slot.status === 'ended').map((slot) => slot.id));
+    const activeSlots = Object.entries(awsSlots).filter(([id, count]) => Number(count || 0) > 0 && !endedSlots.has(id)).length;
+    const auditCount = Number(local?.auditEvents?.length || 0) + Number(local?.reuseEvents?.length || 0);
+    const items = [
+        { title: 'システム運用', value: modeName, detail: aws?.available ? `AWS警報 ${aws.alarms?.active ?? '—'}件 / Cloudflare ${cloudflare?.worker || '—'}` : (aws?.message || 'AWS情報を取得できません'), href: '/site/system-admin/' },
+        { title: '自宅サーバー', value: home?.available ? `正常 ${home.healthy ?? 0}台` : '取得不可', detail: home?.available ? `異常・期限切れ ${home.unhealthy ?? 0}台` : (home?.error || '状態を確認できません'), href: '/site/system-admin/' },
+        { title: 'EC2管理', value: backup?.available ? `${runningInstances}/${backup.count ?? 0}台 稼働` : '取得不可', detail: 'バックアップEC2の詳細・操作', href: '/site/ec2-admin/' },
+        { title: 'XML配信', value: `${activeSlots}配信枠`, detail: `AWS配信先 ${aws?.deliveryDirectory?.channels ?? '—'}チャンネル`, href: '/site/xml-admin/' },
+        { title: '配信先', value: `${aws?.deliveryDirectory?.servers ?? '—'}サーバー`, detail: '登録チャンネル・配信名を検索', href: '/site/channel-admin/' },
+        { title: '最近の運用履歴', value: `${auditCount}件`, detail: '管理操作・申請・遮断の履歴', href: '/site/system-admin/#audit-title' },
+    ];
+    container.replaceChildren(...items.map((item) => {
+        const card = element('a', 'feature-card');
+        card.href = item.href;
+        card.append(element('span', 'feature-title', item.title), element('strong', '', String(item.value)), element('small', '', item.detail), element('span', 'feature-link', '詳細を開く →'));
+        return card;
+    }));
+}
+
 function renderLinks(links) {
     const container = document.getElementById('quick-links');
+    if (!container) return;
     container.replaceChildren(...(links || []).map((link) => {
         const anchor = element('a', 'quick-link', `${link.label} →`);
         anchor.href = link.href;
@@ -65,6 +102,8 @@ function renderLinks(links) {
 }
 
 function renderSystems(cloudflare, aws) {
+    const container = document.getElementById('system-panels');
+    if (!container) return;
     const homeRows = aws.available && aws.homeServers?.available ? [
         ['正常', aws.homeServers.healthy ?? '—'], ['異常/期限切れ', aws.homeServers.unhealthy ?? '—'],
         ...(aws.homeServers.nodes || []).flatMap((node) => [
@@ -83,7 +122,6 @@ function renderSystems(cloudflare, aws) {
         ] : [['状態', aws.message || '利用できません']]],
         ['自宅サーバー', homeRows],
     ];
-    const container = document.getElementById('system-panels');
     container.replaceChildren(...panels.map(([title, rows]) => {
         const card = element('article', 'system-card');
         card.append(element('h3', '', title));
@@ -96,6 +134,7 @@ function renderSystems(cloudflare, aws) {
 
 function renderMode(mode) {
     const container = document.getElementById('mode-current');
+    if (!container) return;
     if (!mode?.available) {
         container.replaceChildren(element('p', 'empty', `取得できません${mode?.error ? `（${mode.error}）` : ''}`));
         return;
@@ -115,6 +154,7 @@ function renderMode(mode) {
 
 function renderEc2(backup) {
     const body = document.getElementById('ec2-rows');
+    if (!body) return;
     body.replaceChildren();
     const instances = backup?.available ? (backup.instances || []) : [];
     if (!instances.length) {
@@ -164,8 +204,10 @@ async function controlEc2(instance, operation, button) {
 }
 
 function updateModeHint() {
-    const mode = document.getElementById('mode-select').value;
-    document.getElementById('mode-confirm-hint').textContent = `「MODE:${mode.toUpperCase()}」と入力してください。`;
+    const select = document.getElementById('mode-select');
+    const hint = document.getElementById('mode-confirm-hint');
+    if (!select || !hint) return;
+    hint.textContent = `「MODE:${select.value.toUpperCase()}」と入力してください。`;
 }
 
 async function loadXmlFile(event) {
@@ -230,19 +272,25 @@ async function runAction(payload, button, refreshAfter) {
 }
 
 function invalidateXmlPreview() {
+    const preview = document.getElementById('xml-preview');
+    const sendButton = document.getElementById('xml-send-btn');
+    if (!preview || !sendButton) return;
     xmlPreviewValid = false;
-    document.getElementById('xml-preview').hidden = true;
-    document.getElementById('xml-send-btn').disabled = true;
+    preview.hidden = true;
+    sendButton.disabled = true;
     updateXmlHint();
 }
 
 function updateXmlHint() {
-    const slot = document.getElementById('xml-slot').value;
-    document.getElementById('xml-confirm-hint').textContent = slot ? `「XML配信:${slot}」と入力してください。` : '配信枠を選択してください。';
+    const select = document.getElementById('xml-slot');
+    const hint = document.getElementById('xml-confirm-hint');
+    if (!select || !hint) return;
+    hint.textContent = select.value ? `「XML配信:${select.value}」と入力してください。` : '配信枠を選択してください。';
 }
 
 function renderXmlSlots(catalog, awsCounts) {
     const select = document.getElementById('xml-slot');
+    if (!select) return;
     const current = select.value;
     const known = new Set((catalog || []).map((slot) => slot.id));
     const extras = Object.keys(awsCounts).filter((id) => !known.has(id)).map((id) => ({ id, label: id, status: 'unlisted' }));
@@ -260,12 +308,13 @@ function renderXmlSlots(catalog, awsCounts) {
 }
 
 function renderAudit(local) {
+    const body = document.getElementById('audit-rows');
+    if (!body) return;
     const rows = [
         ...(local.auditEvents || []).map((event) => ({ at: event.created_at, type: '管理操作', content: `${event.action} / ${event.entity_type}${event.entity_id ? ` / ${event.entity_id}` : ''}`, actor: event.actor })),
         ...(local.reuseEvents || []).map((event) => ({ at: event.created_at, type: '二次利用申請', content: `${event.event_type} / ${event.application_id}${event.message ? ` / ${event.message}` : ''}`, actor: event.actor })),
         ...(local.activeBlocks || []).map((rule) => ({ at: rule.created_at, type: 'IP遮断', content: `${rule.network}: ${rule.reason}`, actor: rule.created_by })),
     ].sort((a, b) => String(b.at).localeCompare(String(a.at))).slice(0, 30);
-    const body = document.getElementById('audit-rows');
     body.replaceChildren();
     if (!rows.length) {
         const row = document.createElement('tr');
@@ -283,9 +332,10 @@ function renderAudit(local) {
 }
 
 function renderSlots(catalog, awsCounts, reuseCounts) {
+    const container = document.getElementById('delivery-slots');
+    if (!container) return;
     const known = new Set((catalog || []).map((slot) => slot.id));
     const extras = Object.keys(awsCounts).filter((id) => !known.has(id)).map((id) => ({ id, label: id, status: 'unlisted' }));
-    const container = document.getElementById('delivery-slots');
     container.replaceChildren(...[...(catalog || []), ...extras].map((slot) => {
         const card = element('article', 'slot-card');
         card.append(element('strong', '', slot.label), element('span', `slot-status ${slot.status}`, slot.status === 'unlisted' ? 'AWS登録' : slot.status), element('code', '', slot.id), element('small', 'slot-count', `AWS登録: ${Number(awsCounts[slot.id] || 0)}件`), element('small', 'slot-count secondary', `許可済み二次利用: ${Number(reuseCounts[slot.id] || 0)}件`));
@@ -295,5 +345,5 @@ function renderSlots(catalog, awsCounts, reuseCounts) {
 
 function stateText(value) { return value ? '設定済み' : '未設定'; }
 function formatDate(value) { const date = new Date(value || ''); return Number.isNaN(date.getTime()) ? '—' : date.toLocaleString('ja-JP'); }
-function setStatus(message, type) { const node = document.getElementById('global-status'); node.textContent = message; node.className = type ? `status ${type}` : 'status'; }
+function setStatus(message, type) { const node = document.getElementById('global-status'); if (!node) return; node.textContent = message; node.className = type ? `status ${type}` : 'status'; }
 function element(tag, className = '', text = '') { const node = document.createElement(tag); if (className) node.className = className; if (text !== '') node.textContent = text; return node; }
