@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { handleAdminCenterRequest } from '../worker/admin-center.js';
+import { handleAdminCenterRequest, __test as adminCenter } from '../worker/admin-center.js';
 import { __test as newsletter } from '../worker/newsletter.js';
 
 const env = {
@@ -71,6 +71,20 @@ test('二次利用者向けメールは選択した配信枠と管理導線を�
     assert.match(mail.html, /\/site\/reuse\//u);
     assert.equal(mail.headers['List-Unsubscribe'], undefined);
     assert.equal(mail.headers['List-Subscribe'], undefined);
+});
+
+test('管理センターは許可済み二次利用の配信枠件数をチャンネル単位で集計する', () => {
+    const counts = adminCenter.countApprovedDeliverySlots([
+        {
+            delivery_types: '["地震情報"]',
+            channel_mappings: JSON.stringify([
+                { channelId: '1', deliveryTypes: ['地震情報', '津波情報'] },
+                { channelId: '2', deliveryTypes: ['地震情報'] },
+            ]),
+        },
+        { delivery_types: '["台風情報"]', channel_mappings: '[]' },
+    ]);
+    assert.deepEqual(counts, { 地震情報: 2, 津波情報: 1, 台風情報: 1 });
 });
 
 test('購読者向けメールは配信停止ヘッダーを維持する', () => {
