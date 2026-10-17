@@ -285,7 +285,7 @@ test('管理画面サマリーはD1予約語を列名に使わずbatchで集計�
             return { sql };
         },
         async batch(statements) {
-            assert.equal(statements.length, 3);
+            assert.equal(statements.length, 5);
             return [
                 { results: [{ status: 'active', count: 1 }] },
                 {
@@ -299,6 +299,8 @@ test('管理画面サマリーはD1予約語を列名に使わずbatchで集計�
                         maintenance_outage_update_count: 1,
                     }],
                 },
+                { results: [] },
+                { results: [{ count: 2 }] },
                 { results: [] },
             ];
         },
@@ -319,6 +321,7 @@ test('管理画面サマリーはD1予約語を列名に使わずbatchで集計�
     });
     assert.equal(result.subscribers.audiences['maintenance,outage'], 1);
     assert.equal(result.subscribers.audiences['maintenance,outage,update'], 1);
+    assert.equal(result.reuseUsers.approved, 2);
     assert.doesNotMatch(capturedSql.join('\n'), /\bAS\s+update\b/iu);
     assert.match(capturedSql.join('\n'), /AS update_count/iu);
 });
@@ -632,3 +635,4 @@ test('Access JWTの署名・発行元・AUD・管理者メールをすべて検�
         globalThis.fetch = originalFetch;
     }
 });
+

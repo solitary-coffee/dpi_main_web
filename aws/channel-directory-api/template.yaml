@@ -10,6 +10,14 @@ Parameters:
   TableName:
     Type: String
     Default: EarthquakeData
+  MonitoredTableNames:
+    Type: String
+    Default: EarthquakeData
+    Description: Comma-separated DynamoDB table names shown in the administrator system summary.
+  HomeServerTableName:
+    Type: String
+    Default: ''
+    Description: Optional DynamoDB heartbeat table for home servers.
 
 Resources:
   ChannelDirectoryFunction:
@@ -22,15 +30,37 @@ Resources:
         - arm64
       Handler: lambda_function.lambda_handler
       CodeUri: .
-      MemorySize: 256
-      Timeout: 15
+      MemorySize: 384
+      Timeout: 25
       Environment:
         Variables:
           TABLE_NAME: !Ref TableName
           DIRECTORY_API_TOKEN: !Ref DirectoryApiToken
+          MONITORED_TABLE_NAMES: !Ref MonitoredTableNames
+          HOME_SERVER_TABLE_NAME: !Ref HomeServerTableName
       Policies:
         - DynamoDBReadPolicy:
             TableName: !Ref TableName
+        - Statement:
+            - Sid: ReadOperationalInventory
+              Effect: Allow
+              Action:
+                - lambda:ListFunctions
+                - apigateway:GET
+                - sqs:ListQueues
+                - sqs:GetQueueAttributes
+                - dynamodb:ListTables
+                - dynamodb:DescribeTable
+                - cloudwatch:DescribeAlarms
+                - logs:DescribeLogGroups
+                - ec2:DescribeInstances
+                - cloudformation:DescribeStacks
+              Resource: '*'
+            - Sid: ReadConfiguredHeartbeatTables
+              Effect: Allow
+              Action:
+                - dynamodb:Scan
+              Resource: !Sub arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/*
       FunctionUrlConfig:
         AuthType: NONE
 
@@ -38,3 +68,4 @@ Outputs:
   ChannelDirectoryUrl:
     Description: Configure this URL as AWS_CHANNEL_DIRECTORY_URL in the Cloudflare Worker.
     Value: !GetAtt ChannelDirectoryFunctionUrl.FunctionUrl
+

@@ -1,4 +1,5 @@
 import { AccessAuthError, authenticateNewsletterAdmin } from './access.js';
+import { DELIVERY_CATALOG } from './delivery-catalog.js';
 
 const CATEGORIES = Object.freeze({
     maintenance: 'メンテナンス情報',
@@ -7,6 +8,13 @@ const CATEGORIES = Object.freeze({
 });
 
 const CATEGORY_ORDER = Object.freeze(Object.keys(CATEGORIES));
+const RECIPIENT_GROUPS = Object.freeze({
+    subscribers: 'お知らせメール購読者',
+    reuse_approved: '許可済み二次利用者',
+    discord_approved: '許可済み配信サーバー',
+});
+const RECIPIENT_GROUP_ORDER = Object.freeze(Object.keys(RECIPIENT_GROUPS));
+const DELIVERY_SLOT_IDS = new Set(DELIVERY_CATALOG.map((item) => item.id));
 const MAX_JSON_BYTES = 24 * 1024;
 const MAX_FORM_BYTES = 8 * 1024;
 const MAX_CAMPAIGN_RECIPIENTS = 1_000;
@@ -76,7 +84,10 @@ const SCHEMA_STATEMENTS = Object.freeze([
         updated_at TEXT NOT NULL,
         started_at TEXT,
         completed_at TEXT,
-        recipient_count INTEGER NOT NULL DEFAULT 0
+        recipient_count INTEGER NOT NULL DEFAULT 0,
+        recipient_groups TEXT NOT NULL DEFAULT 'subscribers',
+        delivery_slots TEXT NOT NULL DEFAULT 'DPI_Bot通知',
+        target_server_ids TEXT NOT NULL DEFAULT ''
     )`,
     `CREATE INDEX IF NOT EXISTS newsletter_campaign_status_idx
         ON newsletter_campaigns(status, created_at)`,
@@ -92,12 +103,29 @@ const SCHEMA_STATEMENTS = Object.freeze([
         queued_at TEXT,
         sent_at TEXT,
         updated_at TEXT NOT NULL,
+        recipient_email TEXT,
+        recipient_kind TEXT NOT NULL DEFAULT 'subscriber',
+        recipient_reference TEXT,
         UNIQUE(campaign_id, subscriber_id)
     )`,
     `CREATE INDEX IF NOT EXISTS newsletter_delivery_campaign_idx
         ON newsletter_deliveries(campaign_id, status)`,
     `CREATE INDEX IF NOT EXISTS newsletter_delivery_subscriber_idx
         ON newsletter_deliveries(subscriber_id)`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS newsletter_delivery_recipient_email_idx
+        ON newsletter_deliveries(campaign_id, lower(recipient_email))
+        WHERE recipient_email IS NOT NULL`,
+    `CREATE TABLE IF NOT EXISTS admin_audit_events (
+        id TEXT PRIMARY KEY,
+        actor TEXT NOT NULL,
+        action TEXT NOT NULL,
+        entity_type TEXT NOT NULL,
+        entity_id TEXT,
+        details_json TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL
+    )`,
+    `CREATE INDEX IF NOT EXISTS admin_audit_events_created_idx
+        ON admin_audit_events(created_at DESC)`,
 ]);
 
 const schemaInitialization = new WeakMap();
@@ -453,6 +481,12 @@ async function handleAdminApi(request, env, pathname) {
         return previewCampaign(request, env);
     }
 
+    if (pathname === '/site/mail-admin/api/audience-preview') {
+        assertMethod(request, ['POST']);
+        assertSameOrigin(request);
+        return previewAudience(request, env);
+    }
+
     if (pathname === '/site/mail-admin/api/campaigns') {
         assertMethod(request, ['POST']);
         assertSameOrigin(request);
@@ -465,15 +499,15 @@ async function handleAdminApi(request, env, pathname) {
         assertSameOrigin(request);
         const [, campaignId, action] = actionMatch;
         return action === 'send'
-            ? queueCampaign(request, env, campaignId)
-            : cancelCampaign(request, env, campaignId);
+            ? queueCampaign(request, env, campaignId, admin)
+            : cancelCampaign(request, env, campaignId, admin);
     }
 
     throw new NewsletterError(404, '指定された管理APIはありません。', 'not_found');
 }
 
 async function adminSummary(env, admin) {
-    const [statusRows, categoryRows, campaignRows] = await env.NEWSLETTER_DB.batch([
+    const [statusRows, categoryRows, campaignRows, reuseRows, serverRows] = await env.NEWSLETTER_DB.batch([
         env.NEWSLETTER_DB.prepare(
             `SELECT status, COUNT(*) AS count FROM newsletter_subscribers
              GROUP BY status ORDER BY status`,
@@ -505,6 +539,7 @@ async function adminSummary(env, admin) {
         env.NEWSLETTER_DB.prepare(
             `SELECT
                 c.id, c.subject, c.body_text, c.category, c.status, c.created_by,
+                c.recipient_groups, c.delivery_slots, c.target_server_ids,
                 c.created_at, c.updated_at, c.started_at, c.completed_at, c.recipient_count,
                 COUNT(d.id) AS delivery_count,
                 SUM(CASE WHEN d.status = 'sent' THEN 1 ELSE 0 END) AS sent_count,
@@ -516,6 +551,17 @@ async function adminSummary(env, admin) {
              GROUP BY c.id
              ORDER BY c.created_at DESC
              LIMIT 30`,
+        ),
+        env.NEWSLETTER_DB.prepare(
+            `SELECT COUNT(DISTINCT lower(contact_email)) AS count
+             FROM reuse_applications
+             WHERE status = 'approved' AND trim(contact_email) <> ''`,
+        ),
+        env.NEWSLETTER_DB.prepare(
+            `SELECT id, guild_id, guild_name, channel_id, channel_name, channel_mappings, delivery_types
+             FROM reuse_applications
+             WHERE status = 'approved'
+             ORDER BY guild_name, updated_at DESC`,
         ),
     ]);
 
@@ -553,6 +599,15 @@ async function adminSummary(env, admin) {
                 ]),
             ),
         },
+        reuseUsers: {
+            approved: Number(reuseRows.results?.[0]?.count || 0),
+        },
+        approvedServers: normalizeApprovedServers(serverRows.results || []),
+        recipientGroups: RECIPIENT_GROUP_ORDER.map((id) => ({
+            id,
+            label: RECIPIENT_GROUPS[id],
+        })),
+        deliveryCatalog: DELIVERY_CATALOG.map((item) => ({ ...item })),
         campaigns: (campaignRows.results || []).map(normalizeCampaignRow),
         limits: { maxRecipientsPerCampaign: MAX_CAMPAIGN_RECIPIENTS },
     });
@@ -566,14 +621,38 @@ async function createCampaign(request, env, admin) {
         ? validateCategories(input.categories)
         : [validateSingleCategory(input.category)];
     const category = serializeCategories(categories);
+    const recipientGroups = validateRecipientGroups(input.recipientGroups);
+    const deliverySlots = validateDeliverySlots(input.deliverySlots);
+    const targetServerIds = validateTargetServerIds(input.targetServerIds, recipientGroups);
+    validateDiscordAnnouncement(subject, bodyText, recipientGroups);
     const now = new Date().toISOString();
     const campaignId = crypto.randomUUID();
 
     await env.NEWSLETTER_DB.prepare(
         `INSERT INTO newsletter_campaigns (
-            id, subject, body_text, category, status, created_by, created_at, updated_at
-         ) VALUES (?, ?, ?, ?, 'draft', ?, ?, ?)`,
-    ).bind(campaignId, subject, bodyText, category, admin.email, now, now).run();
+            id, subject, body_text, category, recipient_groups, delivery_slots, target_server_ids,
+            status, created_by, created_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?)`,
+    ).bind(
+        campaignId,
+        subject,
+        bodyText,
+        category,
+        serializeCsv(recipientGroups),
+        serializeCsv(deliverySlots),
+        serializeCsv(targetServerIds),
+        admin.email,
+        now,
+        now,
+    ).run();
+
+    await recordAdminAudit(env, {
+        actor: admin.email,
+        action: 'campaign_created',
+        entityType: 'newsletter_campaign',
+        entityId: campaignId,
+        details: { categories, recipientGroups, deliverySlots, targetServerIds },
+    });
 
     return jsonResponse({
         success: true,
@@ -583,6 +662,9 @@ async function createCampaign(request, env, admin) {
             body: bodyText,
             category,
             categories,
+            recipientGroups,
+            deliverySlots,
+            targetServerIds,
             status: 'draft',
             createdAt: now,
         },
@@ -594,13 +676,19 @@ async function previewCampaign(request, env) {
     const subject = validateCampaignSubject(input.subject);
     const bodyText = validateCampaignBody(input.body);
     const categories = validateCategories(input.categories);
+    const recipientGroups = validateRecipientGroups(input.recipientGroups);
+    const deliverySlots = validateDeliverySlots(input.deliverySlots);
+    validateTargetServerIds(input.targetServerIds, recipientGroups);
+    validateDiscordAnnouncement(subject, bodyText, recipientGroups);
     const previewMail = buildCampaignEmail({
         campaign_id: 'preview',
         category: serializeCategories(categories),
         subject,
         body_text: bodyText,
+        recipient_kind: recipientGroups.includes('reuse_approved') ? 'reuse_approved' : 'subscriber',
+        delivery_slots: serializeCsv(deliverySlots),
         email: 'preview@example.invalid',
-    }, 'preview.preview', env);
+    }, recipientGroups.includes('subscribers') ? 'preview.preview' : null, env);
 
     return jsonResponse({
         success: true,
@@ -609,7 +697,25 @@ async function previewCampaign(request, env) {
     });
 }
 
-async function queueCampaign(request, env, campaignId) {
+async function previewAudience(request, env) {
+    const input = await readJson(request, MAX_FORM_BYTES);
+    const categories = validateCategories(input.categories);
+    const recipientGroups = validateRecipientGroups(input.recipientGroups);
+    const deliverySlots = validateDeliverySlots(input.deliverySlots);
+    const targetServerIds = validateTargetServerIds(input.targetServerIds, recipientGroups);
+    const recipients = await loadCampaignRecipients(env, {
+        recipient_groups: serializeCsv(recipientGroups),
+        delivery_slots: serializeCsv(deliverySlots),
+        target_server_ids: serializeCsv(targetServerIds),
+    }, categories);
+    const byKind = recipients.reduce((counts, recipient) => {
+        counts[recipient.kind] = (counts[recipient.kind] || 0) + 1;
+        return counts;
+    }, {});
+    return jsonResponse({ success: true, count: recipients.length, byKind });
+}
+
+async function queueCampaign(request, env, campaignId, admin) {
     if (!env.NEWSLETTER_QUEUE || typeof env.NEWSLETTER_QUEUE.sendBatch !== 'function') {
         throw new NewsletterError(503, '配信Queueが設定されていません。', 'queue_not_configured');
     }
@@ -620,7 +726,8 @@ async function queueCampaign(request, env, campaignId) {
     }
 
     const campaign = await env.NEWSLETTER_DB.prepare(
-        `SELECT id, category, status, updated_at FROM newsletter_campaigns WHERE id = ?`,
+        `SELECT id, subject, body_text, category, recipient_groups, delivery_slots, target_server_ids, status, updated_at
+         FROM newsletter_campaigns WHERE id = ?`,
     ).bind(campaignId).first();
     if (!campaign) throw new NewsletterError(404, '配信データが見つかりません。', 'campaign_not_found');
     if (!['draft', 'queuing'].includes(campaign.status)) {
@@ -631,15 +738,10 @@ async function queueCampaign(request, env, campaignId) {
     if (campaignCategories.length === 0) {
         throw new NewsletterError(409, '配信カテゴリが正しくありません。', 'campaign_category_invalid');
     }
-    const categoryMatchSql = campaignCategories
-        .map(() => "instr(',' || categories || ',', ',' || ? || ',') > 0")
-        .join(' OR ');
-
-    const eligibleRow = await env.NEWSLETTER_DB.prepare(
-        `SELECT COUNT(*) AS count FROM newsletter_subscribers
-         WHERE status = 'active' AND (${categoryMatchSql})`,
-    ).bind(...campaignCategories).first();
-    const eligibleCount = Number(eligibleRow?.count || 0);
+    const campaignGroups = validateRecipientGroups(parseCsv(campaign.recipient_groups));
+    validateDiscordAnnouncement(campaign.subject, campaign.body_text, campaignGroups);
+    const recipients = await loadCampaignRecipients(env, campaign, campaignCategories);
+    const eligibleCount = recipients.length;
     if (eligibleCount > MAX_CAMPAIGN_RECIPIENTS) {
         throw new NewsletterError(
             409,
@@ -668,14 +770,24 @@ async function queueCampaign(request, env, campaignId) {
         return jsonResponse({ success: true, campaignId, queued: 0 });
     }
 
-    await env.NEWSLETTER_DB.prepare(
-        `INSERT OR IGNORE INTO newsletter_deliveries (
-            id, campaign_id, subscriber_id, status, attempts, created_at, updated_at
-         )
-         SELECT lower(hex(randomblob(16))), ?, id, 'pending', 0, ?, ?
-         FROM newsletter_subscribers
-         WHERE status = 'active' AND (${categoryMatchSql})`,
-    ).bind(campaignId, now, now, ...campaignCategories).run();
+    for (let offset = 0; offset < recipients.length; offset += QUEUE_BATCH_SIZE) {
+        const chunk = recipients.slice(offset, offset + QUEUE_BATCH_SIZE);
+        await env.NEWSLETTER_DB.batch(chunk.map((recipient) => env.NEWSLETTER_DB.prepare(
+            `INSERT OR IGNORE INTO newsletter_deliveries (
+                id, campaign_id, subscriber_id, status, attempts, created_at, updated_at,
+                recipient_email, recipient_kind, recipient_reference
+             ) VALUES (?, ?, ?, 'pending', 0, ?, ?, ?, ?, ?)`,
+        ).bind(
+            crypto.randomUUID(),
+            campaignId,
+            recipient.subscriberId,
+            now,
+            now,
+            recipient.email,
+            recipient.kind,
+            recipient.reference,
+        )));
+    }
 
     const pendingRows = await env.NEWSLETTER_DB.prepare(
         `SELECT id FROM newsletter_deliveries
@@ -701,10 +813,18 @@ async function queueCampaign(request, env, campaignId) {
         `UPDATE newsletter_campaigns SET status = 'sending', updated_at = ? WHERE id = ?`,
     ).bind(new Date().toISOString(), campaignId).run();
 
+    await recordAdminAudit(env, {
+        actor: admin.email,
+        action: 'campaign_started',
+        entityType: 'newsletter_campaign',
+        entityId: campaignId,
+        details: { queued, eligibleCount },
+    });
+
     return jsonResponse({ success: true, campaignId, queued });
 }
 
-async function cancelCampaign(request, env, campaignId) {
+async function cancelCampaign(request, env, campaignId, admin) {
     const input = await readJson(request, MAX_FORM_BYTES);
     if (input.confirmation !== campaignId) {
         throw new NewsletterError(400, '取消確認が一致しません。', 'campaign_confirmation_mismatch');
@@ -723,6 +843,13 @@ async function cancelCampaign(request, env, campaignId) {
         `UPDATE newsletter_deliveries SET status = 'skipped', updated_at = ?
          WHERE campaign_id = ? AND status IN ('pending', 'queued', 'retry')`,
     ).bind(now, campaignId).run();
+    await recordAdminAudit(env, {
+        actor: admin.email,
+        action: 'campaign_cancelled',
+        entityType: 'newsletter_campaign',
+        entityId: campaignId,
+        details: {},
+    });
     return jsonResponse({ success: true, campaignId, status: 'cancelled' });
 }
 
@@ -733,6 +860,91 @@ async function markDeliveriesQueued(database, deliveryIds, now) {
         `UPDATE newsletter_deliveries SET status = 'queued', queued_at = ?, updated_at = ?
          WHERE id IN (${placeholders}) AND status = 'pending'`,
     ).bind(now, now, ...deliveryIds).run();
+}
+
+async function loadCampaignRecipients(env, campaign, campaignCategories) {
+    const storedGroups = parseCsv(campaign.recipient_groups);
+    const storedSlots = parseCsv(campaign.delivery_slots);
+    const groups = validateRecipientGroups(storedGroups.length ? storedGroups : undefined);
+    const deliverySlots = validateDeliverySlots(storedSlots.length ? storedSlots : undefined);
+    const targetServerIds = validateTargetServerIds(parseCsv(campaign.target_server_ids), groups);
+    const recipientsByEmail = new Map();
+
+    if (groups.includes('subscribers')) {
+        const categoryMatchSql = campaignCategories
+            .map(() => "instr(',' || categories || ',', ',' || ? || ',') > 0")
+            .join(' OR ');
+        const rows = await env.NEWSLETTER_DB.prepare(
+            `SELECT id, email FROM newsletter_subscribers
+             WHERE status = 'active' AND (${categoryMatchSql})
+             ORDER BY updated_at DESC`,
+        ).bind(...campaignCategories).all();
+        for (const row of rows.results || []) {
+            const email = validateEmail(row.email);
+            recipientsByEmail.set(email.toLowerCase(), {
+                email,
+                kind: 'subscriber',
+                subscriberId: row.id,
+                reference: row.id,
+            });
+        }
+    }
+
+    if (groups.includes('reuse_approved')) {
+        const rows = await env.NEWSLETTER_DB.prepare(
+            `SELECT id, contact_email, delivery_types, updated_at
+             FROM reuse_applications
+             WHERE status = 'approved' AND trim(contact_email) <> ''
+             ORDER BY updated_at DESC`,
+        ).all();
+        const allReuseUsers = deliverySlots.includes('DPI_Bot通知');
+        for (const row of rows.results || []) {
+            const appliedSlots = parseStringArray(row.delivery_types);
+            if (!allReuseUsers && !appliedSlots.some((slot) => deliverySlots.includes(slot))) continue;
+            let email;
+            try {
+                email = validateEmail(row.contact_email);
+            } catch {
+                continue;
+            }
+            const key = email.toLowerCase();
+            if (recipientsByEmail.has(key)) continue;
+            recipientsByEmail.set(key, {
+                email,
+                kind: 'reuse_approved',
+                subscriberId: `reuse:${row.id}`,
+                reference: row.id,
+            });
+        }
+    }
+
+    const recipients = [...recipientsByEmail.values()];
+    if (groups.includes('discord_approved')) {
+        const rows = await env.NEWSLETTER_DB.prepare(
+            `SELECT id, guild_id, guild_name, channel_id, channel_name, channel_mappings, delivery_types
+             FROM reuse_applications
+             WHERE status = 'approved'
+             ORDER BY updated_at DESC`,
+        ).all();
+        const channels = new Map();
+        const allSlots = deliverySlots.includes('DPI_Bot通知');
+        for (const row of rows.results || []) {
+            for (const target of applicationChannelTargets(row)) {
+                if (!targetServerIds.includes(target.serverId)) continue;
+                if (!allSlots && !target.deliveryTypes.some((slot) => deliverySlots.includes(slot))) continue;
+                if (!/^\d{17,20}$/u.test(target.channelId) || channels.has(target.channelId)) continue;
+                channels.set(target.channelId, {
+                    email: null,
+                    kind: 'discord_approved',
+                    subscriberId: `discord:${target.channelId}`,
+                    reference: row.id,
+                });
+            }
+        }
+        recipients.push(...channels.values());
+    }
+
+    return recipients;
 }
 
 async function processDeliveryMessage(message, env) {
@@ -748,16 +960,25 @@ async function processDeliveryMessage(message, env) {
         return;
     }
 
-    assertDeliveryConfigured(env);
     await ensureSchema(env);
     const delivery = await env.NEWSLETTER_DB.prepare(
         `SELECT
             d.id, d.campaign_id, d.subscriber_id, d.status, d.attempts, d.updated_at,
-            c.subject, c.body_text, c.category, c.status AS campaign_status,
-            s.email, s.status AS subscriber_status, s.categories
+            d.recipient_kind, d.recipient_reference,
+            c.subject, c.body_text, c.category, c.delivery_slots, c.status AS campaign_status,
+            COALESCE(d.recipient_email, s.email) AS email,
+            s.status AS subscriber_status, s.categories,
+            CASE WHEN d.recipient_kind IN ('reuse_approved', 'discord_approved') THEN EXISTS (
+                SELECT 1 FROM reuse_applications r
+                WHERE r.status = 'approved'
+                  AND (
+                    (d.recipient_kind = 'reuse_approved' AND lower(r.contact_email) = lower(COALESCE(d.recipient_email, '')))
+                    OR (d.recipient_kind = 'discord_approved' AND r.id = d.recipient_reference)
+                  )
+            ) ELSE 1 END AS recipient_still_eligible
          FROM newsletter_deliveries d
          JOIN newsletter_campaigns c ON c.id = d.campaign_id
-         JOIN newsletter_subscribers s ON s.id = d.subscriber_id
+         LEFT JOIN newsletter_subscribers s ON s.id = d.subscriber_id
          WHERE d.id = ? AND d.campaign_id = ?`,
     ).bind(body.deliveryId, body.campaignId).first();
 
@@ -785,10 +1006,18 @@ async function processDeliveryMessage(message, env) {
     }
 
     const now = new Date().toISOString();
+    const isSubscriber = !['reuse_approved', 'discord_approved'].includes(delivery.recipient_kind);
+    const isDiscord = delivery.recipient_kind === 'discord_approved';
     if (
         delivery.campaign_status === 'cancelled'
-        || delivery.subscriber_status !== 'active'
-        || !serializedCategoriesOverlap(delivery.categories, delivery.category)
+        || (!isSubscriber && Number(delivery.recipient_still_eligible) !== 1)
+        || (
+            isSubscriber
+            && (
+                delivery.subscriber_status !== 'active'
+                || !serializedCategoriesOverlap(delivery.categories, delivery.category)
+            )
+        )
     ) {
         await env.NEWSLETTER_DB.prepare(
             `UPDATE newsletter_deliveries SET status = 'skipped', updated_at = ?
@@ -810,10 +1039,27 @@ async function processDeliveryMessage(message, env) {
     }
 
     try {
-        const unsubscribeToken = await createUnsubscribeToken(
-            { id: delivery.subscriber_id, email: delivery.email },
-            env.NEWSLETTER_TOKEN_SECRET,
-        );
+        if (isDiscord) {
+            const channelId = stringValue(delivery.subscriber_id).replace(/^discord:/u, '');
+            const result = await sendDiscordAnnouncement(channelId, delivery.subject, delivery.body_text, env);
+            const sentAt = new Date().toISOString();
+            await env.NEWSLETTER_DB.prepare(
+                `UPDATE newsletter_deliveries SET
+                    status = 'sent', message_id = ?, last_error_code = NULL,
+                    sent_at = ?, updated_at = ?
+                 WHERE id = ?`,
+            ).bind(stringValue(result?.id).slice(0, 200), sentAt, sentAt, delivery.id).run();
+            await updateCampaignCompletion(env.NEWSLETTER_DB, delivery.campaign_id);
+            if (typeof message.ack === 'function') message.ack();
+            return;
+        }
+        assertDeliveryConfigured(env);
+        const unsubscribeToken = isSubscriber
+            ? await createUnsubscribeToken(
+                { id: delivery.subscriber_id, email: delivery.email },
+                env.NEWSLETTER_TOKEN_SECRET,
+            )
+            : null;
         const mail = buildCampaignEmail(delivery, unsubscribeToken, env);
         const result = await env.NOTICE_EMAIL.send(mail);
         const sentAt = new Date().toISOString();
@@ -827,7 +1073,7 @@ async function processDeliveryMessage(message, env) {
         if (typeof message.ack === 'function') message.ack();
     } catch (error) {
         const errorCode = safeErrorCode(error);
-        const isPermanent = isPermanentEmailError(errorCode);
+        const isPermanent = error?.permanent === true || (!isDiscord && isPermanentEmailError(errorCode));
         const exhausted = nextAttempt >= MAX_DELIVERY_ATTEMPTS;
         const status = isPermanent || exhausted ? 'failed' : 'retry';
         const failedAt = new Date().toISOString();
@@ -836,7 +1082,7 @@ async function processDeliveryMessage(message, env) {
              WHERE id = ?`,
         ).bind(status, errorCode, failedAt, delivery.id).run();
 
-        if (errorCode === 'E_RECIPIENT_SUPPRESSED') {
+        if (errorCode === 'E_RECIPIENT_SUPPRESSED' && isSubscriber) {
             await env.NEWSLETTER_DB.prepare(
                 `UPDATE newsletter_subscribers SET status = 'bounced', updated_at = ? WHERE id = ?`,
             ).bind(failedAt, delivery.subscriber_id).run();
@@ -855,6 +1101,36 @@ async function processDeliveryMessage(message, env) {
             await updateCampaignCompletion(env.NEWSLETTER_DB, delivery.campaign_id);
             if (typeof message.ack === 'function') message.ack();
         }
+    }
+}
+
+async function recordAdminAudit(env, {
+    actor,
+    action,
+    entityType,
+    entityId = null,
+    details = {},
+}) {
+    try {
+        await env.NEWSLETTER_DB.prepare(
+            `INSERT INTO admin_audit_events
+                (id, actor, action, entity_type, entity_id, details_json, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        ).bind(
+            crypto.randomUUID(),
+            String(actor || '').slice(0, 320),
+            String(action || '').slice(0, 100),
+            String(entityType || '').slice(0, 100),
+            entityId ? String(entityId).slice(0, 200) : null,
+            JSON.stringify(details).slice(0, 8_000),
+            new Date().toISOString(),
+        ).run();
+    } catch (error) {
+        console.error('Admin audit write failed', {
+            action,
+            entityType,
+            errorName: error?.name || 'Error',
+        });
     }
 }
 
@@ -1092,6 +1368,87 @@ function validateSingleCategory(value) {
     return category;
 }
 
+function validateRecipientGroups(input) {
+    const rawGroups = Array.isArray(input) ? input : [];
+    const selected = new Set(rawGroups.filter((item) => typeof item === 'string' && item));
+    if (selected.size === 0 && !Array.isArray(input)) selected.add('subscribers');
+    if (selected.size > RECIPIENT_GROUP_ORDER.length || [...selected].some((item) => !Object.hasOwn(RECIPIENT_GROUPS, item))) {
+        throw new NewsletterError(400, '配信対象を正しく選択してください。', 'invalid_recipient_groups');
+    }
+    if (selected.size === 0) throw new NewsletterError(400, '配信対象を1つ以上選択してください。', 'invalid_recipient_groups');
+    return RECIPIENT_GROUP_ORDER.filter((group) => selected.has(group));
+}
+
+function validateDeliverySlots(input) {
+    const rawSlots = Array.isArray(input) ? input : [];
+    const selected = new Set(rawSlots.filter((item) => typeof item === 'string' && item));
+    if (selected.size === 0 && !Array.isArray(input)) selected.add('DPI_Bot通知');
+    if (selected.size > DELIVERY_SLOT_IDS.size || [...selected].some((item) => !DELIVERY_SLOT_IDS.has(item))) {
+        throw new NewsletterError(400, '配信枠を正しく選択してください。', 'invalid_delivery_slots');
+    }
+    if (selected.size === 0) throw new NewsletterError(400, '配信枠を1つ以上選択してください。', 'invalid_delivery_slots');
+    return DELIVERY_CATALOG.map((item) => item.id).filter((id) => selected.has(id));
+}
+
+function validateTargetServerIds(input, recipientGroups) {
+    const rawIds = Array.isArray(input) ? input : [];
+    const selected = [...new Set(rawIds.filter((item) => typeof item === 'string').map((item) => item.trim()).filter(Boolean))];
+    if (selected.length > 500 || selected.some((item) => !/^\d{17,20}$/u.test(item))) {
+        throw new NewsletterError(400, '配信先サーバーを正しく選択してください。', 'invalid_target_servers');
+    }
+    if (recipientGroups.includes('discord_approved') && selected.length === 0) {
+        throw new NewsletterError(400, 'Discordへ送信するサーバーを1つ以上選択してください。', 'target_servers_required');
+    }
+    return recipientGroups.includes('discord_approved') ? selected : [];
+}
+
+function validateDiscordAnnouncement(subject, body, recipientGroups) {
+    if (!recipientGroups.includes('discord_approved')) return;
+    if (`**${subject}**\n\n${body}`.length > 2_000) {
+        throw new NewsletterError(400, 'Discordにも配信する場合、件名と本文の合計を1,950文字程度までにしてください。', 'discord_content_too_large');
+    }
+}
+
+function applicationChannelTargets(row) {
+    const fallbackTypes = parseStringArray(row.delivery_types);
+    const mappings = parseObjectArray(row.channel_mappings);
+    const source = mappings.length ? mappings : [{
+        channelId: row.channel_id,
+        channelName: row.channel_name,
+        deliveryTypes: fallbackTypes,
+    }];
+    return source.map((mapping) => ({
+        serverId: stringValue(row.guild_id).trim(),
+        serverName: stringValue(row.guild_name).trim(),
+        channelId: stringValue(mapping.channelId || mapping.channel_id || row.channel_id).trim(),
+        channelName: stringValue(mapping.channelName || mapping.channel_name || row.channel_name).trim(),
+        deliveryTypes: parseStringArray(mapping.deliveryTypes || mapping.delivery_types || fallbackTypes),
+    })).filter((target) => target.serverId && target.channelId);
+}
+
+function normalizeApprovedServers(rows) {
+    const servers = new Map();
+    for (const row of rows) {
+        for (const target of applicationChannelTargets(row)) {
+            const current = servers.get(target.serverId) || {
+                id: target.serverId,
+                name: target.serverName || target.serverId,
+                channels: new Set(),
+                deliveryTypes: new Set(),
+            };
+            current.channels.add(target.channelId);
+            target.deliveryTypes.forEach((item) => current.deliveryTypes.add(item));
+            servers.set(target.serverId, current);
+        }
+    }
+    return [...servers.values()].map((server) => ({
+        id: server.id,
+        name: server.name,
+        channelCount: server.channels.size,
+        deliveryTypes: [...server.deliveryTypes],
+    }));
+}
+
 function validateCampaignSubject(value) {
     const subject = normalizeText(stringValue(value)).trim();
     if (!subject || subject.length > 120 || /[\r\n\u0000-\u001f\u007f]/u.test(subject)) {
@@ -1110,6 +1467,39 @@ function validateCampaignBody(value) {
 
 function serializeCategories(categories) {
     return CATEGORY_ORDER.filter((category) => categories.includes(category)).join(',');
+}
+
+function serializeCsv(values) {
+    return values.join(',');
+}
+
+function parseCsv(value) {
+    return stringValue(value).split(',').map((item) => item.trim()).filter(Boolean);
+}
+
+function parseStringArray(value) {
+    if (Array.isArray(value)) return value.map((item) => stringValue(item).trim()).filter(Boolean);
+    const text = stringValue(value).trim();
+    if (!text) return [];
+    try {
+        const parsed = JSON.parse(text);
+        if (Array.isArray(parsed)) return parsed.map((item) => stringValue(item).trim()).filter(Boolean);
+    } catch {
+        // Older rows may contain comma separated values.
+    }
+    return parseCsv(text);
+}
+
+function parseObjectArray(value) {
+    if (Array.isArray(value)) return value.filter((item) => item && typeof item === 'object');
+    const text = stringValue(value).trim();
+    if (!text) return [];
+    try {
+        const parsed = JSON.parse(text);
+        return Array.isArray(parsed) ? parsed.filter((item) => item && typeof item === 'object') : [];
+    } catch {
+        return [];
+    }
 }
 
 function parseSerializedCategories(value) {
@@ -1353,24 +1743,41 @@ async function sendConfirmationEmail(email, categories, token, env) {
 
 function buildCampaignEmail(delivery, unsubscribeToken, env) {
     const origin = normalizePublicOrigin(env.NEWSLETTER_PUBLIC_ORIGIN);
-    const unsubscribeUrl = new URL('/api/newsletter/unsubscribe', origin);
-    unsubscribeUrl.searchParams.set('token', unsubscribeToken);
+    const isSubscriber = delivery.recipient_kind !== 'reuse_approved';
+    const unsubscribeUrl = isSubscriber ? new URL('/api/newsletter/unsubscribe', origin) : null;
+    if (unsubscribeUrl) unsubscribeUrl.searchParams.set('token', unsubscribeToken);
     const subscribeUrl = new URL('/site/mail/', origin);
+    const reuseUrl = new URL('/site/reuse/', origin);
     const categoryLabel = parseSerializedCategories(delivery.category)
         .map((category) => CATEGORIES[category])
         .join('・') || 'お知らせ';
+    const slotLabels = parseCsv(delivery.delivery_slots)
+        .map((slot) => DELIVERY_CATALOG.find((item) => item.id === slot)?.label || slot);
+    const audienceNote = isSubscriber
+        ? 'このメールはDPI-Botのお知らせメールに登録した方へお送りしています。'
+        : 'このメールはDPI-Botの二次利用を許可されている方へ、運用上のお知らせとしてお送りしています。';
+    const slotText = slotLabels.length ? `対象配信枠: ${slotLabels.join('・')}` : '';
     const text = [
         `【${categoryLabel}】`,
+        slotText,
         '',
         delivery.body_text,
         '',
         '----------------------------------------',
-        'このメールはDPI-Botのお知らせメールに登録した方へお送りしています。',
+        audienceNote,
         emailSignatureText(),
-        `配信停止: ${unsubscribeUrl.toString()}`,
+        ...(unsubscribeUrl
+            ? [`配信停止: ${unsubscribeUrl.toString()}`]
+            : [`二次利用申請の確認・利用停止: ${reuseUrl.toString()}`]),
     ].join('\n');
     const safeBody = renderMarkdownEmail(delivery.body_text);
-    const html = `<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body style="margin:0;background:#f2f5f8;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#172033"><main style="max-width:680px;margin:0 auto;background:#fff;padding:28px"><p style="color:#1769aa;font-weight:700">${escapeHtml(categoryLabel)}</p><h1 style="font-size:24px;line-height:1.45">${escapeHtml(delivery.subject)}</h1><div style="line-height:1.8;overflow-wrap:anywhere">${safeBody}</div><hr style="margin:32px 0;border:0;border-top:1px solid #d8dee6"><p style="font-size:13px;color:#596273">このメールはDPI-Botのお知らせメールに登録した方へお送りしています。</p>${emailSignatureHtml()}<p style="font-size:13px"><a href="${escapeHtml(unsubscribeUrl.toString())}">すべての配信を停止する</a></p></main></body></html>`;
+    const slotHtml = slotLabels.length
+        ? `<p style="font-size:13px;color:#596273"><strong>対象配信枠:</strong> ${escapeHtml(slotLabels.join('・'))}</p>`
+        : '';
+    const actionHtml = unsubscribeUrl
+        ? `<a href="${escapeHtml(unsubscribeUrl.toString())}">すべての配信を停止する</a>`
+        : `<a href="${escapeHtml(reuseUrl.toString())}">二次利用申請の確認・利用停止</a>`;
+    const html = `<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body style="margin:0;background:#f2f5f8;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#172033"><main style="max-width:680px;margin:0 auto;background:#fff;padding:28px"><p style="color:#1769aa;font-weight:700">${escapeHtml(categoryLabel)}</p>${slotHtml}<h1 style="font-size:24px;line-height:1.45">${escapeHtml(delivery.subject)}</h1><div style="line-height:1.8;overflow-wrap:anywhere">${safeBody}</div><hr style="margin:32px 0;border:0;border-top:1px solid #d8dee6"><p style="font-size:13px;color:#596273">${escapeHtml(audienceNote)}</p>${emailSignatureHtml()}<p style="font-size:13px">${actionHtml}</p></main></body></html>`;
 
     return {
         to: delivery.email,
@@ -1382,11 +1789,13 @@ function buildCampaignEmail(delivery, unsubscribeToken, env) {
             ? { replyTo: cleanConfigValue(env.NOTICE_REPLY_TO_EMAIL) }
             : {}),
         headers: {
-            'List-Unsubscribe': `<${unsubscribeUrl.toString()}>`,
-            'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+            ...(unsubscribeUrl ? {
+                'List-Unsubscribe': `<${unsubscribeUrl.toString()}>`,
+                'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+            } : {}),
             'List-Id': 'DPI-Bot Notices <notices.dpi-bot.com>',
-            'List-Help': `<${subscribeUrl.toString()}>`,
-            'List-Subscribe': `<${subscribeUrl.toString()}>`,
+            'List-Help': `<${isSubscriber ? subscribeUrl.toString() : reuseUrl.toString()}>`,
+            ...(isSubscriber ? { 'List-Subscribe': `<${subscribeUrl.toString()}>` } : {}),
             Precedence: 'bulk',
             'Auto-Submitted': 'auto-generated',
             'Content-Language': 'ja',
@@ -1534,12 +1943,18 @@ function normalizePublicOrigin(value) {
 
 function normalizeCampaignRow(row) {
     const categories = parseSerializedCategories(row.category);
+    const storedGroups = parseCsv(row.recipient_groups);
+    const storedSlots = parseCsv(row.delivery_slots);
+    const recipientGroups = validateRecipientGroups(storedGroups.length ? storedGroups : undefined);
     return {
         id: row.id,
         subject: row.subject,
         body: row.body_text,
         category: categories[0] || '',
         categories,
+        recipientGroups,
+        deliverySlots: validateDeliverySlots(storedSlots.length ? storedSlots : undefined),
+        targetServerIds: validateTargetServerIds(parseCsv(row.target_server_ids), recipientGroups),
         status: row.status,
         createdBy: row.created_by,
         createdAt: row.created_at,
@@ -1578,6 +1993,42 @@ function isPermanentEmailError(code) {
 function safeErrorCode(error) {
     const code = typeof error?.code === 'string' ? error.code : 'UNKNOWN_ERROR';
     return /^[A-Z0-9_-]{1,80}$/u.test(code) ? code : 'UNKNOWN_ERROR';
+}
+
+async function sendDiscordAnnouncement(channelId, subject, body, env) {
+    const token = cleanConfigValue(env.DISCORD_BOT_TOKEN);
+    if (!token) {
+        const error = new Error('discord_delivery_not_configured');
+        error.code = 'DISCORD_NOT_CONFIGURED';
+        error.permanent = true;
+        throw error;
+    }
+    if (!/^\d{17,20}$/u.test(channelId)) {
+        const error = new Error('invalid_discord_channel');
+        error.code = 'DISCORD_CHANNEL_INVALID';
+        error.permanent = true;
+        throw error;
+    }
+    const response = await fetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
+        method: 'POST',
+        headers: {
+            Authorization: `Bot ${token}`,
+            'Content-Type': 'application/json',
+            'User-Agent': 'DPI-Bot-Admin-Announcement/1.0',
+        },
+        body: JSON.stringify({
+            content: `**${subject}**\n\n${body}`,
+            allowed_mentions: { parse: [] },
+        }),
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) {
+        const error = new Error(`discord_http_${response.status}`);
+        error.code = `DISCORD_HTTP_${response.status}`;
+        error.permanent = response.status >= 400 && response.status < 500 && response.status !== 429;
+        throw error;
+    }
+    return result;
 }
 
 function statementChangedRows(result) {
@@ -1669,13 +2120,19 @@ export const __test = Object.freeze({
     createUnsubscribeToken,
     escapeHtml,
     isConfirmationToken,
+    loadCampaignRecipients,
     normalizePublicOrigin,
     parseSerializedCategories,
     renderMarkdownEmail,
+    sendDiscordAnnouncement,
     serializeCategories,
     serializedCategoriesOverlap,
     validateCampaignBody,
     validateCampaignSubject,
     validateCategories,
+    validateDeliverySlots,
+    validateRecipientGroups,
+    validateTargetServerIds,
     verifyUnsubscribeToken,
 });
+

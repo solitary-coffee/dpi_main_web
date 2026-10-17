@@ -7,6 +7,7 @@ import { DELIVERY_CATALOG } from '../worker/delivery-catalog.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const excluded = new Set([
+    'site/admin-center/index.html',
     'site/channel-admin/index.html',
     'site/ip-admin/index.html',
     'site/mail-admin/index.html',
@@ -87,3 +88,4 @@ test('トップページのクイックリンクはホバー時も暗色背景�
     assert.match(css, /\.link-card:hover\s*\{[^}]*background-color:\s*#3f454b;/su);
     assert.doesNotMatch(css, /\.link-card:hover\s*\{[^}]*background-color:\s*#fff;/su);
 });
+
