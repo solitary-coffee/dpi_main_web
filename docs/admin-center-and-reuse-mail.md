@@ -8,7 +8,11 @@
   - Cloudflare Worker、D1、Queue、Email Routing、Accessの設定状態
   - 二次利用申請、購読者、メール配信、IP遮断、管理操作履歴
   - AWS Lambda、API Gateway、SQS/DLQ、DynamoDB、CloudWatch Alarm/Logs、CloudFormation、バックアップEC2
-  - DynamoDBのハートビートテーブルを設定した場合の自宅サーバー状態
+  - 東京・大阪の自宅サーバー最終ハートビートと稼働判定
+  - 自動監視・通常固定・フェイルオーバー固定の現在モード表示と手動切替
+  - `dpi:backup-managed=true` のバックアップEC2に限定した起動・停止・再起動
+  - 気象庁XMLの安全なプレビュー、現在の配信枠選択、東京・大阪ingestへの署名付き配信
+  - AWS登録先と許可済み二次利用チャンネルの配信枠別件数
 - `/site/mail-admin/`（お知らせ一括配信）
   - 購読者と許可済み二次利用者を個別または同時に選択
   - 許可済み二次利用申請のDiscordサーバーを選択し、登録チャンネルへ一括配信
@@ -36,14 +40,18 @@ npx wrangler d1 migrations apply dpi-newsletter --remote
 
 ## AWS運用API
 
-`aws/channel-directory-api/template.yaml` をSAMで更新する。既存のBearer tokenとFunction URLはそのまま使用し、`?view=system` で読み取り専用サマリーを返す。
+`aws/channel-directory-api/template.yaml` をSAMで更新する。既存のBearer tokenとFunction URLはそのまま使用する。`GET ?view=system` は運用サマリー、認証済みの `POST` は確認入力付き管理操作を受け付ける。
 
 | パラメータ | 用途 |
 |---|---|
 | `MonitoredTableNames` | 管理画面に表示するDynamoDBテーブル名をカンマ区切りで指定 |
-| `HomeServerTableName` | 任意。自宅サーバーのハートビートテーブル |
+| `HomeServerTableName` / `StateTableName` | `DPI-BackupFleetState-v51` |
+| `OperatingRegions` | EC2と自動監視Lambdaを管理する東京・大阪リージョン |
+| `AutoMonitorFunction` | 自動フェイルオーバー監視Lambda名 |
+| `IngestEndpoints` | 同一配信IDを送信する東京・大阪のingest URL |
+| `IngestHmacParameter` | ingest署名キーを保持するSSM Parameter Store名 |
 
-ハートビートは `status` が `healthy` / `ok` / `online` / `running` のいずれかで、`lastHeartbeat`、`last_heartbeat`、`updatedAt`、`updated_at`、`time` のいずれかが5分以内のレコードを正常と判定する。
+ハートビートは `HOME#TOKYO` と `HOME#OSAKA` の `updated_at` が5分以内なら稼働中と判定する。現在モードは `MODE#TOKYO`、`MODE#OSAKA` と管理用 `ADMIN#SYSTEM_MODE` を表示する。
 
 ## 配信上の安全性
 
@@ -52,3 +60,6 @@ npx wrangler d1 migrations apply dpi-newsletter --remote
 - 購読者と二次利用者で同じメールアドレスが登録されている場合は1通に重複除外する。
 - 二次利用者向けメールには購読解除トークンを発行せず、二次利用申請の確認・利用停止導線を表示する。
 - 管理APIはCloudflare Access認証と管理者メールアドレスの許可リストを引き続き必須とする。
+- EC2操作は管理対象タグ付きインスタンスだけを許可し、終了操作は提供しない。
+- システムモード変更・EC2操作・XML配信は確認文字列、ブラウザー確認、D1とDynamoDBの監査記録を使用する。
+- XMLは1.5MBまで、DOCTYPE/ENTITYを拒否し、配信先URLと署名キーをブラウザーへ返さない。
