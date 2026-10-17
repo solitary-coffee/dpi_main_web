@@ -344,9 +344,9 @@ def _managed_instances_for_region(region):
 
 def _stack_summary():
     stacks = []
-    paginator = _client("cloudformation").get_paginator("describe_stacks")
+    paginator = _client("cloudformation").get_paginator("list_stacks")
     for page in paginator.paginate(PaginationConfig={"MaxItems": 200}):
-        stacks.extend(page.get("Stacks", []))
+        stacks.extend(page.get("StackSummaries", []))
     return {
         "available": True,
         "count": len(stacks),
