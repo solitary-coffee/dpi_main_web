@@ -4,6 +4,8 @@
 
 公開ページは `/site/mail/`、管理画面は `/site/mail-admin/` です。公開登録は二重オプトインで、確認メールのURLを開いた後に確認画面のボタンを押すまで購読は有効になりません。
 
+Discordのお知らせ管理画面は `/site/discord-admin/` です。許可済み二次利用申請のチャンネルから、選択したサーバーと配信枠に一致する送信先だけへ配信します。
+
 ## 構成
 
 - D1: 購読者、同意履歴、下書き、配信状況を保存
@@ -25,6 +27,15 @@
 
 Markdown内の生HTML、画像埋め込み、JavaScript URLは使用できません。HTMLタグは文字として扱い、リンクは認証情報を含まないHTTPS URLだけを有効にします。
 
+### Discordお知らせ
+
+- メンテナンス、障害・重要情報、アップデートの3テンプレートを利用できます。
+- 通常メッセージまたはEmbedを選択できます。Embedは色も指定できます。
+- Discord Markdownをそのまま使用でき、プレビューでは主要な見出し、太字、斜体、リスト、引用、コード、HTTPSリンクを安全なDOMで再現します。
+- HTTPS画像URL、またはPNG・JPEG・GIF・WebP画像を1ファイル添付できます。画像ファイルは最大1.25MBで、MIME形式とマジックバイトの両方を検査します。
+- 画像ファイルはキャンペーン下書きと一緒にD1へ保存し、Queue処理時にDiscord APIへmultipartで直接送信します。R2や追加Secretは不要です。
+- `allowed_mentions` を空にして送信するため、本文に `@everyone` などが含まれてもメンションは発火しません。
+
 ## 1. D1とQueues
 
 `wrangler.jsonc` には次のバインディングを定義済みです。
@@ -35,7 +46,7 @@ Markdown内の生HTML、画像埋め込み、JavaScript URLは使用できませ
 
 リポジトリにはD1の `database_id` を保存していません。Wranglerの[自動プロビジョニング](https://developers.cloudflare.com/workers/wrangler/configuration/#automatic-provisioning)により、GitHub連携から初めてデプロイしたときにD1とQueueが自動作成されます。GitHub経由で作られたIDはダッシュボードに表示され、リポジトリへ書き戻されない仕様です。
 
-Workerは初回利用時にも `CREATE TABLE IF NOT EXISTS` を実行するため、デプロイ直後から使用できます。再現用のマイグレーションは `migrations/0001_newsletter.sql` にあります。手動適用する場合は次を実行します。
+Workerは初回利用時にもテーブル作成と不足列の追加を行うため、デプロイ直後から使用できます。再現用のマイグレーションは `migrations/0001_newsletter.sql` から `migrations/0007_discord_rich_announcements.sql` にあります。手動適用する場合は次を実行します。
 
 ```bash
 npx wrangler d1 migrations apply NEWSLETTER_DB --remote
@@ -131,7 +142,7 @@ Secretを追加・更新しても、すでに失敗したGit連携ビルドは�
 - Markdownは独自の許可リスト方式で変換し、HTMLを先に解析しません。JavaScript、HTMLタグ、イベント属性、画像埋め込みは実行できません。
 - Markdownリンクは認証情報を含まないHTTPS URLだけを有効にし、その他のURLは文字列のまま表示します。
 - メールプレビューは同じサーバー側レンダラーを使用し、権限を与えない `sandbox` iframeと管理画面のCSPで隔離します。
-- 添付ファイル機能は配信システムには設けていません。
+- メール配信には添付ファイルを付けません。Discord画像は許可形式、容量、ファイル署名を検査してD1の2MB行サイズを超えない上限で保存します。
 - Queueメッセージには配信IDだけを入れ、メールアドレスや本文は入れません。
 - 各メールは個別送信し、`List-Unsubscribe`、RFC 8058のワンクリック停止、`List-Id`を付けます。
 - Cloudflare Email Serviceが宛先を抑止している場合、購読者を送信抑止状態へ変更します。

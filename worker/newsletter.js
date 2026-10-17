@@ -17,6 +17,11 @@ const RECIPIENT_GROUP_ORDER = Object.freeze(Object.keys(RECIPIENT_GROUPS));
 const DELIVERY_SLOT_IDS = new Set(DELIVERY_CATALOG.map((item) => item.id));
 const MAX_JSON_BYTES = 24 * 1024;
 const MAX_FORM_BYTES = 8 * 1024;
+const MAX_DISCORD_FORM_BYTES = 1_500_000;
+const MAX_DISCORD_IMAGE_BYTES = 1_250_000;
+const DISCORD_IMAGE_TYPES = Object.freeze(new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']));
+const DISCORD_FORMATS = Object.freeze(new Set(['message', 'embed']));
+const DEFAULT_DISCORD_EMBED_COLOR = 0x5865F2;
 const MAX_CAMPAIGN_RECIPIENTS = 1_000;
 const CONFIRMATION_VALID_MS = 24 * 60 * 60 * 1_000;
 const CONFIRMATION_COOLDOWN_MS = 10 * 60 * 1_000;
@@ -87,7 +92,14 @@ const SCHEMA_STATEMENTS = Object.freeze([
         recipient_count INTEGER NOT NULL DEFAULT 0,
         recipient_groups TEXT NOT NULL DEFAULT 'subscribers',
         delivery_slots TEXT NOT NULL DEFAULT 'DPI_Bot通知',
-        target_server_ids TEXT NOT NULL DEFAULT ''
+        target_server_ids TEXT NOT NULL DEFAULT '',
+        delivery_format TEXT NOT NULL DEFAULT 'message',
+        embed_color INTEGER NOT NULL DEFAULT 5793266,
+        image_url TEXT,
+        image_name TEXT,
+        image_type TEXT,
+        image_data BLOB,
+        image_alt TEXT
     )`,
     `CREATE INDEX IF NOT EXISTS newsletter_campaign_status_idx
         ON newsletter_campaigns(status, created_at)`,
@@ -458,7 +470,7 @@ async function handleProtectedAdminAsset(request, env) {
     if ((headers.get('content-type') || '').includes('text/html')) {
         headers.set(
             'Content-Security-Policy',
-            "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; frame-src blob:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'",
+            "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' https: blob:; connect-src 'self'; frame-src blob:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'",
         );
     }
     return new Response(assetResponse.body, {
@@ -549,6 +561,7 @@ async function adminSummary(env, admin, surface = 'mail') {
             `SELECT
                 c.id, c.subject, c.body_text, c.category, c.status, c.created_by,
                 c.recipient_groups, c.delivery_slots, c.target_server_ids,
+                c.delivery_format, c.embed_color, c.image_url, c.image_name, c.image_type, c.image_alt,
                 c.created_at, c.updated_at, c.started_at, c.completed_at, c.recipient_count,
                 COUNT(d.id) AS delivery_count,
                 SUM(CASE WHEN d.status = 'sent' THEN 1 ELSE 0 END) AS sent_count,
@@ -625,7 +638,7 @@ async function adminSummary(env, admin, surface = 'mail') {
 }
 
 async function createCampaign(request, env, admin, surface = 'mail') {
-    const input = await readJson(request, MAX_JSON_BYTES);
+    const input = await readCampaignInput(request, surface);
     const subject = validateCampaignSubject(input.subject);
     const bodyText = validateCampaignBody(input.body);
     const categories = Array.isArray(input.categories)
@@ -635,15 +648,17 @@ async function createCampaign(request, env, admin, surface = 'mail') {
     const recipientGroups = validateSurfaceRecipientGroups(input.recipientGroups, surface);
     const deliverySlots = validateDeliverySlots(input.deliverySlots);
     const targetServerIds = validateTargetServerIds(input.targetServerIds, recipientGroups);
-    validateDiscordAnnouncement(subject, bodyText, recipientGroups);
+    const discordOptions = validateDiscordOptions(input, recipientGroups);
+    validateDiscordAnnouncement(subject, bodyText, recipientGroups, discordOptions);
     const now = new Date().toISOString();
     const campaignId = crypto.randomUUID();
 
     await env.NEWSLETTER_DB.prepare(
         `INSERT INTO newsletter_campaigns (
             id, subject, body_text, category, recipient_groups, delivery_slots, target_server_ids,
+            delivery_format, embed_color, image_url, image_name, image_type, image_data, image_alt,
             status, created_by, created_at, updated_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?)`,
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?)`,
     ).bind(
         campaignId,
         subject,
@@ -652,6 +667,13 @@ async function createCampaign(request, env, admin, surface = 'mail') {
         serializeCsv(recipientGroups),
         serializeCsv(deliverySlots),
         serializeCsv(targetServerIds),
+        discordOptions.format,
+        discordOptions.embedColor,
+        discordOptions.imageUrl,
+        discordOptions.image?.name || null,
+        discordOptions.image?.type || null,
+        discordOptions.image?.bytes || null,
+        discordOptions.imageAlt,
         admin.email,
         now,
         now,
@@ -662,7 +684,14 @@ async function createCampaign(request, env, admin, surface = 'mail') {
         action: 'campaign_created',
         entityType: 'newsletter_campaign',
         entityId: campaignId,
-        details: { categories, recipientGroups, deliverySlots, targetServerIds },
+        details: {
+            categories,
+            recipientGroups,
+            deliverySlots,
+            targetServerIds,
+            deliveryFormat: discordOptions.format,
+            hasImage: Boolean(discordOptions.image || discordOptions.imageUrl),
+        },
     });
 
     return jsonResponse({
@@ -676,6 +705,11 @@ async function createCampaign(request, env, admin, surface = 'mail') {
             recipientGroups,
             deliverySlots,
             targetServerIds,
+            deliveryFormat: discordOptions.format,
+            embedColor: discordOptions.embedColor,
+            imageUrl: discordOptions.imageUrl,
+            imageName: discordOptions.image?.name || null,
+            imageAlt: discordOptions.imageAlt,
             status: 'draft',
             createdAt: now,
         },
@@ -690,7 +724,8 @@ async function previewCampaign(request, env, surface = 'mail') {
     const recipientGroups = validateSurfaceRecipientGroups(input.recipientGroups, surface);
     const deliverySlots = validateDeliverySlots(input.deliverySlots);
     validateTargetServerIds(input.targetServerIds, recipientGroups);
-    validateDiscordAnnouncement(subject, bodyText, recipientGroups);
+    const discordOptions = validateDiscordOptions(input, recipientGroups, { allowImageMetadataOnly: true });
+    validateDiscordAnnouncement(subject, bodyText, recipientGroups, discordOptions);
     const previewMail = buildCampaignEmail({
         campaign_id: 'preview',
         category: serializeCategories(categories),
@@ -705,7 +740,7 @@ async function previewCampaign(request, env, surface = 'mail') {
         success: true,
         html: previewMail.html,
         text: previewMail.text,
-        discord: surface === 'discord' ? { content: `**${subject}**\n\n${bodyText}` } : null,
+        discord: surface === 'discord' ? buildDiscordPayload(subject, bodyText, discordOptions) : null,
     });
 }
 
@@ -738,7 +773,9 @@ async function queueCampaign(request, env, campaignId, admin, surface = 'mail') 
     }
 
     const campaign = await env.NEWSLETTER_DB.prepare(
-        `SELECT id, subject, body_text, category, recipient_groups, delivery_slots, target_server_ids, status, updated_at
+        `SELECT id, subject, body_text, category, recipient_groups, delivery_slots, target_server_ids,
+                delivery_format, embed_color, image_url, image_name, image_type, image_alt,
+                status, updated_at
          FROM newsletter_campaigns WHERE id = ?`,
     ).bind(campaignId).first();
     if (!campaign) throw new NewsletterError(404, '配信データが見つかりません。', 'campaign_not_found');
@@ -752,7 +789,12 @@ async function queueCampaign(request, env, campaignId, admin, surface = 'mail') 
         throw new NewsletterError(409, '配信カテゴリが正しくありません。', 'campaign_category_invalid');
     }
     const campaignGroups = validateRecipientGroups(parseCsv(campaign.recipient_groups));
-    validateDiscordAnnouncement(campaign.subject, campaign.body_text, campaignGroups);
+    validateDiscordAnnouncement(campaign.subject, campaign.body_text, campaignGroups, {
+        format: campaign.delivery_format,
+        embedColor: campaign.embed_color,
+        imageUrl: campaign.image_url,
+        imageAlt: campaign.image_alt,
+    });
     const recipients = await loadCampaignRecipients(env, campaign, campaignCategories);
     const eligibleCount = recipients.length;
     if (eligibleCount > MAX_CAMPAIGN_RECIPIENTS) {
@@ -985,6 +1027,7 @@ async function processDeliveryMessage(message, env) {
             d.id, d.campaign_id, d.subscriber_id, d.status, d.attempts, d.updated_at,
             d.recipient_kind, d.recipient_reference,
             c.subject, c.body_text, c.category, c.delivery_slots, c.status AS campaign_status,
+            c.delivery_format, c.embed_color, c.image_url, c.image_name, c.image_type, c.image_data, c.image_alt,
             COALESCE(d.recipient_email, s.email) AS email,
             s.status AS subscriber_status, s.categories,
             CASE WHEN d.recipient_kind IN ('reuse_approved', 'discord_approved') THEN EXISTS (
@@ -1060,7 +1103,15 @@ async function processDeliveryMessage(message, env) {
     try {
         if (isDiscord) {
             const channelId = stringValue(delivery.subscriber_id).replace(/^discord:/u, '');
-            const result = await sendDiscordAnnouncement(channelId, delivery.subject, delivery.body_text, env);
+            const result = await sendDiscordAnnouncement(channelId, delivery.subject, delivery.body_text, env, {
+                format: delivery.delivery_format,
+                embedColor: delivery.embed_color,
+                imageUrl: delivery.image_url,
+                imageName: delivery.image_name,
+                imageType: delivery.image_type,
+                imageData: delivery.image_data,
+                imageAlt: delivery.image_alt,
+            });
             const sentAt = new Date().toISOString();
             await env.NEWSLETTER_DB.prepare(
                 `UPDATE newsletter_deliveries SET
@@ -1172,6 +1223,7 @@ async function ensureSchema(env) {
     if (!initialization) {
         initialization = database
             .batch(SCHEMA_STATEMENTS.map((statement) => database.prepare(statement)))
+            .then(() => ensureDiscordCampaignColumns(database))
             .catch((error) => {
                 schemaInitialization.delete(database);
                 throw error;
@@ -1179,6 +1231,31 @@ async function ensureSchema(env) {
         schemaInitialization.set(database, initialization);
     }
     await initialization;
+}
+
+async function ensureDiscordCampaignColumns(database) {
+    const statement = database.prepare('PRAGMA table_info(newsletter_campaigns)');
+    if (typeof statement.all !== 'function') return;
+    const result = await statement.all();
+    const existing = new Set((result.results || []).map((column) => column.name));
+    const additions = [
+        ['delivery_format', "TEXT NOT NULL DEFAULT 'message'"],
+        ['embed_color', 'INTEGER NOT NULL DEFAULT 5793266'],
+        ['image_url', 'TEXT'],
+        ['image_name', 'TEXT'],
+        ['image_type', 'TEXT'],
+        ['image_data', 'BLOB'],
+        ['image_alt', 'TEXT'],
+    ];
+    for (const [name, definition] of additions) {
+        if (existing.has(name)) continue;
+        try {
+            await database.prepare(`ALTER TABLE newsletter_campaigns ADD COLUMN ${name} ${definition}`).run();
+        } catch (error) {
+            const refreshed = await database.prepare('PRAGMA table_info(newsletter_campaigns)').all();
+            if (!(refreshed.results || []).some((column) => column.name === name)) throw error;
+        }
+    }
 }
 
 function assertDatabaseConfigured(env) {
@@ -1303,6 +1380,88 @@ async function readJson(request, limit) {
     } catch {
         throw new NewsletterError(400, '送信内容を読み取れませんでした。', 'invalid_json');
     }
+}
+
+async function readCampaignInput(request, surface) {
+    const contentType = (request.headers.get('content-type') || '').toLowerCase();
+    if (surface !== 'discord' || !contentType.startsWith('multipart/form-data;')) {
+        return readJson(request, MAX_JSON_BYTES);
+    }
+    const rawBody = await readBytesWithLimit(request, MAX_DISCORD_FORM_BYTES);
+    let form;
+    try {
+        form = await new Request(request.url, {
+            method: 'POST',
+            headers: { 'content-type': request.headers.get('content-type') },
+            body: rawBody,
+        }).formData();
+    } catch {
+        throw new NewsletterError(400, '送信内容を読み取れませんでした。', 'invalid_form_data');
+    }
+    const file = form.get('image');
+    let image = null;
+    if (file && typeof file.arrayBuffer === 'function' && Number(file.size || 0) > 0) {
+        if (Number(file.size) > MAX_DISCORD_IMAGE_BYTES) {
+            throw new NewsletterError(400, '画像は1.25MB以内にしてください。', 'discord_image_too_large');
+        }
+        image = {
+            name: stringValue(file.name),
+            type: stringValue(file.type),
+            size: Number(file.size),
+            bytes: await file.arrayBuffer(),
+        };
+    }
+    return {
+        categories: parseJsonFormArray(form, 'categories'),
+        recipientGroups: parseJsonFormArray(form, 'recipientGroups'),
+        deliverySlots: parseJsonFormArray(form, 'deliverySlots'),
+        targetServerIds: parseJsonFormArray(form, 'targetServerIds'),
+        subject: stringValue(form.get('subject')),
+        body: stringValue(form.get('body')),
+        deliveryFormat: stringValue(form.get('deliveryFormat')),
+        embedColor: stringValue(form.get('embedColor')),
+        imageUrl: stringValue(form.get('imageUrl')),
+        imageAlt: stringValue(form.get('imageAlt')),
+        image,
+    };
+}
+
+function parseJsonFormArray(form, name) {
+    try {
+        const value = JSON.parse(stringValue(form.get(name)));
+        if (!Array.isArray(value)) throw new Error('not_array');
+        return value;
+    } catch {
+        throw new NewsletterError(400, '選択内容を読み取れませんでした。', 'invalid_form_data');
+    }
+}
+
+async function readBytesWithLimit(request, limit) {
+    const declaredLength = Number(request.headers.get('content-length') || 0);
+    if (Number.isFinite(declaredLength) && declaredLength > limit) {
+        throw new NewsletterError(413, '送信データが大きすぎます。', 'request_too_large');
+    }
+    if (!request.body) throw new NewsletterError(400, '送信内容がありません。', 'empty_body');
+    const reader = request.body.getReader();
+    const chunks = [];
+    let size = 0;
+    while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        size += value.byteLength;
+        if (size > limit) {
+            await reader.cancel();
+            throw new NewsletterError(413, '送信データが大きすぎます。', 'request_too_large');
+        }
+        chunks.push(value);
+    }
+    const bytes = new Uint8Array(size);
+    let offset = 0;
+    for (const chunk of chunks) {
+        bytes.set(chunk, offset);
+        offset += chunk.byteLength;
+    }
+    return bytes;
 }
 
 async function readForm(request, limit) {
@@ -1442,11 +1601,91 @@ function validateTargetServerIds(input, recipientGroups) {
     return recipientGroups.includes('discord_approved') ? selected : [];
 }
 
-function validateDiscordAnnouncement(subject, body, recipientGroups) {
+function validateDiscordAnnouncement(subject, body, recipientGroups, options = {}) {
     if (!recipientGroups.includes('discord_approved')) return;
-    if (`**${subject}**\n\n${body}`.length > 2_000) {
-        throw new NewsletterError(400, 'Discordにも配信する場合、件名と本文の合計を1,950文字程度までにしてください。', 'discord_content_too_large');
+    const format = validateDiscordFormat(options.format);
+    if (format === 'message' && buildDiscordMessageContent(subject, body, options.imageUrl).length > 2_000) {
+        throw new NewsletterError(400, '通常メッセージは件名・本文・画像URLを合わせて2,000文字以内にしてください。', 'discord_content_too_large');
     }
+    if (format === 'embed' && (subject.length > 256 || body.length > 4_096 || subject.length + body.length > 6_000)) {
+        throw new NewsletterError(400, 'Embedはタイトル256文字、本文4,096文字、全体6,000文字以内にしてください。', 'discord_embed_too_large');
+    }
+}
+
+function validateDiscordOptions(input, recipientGroups, { allowImageMetadataOnly = false } = {}) {
+    if (!recipientGroups.includes('discord_approved')) {
+        return { format: 'message', embedColor: DEFAULT_DISCORD_EMBED_COLOR, imageUrl: '', imageAlt: '', image: null };
+    }
+    const format = validateDiscordFormat(input.deliveryFormat);
+    const embedColor = validateEmbedColor(input.embedColor);
+    const imageUrl = validateDiscordImageUrl(input.imageUrl);
+    const imageAlt = normalizeText(stringValue(input.imageAlt)).trim();
+    if (imageAlt.length > 1_024 || /[\u0000-\u001f\u007f]/u.test(imageAlt)) {
+        throw new NewsletterError(400, '画像の説明は1,024文字以内で入力してください。', 'invalid_image_alt');
+    }
+    let image = null;
+    if (input.image && !allowImageMetadataOnly) image = validateDiscordImage(input.image);
+    if (image && imageUrl) {
+        throw new NewsletterError(400, '画像URLと画像ファイルはどちらか一方だけ指定してください。', 'discord_image_conflict');
+    }
+    return { format, embedColor, imageUrl, imageAlt, image };
+}
+
+function validateDiscordFormat(value) {
+    const format = stringValue(value).trim() || 'message';
+    if (!DISCORD_FORMATS.has(format)) {
+        throw new NewsletterError(400, 'Discordの送信形式を正しく選択してください。', 'invalid_discord_format');
+    }
+    return format;
+}
+
+function validateEmbedColor(value) {
+    const rawValue = typeof value === 'number' ? value : stringValue(value).trim();
+    const raw = rawValue === '' ? DEFAULT_DISCORD_EMBED_COLOR : rawValue;
+    const color = typeof raw === 'number'
+        ? raw
+        : (/^#[0-9a-f]{6}$/iu.test(raw) ? Number.parseInt(raw.slice(1), 16) : Number.NaN);
+    if (!Number.isInteger(color) || color < 0 || color > 0xFFFFFF) {
+        throw new NewsletterError(400, 'Embed色を正しく選択してください。', 'invalid_embed_color');
+    }
+    return color;
+}
+
+function validateDiscordImageUrl(value) {
+    const raw = stringValue(value).trim();
+    if (!raw) return '';
+    if (raw.length > 2_048) throw new NewsletterError(400, '画像URLが長すぎます。', 'invalid_image_url');
+    try {
+        const url = new URL(raw);
+        if (url.protocol !== 'https:' || url.username || url.password) throw new Error('invalid');
+        return url.toString();
+    } catch {
+        throw new NewsletterError(400, '画像URLはHTTPS形式で入力してください。', 'invalid_image_url');
+    }
+}
+
+function validateDiscordImage(file) {
+    const type = stringValue(file.type).toLowerCase();
+    const size = Number(file.size || 0);
+    if (!DISCORD_IMAGE_TYPES.has(type) || !Number.isFinite(size) || size <= 0 || size > MAX_DISCORD_IMAGE_BYTES) {
+        throw new NewsletterError(400, '画像はPNG・JPEG・GIF・WebPのいずれかで、1.25MB以内にしてください。', 'invalid_discord_image');
+    }
+    const bytes = new Uint8Array(file.bytes || new ArrayBuffer(0));
+    const signatures = {
+        'image/png': bytes.length >= 8 && [137, 80, 78, 71, 13, 10, 26, 10].every((value, index) => bytes[index] === value),
+        'image/jpeg': bytes.length >= 3 && bytes[0] === 0xFF && bytes[1] === 0xD8 && bytes[2] === 0xFF,
+        'image/gif': bytes.length >= 6 && ['GIF87a', 'GIF89a'].includes(String.fromCharCode(...bytes.slice(0, 6))),
+        'image/webp': bytes.length >= 12
+            && String.fromCharCode(...bytes.slice(0, 4)) === 'RIFF'
+            && String.fromCharCode(...bytes.slice(8, 12)) === 'WEBP',
+    };
+    if (!signatures[type]) {
+        throw new NewsletterError(400, '画像ファイルの内容と形式が一致しません。', 'invalid_discord_image_signature');
+    }
+    const originalName = stringValue(file.name).normalize('NFC').replace(/[^A-Za-z0-9._-]+/gu, '_').slice(-100);
+    const extension = { 'image/png': '.png', 'image/jpeg': '.jpg', 'image/gif': '.gif', 'image/webp': '.webp' }[type];
+    const name = originalName && originalName.includes('.') ? originalName : `announcement${extension}`;
+    return { name, type, bytes: file.bytes };
 }
 
 function applicationChannelTargets(row) {
@@ -1995,6 +2234,13 @@ function normalizeCampaignRow(row) {
         recipientGroups,
         deliverySlots: validateDeliverySlots(storedSlots.length ? storedSlots : undefined),
         targetServerIds: validateTargetServerIds(parseCsv(row.target_server_ids), recipientGroups),
+        deliveryFormat: validateDiscordFormat(row.delivery_format),
+        embedColor: validateEmbedColor(Number(row.embed_color ?? DEFAULT_DISCORD_EMBED_COLOR)),
+        imageUrl: stringValue(row.image_url),
+        imageName: stringValue(row.image_name),
+        imageType: stringValue(row.image_type),
+        imageAlt: stringValue(row.image_alt),
+        hasImage: Boolean(row.image_url || row.image_name),
         status: row.status,
         createdBy: row.created_by,
         createdAt: row.created_at,
@@ -2035,7 +2281,40 @@ function safeErrorCode(error) {
     return /^[A-Z0-9_-]{1,80}$/u.test(code) ? code : 'UNKNOWN_ERROR';
 }
 
-async function sendDiscordAnnouncement(channelId, subject, body, env) {
+function buildDiscordMessageContent(subject, body, imageUrl = '') {
+    return [`**${subject}**`, '', body, ...(imageUrl ? ['', imageUrl] : [])].join('\n');
+}
+
+function buildDiscordPayload(subject, body, options = {}) {
+    const format = validateDiscordFormat(options.format);
+    const imageUrl = validateDiscordImageUrl(options.imageUrl);
+    const imageName = stringValue(options.imageName || options.image?.name);
+    const attachmentUrl = imageName ? `attachment://${imageName}` : '';
+    const payload = { allowed_mentions: { parse: [] } };
+    if (format === 'embed') {
+        const embed = {
+            title: subject,
+            description: body,
+            color: validateEmbedColor(options.embedColor),
+            footer: { text: 'DPI-Bot 運営' },
+        };
+        const effectiveImageUrl = attachmentUrl || imageUrl;
+        if (effectiveImageUrl) embed.image = { url: effectiveImageUrl };
+        payload.embeds = [embed];
+    } else {
+        payload.content = buildDiscordMessageContent(subject, body, imageUrl);
+    }
+    if (imageName) {
+        payload.attachments = [{
+            id: 0,
+            filename: imageName,
+            ...(stringValue(options.imageAlt).trim() ? { description: stringValue(options.imageAlt).trim() } : {}),
+        }];
+    }
+    return payload;
+}
+
+async function sendDiscordAnnouncement(channelId, subject, body, env, options = {}) {
     const token = cleanConfigValue(env.DISCORD_BOT_TOKEN);
     if (!token) {
         const error = new Error('discord_delivery_not_configured');
@@ -2049,17 +2328,31 @@ async function sendDiscordAnnouncement(channelId, subject, body, env) {
         error.permanent = true;
         throw error;
     }
+    const imageName = stringValue(options.imageName);
+    const imageType = stringValue(options.imageType);
+    const imageData = normalizeBinaryData(options.imageData);
+    const payload = buildDiscordPayload(subject, body, {
+        ...options,
+        imageName: imageData ? imageName : '',
+    });
+    let requestBody;
+    const headers = {
+        Authorization: `Bot ${token}`,
+        'User-Agent': 'DPI-Bot-Admin-Announcement/2.0',
+    };
+    if (imageData && imageName) {
+        const form = new FormData();
+        form.append('payload_json', JSON.stringify(payload));
+        form.append('files[0]', new Blob([imageData], { type: imageType || 'application/octet-stream' }), imageName);
+        requestBody = form;
+    } else {
+        headers['Content-Type'] = 'application/json';
+        requestBody = JSON.stringify(payload);
+    }
     const response = await fetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
         method: 'POST',
-        headers: {
-            Authorization: `Bot ${token}`,
-            'Content-Type': 'application/json',
-            'User-Agent': 'DPI-Bot-Admin-Announcement/1.0',
-        },
-        body: JSON.stringify({
-            content: `**${subject}**\n\n${body}`,
-            allowed_mentions: { parse: [] },
-        }),
+        headers,
+        body: requestBody,
     });
     const result = await response.json().catch(() => ({}));
     if (!response.ok) {
@@ -2069,6 +2362,15 @@ async function sendDiscordAnnouncement(channelId, subject, body, env) {
         throw error;
     }
     return result;
+}
+
+function normalizeBinaryData(value) {
+    if (value instanceof ArrayBuffer) return new Uint8Array(value);
+    if (ArrayBuffer.isView(value)) return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+    if (Array.isArray(value) && value.every((item) => Number.isInteger(item) && item >= 0 && item <= 255)) {
+        return Uint8Array.from(value);
+    }
+    return null;
 }
 
 function statementChangedRows(result) {
@@ -2164,6 +2466,7 @@ export const __test = Object.freeze({
     normalizePublicOrigin,
     parseSerializedCategories,
     renderMarkdownEmail,
+    buildDiscordPayload,
     sendDiscordAnnouncement,
     serializeCategories,
     serializedCategoriesOverlap,
@@ -2171,6 +2474,8 @@ export const __test = Object.freeze({
     validateCampaignSubject,
     validateCategories,
     validateDeliverySlots,
+    validateDiscordAnnouncement,
+    validateDiscordOptions,
     validateRecipientGroups,
     validateSurfaceRecipientGroups,
     validateTargetServerIds,
