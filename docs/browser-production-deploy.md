@@ -2,9 +2,10 @@
 
 ローカル端末は使用しない。GitHub、Cloudflare Dashboard、AWS Management Consoleのブラウザー画面だけで適用する。新しいGitHub Actionsのデプロイ基盤は追加しない。
 
-## 1. Cloudflare D1を先に更新
+## 1. Cloudflare D1を確認
 
-PRをマージする前にCloudflare Dashboardで次を開く。
+すでにPR #33適用時に `0006_admin_center_and_reuse_mail.sql` を実行済みなら、この作業で追加のD1マイグレーションは不要。
+未適用の場合だけCloudflare Dashboardで次を開く。
 
 `Workers & Pages` → `D1 SQL database` → `dpi-newsletter` → `Console`
 
@@ -29,9 +30,9 @@ Cloudflare Dashboardで次を開く。
 
 既存の `ACCESS_AUD`、`ACCESS_TEAM_DOMAIN`、メール配信、reCAPTCHA、Discord OAuthのSecretもそのまま維持する。
 
-## 3. GitHubでPRをマージ
+## 3. GitHubで今回のPRをマージ
 
-GitHubでPR #33を開き、変更内容とテスト結果を確認してマージする。
+GitHubで今回の管理センター拡張PRを開き、変更内容とテスト結果を確認してマージする。
 
 従来のCloudflare Git連携が `main` の更新を検知し、`main-dpi` をデプロイする。Cloudflare DashboardのDeploymentsで成功を確認する。
 
@@ -57,7 +58,12 @@ sam deploy --guided
 | `DirectoryApiToken` | 現在使用中のtoken |
 | `TableName` | 現在の配信先テーブル |
 | `MonitoredTableNames` | 管理画面で監視するDynamoDBテーブル名（カンマ区切り） |
-| `HomeServerTableName` | 自宅サーバーのハートビートテーブル。未使用なら空欄 |
+| `HomeServerTableName` | `DPI-BackupFleetState-v51` |
+| `StateTableName` | `DPI-BackupFleetState-v51` |
+| `OperatingRegions` | `ap-northeast-1,ap-northeast-3` |
+| `AutoMonitorFunction` | `dpi-backup-auto-failover-monitor` |
+| `IngestEndpoints` | テンプレート既定値の東京・大阪 `/ingest` URL |
+| `IngestHmacParameter` | `/dpi-bot/final-backup/hmac-secret` |
 
 CloudFormationの変更セットを確認し、既存スタックの更新として実行する。新規スタックを作らない。
 
@@ -65,10 +71,12 @@ CloudFormationの変更セットを確認し、既存スタックの更新とし
 
 Cloudflare Accessでログインし、次を確認する。
 
-1. `https://dpi-bot.com/site/admin-center/` でCloudflare、AWS、自宅サーバー、件数、ログを確認
+1. `https://dpi-bot.com/site/admin-center/` でCloudflare、AWS、自宅サーバー、システムモード、配信枠件数、ログを確認
 2. `https://dpi-bot.com/site/reuse-admin/` で申請の閲覧・編集・審査を確認
 3. `https://dpi-bot.com/site/mail-admin/` でメール、二次利用者、Discordサーバー、配信枠、対象サーバーを選択
 4. 対象件数とプレビューを確認して下書きを保存
 5. 最初は管理用のテスト対象だけを選び、配信後の送信数・失敗数・ログを確認
+6. EC2は状態表示を確認してから管理対象の1台で起動・停止ボタンの確認入力までを確認
+7. XMLはテスト電文を読み込み、プレビュー内容と配信枠件数を確認する。実配信が不要な場合は「XMLを配信」を押さない
 
 管理操作はすべて上記Web画面から行う。日常運用でCloudflareやAWSのコンソールを開く必要はない。
