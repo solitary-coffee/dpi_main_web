@@ -208,8 +208,13 @@ test('Discordお知らせ画面と配信統計画面を専用タブとして提�
         readFile(new URL('../site/delivery-admin/script.js', import.meta.url), 'utf8'),
     ]);
     assert.match(discordHtml, /Discordお知らせ管理/u);
+    assert.match(discordHtml, /data-template="maintenance"/u);
+    assert.match(discordHtml, /name="delivery-format"[^>]+value="embed"/u);
+    assert.match(discordHtml, /id="image-file"[^>]+image\/png/u);
     assert.match(discordScript, /recipientGroups: \['discord_approved'\]/u);
     assert.match(discordScript, /\/site\/discord-admin\/api\/campaigns/u);
+    assert.match(discordScript, /new FormData\(\)/u);
+    assert.match(discordScript, /renderDiscordMarkdown/u);
     assert.match(deliveryHtml, /緊急地震速報|情報種別ごとの配信数/u);
     assert.match(deliveryScript, /\/site\/delivery-admin\/api\/summary/u);
     assert.doesNotMatch(discordScript, /innerHTML/u);
@@ -276,6 +281,61 @@ test('Discordお知らせはメンションを無効化してBot APIへ投稿す
     } finally {
         globalThis.fetch = originalFetch;
     }
+});
+
+test('Discord EmbedはMarkdown・色・画像添付をmultipartで送信する', async () => {
+    const originalFetch = globalThis.fetch;
+    let request;
+    globalThis.fetch = async (url, options) => {
+        request = { url: String(url), options };
+        return Response.json({ id: 'embed-message-id' });
+    };
+    try {
+        const image = Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10, 0, 0]);
+        const result = await newsletter.sendDiscordAnnouncement(
+            '22345678901234567',
+            '障害情報',
+            '**復旧作業中**です。',
+            { DISCORD_BOT_TOKEN: 'secret-token' },
+            {
+                format: 'embed', embedColor: 0xdc2626,
+                imageName: 'status.png', imageType: 'image/png', imageData: [...image],
+                imageAlt: '障害状況の画像',
+            },
+        );
+        assert.equal(result.id, 'embed-message-id');
+        assert.ok(request.options.body instanceof FormData);
+        assert.equal(request.options.headers['Content-Type'], undefined);
+        const payload = JSON.parse(request.options.body.get('payload_json'));
+        assert.equal(payload.embeds[0].title, '障害情報');
+        assert.equal(payload.embeds[0].description, '**復旧作業中**です。');
+        assert.equal(payload.embeds[0].color, 0xdc2626);
+        assert.equal(payload.embeds[0].image.url, 'attachment://status.png');
+        assert.equal(payload.attachments[0].description, '障害状況の画像');
+        assert.deepEqual(payload.allowed_mentions, { parse: [] });
+        assert.equal(request.options.body.get('files[0]').size, image.byteLength);
+    } finally {
+        globalThis.fetch = originalFetch;
+    }
+});
+
+test('Discord画像は許可形式・マジックバイト・URLとの重複を検証する', () => {
+    const recipientGroups = ['discord_approved'];
+    const pngBytes = Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10]).buffer;
+    const options = newsletter.validateDiscordOptions({
+        deliveryFormat: 'embed', embedColor: '#5865f2', imageUrl: '', imageAlt: '説明',
+        image: { name: 'notice.png', type: 'image/png', size: 8, bytes: pngBytes },
+    }, recipientGroups);
+    assert.equal(options.image.name, 'notice.png');
+    assert.equal(options.embedColor, 0x5865f2);
+    assert.throws(() => newsletter.validateDiscordOptions({
+        deliveryFormat: 'message', embedColor: '#5865f2', imageUrl: '',
+        image: { name: 'fake.png', type: 'image/png', size: 4, bytes: new Uint8Array([1, 2, 3, 4]).buffer },
+    }, recipientGroups), /内容と形式/u);
+    assert.throws(() => newsletter.validateDiscordOptions({
+        deliveryFormat: 'embed', embedColor: '#5865f2', imageUrl: 'https://example.com/image.png',
+        image: { name: 'notice.png', type: 'image/png', size: 8, bytes: pngBytes },
+    }, recipientGroups), /どちらか一方/u);
 });
 
 test('二次利用者は許可状態と選択配信枠で絞り込み、購読者と重複除外する', async () => {

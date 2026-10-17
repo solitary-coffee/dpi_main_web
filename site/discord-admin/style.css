@@ -1,3 +1,21 @@
-.discord-preview { background: #313338; border-radius: 8px; color: #dbdee1; padding: 1rem; border-left: 4px solid #5865f2; }
-.discord-preview strong { color: #f2f3f5; display: block; margin-bottom: .55rem; }
-.discord-preview p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.discord-preview { --embed-color: #5865f2; max-width: 680px; background: #313338; border-radius: 8px; color: #dbdee1; padding: 1rem; overflow-wrap: anywhere; }
+.discord-preview.embed-preview { border-left: 4px solid var(--embed-color); background: #2b2d31; }
+.discord-preview.message-preview { border-left: 4px solid transparent; }
+.discord-preview > strong { color: #f2f3f5; display: block; margin-bottom: .55rem; }
+.discord-preview.message-preview > strong::before { content: "**"; }
+.discord-preview.message-preview > strong::after { content: "**"; }
+.preview-markdown p { margin: .22rem 0; white-space: pre-wrap; }
+.preview-markdown ul { margin: .4rem 0; padding-left: 1.5rem; }
+.preview-markdown code { padding: 2px 4px; border-radius: 3px; background: #1e1f22; color: #f2f3f5; }
+.preview-markdown a { color: #00a8fc; }
+.markdown-heading { display: block; margin: .55rem 0 .25rem; color: #f2f3f5; font-size: 1.08rem; }
+.markdown-quote { margin: .35rem 0; padding-left: .65rem; border-left: 3px solid #949ba4; color: #b5bac1; }
+.discord-preview img { display: block; width: auto; max-width: min(100%, 520px); max-height: 420px; margin-top: .8rem; border-radius: 6px; object-fit: contain; }
+.discord-preview img[hidden] { display: none; }
+.embed-options, .image-options { display: grid; gap: 12px; padding: 15px; border: 1px solid #626a73; border-radius: 8px; background: #343a40; }
+.embed-options[hidden] { display: none; }
+.image-options { margin: 0; }
+.image-options legend { padding: 0 5px; font-weight: 700; }
+.image-options input[type="url"], .image-options input[type="file"], .image-options input[type="text"] { width: 100%; padding: 10px 12px; border: 1px solid #adb8c5; border-radius: 6px; color: #172033; background: #fff; font: inherit; }
+.embed-options input[type="color"] { width: 90px; height: 44px; padding: 3px; border: 1px solid #adb8c5; border-radius: 6px; background: #fff; }
+.validation-error { color: #ffb4b4 !important; font-weight: 700; }

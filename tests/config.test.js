@@ -68,3 +68,10 @@ test('IP遮断用D1マイグレーションを同梱する', async () => {
     assert.match(migration, /CREATE TABLE IF NOT EXISTS ip_block_rules/u);
     assert.match(migration, /CREATE TABLE IF NOT EXISTS ip_block_audit/u);
 });
+
+test('Discordリッチお知らせ用D1マイグレーションを同梱する', async () => {
+    const migration = await readFile(new URL('../migrations/0007_discord_rich_announcements.sql', import.meta.url), 'utf8');
+    assert.match(migration, /delivery_format/u);
+    assert.match(migration, /embed_color/u);
+    assert.match(migration, /image_data BLOB/u);
+});
