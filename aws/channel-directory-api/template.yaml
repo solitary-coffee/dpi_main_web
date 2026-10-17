@@ -51,7 +51,7 @@ Resources:
       Handler: lambda_function.lambda_handler
       CodeUri: .
       MemorySize: 512
-      Timeout: 40
+      Timeout: 120
       Environment:
         Variables:
           TABLE_NAME: !Ref TableName

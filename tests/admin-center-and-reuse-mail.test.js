@@ -183,14 +183,14 @@ test('購読者向けメールは配信停止ヘッダーを維持する', () =>
     assert.match(mail.headers['List-Subscribe'], /\/site\/mail\//u);
 });
 
-test('送信先と配信枠はサーバー側の許可リストで検証する', () => {
+test('配信枠を検証しDiscordはサーバー未選択でも配信できる', () => {
     assert.deepEqual(newsletter.validateRecipientGroups(['subscribers', 'reuse_approved', 'discord_approved']), ['subscribers', 'reuse_approved', 'discord_approved']);
     assert.deepEqual(newsletter.validateDeliverySlots(['地震情報', 'DPI_Bot通知']), ['地震情報', 'DPI_Bot通知']);
     assert.deepEqual(newsletter.validateTargetServerIds(['12345678901234567'], ['discord_approved']), ['12345678901234567']);
     assert.throws(() => newsletter.validateRecipientGroups([]), /1つ以上/u);
     assert.throws(() => newsletter.validateRecipientGroups(['unknown']), /正しく/u);
     assert.throws(() => newsletter.validateDeliverySlots(['unknown']), /正しく/u);
-    assert.throws(() => newsletter.validateTargetServerIds([], ['discord_approved']), /1つ以上/u);
+    assert.deepEqual(newsletter.validateTargetServerIds([], ['discord_approved']), []);
 });
 
 test('メールとDiscordの管理APIは送信先を相互に混在させない', () => {
@@ -201,11 +201,12 @@ test('メールとDiscordの管理APIは送信先を相互に混在させない'
 });
 
 test('Discordお知らせ画面と配信統計画面を専用タブとして提供する', async () => {
-    const [discordHtml, discordScript, deliveryHtml, deliveryScript] = await Promise.all([
+    const [discordHtml, discordScript, deliveryHtml, deliveryScript, directoryLambda] = await Promise.all([
         readFile(new URL('../site/discord-admin/index.html', import.meta.url), 'utf8'),
         readFile(new URL('../site/discord-admin/script.js', import.meta.url), 'utf8'),
         readFile(new URL('../site/delivery-admin/index.html', import.meta.url), 'utf8'),
         readFile(new URL('../site/delivery-admin/script.js', import.meta.url), 'utf8'),
+        readFile(new URL('../aws/channel-directory-api/lambda_function.py', import.meta.url), 'utf8'),
     ]);
     assert.match(discordHtml, /Discordお知らせ管理/u);
     assert.match(discordHtml, /data-template="maintenance"/u);
@@ -215,6 +216,10 @@ test('Discordお知らせ画面と配信統計画面を専用タブとして提�
     assert.match(discordScript, /\/site\/discord-admin\/api\/campaigns/u);
     assert.match(discordScript, /new FormData\(\)/u);
     assert.match(discordScript, /renderDiscordMarkdown/u);
+    assert.match(discordHtml, /送信先サーバー（任意）/u);
+    assert.match(discordScript, /Discord Webhook/u);
+    assert.match(directoryLambda, /discord-announcement-preview/u);
+    assert.match(directoryLambda, /_valid_discord_webhook_url/u);
     assert.match(deliveryHtml, /緊急地震速報|情報種別ごとの配信数/u);
     assert.match(deliveryScript, /\/site\/delivery-admin\/api\/summary/u);
     assert.doesNotMatch(discordScript, /innerHTML/u);

@@ -78,10 +78,10 @@ async function loadSummary() {
 
 function renderStats() {
     const servers = summaryState.approvedServers || [];
-    const channels = servers.reduce((sum, server) => sum + Number(server.channelCount || 0), 0);
+    const webhooks = Number(summaryState.discordDirectory?.webhookCount || 0);
     const sent = (summaryState.campaigns || []).reduce((sum, campaign) => sum + Number(campaign.sentCount || 0), 0);
     const container = document.getElementById('discord-stats'); container.replaceChildren();
-    for (const [label, value] of [['許可済みサーバー', servers.length], ['登録チャンネル', channels], ['直近30配信の送信済み', sent]]) {
+    for (const [label, value] of [['登録サーバー', servers.length], ['AWS登録Webhook', webhooks], ['直近30配信の送信済み', sent]]) {
         const card = el('article', 'stat-card'); card.append(el('span', 'stat-label', label), el('strong', 'stat-value', String(value))); container.append(card);
     }
 }
@@ -105,7 +105,8 @@ function renderServers() {
     for (const server of servers) {
         const label = el('label', 'delivery-slot'); const input = document.createElement('input');
         input.type = 'checkbox'; input.name = 'server-ids'; input.value = server.id; input.checked = previous.has(server.id);
-        const text = el('span', '', server.name || server.id); text.append(el('small', 'slot-status active', `${server.channelCount}ch`)); label.append(input, text); container.append(label);
+        const count = Number(server.webhookCount ?? server.channelCount ?? 0);
+        const text = el('span', '', server.name || server.id); text.append(el('small', 'slot-status active', `${count}件`)); label.append(input, text); container.append(label);
     }
 }
 
@@ -122,11 +123,11 @@ function renderCampaigns() {
         const metrics = el('div', 'campaign-metrics');
         for (const [label, value] of [['対象', campaign.recipientCount], ['送信済み', campaign.sentCount], ['残り', campaign.remainingCount], ['失敗', campaign.failedCount]]) metrics.append(el('span', '', `${label}: ${value}`));
         card.append(metrics);
-        const names = (campaign.targetServerIds || []).map(serverName).join('・');
+        const names = (campaign.targetServerIds || []).map(serverName).join('・') || '配信枠に一致するすべて';
         card.append(el('p', 'campaign-meta', `対象配信枠: ${(campaign.deliverySlots || []).map(slotName).join('・')} / サーバー: ${names}`));
         const actions = el('div', 'campaign-actions');
         if (['draft', 'queuing'].includes(campaign.status)) {
-            const button = el('button', 'primary-btn', campaign.status === 'queuing' ? 'Queue登録を再開' : '配信を開始'); button.type = 'button'; button.addEventListener('click', () => sendCampaign(campaign, button)); actions.append(button);
+            const button = el('button', 'primary-btn', '配信を開始'); button.type = 'button'; button.addEventListener('click', () => sendCampaign(campaign, button)); actions.append(button);
         }
         if (['draft', 'queuing', 'sending'].includes(campaign.status)) {
             const button = el('button', 'danger-btn', '未送信分を取消'); button.type = 'button'; button.addEventListener('click', () => cancelCampaign(campaign, button)); actions.append(button);
@@ -159,7 +160,7 @@ async function createCampaign(event) {
     event.preventDefault(); const button = document.getElementById('save-btn'); button.disabled = true;
     try {
         const payload = selectionPayload();
-        if (!payload.categories.length || !payload.deliverySlots.length || !payload.targetServerIds.length) throw new Error('カテゴリ・配信枠・サーバーをそれぞれ1つ以上選択してください。');
+        if (!payload.categories.length || !payload.deliverySlots.length) throw new Error('カテゴリと配信枠をそれぞれ1つ以上選択してください。');
         validateImageSelection(true);
         const form = new FormData();
         for (const key of ['categories', 'recipientGroups', 'deliverySlots', 'targetServerIds']) form.append(key, JSON.stringify(payload[key]));
@@ -174,7 +175,7 @@ async function createCampaign(event) {
 async function sendCampaign(campaign, button) {
     if (!window.confirm(`「${campaign.subject}」をDiscordへ配信します。送信済み投稿は取り消せません。`)) return;
     button.disabled = true;
-    try { const result = await request(`/site/discord-admin/api/campaigns/${campaign.id}/send`, { method: 'POST', body: JSON.stringify({ confirmation: campaign.id }) }); setStatus(`${result.queued}件をQueueへ登録しました。`, 'success'); await loadSummary(); }
+    try { const result = await request(`/site/discord-admin/api/campaigns/${campaign.id}/send`, { method: 'POST', body: JSON.stringify({ confirmation: campaign.id }) }); setStatus(`対象${result.targetCount}件へ配信し、成功${result.sentCount}件・失敗${result.failedCount}件でした。`, result.failedCount ? 'error' : 'success'); await loadSummary(); }
     catch (error) { setStatus(error.message, 'error'); button.disabled = false; }
 }
 async function cancelCampaign(campaign, button) {
@@ -193,8 +194,8 @@ function scheduleAudiencePreview() { window.clearTimeout(audienceTimer); audienc
 
 async function updateAudiencePreview() {
     const payload = selectionPayload(); const target = document.getElementById('recipient-preview');
-    if (!payload.categories.length || !payload.deliverySlots.length || !payload.targetServerIds.length) { target.textContent = 'カテゴリ・配信枠・サーバーを選ぶと対象チャンネル数を表示します。'; return; }
-    try { const result = await request('/site/discord-admin/api/audience-preview', { method: 'POST', body: JSON.stringify(payload) }); target.textContent = `現在の対象: Discordチャンネル ${result.count}件。配信開始時に再計算します。`; }
+    if (!payload.categories.length || !payload.deliverySlots.length) { target.textContent = 'カテゴリと配信枠を選ぶと対象Webhook数を表示します。'; return; }
+    try { const result = await request('/site/discord-admin/api/audience-preview', { method: 'POST', body: JSON.stringify(payload) }); target.textContent = `現在の対象: Discord Webhook ${result.count}件。配信開始時に再計算します。`; }
     catch (error) { target.textContent = error.message; }
 }
 

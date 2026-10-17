@@ -74,4 +74,6 @@ test('Discordリッチお知らせ用D1マイグレーションを同梱する',
     assert.match(migration, /delivery_format/u);
     assert.match(migration, /embed_color/u);
     assert.match(migration, /image_data BLOB/u);
+    assert.match(migration, /external_sent_count/u);
+    assert.match(migration, /external_failed_count/u);
 });
