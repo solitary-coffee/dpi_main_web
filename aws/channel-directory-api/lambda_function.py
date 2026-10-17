@@ -609,19 +609,20 @@ def _control_system_mode(body, actor, request_id):
     now = int(time.time())
 
     if mode == "automatic":
-        for region in OPERATING_REGIONS:
-            lambda_client = _client("lambda", region)
-            saved = previous.get(region)
-            if saved is None or int(saved) < 0:
-                try:
-                    lambda_client.delete_function_concurrency(FunctionName=AUTO_MONITOR_FUNCTION)
-                except lambda_client.exceptions.ResourceNotFoundException:
-                    pass
-            else:
-                lambda_client.put_function_concurrency(
-                    FunctionName=AUTO_MONITOR_FUNCTION,
-                    ReservedConcurrentExecutions=int(saved),
-                )
+        if current:
+            for region in OPERATING_REGIONS:
+                lambda_client = _client("lambda", region)
+                saved = previous.get(region)
+                if saved is None or int(saved) < 0:
+                    try:
+                        lambda_client.delete_function_concurrency(FunctionName=AUTO_MONITOR_FUNCTION)
+                    except lambda_client.exceptions.ResourceNotFoundException:
+                        pass
+                else:
+                    lambda_client.put_function_concurrency(
+                        FunctionName=AUTO_MONITOR_FUNCTION,
+                        ReservedConcurrentExecutions=int(saved),
+                    )
         table.delete_item(Key={"pk": MANUAL_MODE_KEY})
         for region in OPERATING_REGIONS:
             _client("lambda", region).invoke(FunctionName=AUTO_MONITOR_FUNCTION, InvocationType="Event", Payload=b"{}")
@@ -715,13 +716,15 @@ def _xml_dispatch(body, actor, request_id):
         raise ValueError("選択した配信枠に有効な配信先URLがありません。")
 
     now = datetime.now(tz=timezone.utc).isoformat()
+    xml_digest = hashlib.sha256(xml_text.encode("utf-8")).hexdigest()
+    delivery_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"dpi-admin:{xml_digest}:{delivery_slot}:{send_data}"))
     payload = {
         "title": preview.get("headline") or preview.get("controlTitle") or "気象庁XML",
         "url": targets,
         "data": xml_text,
-        "id": request_id,
-        "delivery_id": request_id,
-        "source_uuid": request_id,
+        "id": delivery_id,
+        "delivery_id": delivery_id,
+        "source_uuid": delivery_id,
         "times": now,
         "type": preview.get("controlTitle") or "XML",
         "send_data": send_data,
@@ -729,19 +732,23 @@ def _xml_dispatch(body, actor, request_id):
     }
     raw_body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     secret = _get_ingest_secret()
-    results = [_post_signed_ingest(endpoint, raw_body, secret) for endpoint in INGEST_ENDPOINTS]
+    timestamp = str(int(time.time()))
+    signature = hmac.new(secret.encode("utf-8"), timestamp.encode("ascii") + b"." + raw_body, hashlib.sha256).hexdigest()
+    results = [_post_signed_ingest(endpoint, raw_body, timestamp, signature) for endpoint in INGEST_ENDPOINTS]
     _audit_operation(actor, "xml.dispatch", request_id, {
         "delivery_slot": delivery_slot,
         "send_data": send_data,
         "target_count": len(targets),
         "endpoint_count": len(results),
-        "xml_sha256": hashlib.sha256(xml_text.encode("utf-8")).hexdigest(),
+        "xml_sha256": xml_digest,
+        "delivery_id": delivery_id,
     })
     return {
         "message": "XML配信を受け付けました。二重送信は既存の配信IDで抑止されます。",
         "deliverySlot": delivery_slot,
         "sendData": send_data,
         "targetCount": len(targets),
+        "deliveryId": delivery_id,
         "endpoints": results,
         "preview": preview,
     }
@@ -833,12 +840,10 @@ def _get_ingest_secret():
     return value
 
 
-def _post_signed_ingest(endpoint, raw_body, secret):
+def _post_signed_ingest(endpoint, raw_body, timestamp, signature):
     parsed = urllib.parse.urlparse(endpoint)
     if parsed.scheme != "https" or not parsed.hostname or not parsed.hostname.endswith(".amazonaws.com"):
         raise ValueError("XML配信エンドポイントが不正です。")
-    timestamp = str(int(time.time()))
-    signature = hmac.new(secret.encode("utf-8"), timestamp.encode("ascii") + b"." + raw_body, hashlib.sha256).hexdigest()
     request = urllib.request.Request(endpoint, data=raw_body, method="POST", headers={
         "Content-Type": "application/json",
         "X-DPI-Timestamp": timestamp,
