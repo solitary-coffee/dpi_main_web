@@ -23,12 +23,15 @@ test('メール配信・認証のSecretをリポジトリ上のvarsへ保存し�
         'REUSE_SESSION_SECRET',
         'AWS_CHANNEL_DIRECTORY_URL',
         'AWS_CHANNEL_DIRECTORY_TOKEN',
+        'STATUSPAGE_API_KEY',
     ];
 
     for (const name of secretNames) {
         assert.equal(Object.hasOwn(config.vars || {}, name), false, `${name} must not be in vars`);
     }
     assert.equal(Object.hasOwn(config, 'secrets'), false);
+    assert.equal(config.vars.STATUSPAGE_PAGE_ID, '28grbz2c7xtm');
+    assert.equal(config.vars.STATUSPAGE_PUBLIC_URL, 'https://coffeebousai.statuspage.io/');
 });
 
 test('D1・Queue・送信元制限・管理画面ルーティングを宣言する', async () => {

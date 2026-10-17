@@ -319,7 +319,7 @@ def _ec2_summary():
 
 def _managed_instances_for_region(region):
     client = _client("ec2", region)
-    instances = []
+    raw_instances = []
     paginator = client.get_paginator("describe_instances")
     for page in paginator.paginate(
         Filters=[{"Name": f"tag:{MANAGED_INSTANCE_TAG}", "Values": ["true"]}],
@@ -327,18 +327,55 @@ def _managed_instances_for_region(region):
     ):
         for reservation in page.get("Reservations", []):
             for instance in reservation.get("Instances", []):
-                tags = {str(tag.get("Key", "")): str(tag.get("Value", "")) for tag in instance.get("Tags", [])}
-                instances.append({
-                    "instanceId": _clean(instance.get("InstanceId"), 30),
-                    "name": _clean(tags.get("Name"), 120) or _clean(instance.get("InstanceId"), 30),
-                    "region": region,
-                    "state": _clean((instance.get("State") or {}).get("Name"), 30) or "unknown",
-                    "normalState": _clean(tags.get("dpi:normal-state"), 30) or "unknown",
-                    "backupRole": _clean(tags.get("dpi:backup-role"), 80) or "unknown",
-                    "availabilityZone": _clean((instance.get("Placement") or {}).get("AvailabilityZone"), 40),
-                    "launchTime": _normalize_time(instance.get("LaunchTime")),
-                    "controllable": True,
-                })
+                raw_instances.append(instance)
+
+    status_by_id = {}
+    instance_ids = [_clean(instance.get("InstanceId"), 30) for instance in raw_instances if instance.get("InstanceId")]
+    if instance_ids:
+        response = client.describe_instance_status(InstanceIds=instance_ids, IncludeAllInstances=True)
+        status_by_id = {item.get("InstanceId"): item for item in response.get("InstanceStatuses", [])}
+
+    instances = []
+    for instance in raw_instances:
+        instance_id = _clean(instance.get("InstanceId"), 30)
+        tags = {str(tag.get("Key", "")): str(tag.get("Value", "")) for tag in instance.get("Tags", [])}
+        health = status_by_id.get(instance_id, {})
+        security_groups = [
+            {"id": _clean(group.get("GroupId"), 40), "name": _clean(group.get("GroupName"), 120)}
+            for group in instance.get("SecurityGroups", [])
+        ]
+        volumes = [
+            _clean((mapping.get("Ebs") or {}).get("VolumeId"), 40)
+            for mapping in instance.get("BlockDeviceMappings", [])
+            if (mapping.get("Ebs") or {}).get("VolumeId")
+        ]
+        instances.append({
+            "instanceId": instance_id,
+            "name": _clean(tags.get("Name"), 120) or instance_id,
+            "region": region,
+            "state": _clean((instance.get("State") or {}).get("Name"), 30) or "unknown",
+            "normalState": _clean(tags.get("dpi:normal-state"), 30) or "unknown",
+            "backupRole": _clean(tags.get("dpi:backup-role"), 80) or "unknown",
+            "availabilityZone": _clean((instance.get("Placement") or {}).get("AvailabilityZone"), 40),
+            "launchTime": _normalize_time(instance.get("LaunchTime")),
+            "instanceType": _clean(instance.get("InstanceType"), 40),
+            "architecture": _clean(instance.get("Architecture"), 40),
+            "imageId": _clean(instance.get("ImageId"), 40),
+            "platformDetails": _clean(instance.get("PlatformDetails"), 80),
+            "privateIpAddress": _clean(instance.get("PrivateIpAddress"), 80),
+            "publicIpAddress": _clean(instance.get("PublicIpAddress"), 80),
+            "vpcId": _clean(instance.get("VpcId"), 40),
+            "subnetId": _clean(instance.get("SubnetId"), 40),
+            "monitoringState": _clean((instance.get("Monitoring") or {}).get("State"), 30),
+            "rootDeviceType": _clean(instance.get("RootDeviceType"), 30),
+            "virtualizationType": _clean(instance.get("VirtualizationType"), 30),
+            "ebsOptimized": bool(instance.get("EbsOptimized")),
+            "instanceStatus": _clean((health.get("InstanceStatus") or {}).get("Status"), 30) or "unknown",
+            "systemStatus": _clean((health.get("SystemStatus") or {}).get("Status"), 30) or "unknown",
+            "securityGroups": security_groups,
+            "volumeIds": volumes,
+            "controllable": True,
+        })
     return instances
 
 

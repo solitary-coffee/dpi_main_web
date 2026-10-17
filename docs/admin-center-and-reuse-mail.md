@@ -15,9 +15,15 @@
   - 管理操作、二次利用申請、IP遮断の最近の履歴
 - `/site/ec2-admin/`
   - `dpi:backup-managed=true` のバックアップEC2に限定した起動・停止・再起動
+  - インスタンス/システムチェック、種類、AMI、OS、IP、VPC/Subnet、セキュリティグループ、EBSボリューム、起動日時
 - `/site/xml-admin/`
   - 気象庁XMLの安全なプレビュー、現在の配信枠選択、東京・大阪ingestへの署名付き配信
   - AWS登録先と許可済み二次利用チャンネルの配信枠別件数
+- `/site/status-admin/`
+  - Statuspageコンポーネントの一覧と稼働状況更新
+  - インシデントの一覧・作成・更新・削除
+  - 予定メンテナンスの一覧・作成・更新・削除と自動遷移・通知設定
+  - Statuspage APIキーはWorkerのSecretだけで保持し、ブラウザーへ返さない
 - `/site/mail-admin/`（お知らせ一括配信）
   - 購読者と許可済み二次利用者を個別または同時に選択
   - 許可済み二次利用申請のDiscordサーバーを選択し、登録チャンネルへ一括配信
@@ -33,8 +39,11 @@ Workerを切り替える前にD1マイグレーションを適用する。
 その前に、管理者のメールアドレスをカンマ区切りで `ADMIN_EMAILS` Secretへ登録する。
 許可リストをリポジトリの `vars` に保存しない。
 
+StatuspageのPage ID `28grbz2c7xtm` と公開URLは通常変数に設定済み。Atlassian Statuspageで発行したAPIキーだけをSecretとして登録する。
+
 ```bash
 npx wrangler secret put ADMIN_EMAILS
+npx wrangler secret put STATUSPAGE_API_KEY
 ```
 
 ```bash

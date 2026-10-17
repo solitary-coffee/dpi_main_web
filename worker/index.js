@@ -4,6 +4,7 @@ import { handleIpAdminRequest } from './ip-admin.js';
 import { handleReuseRequest } from './reuse.js';
 import { handleChannelDirectoryRequest } from './channel-directory.js';
 import { handleAdminCenterRequest } from './admin-center.js';
+import { handleStatuspageAdminRequest } from './statuspage-admin.js';
 
 const TOPICS = Object.freeze({
     bot_issue: 'BOTの不具合',
@@ -47,6 +48,9 @@ export default {
 
         const blockedResponse = await blockResponseForRequest(request, env);
         if (blockedResponse) return blockedResponse;
+
+        const statuspageAdminResponse = await handleStatuspageAdminRequest(request, env);
+        if (statuspageAdminResponse) return statuspageAdminResponse;
 
         const adminCenterResponse = await handleAdminCenterRequest(request, env);
         if (adminCenterResponse) return adminCenterResponse;
