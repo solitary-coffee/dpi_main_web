@@ -630,7 +630,7 @@ def _timestamp(value):
 def _directory_entries(record):
     channel_id = _clean(record.get("id"), 30)
     channel_name = _clean(record.get("Ch_Name"), 100)
-    deliveries = _string_list(record.get("app"), 100)
+    deliveries = _string_list(record.get("app"), 100, item_length=120)
     updated_at = _normalize_time(record.get("time"))
     has_webhook = any(
         _valid_discord_webhook_url(candidate)
@@ -678,7 +678,7 @@ def _normalize_time(value):
         return text
 
 
-def _string_list(value, limit):
+def _string_list(value, limit, item_length=2048):
     if isinstance(value, str):
         text = value.strip()
         if not text:
@@ -692,7 +692,7 @@ def _string_list(value, limit):
         value = [value]
     result = []
     for item in value:
-        text = _clean(item, 100)
+        text = _clean(item, item_length)
         if text and text not in result:
             result.append(text)
         if len(result) >= limit:
@@ -1097,7 +1097,10 @@ def _load_announcement_targets(delivery_slots, server_ids, target_mode="delivery
             server_matches = bool(selected_servers.intersection(record_servers))
             if target_mode in {"servers", "intersection"} and not server_matches:
                 continue
-            record_slots = {_normalize_delivery_name(value) for value in _string_list(record.get("app"), 100)}
+            record_slots = {
+                _normalize_delivery_name(value)
+                for value in _string_list(record.get("app"), 100, item_length=120)
+            }
             record_slots.discard("")
             matched_slots = selected_slots.intersection(record_slots)
             if target_mode in {"delivery_slots", "intersection"} and not matched_slots:
@@ -1381,7 +1384,10 @@ def _load_dispatch_targets(delivery_slot):
         ExpressionAttributeNames={"#app": "app", "#upper_url": "URL", "#lower_url": "url"},
     ):
         for record in page.get("Items", []):
-            slots = {_normalize_delivery_name(value) for value in _string_list(record.get("app"), 100)}
+            slots = {
+                _normalize_delivery_name(value)
+                for value in _string_list(record.get("app"), 100, item_length=120)
+            }
             if delivery_slot not in slots:
                 continue
             for candidate in [*_string_list(record.get("URL"), 100), *_string_list(record.get("url"), 100)]:
