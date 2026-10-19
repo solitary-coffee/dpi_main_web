@@ -78,6 +78,11 @@ test('配信系統はEC2とLambda・SQSバックアップを分離しSQS稼働�
     assert.match(script, /document\.createElement\(tag\)/u);
     assert.match(script, /flow\.routes/u);
     assert.match(script, /flow-route-branches/u);
+    assert.match(script, /stageStatusSummary\(matches\)/u);
+    assert.match(script, /\['abnormal', '異常'\]/u);
+    assert.match(script, /component\.activityState === 'error'/u);
+    assert.match(style, /\.flow-stage-statuses/u);
+    assert.match(style, /\.flow-stage-status/u);
     assert.match(style, /grid-template-columns: repeat\(2/u);
     assert.match(style, /@media \(max-width: 760px\)/u);
     assert.doesNotMatch(script, /setInterval|innerHTML/u);
