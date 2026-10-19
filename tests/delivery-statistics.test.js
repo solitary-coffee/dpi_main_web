@@ -31,8 +31,12 @@ test('DMDATA履歴は固定ドメイン・短時間キャッシュ・配信状�
     assert.match(source, /hmac\.compare_digest\(dmdata_source\["xmlSha256"\], xml_digest\)/u);
     assert.match(source, /deliveryStateLabel/u);
     assert.match(source, /gd\/eew/u);
+    assert.match(source, /dmdata_delivery_state_lookup_failed/u);
+    assert.match(source, /"deliveryStateLabel"\] = "状態取得失敗"/u);
     assert.match(template, /DmdataApiKeyParameter/u);
     assert.match(template, /DMDATA_API_KEY_PARAMETER/u);
+    const operationalPolicy = template.match(/- Sid: ReadAndWriteOperationalState([\s\S]*?)(?=\n\s+- Sid:|\n\s+FunctionUrlConfig:)/u)?.[1] || '';
+    assert.match(operationalPolicy, /dynamodb:BatchGetItem/u);
     assert.doesNotMatch(template, /DMDATA_API_KEY:\s/u);
     assert.match(html, /DMDATA過去受信/u);
     assert.match(html, /未対応形式/u);
