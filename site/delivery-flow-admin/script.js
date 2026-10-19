@@ -25,6 +25,7 @@ function renderFlow(flow) {
     const summary = flow.summary || {};
     const cards = [
         ['正常', summary.normal || 0, 'normal'],
+        ['うち待機中', summary.waiting || 0, 'waiting'],
         ['停止・待機', summary.stopped || 0, 'stopped'],
         ['異常', summary.abnormal || 0, 'abnormal'],
         ['未確認', summary.unknown || 0, 'unknown'],
@@ -79,11 +80,13 @@ function routePanel(route, components) {
 }
 
 function routeStage(stage, components, branch = false) {
-    const section = el('section', branch ? 'flow-route-stage flow-route-branch' : 'flow-route-stage');
-    section.append(el('h4', '', stage.label || stage.id));
+    const section = el('details', branch ? 'flow-route-stage flow-route-branch' : 'flow-route-stage');
     const grid = el('div', 'flow-component-grid');
     const layers = new Set(stage.componentLayers || [stage.id]);
     const matches = components.filter((component) => layers.has(component.layer));
+    const heading = el('summary', 'flow-stage-summary');
+    heading.append(el('strong', '', stage.label || stage.id), el('span', 'flow-stage-count', `${number(matches.length)}系統`));
+    section.append(heading);
     if (!matches.length) grid.append(el('p', 'empty', '対象系統はありません。'));
     for (const component of matches) grid.append(componentCard(component));
     section.append(grid);
@@ -91,11 +94,14 @@ function routeStage(stage, components, branch = false) {
 }
 
 function componentCard(component) {
-    const card = el('article', `flow-component component-${component.status || 'unknown'}`);
-    const head = el('div', 'flow-component-head');
-    head.append(el('h4', '', component.name || component.id), el('span', `flow-state state-${component.status || 'unknown'}`, statusLabel(component.status)));
-    card.append(head, el('p', 'flow-detail', component.detail || '詳細なし'));
-    if (component.expectedStopped) card.append(el('p', 'expected-note', '待機系統のため停止中でも異常判定しません。'));
+    const card = el('details', `flow-component component-${component.status || 'unknown'}`);
+    const displayState = component.status === 'abnormal' ? 'abnormal' : (component.activityState || component.status || 'unknown');
+    const head = el('summary', 'flow-component-head');
+    head.append(el('strong', '', component.name || component.id), el('span', `flow-state state-${displayState}`, component.activityLabel || statusLabel(component.status)));
+    const body = el('div', 'flow-component-body');
+    body.append(el('p', 'flow-detail', component.detail || '詳細なし'));
+    if (component.expectedStopped) body.append(el('p', 'expected-note', '待機系統のため停止中でも異常判定しません。'));
+    if (component.standby) body.append(el('p', 'expected-note', 'オンデマンド起動の待機状態です。停止・異常ではありません。'));
     const list = el('dl');
     const rows = [
         ['最終疎通', formatDate(component.lastConnectivityAt)],
@@ -103,13 +109,32 @@ function componentCard(component) {
         ['直近通過時間', component.passageMs == null ? '未記録' : `${number(component.passageMs)} ms`],
     ];
     if (component.lastTitle) rows.push(['直近タイトル', component.lastTitle]);
-    if ((component.queues || []).length) rows.push(['キュー内訳', component.queues.map((queue) => `${queue.name}: 待機${number(queue.visible)} / 処理中${number(queue.inFlight)}`).join('、')]);
+    if ((component.functions || []).length) rows.push(['Lambda', component.functions.join('、')]);
     for (const [label, value] of rows) list.append(el('dt', '', label), el('dd', '', value));
-    card.append(list);
+    body.append(list);
+    if ((component.queues || []).length) {
+        const queueSection = el('section', 'queue-breakdown');
+        queueSection.append(el('h5', '', 'キュー内訳'));
+        const queueList = el('ul', 'queue-list');
+        for (const queue of component.queues) {
+            const state = queue.activityState || 'unknown';
+            const item = el('li', `queue-item queue-${state}`);
+            item.append(
+                el('strong', '', queue.name || '名称未取得'),
+                el('span', `queue-state state-${state}`, queueStateLabel(queue)),
+                el('small', '', `処理待ち ${number(queue.visible)} / 処理中 ${number(queue.inFlight)} / 遅延待機 ${number(queue.delayed)}${queue.deadLetter ? ' / DLQ' : ''}`),
+            );
+            queueList.append(item);
+        }
+        queueSection.append(queueList);
+        body.append(queueSection);
+    }
+    card.append(body);
     return card;
 }
 
 function statusLabel(value) { return ({ normal: '正常', stopped: '停止', abnormal: '異常', unknown: '未確認' }[value] || '未確認'); }
+function queueStateLabel(queue) { return ({ waiting: '待機中（正常）', queued: '処理待ち', processing: '処理中', delayed: '遅延待機', error: 'DLQ異常' }[queue.activityState] || '未確認'); }
 function number(value) { return new Intl.NumberFormat('ja-JP').format(Number(value || 0)); }
 function formatDate(value) { const date = new Date(value || ''); return Number.isFinite(date.getTime()) ? new Intl.DateTimeFormat('ja-JP', { dateStyle: 'medium', timeStyle: 'medium' }).format(date) : '未記録'; }
 function setStatus(message, type) { const target = document.getElementById('global-status'); target.textContent = message; target.className = type ? `status ${type}` : 'status'; }

@@ -420,7 +420,7 @@ DMDATA_CATEGORIES = {
 
 def _load_dmdata_history(params):
     category = _clean(params.get("category"), 30).casefold() or "earthquake"
-    if category not in {*DMDATA_CATEGORIES, "eew"}:
+    if category not in {*DMDATA_CATEGORIES, "eew", "eew-warning"}:
         raise ValueError("DMDATAの情報分類を確認してください。")
     limit = min(max(_integer(params.get("limit"), 20), 1), 100)
     cursor = _clean(params.get("cursorToken"), 2000)
@@ -436,8 +436,8 @@ def _load_dmdata_history(params):
     if cached and cached["expires_at"] > now:
         return cached["value"]
 
-    if category == "eew":
-        value = _load_dmdata_eew(event_id, limit, cursor)
+    if category in {"eew", "eew-warning"}:
+        value = _load_dmdata_eew(event_id, limit, cursor, warning_only=category == "eew-warning")
     else:
         query = {
             "classification": DMDATA_CATEGORIES[category],
@@ -466,7 +466,7 @@ def _load_dmdata_history(params):
     return value
 
 
-def _load_dmdata_eew(event_id, limit, cursor=""):
+def _load_dmdata_eew(event_id, limit, cursor="", warning_only=False):
     if not event_id:
         query = {"limit": str(limit)}
         if cursor:
@@ -476,12 +476,15 @@ def _load_dmdata_eew(event_id, limit, cursor=""):
         for raw in response.get("items") or []:
             if not isinstance(raw, dict):
                 continue
+            if warning_only and not raw.get("isWarning"):
+                continue
             event = _clean(raw.get("eventId"), 40)
             earthquake = raw.get("earthquake") if isinstance(raw.get("earthquake"), dict) else {}
             hypocenter = earthquake.get("hypocenter") if isinstance(earthquake.get("hypocenter"), dict) else {}
-            title = "緊急地震速報"
+            title = "緊急地震速報（警報）" if raw.get("isWarning") else "緊急地震速報（予報）"
             if hypocenter.get("name"):
-                title = f"緊急地震速報（{_clean(hypocenter.get('name'), 120)}）"
+                kind = "警報" if raw.get("isWarning") else "予報"
+                title = f"緊急地震速報（{kind}・{_clean(hypocenter.get('name'), 120)}）"
             items.append({
                 "sourceId": "",
                 "eventId": event,
@@ -489,8 +492,8 @@ def _load_dmdata_eew(event_id, limit, cursor=""):
                 "title": title,
                 "controlTitle": "緊急地震速報",
                 "headline": _clean(raw.get("text"), 500),
-                "classification": "eew.forecast",
-                "category": "eew",
+                "classification": "eew.warning" if raw.get("isWarning") else "eew.forecast",
+                "category": "eew-warning" if warning_only else "eew",
                 "typeCode": "VXSE",
                 "receivedTime": _clean(raw.get("dateTime"), 60),
                 "format": "event",
@@ -500,10 +503,11 @@ def _load_dmdata_eew(event_id, limit, cursor=""):
                 "selectable": False,
                 "needsReports": True,
                 "isWarning": bool(raw.get("isWarning")),
+                "warningLabel": "警報発表済み" if raw.get("isWarning") else "予報",
                 "isCanceled": bool(raw.get("isCanceled")),
             })
         return {
-            "category": "eew",
+            "category": "eew-warning" if warning_only else "eew",
             "items": items,
             "nextToken": _clean(response.get("nextToken"), 2000) or None,
             "count": len(items),
@@ -516,6 +520,8 @@ def _load_dmdata_eew(event_id, limit, cursor=""):
     for report in response.get("items") or []:
         if not isinstance(report, dict):
             continue
+        if warning_only and not report.get("isWarning"):
+            continue
         for telegram in report.get("telegrams") or []:
             if not isinstance(telegram, dict):
                 continue
@@ -524,6 +530,7 @@ def _load_dmdata_eew(event_id, limit, cursor=""):
                 "eventId": _clean(report.get("eventId"), 40) or event_id,
                 "serial": _integer(report.get("serial"), _integer(telegram.get("serial"), 0)),
                 "isWarning": bool(report.get("isWarning")),
+                "warningLabel": "警報発表済み" if report.get("isWarning") else "予報",
                 "isCanceled": bool(report.get("isCanceled")),
                 "needsReports": False,
             })
@@ -532,7 +539,7 @@ def _load_dmdata_eew(event_id, limit, cursor=""):
             items.append(item)
     _attach_dmdata_delivery_states(items)
     return {
-        "category": "eew",
+        "category": "eew-warning" if warning_only else "eew",
         "eventId": event_id,
         "items": items,
         "nextToken": None,
@@ -852,19 +859,28 @@ def _sqs_region_summary(region):
     for url in urls[:50]:
         attributes = client.get_queue_attributes(
             QueueUrl=url,
-            AttributeNames=["ApproximateNumberOfMessages", "ApproximateNumberOfMessagesNotVisible"],
+            AttributeNames=[
+                "ApproximateNumberOfMessages",
+                "ApproximateNumberOfMessagesNotVisible",
+                "ApproximateNumberOfMessagesDelayed",
+            ],
         ).get("Attributes", {})
         count = _integer(attributes.get("ApproximateNumberOfMessages"), 0)
+        in_flight = _integer(attributes.get("ApproximateNumberOfMessagesNotVisible"), 0)
+        delayed = _integer(attributes.get("ApproximateNumberOfMessagesDelayed"), 0)
         name = url.rsplit("/", 1)[-1]
+        is_dead_letter = "dlq" in name.casefold() or "dead" in name.casefold()
         visible += count
-        if "dlq" in name.casefold() or "dead" in name.casefold():
+        if is_dead_letter:
             dead_letter += count
         queues.append({
             "name": name[:100],
             "region": region,
             "visible": count,
-            "inFlight": _integer(attributes.get("ApproximateNumberOfMessagesNotVisible"), 0),
-            "deadLetter": "dlq" in name.casefold() or "dead" in name.casefold(),
+            "inFlight": in_flight,
+            "delayed": delayed,
+            "deadLetter": is_dead_letter,
+            "activityState": _sqs_activity_state(count, in_flight, delayed, is_dead_letter),
         })
     return {
         "region": region,
@@ -873,6 +889,18 @@ def _sqs_region_summary(region):
         "deadLetterMessages": dead_letter,
         "queues": queues,
     }
+
+
+def _sqs_activity_state(visible, in_flight, delayed, dead_letter=False):
+    if dead_letter and visible > 0:
+        return "error"
+    if in_flight > 0:
+        return "processing"
+    if delayed > 0:
+        return "delayed"
+    if visible > 0:
+        return "queued"
+    return "waiting"
 
 
 def _dynamodb_summary():
@@ -1179,6 +1207,11 @@ def _load_delivery_flow():
         recent = _flow_recent_for_region(statistics.get("recent") or [], region)
         queue_count = _integer((section or {}).get("count"), 0)
         dlq = _integer((section or {}).get("deadLetterMessages"), 0)
+        queues = (section or {}).get("queues") or []
+        visible = sum(_integer(queue.get("visible"), 0) for queue in queues if not queue.get("deadLetter"))
+        in_flight = sum(_integer(queue.get("inFlight"), 0) for queue in queues if not queue.get("deadLetter"))
+        delayed = sum(_integer(queue.get("delayed"), 0) for queue in queues if not queue.get("deadLetter"))
+        activity_state = _sqs_activity_state(visible, in_flight, delayed, dlq > 0)
         status = "abnormal" if not sqs.get("available") or dlq > 0 or queue_count == 0 else "normal"
         components.append({
             "id": f"sqs-{region}",
@@ -1187,24 +1220,111 @@ def _load_delivery_flow():
             "region": region,
             "status": status,
             "expectedStopped": False,
-            "detail": f"キュー {queue_count}件 / 待機 {_integer((section or {}).get('visibleMessages'), 0)}件 / DLQ {dlq}件",
+            "activityState": activity_state,
+            "activityLabel": _sqs_activity_label(activity_state, visible, in_flight, delayed, dlq),
+            "detail": f"キュー {queue_count}件 / 処理待ち {visible}件 / 処理中 {in_flight}件 / 遅延待機 {delayed}件 / DLQ {dlq}件",
             "lastConnectivityAt": observed_at if sqs.get("available") else None,
             "lastPassedAt": _epoch_iso(recent.get("updatedEpoch")) if recent else None,
             "passageMs": recent.get("maxLatencyMs") if recent else None,
-            "queues": (section or {}).get("queues") or [],
+            "queues": queues,
+        })
+
+    function_names_by_region = {
+        item.get("region"): set(item.get("names") or [])
+        for item in lambda_summary.get("regions") or []
+    }
+    sqs_sections = {
+        item.get("region"): item
+        for item in sqs.get("regions") or []
+    }
+    for region in OPERATING_REGIONS:
+        region_role = _region_role(region).upper()
+        function_names = function_names_by_region.get(region, set())
+        backup_function = f"dpi-delivery-backup-{region_role}"
+        candidate_function = f"dpi-ha-candidate-{region_role}"
+        candidate_queue = next((
+            queue for queue in (sqs_sections.get(region) or {}).get("queues") or []
+            if queue.get("name") == f"dpi-ha-candidate-{region}"
+        ), None)
+        missing = [name for name in (candidate_function, backup_function) if name not in function_names]
+        if candidate_queue is None:
+            missing.append(f"dpi-ha-candidate-{region}")
+        activity_state = _queue_component_activity(candidate_queue)
+        status = "abnormal" if missing or activity_state == "error" else "normal"
+        components.append({
+            "id": f"regional-backup-{region}",
+            "layer": "regional-backup",
+            "name": f"リージョン内バックアップ（{region_role}）",
+            "region": region,
+            "status": status,
+            "expectedStopped": False,
+            "standby": activity_state == "waiting",
+            "activityState": activity_state,
+            "activityLabel": _backup_activity_label(activity_state),
+            "sourceType": "lambda-sqs",
+            "backupScope": "regional",
+            "detail": (
+                f"候補SQS → {candidate_function} → {backup_function}"
+                if not missing else f"不足リソース: {', '.join(missing)}"
+            ),
+            "lastConnectivityAt": observed_at if sqs.get("available") and lambda_summary.get("available") else None,
+            "lastPassedAt": None,
+            "passageMs": None,
+            "queues": [candidate_queue] if candidate_queue else [],
+            "functions": [candidate_function, backup_function],
+        })
+
+    for source_region in OPERATING_REGIONS:
+        target_region = next((region for region in OPERATING_REGIONS if region != source_region), None)
+        if not target_region:
+            continue
+        source_role = _region_role(source_region).upper()
+        target_role = _region_role(target_region).upper()
+        target_functions = function_names_by_region.get(target_region, set())
+        target_backup = f"dpi-delivery-backup-{target_role}"
+        target_candidate = f"dpi-ha-candidate-{target_role}"
+        target_queue = next((
+            queue for queue in (sqs_sections.get(target_region) or {}).get("queues") or []
+            if queue.get("name") == f"dpi-ha-candidate-{target_region}"
+        ), None)
+        missing = [name for name in (target_candidate, target_backup) if name not in target_functions]
+        if target_queue is None:
+            missing.append(f"dpi-ha-candidate-{target_region}")
+        activity_state = _queue_component_activity(target_queue)
+        status = "abnormal" if missing or activity_state == "error" else "normal"
+        components.append({
+            "id": f"cross-backup-{source_region}-to-{target_region}",
+            "layer": "cross-backup",
+            "name": f"相互バックアップ（{source_role} → {target_role}）",
+            "region": target_region,
+            "status": status,
+            "expectedStopped": False,
+            "standby": activity_state == "waiting",
+            "activityState": activity_state,
+            "activityLabel": _backup_activity_label(activity_state),
+            "sourceType": "lambda-sqs",
+            "backupScope": "cross",
+            "detail": (
+                f"{source_role}系統障害時に{target_role}の候補SQS・Lambdaで引継ぎ"
+                if not missing else f"引継ぎ先の不足リソース: {', '.join(missing)}"
+            ),
+            "lastConnectivityAt": observed_at if sqs.get("available") and lambda_summary.get("available") else None,
+            "lastPassedAt": None,
+            "passageMs": None,
+            "queues": [target_queue] if target_queue else [],
+            "functions": [target_candidate, target_backup],
         })
 
     backup = system.get("backupInstances") or {}
     instances = backup.get("instances") or []
     if not instances:
         components.append({
-            "id": "backup-unconfigured",
-            "layer": "regional-backup",
-            "name": "バックアップ配信系統",
+            "id": "ec2-unconfigured",
+            "layer": "ec2",
+            "name": "EC2受信・送信系統",
             "status": "stopped",
             "expectedStopped": True,
             "sourceType": "ec2",
-            "backupScope": "regional",
             "detail": "管理対象EC2は停止または未登録です",
             "lastConnectivityAt": observed_at if backup.get("available") else None,
             "lastPassedAt": None,
@@ -1212,7 +1332,6 @@ def _load_delivery_flow():
         })
     for instance in instances:
         state = _clean(instance.get("state"), 30).casefold()
-        backup_scope = _backup_scope(instance)
         healthy = instance.get("instanceStatus") in {"ok", "unknown", "not_applicable"} and instance.get("systemStatus") in {"ok", "unknown", "not_applicable"}
         if state == "stopped":
             status = "stopped"
@@ -1222,24 +1341,25 @@ def _load_delivery_flow():
             status = "abnormal"
         recent = _flow_recent_for_region(statistics.get("recent") or [], _clean(instance.get("region"), 40))
         components.append({
-            "id": f"backup-{_clean(instance.get('instanceId'), 40)}",
-            "layer": f"{backup_scope}-backup",
+            "id": f"ec2-{_clean(instance.get('instanceId'), 40)}",
+            "layer": "ec2",
             "name": _clean(instance.get("name"), 160) or _clean(instance.get("instanceId"), 40),
             "region": _clean(instance.get("region"), 40),
             "status": status,
             "expectedStopped": state == "stopped",
             "sourceType": "ec2",
-            "backupScope": backup_scope,
-            "detail": f"EC2 {state or 'unknown'} / {_backup_scope_label(backup_scope)} / 役割 {_clean(instance.get('backupRole'), 80) or '未設定'}",
+            "detail": f"EC2 {state or 'unknown'} / 役割 {_clean(instance.get('backupRole'), 80) or '未設定'} / 通常時 {_clean(instance.get('normalState'), 30) or '未設定'}",
             "lastConnectivityAt": observed_at if backup.get("available") else None,
             "lastPassedAt": _epoch_iso(recent.get("updatedEpoch")) if recent else None,
             "passageMs": recent.get("maxLatencyMs") if recent else None,
         })
 
-    counts = {"normal": 0, "stopped": 0, "abnormal": 0, "unknown": 0}
+    counts = {"normal": 0, "stopped": 0, "abnormal": 0, "unknown": 0, "waiting": 0}
     for component in components:
         key = component.get("status") if component.get("status") in counts else "unknown"
         counts[key] += 1
+        if component.get("activityState") == "waiting" or component.get("standby"):
+            counts["waiting"] += 1
     value = {
         "summary": counts,
         "components": components,
@@ -1250,6 +1370,7 @@ def _load_delivery_flow():
             {"id": "sqs", "label": "SQS系統"},
             {"id": "regional-backup", "label": "リージョン内バックアップ配信"},
             {"id": "cross-backup", "label": "相互バックアップ配信"},
+            {"id": "ec2", "label": "EC2"},
         ],
         "routes": [
             {
@@ -1270,7 +1391,7 @@ def _load_delivery_flow():
                 "id": "ec2-fast-delivery",
                 "label": "EC2起点",
                 "sequence": [
-                    {"id": "ec2", "label": "EC2", "componentLayers": ["regional-backup", "cross-backup"]},
+                    {"id": "ec2", "label": "EC2", "componentLayers": ["ec2"]},
                     {"id": "aws-fast", "label": "AWS高速配信", "componentLayers": ["aws-fast"]},
                 ],
                 "branches": [],
@@ -1283,21 +1404,38 @@ def _load_delivery_flow():
     return value
 
 
-def _backup_scope(instance):
-    role = _clean(instance.get("backupRole"), 80).casefold()
-    region = _clean(instance.get("region"), 40)
-    primary_region = {
-        "eew-earthquake": "ap-northeast-1",
-        "weather-volcano": "ap-northeast-3",
-    }.get(role)
-    if primary_region:
-        return "regional" if region == primary_region else "cross"
-    normal_state = _clean(instance.get("normalState"), 30).casefold()
-    return "regional" if normal_state == "running" else "cross"
+def _queue_component_activity(queue):
+    if not queue:
+        return "unknown"
+    return _clean(queue.get("activityState"), 30).casefold() or "unknown"
 
 
-def _backup_scope_label(scope):
-    return "リージョン内バックアップ" if scope == "regional" else "相互バックアップ"
+def _sqs_activity_label(state, visible=0, in_flight=0, delayed=0, dlq=0):
+    if state == "error":
+        return f"DLQ異常（{dlq}件）"
+    if state == "processing":
+        return f"処理中（{in_flight}件）"
+    if state == "delayed":
+        return f"遅延待機（{delayed}件）"
+    if state == "queued":
+        return f"処理待ち（{visible}件）"
+    if state == "waiting":
+        return "待機中（正常・メッセージなし）"
+    return "状態未確認"
+
+
+def _backup_activity_label(state):
+    if state == "error":
+        return "DLQ異常"
+    if state == "processing":
+        return "バックアップ処理中"
+    if state == "delayed":
+        return "遅延待機中"
+    if state == "queued":
+        return "引継ぎ処理待ち"
+    if state == "waiting":
+        return "待機中（正常）"
+    return "状態未確認"
 
 
 def _load_flow_system_summary():
@@ -2111,6 +2249,7 @@ def _dmdata_source_from_body(value):
         "receivedTime": _clean(value.get("receivedTime"), 60),
         "eventId": _clean(value.get("eventId"), 80),
         "title": _clean(value.get("title"), 300),
+        "isWarning": value.get("isWarning") is True,
         "xmlSha256": _valid_sha256(value.get("xmlSha256")),
     }
 
@@ -2162,6 +2301,7 @@ def _record_dmdata_dispatch(source, status, delivery_slot, send_data, delivery_i
         "classification": source.get("classification") or "",
         "type_code": source.get("typeCode") or "",
         "event_id": source.get("eventId") or "",
+        "is_warning": source.get("isWarning") is True,
         "received_time": source.get("receivedTime") or "",
         "title": preview.get("headline") or preview.get("controlTitle") or source.get("title") or "",
         "status": status,

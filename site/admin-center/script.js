@@ -330,6 +330,7 @@ function renderDmdataRows() {
         if (item.headline) title.append(element('small', 'block-code', item.headline));
         const type = element('td');
         type.append(element('span', '', item.classification || '—'), element('code', 'block-code', item.typeCode || item.format || '—'));
+        if (item.warningLabel) type.append(element('small', `block-code eew-${item.isWarning ? 'warning' : 'forecast'}`, item.warningLabel));
         const event = element('td');
         event.append(element('code', '', item.eventId || '—'));
         if (item.serial) event.append(element('small', 'block-code', `第${item.serial}報`));
@@ -364,8 +365,10 @@ async function loadDmdataXml(item, button) {
             receivedTime: item.receivedTime || '',
             eventId: item.eventId || '',
             title: item.title || '',
+            isWarning: Boolean(item.isWarning),
             xmlSha256: data.xmlSha256 || '',
         };
+        if (String(item.category || '').startsWith('eew')) document.getElementById('xml-route').value = 'eew';
         renderSelectedDmdata();
         invalidateXmlPreview();
         await previewXml();

@@ -17,11 +17,12 @@ test('AWS配信統計は最新世代だけを集計し24時間・7日・保持�
 });
 
 test('DMDATA履歴は固定ドメイン・短時間キャッシュ・配信状態記録を使用する', async () => {
-    const [source, template, html, script] = await Promise.all([
+    const [source, template, html, script, worker] = await Promise.all([
         readFile(new URL('../aws/channel-directory-api/lambda_function.py', import.meta.url), 'utf8'),
         readFile(new URL('../aws/channel-directory-api/template.yaml', import.meta.url), 'utf8'),
         readFile(new URL('../site/xml-admin/index.html', import.meta.url), 'utf8'),
         readFile(new URL('../site/admin-center/script.js', import.meta.url), 'utf8'),
+        readFile(new URL('../worker/admin-center.js', import.meta.url), 'utf8'),
     ]);
     assert.match(source, /view == "dmdata-history"/u);
     assert.match(source, /api\.dmdata\.jp.*data\.api\.dmdata\.jp/u);
@@ -31,6 +32,9 @@ test('DMDATA履歴は固定ドメイン・短時間キャッシュ・配信状�
     assert.match(source, /hmac\.compare_digest\(dmdata_source\["xmlSha256"\], xml_digest\)/u);
     assert.match(source, /deliveryStateLabel/u);
     assert.match(source, /gd\/eew/u);
+    assert.match(source, /"eew-warning"/u);
+    assert.match(source, /warning_only=category == "eew-warning"/u);
+    assert.match(source, /"warningLabel": "警報発表済み"/u);
     assert.match(source, /dmdata_delivery_state_lookup_failed/u);
     assert.match(source, /"deliveryStateLabel"\] = "状態取得失敗"/u);
     assert.match(template, /DmdataApiKeyParameter/u);
@@ -39,29 +43,42 @@ test('DMDATA履歴は固定ドメイン・短時間キャッシュ・配信状�
     assert.match(operationalPolicy, /dynamodb:BatchGetItem/u);
     assert.doesNotMatch(template, /DMDATA_API_KEY:\s/u);
     assert.match(html, /DMDATA過去受信/u);
+    assert.match(html, /緊急地震速報（警報発表イベント）/u);
     assert.match(html, /未対応形式/u);
     assert.match(script, /dmdata-load-xml/u);
+    assert.match(worker, /'eew-warning'/u);
+    assert.match(source, /"is_warning": source\.get\("isWarning"\) is True/u);
     assert.doesNotMatch(script, /innerHTML/u);
 });
 
-test('配信系統は待機系停止を異常にせず地域別SQSを表示する', async () => {
-    const [source, html, script] = await Promise.all([
+test('配信系統はEC2とLambda・SQSバックアップを分離しSQS稼働状態を表示する', async () => {
+    const [source, html, script, style] = await Promise.all([
         readFile(new URL('../aws/channel-directory-api/lambda_function.py', import.meta.url), 'utf8'),
         readFile(new URL('../site/delivery-flow-admin/index.html', import.meta.url), 'utf8'),
         readFile(new URL('../site/delivery-flow-admin/script.js', import.meta.url), 'utf8'),
+        readFile(new URL('../site/delivery-flow-admin/style.css', import.meta.url), 'utf8'),
     ]);
     assert.match(source, /view == "delivery-flow"/u);
     assert.match(source, /def _sqs_region_summary/u);
-    assert.match(source, /"expectedStopped": state == "stopped"/u);
+    assert.match(source, /"layer": "ec2"/u);
+    assert.match(source, /dpi-delivery-backup-/u);
+    assert.match(source, /dpi-ha-candidate-/u);
+    assert.match(source, /"sourceType": "lambda-sqs"/u);
     assert.match(source, /"lastConnectivityAt"/u);
     assert.match(source, /"lastPassedAt"/u);
     assert.match(source, /"label": "上流API"[\s\S]*"label": "自宅サーバー"[\s\S]*"label": "AWS高速配信"[\s\S]*"label": "SQS"[\s\S]*"label": "リージョン内バックアップ配信"[\s\S]*"label": "相互バックアップ配信"/u);
     assert.match(source, /"label": "EC2"[\s\S]*"label": "AWS高速配信"/u);
-    assert.match(source, /def _backup_scope/u);
-    assert.match(html, /AWS高速系統|バックアップ待機中/u);
+    assert.match(source, /def _sqs_activity_state/u);
+    assert.match(source, /"activityLabel": _sqs_activity_label/u);
+    assert.match(html, /待機中（正常）|バックアップ待機中/u);
     assert.match(script, /component\.expectedStopped/u);
+    assert.match(script, /component\.standby/u);
+    assert.match(script, /queueStateLabel/u);
+    assert.match(script, /document\.createElement\(tag\)/u);
     assert.match(script, /flow\.routes/u);
     assert.match(script, /flow-route-branches/u);
+    assert.match(style, /grid-template-columns: repeat\(2/u);
+    assert.match(style, /@media \(max-width: 760px\)/u);
     assert.doesNotMatch(script, /setInterval|innerHTML/u);
 });
 
