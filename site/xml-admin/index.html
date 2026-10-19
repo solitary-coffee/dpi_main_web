@@ -43,7 +43,7 @@
                 <div class="section-heading"><div><p class="eyebrow">DMDATA HISTORY</p><h2 id="dmdata-title">DMDATA過去受信</h2></div><p>管理者が更新した時だけAPIへ接続します。</p></div>
                 <p class="section-description">過去電文を分類別に参照し、選択した1件のXMLだけを読み込みます。緊急地震速報はイベントを選んで各報を表示してください。配信済み判定には既存の配信監視記録と、この画面からの配信記録を使用します。</p>
                 <form id="dmdata-search-form" class="control-form">
-                    <label>情報分類<select id="dmdata-category"><option value="eew">緊急地震速報</option><option value="earthquake" selected>地震・津波関連</option><option value="weather">気象関連</option><option value="volcano">火山関連</option></select></label>
+                    <label>情報分類<select id="dmdata-category"><option value="eew">緊急地震速報（予報・警報）</option><option value="eew-warning">緊急地震速報（警報発表イベント）</option><option value="earthquake" selected>地震・津波関連</option><option value="weather">気象関連</option><option value="volcano">火山関連</option></select></label>
                     <label>取得件数<select id="dmdata-limit"><option value="20">20件</option><option value="50">50件</option><option value="100">100件</option></select></label>
                     <label>配信状態<select id="dmdata-state"><option value="all">すべて</option><option value="undelivered">未配信</option><option value="delivered">配信済み</option><option value="unsupported">未対応形式</option></select></label>
                     <label class="wide">一覧内検索<input id="dmdata-query" type="search" placeholder="タイトル・電文コード・イベントID"></label>

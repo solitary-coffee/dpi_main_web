@@ -376,7 +376,7 @@ async function proxyDeliveryStatistics(requestUrl, env, admin) {
 
 async function proxyDmdataHistory(requestUrl, env, admin) {
     const category = clean(requestUrl.searchParams.get('category')) || 'earthquake';
-    if (!['eew', 'earthquake', 'weather', 'volcano'].includes(category)) {
+    if (!['eew', 'eew-warning', 'earthquake', 'weather', 'volcano'].includes(category)) {
         throw new AdminCenterError(400, 'DMDATAの情報分類を確認してください。', 'invalid_dmdata_category');
     }
     const requestedLimit = Number(requestUrl.searchParams.get('limit') || 20);
