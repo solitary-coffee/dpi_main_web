@@ -1,6 +1,7 @@
 const categoryLabels = Object.freeze({ maintenance: 'メンテナンス情報', outage: '障害・重要情報', update: 'アップデート情報' });
 const statusLabels = Object.freeze({ draft: '下書き', queuing: 'Queue登録中', sending: '配信中', completed: '完了', cancelled: '取消済み' });
 const formatLabels = Object.freeze({ message: '通常メッセージ', embed: 'Embed' });
+const targetModeLabels = Object.freeze({ delivery_slots: '配信枠', servers: 'サーバー', intersection: '配信枠＋サーバー' });
 const MAX_IMAGE_BYTES = 1_250_000;
 const IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
 const campaignTemplates = Object.freeze({
@@ -71,7 +72,7 @@ async function loadSummary() {
     try {
         summaryState = await request('/site/discord-admin/api/summary');
         document.getElementById('admin-email').textContent = summaryState.admin;
-        renderStats(); renderSlots(); renderServers(); renderCampaigns(); scheduleAudiencePreview();
+        renderStats(); renderSlots(); renderServers(); updateTargetModeUI(); renderCampaigns(); scheduleAudiencePreview();
         setStatus('', '');
     } catch (error) { setStatus(error.message, 'error'); }
 }
@@ -93,6 +94,7 @@ function renderSlots() {
         const label = el('label', 'delivery-slot'); const input = document.createElement('input');
         input.type = 'checkbox'; input.name = 'delivery-slots'; input.value = slot.id;
         input.checked = previous.has(slot.id) || (previous.size === 0 && slot.id === 'DPI_Bot通知');
+        input.defaultChecked = input.checked;
         const text = el('span', '', slot.label); text.append(el('small', `slot-status ${slot.status}`, slot.status)); label.append(input, text); container.append(label);
     }
 }
@@ -123,8 +125,10 @@ function renderCampaigns() {
         const metrics = el('div', 'campaign-metrics');
         for (const [label, value] of [['対象', campaign.recipientCount], ['送信済み', campaign.sentCount], ['残り', campaign.remainingCount], ['失敗', campaign.failedCount]]) metrics.append(el('span', '', `${label}: ${value}`));
         card.append(metrics);
-        const names = (campaign.targetServerIds || []).map(serverName).join('・') || '配信枠に一致するすべて';
-        card.append(el('p', 'campaign-meta', `対象配信枠: ${(campaign.deliverySlots || []).map(slotName).join('・')} / サーバー: ${names}`));
+        const names = (campaign.targetServerIds || []).map(serverName).join('・') || '指定なし';
+        const slots = (campaign.deliverySlots || []).map(slotName).join('・') || '指定なし';
+        const duplicateText = campaign.deduplicateChannels === false ? '配信枠ごと' : '同一チャンネル1件';
+        card.append(el('p', 'campaign-meta', `指定方法: ${targetModeLabels[campaign.targetMode] || '配信枠'} / 配信枠: ${slots} / サーバー: ${names} / ${duplicateText}`));
         const actions = el('div', 'campaign-actions');
         if (['draft', 'queuing'].includes(campaign.status)) {
             const button = el('button', 'primary-btn', '配信を開始'); button.type = 'button'; button.addEventListener('click', () => sendCampaign(campaign, button)); actions.append(button);
@@ -138,6 +142,7 @@ function renderCampaigns() {
 
 function handleFormChange(event) {
     if (event.target.name === 'delivery-format') updateFormatOptions();
+    if (event.target.name === 'target-mode') updateTargetModeUI();
     if (event.target.id === 'image-file' || event.target.id === 'image-url') validateImageSelection();
     scheduleAudiencePreview(); renderPreview();
 }
@@ -160,14 +165,15 @@ async function createCampaign(event) {
     event.preventDefault(); const button = document.getElementById('save-btn'); button.disabled = true;
     try {
         const payload = selectionPayload();
-        if (!payload.categories.length || !payload.deliverySlots.length) throw new Error('カテゴリと配信枠をそれぞれ1つ以上選択してください。');
+        if (!payload.categories.length) throw new Error('お知らせカテゴリを1つ以上選択してください。');
+        validateTargetSelection(payload);
         validateImageSelection(true);
         const form = new FormData();
         for (const key of ['categories', 'recipientGroups', 'deliverySlots', 'targetServerIds']) form.append(key, JSON.stringify(payload[key]));
-        for (const key of ['subject', 'body', 'deliveryFormat', 'embedColor', 'imageUrl', 'imageAlt']) form.append(key, payload[key]);
+        for (const key of ['targetMode', 'deduplicateChannels', 'subject', 'body', 'deliveryFormat', 'embedColor', 'imageUrl', 'imageAlt']) form.append(key, String(payload[key]));
         const image = document.getElementById('image-file').files[0]; if (image) form.append('image', image, image.name);
         const result = await request('/site/discord-admin/api/campaigns', { method: 'POST', body: form });
-        document.getElementById('campaign-form').reset(); document.getElementById('embed-color').value = '#5865f2'; updateFormatOptions(); revokePreviewImage(); renderPreview();
+        document.getElementById('campaign-form').reset(); document.getElementById('embed-color').value = '#5865f2'; updateFormatOptions(); updateTargetModeUI(); revokePreviewImage(); renderPreview(); scheduleAudiencePreview();
         setStatus(`下書きを保存しました。配信ID: ${result.campaign.id}`, 'success'); await loadSummary();
     } catch (error) { setStatus(error.message, 'error'); } finally { button.disabled = false; }
 }
@@ -185,18 +191,41 @@ async function cancelCampaign(campaign, button) {
 }
 
 function selectionPayload() {
-    return { categories: checked('campaign-categories'), recipientGroups: ['discord_approved'], deliverySlots: checked('delivery-slots'), targetServerIds: checked('server-ids'), subject: document.getElementById('subject').value, body: document.getElementById('body').value, deliveryFormat: selectedFormat(), embedColor: document.getElementById('embed-color').value, imageUrl: document.getElementById('image-url').value.trim(), imageAlt: document.getElementById('image-alt').value.trim() };
+    return { categories: checked('campaign-categories'), recipientGroups: ['discord_approved'], targetMode: selectedTargetMode(), deliverySlots: checked('delivery-slots'), targetServerIds: checked('server-ids'), deduplicateChannels: document.getElementById('deduplicate-channels').checked, subject: document.getElementById('subject').value, body: document.getElementById('body').value, deliveryFormat: selectedFormat(), embedColor: document.getElementById('embed-color').value, imageUrl: document.getElementById('image-url').value.trim(), imageAlt: document.getElementById('image-alt').value.trim() };
 }
 function selectedFormat() { return document.querySelector('input[name="delivery-format"]:checked')?.value || 'message'; }
-function checked(name) { return [...document.querySelectorAll(`input[name="${name}"]:checked`)].map((input) => input.value); }
+function selectedTargetMode() { return document.querySelector('input[name="target-mode"]:checked')?.value || 'delivery_slots'; }
+function checked(name) { return [...document.querySelectorAll(`input[name="${name}"]:not(:disabled):checked`)].map((input) => input.value); }
 function setAllServers(value) { for (const input of document.querySelectorAll('input[name="server-ids"]')) input.checked = value; scheduleAudiencePreview(); }
 function scheduleAudiencePreview() { window.clearTimeout(audienceTimer); audienceTimer = window.setTimeout(updateAudiencePreview, 250); }
 
+function updateTargetModeUI() {
+    const mode = selectedTargetMode();
+    const slotsEnabled = mode !== 'servers'; const serversEnabled = mode !== 'delivery_slots';
+    const slotsFieldset = document.getElementById('delivery-slots-fieldset'); const serversFieldset = document.getElementById('servers-fieldset');
+    slotsFieldset.classList.toggle('target-disabled', !slotsEnabled); serversFieldset.classList.toggle('target-disabled', !serversEnabled);
+    for (const input of slotsFieldset.querySelectorAll('input')) input.disabled = !slotsEnabled;
+    for (const input of serversFieldset.querySelectorAll('input, button')) input.disabled = !serversEnabled;
+}
+
+function validateTargetSelection(payload) {
+    if (payload.targetMode === 'delivery_slots' && !payload.deliverySlots.length) throw new Error('配信枠を1つ以上選択してください。');
+    if (payload.targetMode === 'servers' && !payload.targetServerIds.length) throw new Error('配信先サーバーを1つ以上選択してください。');
+    if (payload.targetMode === 'intersection' && (!payload.deliverySlots.length || !payload.targetServerIds.length)) throw new Error('配信枠と配信先サーバーをそれぞれ1つ以上選択してください。');
+}
+
 async function updateAudiencePreview() {
     const payload = selectionPayload(); const target = document.getElementById('recipient-preview');
-    if (!payload.categories.length || !payload.deliverySlots.length) { target.textContent = 'カテゴリと配信枠を選ぶと対象Webhook数を表示します。'; return; }
-    try { const result = await request('/site/discord-admin/api/audience-preview', { method: 'POST', body: JSON.stringify(payload) }); target.textContent = `現在の対象: Discord Webhook ${result.count}件。配信開始時に再計算します。`; }
-    catch (error) { target.textContent = error.message; }
+    target.classList.remove('validation-error');
+    try { validateTargetSelection(payload); }
+    catch (error) { target.textContent = `${error.message} 選択後に対象Webhook数を表示します。`; return; }
+    try {
+        const result = await request('/site/discord-admin/api/audience-preview', { method: 'POST', body: JSON.stringify(payload) });
+        const count = Number(result.count || 0); target.textContent = `現在の送信件数: ${count}件。配信開始時に再計算します。`;
+        target.classList.toggle('validation-error', count === 0);
+        if (count === 0) target.textContent += ' 送信先がないため、下書き保存・配信はできません。';
+    }
+    catch (error) { target.textContent = error.message; target.classList.add('validation-error'); }
 }
 
 function validateImageSelection(throwOnError = false) {

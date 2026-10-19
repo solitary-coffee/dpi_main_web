@@ -3,6 +3,7 @@ import hashlib
 import json
 import os
 import re
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -32,6 +33,8 @@ MAX_LIMITED_RESULTS = 1000
 MAX_XML_BYTES = 1_500_000
 MAX_ADMIN_BODY_BYTES = 2_200_000
 MAX_DISCORD_IMAGE_BYTES = 1_250_000
+MAX_DISCORD_WORKERS = 25
+DISCORD_REQUEST_INTERVAL_SECONDS = 0.03
 SNOWFLAKE_LENGTHS = {17, 18, 19, 20}
 RESERVED_FIELDS = {"id", "Ch_Name", "app", "time", "URL", "url"}
 MANAGED_INSTANCE_TAG = "dpi:backup-managed"
@@ -54,6 +57,8 @@ _cache = {"expires_at": 0.0, "items": []}
 _system_cache = {"expires_at": 0.0, "value": None}
 _delivery_statistics_cache = {}
 _secret_cache = {"expires_at": 0.0, "value": None}
+_discord_rate_lock = threading.Lock()
+_discord_next_request_at = 0.0
 
 
 def lambda_handler(event, context):
@@ -112,10 +117,15 @@ def lambda_handler(event, context):
         if limit is not None and len(matched) >= limit:
             break
 
+    webhook_channels = {
+        entry["channelId"] for entry in matched
+        if entry.get("channelId") and entry.get("hasWebhook")
+    }
     return _response(200, {
         "success": True,
         "items": matched,
         "count": len(matched),
+        "webhookCount": len(webhook_channels),
         "source": {"region": os.environ.get("AWS_REGION", ""), "table": TABLE_NAME},
     })
 
@@ -622,6 +632,10 @@ def _directory_entries(record):
     channel_name = _clean(record.get("Ch_Name"), 100)
     deliveries = _string_list(record.get("app"), 100)
     updated_at = _normalize_time(record.get("time"))
+    has_webhook = any(
+        _valid_discord_webhook_url(candidate)
+        for candidate in [*_string_list(record.get("URL"), 100), *_string_list(record.get("url"), 100)]
+    )
 
     servers = []
     for key, value in record.items():
@@ -647,6 +661,7 @@ def _directory_entries(record):
         "visibility": None,
         "memberCount": None,
         "updatedAt": updated_at,
+        "hasWebhook": has_webhook,
     } for server_id, server_name in servers if channel_id or channel_name]
 
 
@@ -850,12 +865,18 @@ def _xml_preview(body):
 
 
 def _discord_announcement_preview(body):
-    delivery_slots = _announcement_delivery_slots(body)
-    server_ids = _announcement_server_ids(body)
-    targets, by_delivery = _load_announcement_targets(delivery_slots, server_ids)
+    target_mode, delivery_slots, server_ids, deduplicate_channels = _announcement_targeting(body)
+    targets, by_delivery = _load_announcement_targets(
+        delivery_slots,
+        server_ids,
+        target_mode,
+        deduplicate_channels,
+    )
     return {
         "targetCount": len(targets),
         "byDelivery": by_delivery,
+        "targetMode": target_mode,
+        "deduplicateChannels": deduplicate_channels,
         "serverFilterApplied": bool(server_ids),
     }
 
@@ -863,8 +884,7 @@ def _discord_announcement_preview(body):
 def _discord_announcement(body, actor, request_id):
     if not hmac.compare_digest(_clean(body.get("confirmation"), 100), request_id):
         raise ValueError("配信確認が一致しません。")
-    delivery_slots = _announcement_delivery_slots(body)
-    server_ids = _announcement_server_ids(body)
+    target_mode, delivery_slots, server_ids, deduplicate_channels = _announcement_targeting(body)
     subject = _clean(body.get("subject"), 121)
     message = str(body.get("body") or "").strip()
     delivery_format = _clean(body.get("deliveryFormat"), 20).casefold() or "message"
@@ -887,9 +907,14 @@ def _discord_announcement(body, actor, request_id):
     if delivery_format == "message" and len(f"**{subject}**\n\n{message}" + (f"\n\n{image_url}" if image_url else "")) > 2000:
         raise ValueError("通常メッセージは2,000文字以内にしてください。")
 
-    targets, by_delivery = _load_announcement_targets(delivery_slots, server_ids)
+    targets, by_delivery = _load_announcement_targets(
+        delivery_slots,
+        server_ids,
+        target_mode,
+        deduplicate_channels,
+    )
     if not targets:
-        raise ValueError("選択した配信枠に有効なWebhookがありません。")
+        raise ValueError("選択条件に一致する有効なDiscord Webhookがありません。")
     state_table = _dynamodb.Table(STATE_TABLE_NAME) if STATE_TABLE_NAME else None
     operation_key = f"ADMIN#DISCORD_ANNOUNCEMENT#{request_id}"
     if state_table:
@@ -907,33 +932,77 @@ def _discord_announcement(body, actor, request_id):
             raise ValueError("この配信は現在処理中です。完了後に更新してください。") from None
 
     payload = _discord_webhook_payload(subject, message, delivery_format, embed_color, image_url, image_name if image_bytes else "", image_alt)
-    def deliver(url):
-        return _post_discord_webhook(url, payload, image_bytes, image_name, image_type)
+    delivery_deadline = time.monotonic() + 105
+    target_groups = {}
+    for target in targets:
+        target_groups.setdefault(target["url"], []).append(target)
+
+    def deliver_group(group):
+        group_results = []
+        for index, target in enumerate(group):
+            if time.monotonic() >= delivery_deadline:
+                result = {"ok": False, "reason": "DELIVERY_DEADLINE", "status": 0}
+            else:
+                result = _post_discord_webhook(target["url"], payload, image_bytes, image_name, image_type)
+            result["slot"] = target.get("slot") or ""
+            group_results.append(result)
+            if index + 1 < len(group):
+                time.sleep(0.45)
+        return group_results
     try:
-        with ThreadPoolExecutor(max_workers=min(100, len(targets))) as executor:
-            results = list(executor.map(deliver, targets))
-        sent_count = sum(1 for result in results if result)
+        groups = list(target_groups.values())
+        with ThreadPoolExecutor(max_workers=min(MAX_DISCORD_WORKERS, len(groups))) as executor:
+            grouped_results = list(executor.map(deliver_group, groups))
+        results = [result for group in grouped_results for result in group]
+        sent_count = sum(1 for result in results if result.get("ok"))
         failed_count = len(results) - sent_count
+        failure_summary = {}
+        for result in results:
+            if result.get("ok"):
+                continue
+            reason = _clean(result.get("reason"), 80) or "UNKNOWN"
+            failure_summary[reason] = failure_summary.get(reason, 0) + 1
         completed = int(time.time())
+        operation_status = "failed" if failed_count and sent_count == 0 else "completed"
         if state_table:
             state_table.update_item(
                 Key={"pk": operation_key},
-                UpdateExpression="SET #status = :status, target_count = :targets, sent_count = :sent, failed_count = :failed, completed_at = :completed",
+                UpdateExpression="SET #status = :status, target_count = :targets, sent_count = :sent, failed_count = :failed, failure_summary = :summary, completed_at = :completed",
                 ExpressionAttributeNames={"#status": "status"},
-                ExpressionAttributeValues={":status": "completed", ":targets": len(targets), ":sent": sent_count, ":failed": failed_count, ":completed": completed},
+                ExpressionAttributeValues={
+                    ":status": operation_status,
+                    ":targets": len(targets),
+                    ":sent": sent_count,
+                    ":failed": failed_count,
+                    ":summary": failure_summary,
+                    ":completed": completed,
+                },
             )
         _audit_operation(actor, "discord.announcement", request_id, {
+            "target_mode": target_mode,
+            "deduplicate_channels": deduplicate_channels,
             "delivery_slots": delivery_slots,
             "server_filter_count": len(server_ids),
             "target_count": len(targets),
             "sent_count": sent_count,
             "failed_count": failed_count,
+            "failure_summary": failure_summary,
         })
+        if failure_summary:
+            print(json.dumps({
+                "event": "discord_announcement_delivery_failures",
+                "request_id": request_id,
+                "target_count": len(targets),
+                "sent_count": sent_count,
+                "failure_summary": failure_summary,
+            }, ensure_ascii=False))
         return {
             "message": "Discordお知らせの配信処理が完了しました。",
             "targetCount": len(targets),
             "sentCount": sent_count,
             "failedCount": failed_count,
+            "failureSummary": failure_summary,
+            "allFailed": bool(failed_count and sent_count == 0),
             "byDelivery": by_delivery,
         }
     except Exception:
@@ -953,9 +1022,34 @@ def _announcement_result(item, by_delivery, reused=False):
         "targetCount": _integer(item.get("target_count"), 0),
         "sentCount": _integer(item.get("sent_count"), 0),
         "failedCount": _integer(item.get("failed_count"), 0),
+        "failureSummary": item.get("failure_summary") if isinstance(item.get("failure_summary"), dict) else {},
         "byDelivery": by_delivery,
         "reused": reused,
     }
+
+
+def _announcement_targeting(body):
+    delivery_slots = _announcement_delivery_slots(body)
+    server_ids = _announcement_server_ids(body)
+    target_mode = _clean(body.get("targetMode"), 30).casefold()
+    if not target_mode:
+        target_mode = "intersection" if server_ids else "delivery_slots"
+    if target_mode not in {"delivery_slots", "servers", "intersection"}:
+        raise ValueError("Discordの送信先指定方法を確認してください。")
+    if target_mode == "delivery_slots" and not delivery_slots:
+        raise ValueError("配信枠を1つ以上選択してください。")
+    if target_mode == "servers" and not server_ids:
+        raise ValueError("配信先サーバーを1つ以上選択してください。")
+    if target_mode == "intersection" and (not delivery_slots or not server_ids):
+        raise ValueError("配信枠と配信先サーバーをそれぞれ1つ以上選択してください。")
+    if target_mode == "delivery_slots":
+        server_ids = []
+    elif target_mode == "servers":
+        delivery_slots = []
+    deduplicate_value = body.get("deduplicateChannels", True)
+    if not isinstance(deduplicate_value, bool):
+        raise ValueError("同一チャンネルへの送信方法を確認してください。")
+    return target_mode, delivery_slots, server_ids, deduplicate_value
 
 
 def _announcement_delivery_slots(body):
@@ -967,8 +1061,8 @@ def _announcement_delivery_slots(body):
         normalized = _normalize_delivery_name(value)
         if normalized and normalized not in slots:
             slots.append(normalized)
-    if not slots or len(slots) > 100:
-        raise ValueError("配信枠を1つ以上選択してください。")
+    if len(slots) > 100:
+        raise ValueError("配信枠を確認してください。")
     return slots
 
 
@@ -986,12 +1080,13 @@ def _announcement_server_ids(body):
     return result
 
 
-def _load_announcement_targets(delivery_slots, server_ids):
+def _load_announcement_targets(delivery_slots, server_ids, target_mode="delivery_slots", deduplicate_channels=True):
     selected_slots = set(delivery_slots)
     selected_servers = set(server_ids)
     targets = []
     seen = set()
     by_delivery_urls = {slot: set() for slot in delivery_slots}
+    by_delivery_tasks = {slot: 0 for slot in delivery_slots}
     paginator = _table.meta.client.get_paginator("scan")
     for page in paginator.paginate(TableName=TABLE_NAME):
         for record in page.get("Items", []):
@@ -999,21 +1094,37 @@ def _load_announcement_targets(delivery_slots, server_ids):
                 _clean(key, 30) for key in record
                 if _clean(key, 30).isdigit() and len(_clean(key, 30)) in SNOWFLAKE_LENGTHS
             }
-            if selected_servers and not selected_servers.intersection(record_servers):
+            server_matches = bool(selected_servers.intersection(record_servers))
+            if target_mode in {"servers", "intersection"} and not server_matches:
                 continue
             record_slots = {_normalize_delivery_name(value) for value in _string_list(record.get("app"), 100)}
+            record_slots.discard("")
             matched_slots = selected_slots.intersection(record_slots)
-            if not matched_slots:
+            if target_mode in {"delivery_slots", "intersection"} and not matched_slots:
                 continue
+            applicable_slots = matched_slots if target_mode in {"delivery_slots", "intersection"} else record_slots
+            task_slots = sorted(applicable_slots) or [""]
             for candidate in [*_string_list(record.get("URL"), 100), *_string_list(record.get("url"), 100)]:
                 if not _valid_discord_webhook_url(candidate):
                     continue
-                for slot in matched_slots:
+                for slot in applicable_slots:
+                    by_delivery_urls.setdefault(slot, set())
                     by_delivery_urls[slot].add(candidate)
-                if candidate not in seen:
-                    seen.add(candidate)
-                    targets.append(candidate)
-    return targets, {slot: len(urls) for slot, urls in by_delivery_urls.items()}
+                for slot in task_slots:
+                    target_key = candidate if deduplicate_channels else (candidate, slot)
+                    if target_key in seen:
+                        continue
+                    seen.add(target_key)
+                    targets.append({"url": candidate, "slot": slot})
+                    if slot:
+                        by_delivery_tasks[slot] = by_delivery_tasks.get(slot, 0) + 1
+                    if deduplicate_channels:
+                        break
+    by_delivery = {
+        slot: len(urls) if deduplicate_channels else by_delivery_tasks.get(slot, 0)
+        for slot, urls in by_delivery_urls.items()
+    }
+    return targets, by_delivery
 
 
 def _discord_webhook_payload(subject, message, delivery_format, color, image_url, image_name, image_alt):
@@ -1045,20 +1156,58 @@ def _post_discord_webhook(url, payload, image_bytes, image_name, image_type):
         body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         headers["Content-Type"] = "application/json"
     for attempt in range(2):
+        _wait_for_discord_rate_slot()
         request = urllib.request.Request(endpoint, data=body, method="POST", headers=headers)
         try:
             with urllib.request.urlopen(request, timeout=6) as response:
-                return 200 <= response.status < 300
+                if 200 <= response.status < 300:
+                    return {"ok": True, "reason": "OK", "status": response.status}
+                return {"ok": False, "reason": f"HTTP_{response.status}", "status": response.status}
         except urllib.error.HTTPError as error:
+            reason = _discord_http_error_reason(error)
             if attempt == 0 and (error.code == 429 or error.code >= 500):
-                time.sleep(min(2.0, max(0.1, float(error.headers.get("Retry-After", "0.5") or 0.5))))
+                time.sleep(_discord_retry_delay(error))
                 continue
-            return False
-        except (urllib.error.URLError, TimeoutError, ValueError):
+            return {"ok": False, "reason": reason, "status": error.code}
+        except (urllib.error.URLError, TimeoutError) as error:
             if attempt == 0:
                 continue
-            return False
-    return False
+            reason = "NETWORK_TIMEOUT" if isinstance(error, TimeoutError) or isinstance(getattr(error, "reason", None), TimeoutError) else "NETWORK_ERROR"
+            return {"ok": False, "reason": reason, "status": 0}
+        except ValueError:
+            return {"ok": False, "reason": "INVALID_WEBHOOK_URL", "status": 0}
+    return {"ok": False, "reason": "UNKNOWN", "status": 0}
+
+
+def _wait_for_discord_rate_slot():
+    global _discord_next_request_at
+    with _discord_rate_lock:
+        now = time.monotonic()
+        scheduled = max(now, _discord_next_request_at)
+        _discord_next_request_at = scheduled + DISCORD_REQUEST_INTERVAL_SECONDS
+    delay = scheduled - time.monotonic()
+    if delay > 0:
+        time.sleep(delay)
+
+
+def _discord_http_error_reason(error):
+    discord_code = ""
+    try:
+        raw = error.read(2048)
+        parsed = json.loads(raw.decode("utf-8", errors="replace")) if raw else {}
+        if isinstance(parsed, dict) and isinstance(parsed.get("code"), int):
+            discord_code = f"_DISCORD_{parsed['code']}"
+    except (OSError, TypeError, ValueError):
+        pass
+    return f"HTTP_{error.code}{discord_code}"[:80]
+
+
+def _discord_retry_delay(error):
+    retry_after = error.headers.get("Retry-After", "") if error.headers else ""
+    try:
+        return min(10.0, max(0.25, float(retry_after)))
+    except (TypeError, ValueError):
+        return 1.0
 
 
 def _multipart_discord_body(boundary, payload, image_bytes, image_name, image_type):

@@ -191,6 +191,22 @@ test('配信枠を検証しDiscordはサーバー未選択でも配信できる'
     assert.throws(() => newsletter.validateRecipientGroups(['unknown']), /正しく/u);
     assert.throws(() => newsletter.validateDeliverySlots(['unknown']), /正しく/u);
     assert.deepEqual(newsletter.validateTargetServerIds([], ['discord_approved']), []);
+    assert.deepEqual(newsletter.validateDiscordTargeting({
+        targetMode: 'delivery_slots', deliverySlots: ['地震情報'], targetServerIds: [], deduplicateChannels: true,
+    }, ['discord_approved']), {
+        targetMode: 'delivery_slots', deliverySlots: ['地震情報'], targetServerIds: [], deduplicateChannels: true,
+    });
+    assert.deepEqual(newsletter.validateDiscordTargeting({
+        targetMode: 'servers', deliverySlots: [], targetServerIds: ['12345678901234567'], deduplicateChannels: false,
+    }, ['discord_approved']), {
+        targetMode: 'servers', deliverySlots: [], targetServerIds: ['12345678901234567'], deduplicateChannels: false,
+    });
+    assert.throws(() => newsletter.validateDiscordTargeting({
+        targetMode: 'servers', deliverySlots: [], targetServerIds: [], deduplicateChannels: true,
+    }, ['discord_approved']), /サーバーを1つ以上/u);
+    assert.throws(() => newsletter.validateDiscordTargeting({
+        targetMode: 'intersection', deliverySlots: ['地震情報'], targetServerIds: [], deduplicateChannels: true,
+    }, ['discord_approved']), /それぞれ1つ以上/u);
 });
 
 test('メールとDiscordの管理APIは送信先を相互に混在させない', () => {
@@ -216,10 +232,15 @@ test('Discordお知らせ画面と配信統計画面を専用タブとして提�
     assert.match(discordScript, /\/site\/discord-admin\/api\/campaigns/u);
     assert.match(discordScript, /new FormData\(\)/u);
     assert.match(discordScript, /renderDiscordMarkdown/u);
-    assert.match(discordHtml, /送信先サーバー（任意）/u);
-    assert.match(discordScript, /Discord Webhook/u);
+    assert.match(discordHtml, /送信先サーバー/u);
+    assert.match(discordHtml, /同じチャンネルには1件だけ送信する/u);
+    assert.match(discordHtml, /value="delivery_slots"/u);
+    assert.match(discordScript, /validateTargetSelection/u);
+    assert.match(discordScript, /現在の送信件数|AWS登録Webhook/u);
     assert.match(directoryLambda, /discord-announcement-preview/u);
     assert.match(directoryLambda, /_valid_discord_webhook_url/u);
+    assert.match(directoryLambda, /failureSummary/u);
+    assert.match(directoryLambda, /deduplicateChannels/u);
     assert.match(deliveryHtml, /緊急地震速報|情報種別ごとの配信数/u);
     assert.match(deliveryScript, /\/site\/delivery-admin\/api\/summary/u);
     assert.doesNotMatch(discordScript, /innerHTML/u);

@@ -21,6 +21,7 @@ const MAX_DISCORD_FORM_BYTES = 1_500_000;
 const MAX_DISCORD_IMAGE_BYTES = 1_250_000;
 const DISCORD_IMAGE_TYPES = Object.freeze(new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']));
 const DISCORD_FORMATS = Object.freeze(new Set(['message', 'embed']));
+const DISCORD_TARGET_MODES = Object.freeze(new Set(['delivery_slots', 'servers', 'intersection']));
 const DEFAULT_DISCORD_EMBED_COLOR = 0x5865F2;
 const MAX_CAMPAIGN_RECIPIENTS = 1_000;
 const CONFIRMATION_VALID_MS = 24 * 60 * 60 * 1_000;
@@ -93,6 +94,8 @@ const SCHEMA_STATEMENTS = Object.freeze([
         recipient_groups TEXT NOT NULL DEFAULT 'subscribers',
         delivery_slots TEXT NOT NULL DEFAULT 'DPI_Bot通知',
         target_server_ids TEXT NOT NULL DEFAULT '',
+        target_mode TEXT NOT NULL DEFAULT 'delivery_slots',
+        deduplicate_channels INTEGER NOT NULL DEFAULT 1,
         delivery_format TEXT NOT NULL DEFAULT 'message',
         embed_color INTEGER NOT NULL DEFAULT 5793266,
         image_url TEXT,
@@ -563,7 +566,7 @@ async function adminSummary(env, admin, surface = 'mail') {
         env.NEWSLETTER_DB.prepare(
             `SELECT
                 c.id, c.subject, c.body_text, c.category, c.status, c.created_by,
-                c.recipient_groups, c.delivery_slots, c.target_server_ids,
+                c.recipient_groups, c.delivery_slots, c.target_server_ids, c.target_mode, c.deduplicate_channels,
                 c.delivery_format, c.embed_color, c.image_url, c.image_name, c.image_type, c.image_alt,
                 c.external_sent_count, c.external_failed_count,
                 c.created_at, c.updated_at, c.started_at, c.completed_at, c.recipient_count,
@@ -639,7 +642,7 @@ async function adminSummary(env, admin, surface = 'mail') {
         discordDirectory: {
             configured: awsDirectory.configured,
             available: awsDirectory.available,
-            webhookCount: new Set(awsDirectory.items.map((item) => item.channelId).filter(Boolean)).size,
+            webhookCount: Number(awsDirectory.webhookCount || 0),
             message: awsDirectory.message || '',
         },
         recipientGroups: RECIPIENT_GROUP_ORDER.map((id) => ({
@@ -662,19 +665,42 @@ async function createCampaign(request, env, admin, surface = 'mail') {
     const category = serializeCategories(categories);
     const recipientGroups = validateSurfaceRecipientGroups(input.recipientGroups, surface);
     const awsDirectory = surface === 'discord' ? await loadAwsDiscordDirectory(env) : { items: [] };
-    const deliverySlots = validateDeliverySlots(input.deliverySlots, allowedDeliverySlotIds(awsDirectory.items));
-    const targetServerIds = validateTargetServerIds(input.targetServerIds, recipientGroups);
+    const targeting = surface === 'discord'
+        ? validateDiscordTargeting(input, recipientGroups, allowedDeliverySlotIds(awsDirectory.items))
+        : {
+            targetMode: 'delivery_slots',
+            deliverySlots: validateDeliverySlots(input.deliverySlots, allowedDeliverySlotIds(awsDirectory.items)),
+            targetServerIds: validateTargetServerIds(input.targetServerIds, recipientGroups),
+            deduplicateChannels: true,
+        };
+    const { targetMode, deliverySlots, targetServerIds, deduplicateChannels } = targeting;
     const discordOptions = validateDiscordOptions(input, recipientGroups);
     validateDiscordAnnouncement(subject, bodyText, recipientGroups, discordOptions);
     const now = new Date().toISOString();
     const campaignId = crypto.randomUUID();
 
+    if (surface === 'discord') {
+        const audience = await callAwsDirectoryAction(env, {
+            action: 'discord-announcement-preview',
+            actor: admin.email,
+            requestId: crypto.randomUUID(),
+            targetMode,
+            deliverySlots,
+            targetServerIds,
+            deduplicateChannels,
+        });
+        if (Number(audience.targetCount || 0) === 0) {
+            throw new NewsletterError(409, '選択条件に一致する有効なDiscord Webhookがありません。', 'discord_no_targets');
+        }
+    }
+
     await env.NEWSLETTER_DB.prepare(
         `INSERT INTO newsletter_campaigns (
             id, subject, body_text, category, recipient_groups, delivery_slots, target_server_ids,
+            target_mode, deduplicate_channels,
             delivery_format, embed_color, image_url, image_name, image_type, image_data, image_alt,
             status, created_by, created_at, updated_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?)`,
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?)`,
     ).bind(
         campaignId,
         subject,
@@ -683,6 +709,8 @@ async function createCampaign(request, env, admin, surface = 'mail') {
         serializeCsv(recipientGroups),
         serializeCsv(deliverySlots),
         serializeCsv(targetServerIds),
+        targetMode,
+        deduplicateChannels ? 1 : 0,
         discordOptions.format,
         discordOptions.embedColor,
         discordOptions.imageUrl,
@@ -705,6 +733,8 @@ async function createCampaign(request, env, admin, surface = 'mail') {
             recipientGroups,
             deliverySlots,
             targetServerIds,
+            targetMode,
+            deduplicateChannels,
             deliveryFormat: discordOptions.format,
             hasImage: Boolean(discordOptions.image || discordOptions.imageUrl),
         },
@@ -721,6 +751,8 @@ async function createCampaign(request, env, admin, surface = 'mail') {
             recipientGroups,
             deliverySlots,
             targetServerIds,
+            targetMode,
+            deduplicateChannels,
             deliveryFormat: discordOptions.format,
             embedColor: discordOptions.embedColor,
             imageUrl: discordOptions.imageUrl,
@@ -739,8 +771,13 @@ async function previewCampaign(request, env, surface = 'mail') {
     const categories = validateCategories(input.categories);
     const recipientGroups = validateSurfaceRecipientGroups(input.recipientGroups, surface);
     const awsDirectory = surface === 'discord' ? await loadAwsDiscordDirectory(env) : { items: [] };
-    const deliverySlots = validateDeliverySlots(input.deliverySlots, allowedDeliverySlotIds(awsDirectory.items));
-    validateTargetServerIds(input.targetServerIds, recipientGroups);
+    const targeting = surface === 'discord'
+        ? validateDiscordTargeting(input, recipientGroups, allowedDeliverySlotIds(awsDirectory.items))
+        : {
+            deliverySlots: validateDeliverySlots(input.deliverySlots, allowedDeliverySlotIds(awsDirectory.items)),
+            targetServerIds: validateTargetServerIds(input.targetServerIds, recipientGroups),
+        };
+    const { deliverySlots } = targeting;
     const discordOptions = validateDiscordOptions(input, recipientGroups, { allowImageMetadataOnly: true });
     validateDiscordAnnouncement(subject, bodyText, recipientGroups, discordOptions);
     const previewMail = buildCampaignEmail({
@@ -763,26 +800,35 @@ async function previewCampaign(request, env, surface = 'mail') {
 
 async function previewAudience(request, env, admin, surface = 'mail') {
     const input = await readJson(request, MAX_FORM_BYTES);
-    const categories = validateCategories(input.categories);
+    const categories = surface === 'discord' ? [] : validateCategories(input.categories);
     const recipientGroups = validateSurfaceRecipientGroups(input.recipientGroups, surface);
     const awsDirectory = surface === 'discord' ? await loadAwsDiscordDirectory(env) : { items: [] };
-    const deliverySlots = validateDeliverySlots(input.deliverySlots, allowedDeliverySlotIds(awsDirectory.items));
-    const targetServerIds = validateTargetServerIds(input.targetServerIds, recipientGroups);
     if (surface === 'discord') {
+        const { targetMode, deliverySlots, targetServerIds, deduplicateChannels } = validateDiscordTargeting(
+            input,
+            recipientGroups,
+            allowedDeliverySlotIds(awsDirectory.items),
+        );
         const preview = await callAwsDirectoryAction(env, {
             action: 'discord-announcement-preview',
             actor: admin.email,
             requestId: crypto.randomUUID(),
+            targetMode,
             deliverySlots,
             targetServerIds,
+            deduplicateChannels,
         });
         return jsonResponse({
             success: true,
             count: Number(preview.targetCount || 0),
             byKind: { discord_webhook: Number(preview.targetCount || 0) },
             byDelivery: preview.byDelivery || {},
+            targetMode,
+            deduplicateChannels,
         });
     }
+    const deliverySlots = validateDeliverySlots(input.deliverySlots, allowedDeliverySlotIds(awsDirectory.items));
+    const targetServerIds = validateTargetServerIds(input.targetServerIds, recipientGroups);
     const recipients = await loadCampaignRecipients(env, {
         recipient_groups: serializeCsv(recipientGroups),
         delivery_slots: serializeCsv(deliverySlots),
@@ -807,6 +853,7 @@ async function queueCampaign(request, env, campaignId, admin, surface = 'mail') 
 
     const campaign = await env.NEWSLETTER_DB.prepare(
         `SELECT id, subject, body_text, category, recipient_groups, delivery_slots, target_server_ids,
+                target_mode, deduplicate_channels,
                 delivery_format, embed_color, image_url, image_name, image_type, image_data, image_alt,
                 status, updated_at
          FROM newsletter_campaigns WHERE id = ?`,
@@ -920,8 +967,12 @@ async function dispatchAwsDiscordCampaign(env, campaign, campaignId, admin) {
     if (!directory.available) {
         throw new NewsletterError(503, directory.message || 'AWS配信先ディレクトリを取得できません。', 'aws_directory_unavailable');
     }
-    const deliverySlots = validateDeliverySlots(parseCsv(campaign.delivery_slots), allowedDeliverySlotIds(directory.items));
-    const targetServerIds = validateTargetServerIds(parseCsv(campaign.target_server_ids), ['discord_approved']);
+    const { targetMode, deliverySlots, targetServerIds, deduplicateChannels } = validateDiscordTargeting({
+        targetMode: campaign.target_mode,
+        deliverySlots: parseCsv(campaign.delivery_slots),
+        targetServerIds: parseCsv(campaign.target_server_ids),
+        deduplicateChannels: Number(campaign.deduplicate_channels ?? 1) !== 0,
+    }, ['discord_approved'], allowedDeliverySlotIds(directory.items));
     const now = new Date().toISOString();
     const lock = await env.NEWSLETTER_DB.prepare(
         `UPDATE newsletter_campaigns SET status = 'sending', updated_at = ?, started_at = COALESCE(started_at, ?)
@@ -938,8 +989,10 @@ async function dispatchAwsDiscordCampaign(env, campaign, campaignId, admin) {
             actor: admin.email,
             requestId: campaignId,
             confirmation: campaignId,
+            targetMode,
             deliverySlots,
             targetServerIds,
+            deduplicateChannels,
             subject: campaign.subject,
             body: campaign.body_text,
             deliveryFormat: campaign.delivery_format,
@@ -953,6 +1006,17 @@ async function dispatchAwsDiscordCampaign(env, campaign, campaignId, admin) {
         const targetCount = Number(result.targetCount || 0);
         const sentCount = Number(result.sentCount || 0);
         const failedCount = Number(result.failedCount || 0);
+        if (targetCount === 0) {
+            throw new NewsletterError(409, '選択条件に一致する有効なDiscord Webhookがありません。', 'discord_no_targets');
+        }
+        if (result.allFailed === true || (sentCount === 0 && failedCount > 0)) {
+            const failureText = formatDiscordFailureSummary(result.failureSummary);
+            throw new NewsletterError(
+                502,
+                `Discord配信が全件失敗しました${failureText ? `（${failureText}）` : ''}。設定を確認して再試行してください。`,
+                'discord_delivery_failed',
+            );
+        }
         const completedAt = new Date().toISOString();
         await env.NEWSLETTER_DB.prepare(
             `UPDATE newsletter_campaigns SET status = 'completed', recipient_count = ?,
@@ -964,7 +1028,7 @@ async function dispatchAwsDiscordCampaign(env, campaign, campaignId, admin) {
             action: 'campaign_started',
             entityType: 'newsletter_campaign',
             entityId: campaignId,
-            details: { targetCount, sentCount, failedCount, deliverySlots, targetServerIds },
+            details: { targetCount, sentCount, failedCount, targetMode, deliverySlots, targetServerIds, deduplicateChannels },
         });
         return jsonResponse({ success: true, campaignId, queued: targetCount, targetCount, sentCount, failedCount, status: 'completed' });
     } catch (error) {
@@ -999,10 +1063,32 @@ async function callAwsDirectoryAction(env, payload, timeoutMs = 20_000) {
     return result;
 }
 
+function formatDiscordFailureSummary(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return '';
+    return Object.entries(value)
+        .filter(([reason, count]) => /^[A-Z0-9_]{2,80}$/u.test(reason) && Number.isFinite(Number(count)))
+        .sort((left, right) => Number(right[1]) - Number(left[1]))
+        .slice(0, 3)
+        .map(([reason, count]) => `${discordFailureReasonLabel(reason)}: ${Number(count)}件`)
+        .join('、');
+}
+
+function discordFailureReasonLabel(reason) {
+    if (reason.startsWith('HTTP_404')) return '削除済み・無効なWebhook';
+    if (reason.startsWith('HTTP_401')) return 'Webhook認証エラー';
+    if (reason.startsWith('HTTP_403')) return 'Discordによる送信拒否';
+    if (reason.startsWith('HTTP_429')) return 'Discordレート制限';
+    if (/^HTTP_5\d\d/u.test(reason)) return 'Discord一時障害';
+    if (reason === 'NETWORK_TIMEOUT') return 'Discord接続タイムアウト';
+    if (reason === 'NETWORK_ERROR') return 'Discord接続エラー';
+    if (reason === 'DELIVERY_DEADLINE') return '配信処理の時間上限';
+    return reason;
+}
+
 async function loadAwsDiscordDirectory(env) {
     const endpoint = cleanConfigValue(env.AWS_CHANNEL_DIRECTORY_URL);
     const token = cleanConfigValue(env.AWS_CHANNEL_DIRECTORY_TOKEN);
-    if (!endpoint || !token) return { configured: false, available: false, items: [], message: 'AWS配信先ディレクトリが未設定です。' };
+    if (!endpoint || !token) return { configured: false, available: false, items: [], webhookCount: 0, message: 'AWS配信先ディレクトリが未設定です。' };
     try {
         const url = new URL(endpoint);
         url.searchParams.set('limit', 'all');
@@ -1012,9 +1098,17 @@ async function loadAwsDiscordDirectory(env) {
         });
         const result = await response.json().catch(() => ({}));
         if (!response.ok || result.success !== true || !Array.isArray(result.items)) throw new Error('invalid_response');
-        return { configured: true, available: true, items: result.items.map(normalizeAwsDirectoryItem).filter(Boolean), message: '' };
+        const items = result.items.map(normalizeAwsDirectoryItem).filter(Boolean);
+        const fallbackWebhookCount = new Set(items.filter((item) => item.hasWebhook).map((item) => item.channelId).filter(Boolean)).size;
+        return {
+            configured: true,
+            available: true,
+            items,
+            webhookCount: Number.isFinite(Number(result.webhookCount)) ? Number(result.webhookCount) : fallbackWebhookCount,
+            message: '',
+        };
     } catch {
-        return { configured: true, available: false, items: [], message: 'AWS配信先ディレクトリを取得できません。' };
+        return { configured: true, available: false, items: [], webhookCount: 0, message: 'AWS配信先ディレクトリを取得できません。' };
     }
 }
 
@@ -1387,6 +1481,8 @@ async function ensureDiscordCampaignColumns(database) {
         ['image_alt', 'TEXT'],
         ['external_sent_count', 'INTEGER NOT NULL DEFAULT 0'],
         ['external_failed_count', 'INTEGER NOT NULL DEFAULT 0'],
+        ['target_mode', "TEXT NOT NULL DEFAULT 'delivery_slots'"],
+        ['deduplicate_channels', 'INTEGER NOT NULL DEFAULT 1'],
     ];
     for (const [name, definition] of additions) {
         if (existing.has(name)) continue;
@@ -1397,6 +1493,10 @@ async function ensureDiscordCampaignColumns(database) {
             if (!(refreshed.results || []).some((column) => column.name === name)) throw error;
         }
     }
+    await database.prepare(
+        `UPDATE newsletter_campaigns SET target_mode = 'intersection'
+         WHERE target_mode = 'delivery_slots' AND trim(target_server_ids) <> ''`,
+    ).run();
 }
 
 function assertDatabaseConfigured(env) {
@@ -1557,6 +1657,8 @@ async function readCampaignInput(request, surface) {
         recipientGroups: parseJsonFormArray(form, 'recipientGroups'),
         deliverySlots: parseJsonFormArray(form, 'deliverySlots'),
         targetServerIds: parseJsonFormArray(form, 'targetServerIds'),
+        targetMode: stringValue(form.get('targetMode')),
+        deduplicateChannels: stringValue(form.get('deduplicateChannels')),
         subject: stringValue(form.get('subject')),
         body: stringValue(form.get('body')),
         deliveryFormat: stringValue(form.get('deliveryFormat')),
@@ -1740,6 +1842,50 @@ function validateTargetServerIds(input, recipientGroups) {
     return recipientGroups.includes('discord_approved') ? selected : [];
 }
 
+function validateOptionalDeliverySlots(input, allowedIds = DELIVERY_SLOT_IDS) {
+    const rawSlots = Array.isArray(input) ? input : [];
+    const allowed = allowedIds instanceof Set ? allowedIds : new Set(allowedIds || []);
+    const selected = [...new Set(rawSlots
+        .filter((item) => typeof item === 'string')
+        .map(normalizeDeliveryName)
+        .filter(Boolean))];
+    if (selected.length > 100 || selected.some((item) => !allowed.has(item))) {
+        throw new NewsletterError(400, '配信枠を正しく選択してください。', 'invalid_delivery_slots');
+    }
+    return selected;
+}
+
+function validateDiscordTargeting(input, recipientGroups, allowedIds = DELIVERY_SLOT_IDS) {
+    let deliverySlots = validateOptionalDeliverySlots(input.deliverySlots, allowedIds);
+    let targetServerIds = validateTargetServerIds(input.targetServerIds, recipientGroups);
+    const inferredMode = targetServerIds.length ? 'intersection' : 'delivery_slots';
+    const targetMode = stringValue(input.targetMode).trim() || inferredMode;
+    if (!DISCORD_TARGET_MODES.has(targetMode)) {
+        throw new NewsletterError(400, 'Discordの送信先指定方法を確認してください。', 'invalid_discord_target_mode');
+    }
+    if (targetMode === 'delivery_slots' && deliverySlots.length === 0) {
+        throw new NewsletterError(400, '配信枠を1つ以上選択してください。', 'invalid_delivery_slots');
+    }
+    if (targetMode === 'servers' && targetServerIds.length === 0) {
+        throw new NewsletterError(400, '配信先サーバーを1つ以上選択してください。', 'invalid_target_servers');
+    }
+    if (targetMode === 'intersection' && (deliverySlots.length === 0 || targetServerIds.length === 0)) {
+        throw new NewsletterError(400, '配信枠と配信先サーバーをそれぞれ1つ以上選択してください。', 'invalid_discord_targeting');
+    }
+    if (targetMode === 'delivery_slots') targetServerIds = [];
+    if (targetMode === 'servers') deliverySlots = [];
+    const deduplicateChannels = input.deduplicateChannels === undefined
+        ? true
+        : parseBooleanValue(input.deduplicateChannels, '同一チャンネルへの送信方法を確認してください。');
+    return { targetMode, deliverySlots, targetServerIds, deduplicateChannels };
+}
+
+function parseBooleanValue(value, message) {
+    if (value === true || value === 1 || value === '1' || value === 'true') return true;
+    if (value === false || value === 0 || value === '0' || value === 'false') return false;
+    throw new NewsletterError(400, message, 'invalid_boolean');
+}
+
 function validateDiscordAnnouncement(subject, body, recipientGroups, options = {}) {
     if (!recipientGroups.includes('discord_approved')) return;
     const format = validateDiscordFormat(options.format);
@@ -1888,6 +2034,7 @@ function normalizeAwsDirectoryItem(item) {
         channelId,
         channelName: stringValue(item.channelName).trim().slice(0, 100),
         deliveryTypes,
+        hasWebhook: item.hasWebhook !== false,
     };
 }
 
@@ -1901,7 +2048,7 @@ function normalizeAwsDirectoryServers(items) {
             channels: new Set(),
             deliveryTypes: new Set(),
         };
-        if (item.channelId) current.channels.add(item.channelId);
+        if (item.channelId && item.hasWebhook) current.channels.add(item.channelId);
         item.deliveryTypes.forEach((value) => current.deliveryTypes.add(value));
         servers.set(item.serverId, current);
     }
@@ -2448,6 +2595,8 @@ function normalizeCampaignRow(row) {
         recipientGroups,
         deliverySlots: storedSlots.map(normalizeDeliveryName).filter(Boolean),
         targetServerIds: validateTargetServerIds(parseCsv(row.target_server_ids), recipientGroups),
+        targetMode: DISCORD_TARGET_MODES.has(stringValue(row.target_mode)) ? row.target_mode : 'delivery_slots',
+        deduplicateChannels: Number(row.deduplicate_channels ?? 1) !== 0,
         deliveryFormat: validateDiscordFormat(row.delivery_format),
         embedColor: validateEmbedColor(Number(row.embed_color ?? DEFAULT_DISCORD_EMBED_COLOR)),
         imageUrl: stringValue(row.image_url),
@@ -2696,6 +2845,7 @@ export const __test = Object.freeze({
     validateCampaignSubject,
     validateCategories,
     validateDeliverySlots,
+    validateDiscordTargeting,
     validateDiscordAnnouncement,
     validateDiscordOptions,
     validateRecipientGroups,
