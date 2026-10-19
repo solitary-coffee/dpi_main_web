@@ -19,3 +19,11 @@
 .image-options input[type="url"], .image-options input[type="file"], .image-options input[type="text"] { width: 100%; padding: 10px 12px; border: 1px solid #adb8c5; border-radius: 6px; color: #172033; background: #fff; font: inherit; }
 .embed-options input[type="color"] { width: 90px; height: 44px; padding: 3px; border: 1px solid #adb8c5; border-radius: 6px; background: #fff; }
 .validation-error { color: #ffb4b4 !important; font-weight: 700; }
+.target-mode-options { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 10px; }
+.target-mode-option, .deduplicate-option { display: flex; align-items: flex-start; gap: 10px; padding: 13px; border: 1px solid #626a73; border-radius: 8px; background: #343a40; cursor: pointer; }
+.target-mode-option input, .deduplicate-option input { margin-top: 4px; flex: 0 0 auto; }
+.target-mode-option span, .deduplicate-option span { display: grid; gap: 4px; }
+.target-mode-option small, .deduplicate-option small { color: #c8d0d9; line-height: 1.5; }
+.target-disabled { opacity: .55; }
+.target-disabled .delivery-slots { pointer-events: none; }
+@media (max-width: 640px) { .target-mode-options { grid-template-columns: 1fr; } }

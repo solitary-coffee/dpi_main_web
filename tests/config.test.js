@@ -77,3 +77,10 @@ test('Discordリッチお知らせ用D1マイグレーションを同梱する',
     assert.match(migration, /external_sent_count/u);
     assert.match(migration, /external_failed_count/u);
 });
+
+test('Discord送信先モード用D1マイグレーションを同梱する', async () => {
+    const migration = await readFile(new URL('../migrations/0008_discord_targeting.sql', import.meta.url), 'utf8');
+    assert.match(migration, /target_mode/u);
+    assert.match(migration, /deduplicate_channels/u);
+    assert.match(migration, /target_server_ids/u);
+});

@@ -46,7 +46,7 @@ Markdown内の生HTML、画像埋め込み、JavaScript URLは使用できませ
 
 リポジトリにはD1の `database_id` を保存していません。Wranglerの[自動プロビジョニング](https://developers.cloudflare.com/workers/wrangler/configuration/#automatic-provisioning)により、GitHub連携から初めてデプロイしたときにD1とQueueが自動作成されます。GitHub経由で作られたIDはダッシュボードに表示され、リポジトリへ書き戻されない仕様です。
 
-Workerは初回利用時にもテーブル作成と不足列の追加を行うため、デプロイ直後から使用できます。再現用のマイグレーションは `migrations/0001_newsletter.sql` から `migrations/0007_discord_rich_announcements.sql` にあります。手動適用する場合は次を実行します。
+Workerは初回利用時にもテーブル作成と不足列の追加を行うため、デプロイ直後から使用できます。再現用のマイグレーションは `migrations/0001_newsletter.sql` から `migrations/0008_discord_targeting.sql` にあります。手動適用する場合は次を実行します。
 
 ```bash
 npx wrangler d1 migrations apply NEWSLETTER_DB --remote
