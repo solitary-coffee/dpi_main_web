@@ -19,16 +19,39 @@ function render(stats) {
     document.getElementById('coverage').textContent = stats.coverage?.oldestEpoch ? `${formatEpoch(stats.coverage.oldestEpoch)} ～ ${formatEpoch(stats.coverage.latestEpoch)}` : '対象データはありません。';
     const source = stats.source?.table ? `取得元: ${stats.source.table} (${stats.source.region || 'region不明'})` : '';
     document.getElementById('retention-note').textContent = [stats.retentionNote, source].filter(Boolean).join(' / ');
+    const titleBody = document.getElementById('delivery-titles'); titleBody.replaceChildren();
+    for (const item of stats.byTitle || []) titleBody.append(row([
+        item.title || 'タイトル未記録',
+        eventLabels[item.eventType] || item.eventType,
+        item.deliverySlot || '未記録',
+        item.events,
+        item.targets,
+        item.normal,
+        item.errors,
+        formatEpoch(item.latestEpoch),
+    ], [3, 4, 5, 6], [6]));
+    if (!(stats.byTitle || []).length) titleBody.append(emptyRow(8));
     const eventBody = document.getElementById('event-types'); eventBody.replaceChildren();
-    for (const item of stats.byEventType || []) eventBody.append(row([eventLabels[item.eventType] || item.eventType, item.events, item.targets, item.normal, item.errors, item.seriousErrors, `${number(item.maxLatencyMs)} ms`], [1, 2, 3, 4, 5, 6]));
+    for (const item of stats.byEventType || []) eventBody.append(row([eventLabels[item.eventType] || item.eventType, item.events, item.targets, item.normal, item.errors, item.seriousErrors, `${number(item.maxLatencyMs)} ms`], [1, 2, 3, 4, 5, 6], [4, 5]));
     if (!(stats.byEventType || []).length) eventBody.append(emptyRow(7));
     const recent = document.getElementById('recent'); recent.replaceChildren();
-    for (const item of stats.recent || []) recent.append(row([formatEpoch(item.updatedEpoch), eventLabels[item.eventType] || item.eventType, item.ownerRegion || '不明', item.targets, item.normal, item.errors, item.logsCollected ? '収集済み' : '未収集'], [3, 4, 5]));
-    if (!(stats.recent || []).length) recent.append(emptyRow(7));
+    for (const item of stats.recent || []) recent.append(row([
+        item.title || 'タイトル未記録',
+        eventLabels[item.eventType] || item.eventType,
+        item.deliverySlot || '未記録',
+        formatEpoch(item.updatedEpoch),
+        item.ownerRegion || '不明',
+        item.route || '未記録',
+        item.targets,
+        item.normal,
+        item.errors,
+        item.logsCollected ? '収集済み' : '未収集',
+    ], [6, 7, 8], [8]));
+    if (!(stats.recent || []).length) recent.append(emptyRow(10));
 }
 
 function renderCards(id, items) { const container = document.getElementById(id); container.replaceChildren(); for (const [label, value] of items) { const card = el('article', 'metric-card'); card.append(el('span', '', label), el('strong', '', typeof value === 'string' ? value : number(value))); container.append(card); } }
-function row(values, numeric = []) { const tr = document.createElement('tr'); values.forEach((value, index) => { const td = el('td', numeric.includes(index) ? 'number' : '', typeof value === 'number' ? number(value) : String(value ?? '')); if ((index === 4 || index === 5) && Number(value) > 0) td.classList.add('error-value'); tr.append(td); }); return tr; }
+function row(values, numeric = [], errorIndexes = []) { const tr = document.createElement('tr'); values.forEach((value, index) => { const td = el('td', numeric.includes(index) ? 'number' : '', typeof value === 'number' ? number(value) : String(value ?? '')); if (errorIndexes.includes(index) && Number(value) > 0) td.classList.add('error-value'); tr.append(td); }); return tr; }
 function emptyRow(columns) { const tr = document.createElement('tr'); const td = el('td', '', '対象データはありません。'); td.colSpan = columns; tr.append(td); return tr; }
 function number(value) { return new Intl.NumberFormat('ja-JP').format(Number(value || 0)); }
 function formatEpoch(value) { return formatDate(new Date(Number(value) * 1000).toISOString()); }

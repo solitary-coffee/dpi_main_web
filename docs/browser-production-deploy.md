@@ -65,6 +65,20 @@ sam deploy --guided
 | `AutoMonitorFunction` | `dpi-backup-auto-failover-monitor` |
 | `IngestEndpoints` | テンプレート既定値の東京・大阪 `/ingest` URL |
 | `IngestHmacParameter` | `/dpi-bot/final-backup/hmac-secret` |
+| `DmdataApiKeyParameter` | `/dpi-bot/dmdata/api-key` |
+
+### DMDATA APIキーをブラウザーで保存
+
+AWS Management Consoleで `Systems Manager` → `Parameter Store` → `Create parameter` を開き、次の内容で作成する。
+
+| 項目 | 値 |
+|---|---|
+| Name | `/dpi-bot/dmdata/api-key` |
+| Tier | Standard |
+| Type | SecureString |
+| Value | DMDATAコントロールパネルで発行したAPIキー |
+
+APIキーには、少なくとも `telegram.list`、`telegram.data`、`gd.eew` と、参照する契約区分（地震・気象・予報・定時・火山・緊急地震速報）の取得権限を付ける。キーの値はGitHub、Cloudflare、SAMパラメータへ直接保存しない。
 
 CloudFormationの変更セットを確認し、既存スタックの更新として実行する。新規スタックを作らない。
 
@@ -80,10 +94,14 @@ Cloudflare Accessでログインし、次を確認する。
 6. EC2は状態表示を確認してから管理対象の1台で起動・停止ボタンの確認入力までを確認
 7. XMLはテスト電文を読み込み、プレビュー内容と配信枠件数を確認する。実配信が不要な場合は「XMLを配信」を押さない
 8. `https://dpi-bot.com/site/status-admin/` でコンポーネント、インシデント、メンテナンスを確認する。最初はコンポーネント状態を変更せず一覧取得だけを確認する
+9. `https://dpi-bot.com/site/xml-admin/` でDMDATA過去受信を20件取得し、1件だけXMLへ読み込む。配信済み・未配信・未対応形式の表示を確認し、実配信前に配信枠と経路を再確認する
+10. `https://dpi-bot.com/site/delivery-flow-admin/` で上流API、自宅サーバー、東京・大阪の高速系統、SQS、バックアップ系統を確認する。待機用EC2の停止が異常件数に入らないことを確認する
 
 Cloudflare AccessのSelf-hosted applicationには、ほかの管理画面と同じポリシーで次の2パスを追加する。
 
 - `https://dpi-bot.com/site/status-admin`
 - `https://dpi-bot.com/site/status-admin/*`
+- `https://dpi-bot.com/site/delivery-flow-admin`
+- `https://dpi-bot.com/site/delivery-flow-admin/*`
 
 管理操作はすべて上記Web画面から行う。日常運用でCloudflareやAWSのコンソールを開く必要はない。

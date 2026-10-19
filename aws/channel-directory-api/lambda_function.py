@@ -10,7 +10,7 @@ import urllib.parse
 import urllib.request
 import uuid
 import xml.etree.ElementTree as ET
-from base64 import b64decode
+from base64 import b64decode, b64encode
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
@@ -29,8 +29,10 @@ OPERATING_REGIONS = [name.strip() for name in os.environ.get("OPERATING_REGIONS"
 AUTO_MONITOR_FUNCTION = os.environ.get("AUTO_MONITOR_FUNCTION", "dpi-backup-auto-failover-monitor").strip()
 INGEST_ENDPOINTS = [url.strip() for url in os.environ.get("INGEST_ENDPOINTS", "").split(",") if url.strip()]
 INGEST_HMAC_PARAMETER = os.environ.get("INGEST_HMAC_PARAMETER", "").strip()
+DMDATA_API_KEY_PARAMETER = os.environ.get("DMDATA_API_KEY_PARAMETER", "/dpi-bot/dmdata/api-key").strip()
 MAX_LIMITED_RESULTS = 1000
 MAX_XML_BYTES = 1_500_000
+MAX_DMDATA_RESPONSE_BYTES = 4_000_000
 MAX_ADMIN_BODY_BYTES = 2_200_000
 MAX_DISCORD_IMAGE_BYTES = 1_250_000
 MAX_DISCORD_WORKERS = 25
@@ -55,8 +57,13 @@ _dynamodb = boto3.resource(
 _table = _dynamodb.Table(TABLE_NAME)
 _cache = {"expires_at": 0.0, "items": []}
 _system_cache = {"expires_at": 0.0, "value": None}
+_flow_system_cache = {"expires_at": 0.0, "value": None}
+_delivery_flow_cache = {"expires_at": 0.0, "value": None}
 _delivery_statistics_cache = {}
 _secret_cache = {"expires_at": 0.0, "value": None}
+_dmdata_key_cache = {"expires_at": 0.0, "value": None}
+_dmdata_history_cache = {}
+_dmdata_xml_cache = {}
 _discord_rate_lock = threading.Lock()
 _discord_next_request_at = 0.0
 
@@ -92,6 +99,24 @@ def lambda_handler(event, context):
         return _response(200, {
             "success": True,
             "statistics": _load_delivery_statistics(period),
+            "observedAt": datetime.now(tz=timezone.utc).isoformat(),
+        })
+    if view == "dmdata-history":
+        try:
+            return _response(200, {
+                "success": True,
+                **_load_dmdata_history(params),
+                "observedAt": datetime.now(tz=timezone.utc).isoformat(),
+            })
+        except ValueError as error:
+            return _response(400, {"success": False, "message": str(error)})
+        except Exception as error:
+            print(json.dumps({"event": "dmdata_history_failed", "error": type(error).__name__}, ensure_ascii=False))
+            return _response(502, {"success": False, "message": "DMDATAの過去電文を取得できませんでした。"})
+    if view == "delivery-flow":
+        return _response(200, {
+            "success": True,
+            "flow": _load_delivery_flow(),
             "observedAt": datetime.now(tz=timezone.utc).isoformat(),
         })
     query = _clean(params.get("q"), 120).casefold()
@@ -160,6 +185,8 @@ def _handle_action(body):
         result = _xml_preview(body)
     elif action == "xml-dispatch":
         result = _xml_dispatch(body, actor, request_id)
+    elif action == "dmdata-load-xml":
+        result = _dmdata_load_xml(body)
     elif action == "discord-announcement-preview":
         result = _discord_announcement_preview(body)
     elif action == "discord-announcement":
@@ -168,6 +195,8 @@ def _handle_action(body):
         raise ValueError("指定された管理操作はありません。")
 
     _system_cache["expires_at"] = 0.0
+    _flow_system_cache["expires_at"] = 0.0
+    _delivery_flow_cache["expires_at"] = 0.0
     return _response(200, {"success": True, "requestId": request_id, **result})
 
 
@@ -237,8 +266,18 @@ def _load_delivery_statistics(period):
     cutoff = {"24h": now - 86400, "7d": now - 7 * 86400, "all": 0}[period]
     table = _dynamodb.Table(DELIVERY_MONITOR_TABLE_NAME)
     scan_args = {
-        "ProjectionExpression": "#kind, deliveryId, generation, eventType, updatedEpoch, targetCount, normalCount, errorCount, excludedErrorCount, seriousErrorCount, ownerRegion, workerMaxSeconds, latencyMaxMs, logsCollected",
-        "ExpressionAttributeNames": {"#kind": "kind"},
+        "ProjectionExpression": (
+            "#kind, deliveryId, generation, eventType, updatedEpoch, targetCount, normalCount, "
+            "errorCount, excludedErrorCount, seriousErrorCount, ownerRegion, workerMaxSeconds, "
+            "latencyMaxMs, logsCollected, #title, subject, eventTitle, reportTitle, headline, "
+            "deliverySlot, deliverySlots, deliveryType, #app, sendData, send_data, pipeline, #route"
+        ),
+        "ExpressionAttributeNames": {
+            "#kind": "kind",
+            "#title": "title",
+            "#app": "app",
+            "#route": "route",
+        },
     }
     latest_by_delivery = {}
     while True:
@@ -267,12 +306,25 @@ def _load_delivery_statistics(period):
     rows = sorted(latest_by_delivery.values(), key=lambda item: _integer(item.get("updatedEpoch"), 0), reverse=True)
     totals = _empty_delivery_totals()
     by_type = {}
+    by_title = {}
     regions = {}
     for item in rows:
         event_type = _clean(item.get("eventType"), 40).casefold() or "unknown"
         bucket = by_type.setdefault(event_type, _empty_delivery_totals())
         _add_delivery_totals(totals, item)
         _add_delivery_totals(bucket, item)
+        title = _delivery_title(item)
+        delivery_slot = _delivery_slot(item)
+        title_key = (title, event_type, delivery_slot)
+        title_bucket = by_title.setdefault(title_key, {
+            **_empty_delivery_totals(),
+            "title": title,
+            "eventType": event_type,
+            "deliverySlot": delivery_slot,
+            "latestEpoch": 0,
+        })
+        _add_delivery_totals(title_bucket, item)
+        title_bucket["latestEpoch"] = max(title_bucket["latestEpoch"], _integer(item.get("updatedEpoch"), 0))
         region = _clean(item.get("ownerRegion"), 40) or "unknown"
         regions[region] = regions.get(region, 0) + 1
 
@@ -287,6 +339,7 @@ def _load_delivery_statistics(period):
         },
         "totals": totals,
         "byEventType": [{"eventType": key, **counts} for key, counts in sorted(by_type.items())],
+        "byTitle": sorted(by_title.values(), key=lambda item: item["latestEpoch"], reverse=True)[:100],
         "byRegion": regions,
         "recent": [_delivery_stat_row(item) for item in rows[:50]],
     }
@@ -312,7 +365,10 @@ def _add_delivery_totals(totals, item):
 
 def _delivery_stat_row(item):
     return {
+        "title": _delivery_title(item),
         "eventType": _clean(item.get("eventType"), 40).casefold() or "unknown",
+        "deliverySlot": _delivery_slot(item),
+        "route": _delivery_route(item),
         "updatedEpoch": _integer(item.get("updatedEpoch"), 0),
         "generation": _integer(item.get("generation"), 0),
         "targets": _integer(item.get("targetCount"), 0),
@@ -321,7 +377,376 @@ def _delivery_stat_row(item):
         "seriousErrors": _integer(item.get("seriousErrorCount"), 0),
         "ownerRegion": _clean(item.get("ownerRegion"), 40),
         "logsCollected": bool(item.get("logsCollected")),
+        "maxLatencyMs": max((_integer(value, 0) for value in (item.get("latencyMaxMs") or {}).values()), default=0),
     }
+
+
+def _delivery_title(item):
+    for key in ("title", "subject", "eventTitle", "reportTitle", "headline"):
+        value = _clean(item.get(key), 300)
+        if value:
+            return value
+    return _clean(item.get("eventType"), 80) or "タイトル未記録"
+
+
+def _delivery_slot(item):
+    for key in ("deliverySlot", "deliverySlots", "deliveryType", "app"):
+        values = _string_list(item.get(key), 20, item_length=120)
+        if values:
+            return "、".join(values)
+    return "未記録"
+
+
+def _delivery_route(item):
+    for key in ("sendData", "send_data", "pipeline", "route"):
+        value = _clean(item.get(key), 120)
+        if value:
+            return value
+    return "未記録"
+
+
+DMDATA_CATEGORIES = {
+    "earthquake": "telegram.earthquake",
+    "weather": "telegram.weather,telegram.forecast,telegram.scheduled",
+    "volcano": "telegram.volcano",
+}
+
+
+def _load_dmdata_history(params):
+    category = _clean(params.get("category"), 30).casefold() or "earthquake"
+    if category not in {*DMDATA_CATEGORIES, "eew"}:
+        raise ValueError("DMDATAの情報分類を確認してください。")
+    limit = min(max(_integer(params.get("limit"), 20), 1), 100)
+    cursor = _clean(params.get("cursorToken"), 2000)
+    event_id = _clean(params.get("eventId"), 40)
+    if cursor and not re.fullmatch(r"[A-Za-z0-9._~+/=-]+", cursor):
+        raise ValueError("DMDATAの続き位置が不正です。")
+    if event_id and not re.fullmatch(r"[0-9]{10,20}", event_id):
+        raise ValueError("緊急地震速報のイベントIDが不正です。")
+
+    cache_key = json.dumps([category, limit, cursor, event_id], separators=(",", ":"))
+    now = time.time()
+    cached = _dmdata_history_cache.get(cache_key)
+    if cached and cached["expires_at"] > now:
+        return cached["value"]
+
+    if category == "eew":
+        value = _load_dmdata_eew(event_id, limit, cursor)
+    else:
+        query = {
+            "classification": DMDATA_CATEGORIES[category],
+            "xmlReport": "true",
+            "test": "including",
+            "formatMode": "raw",
+            "limit": str(limit),
+        }
+        if cursor:
+            query["cursorToken"] = cursor
+        response = _dmdata_json(f"https://api.dmdata.jp/v2/telegram?{urllib.parse.urlencode(query)}")
+        raw_items = response.get("items") if isinstance(response.get("items"), list) else []
+        items = [_normalize_dmdata_telegram(item, category) for item in raw_items if isinstance(item, dict)]
+        _attach_dmdata_delivery_states(items)
+        value = {
+            "category": category,
+            "items": items,
+            "nextToken": _clean(response.get("nextToken"), 2000) or None,
+            "count": len(items),
+            "source": "telegram.list",
+            "cacheSeconds": 60,
+        }
+
+    _dmdata_history_cache[cache_key] = {"expires_at": now + 60, "value": value}
+    _trim_ttl_cache(_dmdata_history_cache, 24)
+    return value
+
+
+def _load_dmdata_eew(event_id, limit, cursor=""):
+    if not event_id:
+        query = {"limit": str(limit)}
+        if cursor:
+            query["cursorToken"] = cursor
+        response = _dmdata_json(f"https://api.dmdata.jp/v2/gd/eew?{urllib.parse.urlencode(query)}")
+        items = []
+        for raw in response.get("items") or []:
+            if not isinstance(raw, dict):
+                continue
+            event = _clean(raw.get("eventId"), 40)
+            earthquake = raw.get("earthquake") if isinstance(raw.get("earthquake"), dict) else {}
+            hypocenter = earthquake.get("hypocenter") if isinstance(earthquake.get("hypocenter"), dict) else {}
+            title = "緊急地震速報"
+            if hypocenter.get("name"):
+                title = f"緊急地震速報（{_clean(hypocenter.get('name'), 120)}）"
+            items.append({
+                "sourceId": "",
+                "eventId": event,
+                "serial": _integer(raw.get("serial"), 0),
+                "title": title,
+                "controlTitle": "緊急地震速報",
+                "headline": _clean(raw.get("text"), 500),
+                "classification": "eew.forecast",
+                "category": "eew",
+                "typeCode": "VXSE",
+                "receivedTime": _clean(raw.get("dateTime"), 60),
+                "format": "event",
+                "test": False,
+                "deliveryState": "details_required",
+                "deliveryStateLabel": "報の取得が必要",
+                "selectable": False,
+                "needsReports": True,
+                "isWarning": bool(raw.get("isWarning")),
+                "isCanceled": bool(raw.get("isCanceled")),
+            })
+        return {
+            "category": "eew",
+            "items": items,
+            "nextToken": _clean(response.get("nextToken"), 2000) or None,
+            "count": len(items),
+            "source": "gd.eew.list",
+            "cacheSeconds": 60,
+        }
+
+    response = _dmdata_json(f"https://api.dmdata.jp/v2/gd/eew/{urllib.parse.quote(event_id, safe='')}")
+    items = []
+    for report in response.get("items") or []:
+        if not isinstance(report, dict):
+            continue
+        for telegram in report.get("telegrams") or []:
+            if not isinstance(telegram, dict):
+                continue
+            item = _normalize_dmdata_telegram(telegram, "eew", raw_source_id=telegram.get("originalId"))
+            item.update({
+                "eventId": _clean(report.get("eventId"), 40) or event_id,
+                "serial": _integer(report.get("serial"), _integer(telegram.get("serial"), 0)),
+                "isWarning": bool(report.get("isWarning")),
+                "isCanceled": bool(report.get("isCanceled")),
+                "needsReports": False,
+            })
+            if not item["headline"]:
+                item["headline"] = _clean(report.get("text"), 500)
+            items.append(item)
+    _attach_dmdata_delivery_states(items)
+    return {
+        "category": "eew",
+        "eventId": event_id,
+        "items": items,
+        "nextToken": None,
+        "count": len(items),
+        "source": "gd.eew.event",
+        "cacheSeconds": 60,
+    }
+
+
+def _normalize_dmdata_telegram(raw, category, raw_source_id=None):
+    xml_report = raw.get("xmlReport") if isinstance(raw.get("xmlReport"), dict) else {}
+    control = xml_report.get("control") if isinstance(xml_report.get("control"), dict) else {}
+    head_report = xml_report.get("head") if isinstance(xml_report.get("head"), dict) else {}
+    head = raw.get("head") if isinstance(raw.get("head"), dict) else {}
+    source_id = _clean(raw_source_id if raw_source_id is not None else raw.get("id"), 160)
+    data_format = _clean(raw.get("format"), 20).casefold()
+    if category == "eew" and source_id:
+        data_format = "xml"
+    title = _clean(head_report.get("title"), 300) or _clean(control.get("title"), 300) or _clean(head.get("type"), 40) or "名称未取得"
+    return {
+        "sourceId": source_id,
+        "eventId": _clean(head_report.get("eventId"), 80),
+        "serial": _integer(raw.get("serial"), 0),
+        "title": title,
+        "controlTitle": _clean(control.get("title"), 300),
+        "headline": _clean(head_report.get("headline"), 500),
+        "classification": _clean(raw.get("classification"), 80),
+        "category": category,
+        "typeCode": _clean(head.get("type"), 40),
+        "receivedTime": _clean(raw.get("receivedTime"), 60) or _clean(head.get("time"), 60),
+        "reportTime": _clean(head_report.get("reportDateTime"), 60),
+        "format": data_format or "unknown",
+        "test": bool(head.get("test")),
+        "deliveryState": "unsupported" if data_format != "xml" else "undelivered",
+        "deliveryStateLabel": "未対応形式" if data_format != "xml" else "未配信",
+        "selectable": data_format == "xml" and bool(source_id),
+        "needsReports": False,
+    }
+
+
+def _attach_dmdata_delivery_states(items):
+    if not STATE_TABLE_NAME:
+        states = {}
+    else:
+        states = {}
+        keys = [{"pk": f"DMDATA#SOURCE#{item['sourceId']}"} for item in items if item.get("sourceId")]
+        for offset in range(0, len(keys), 100):
+            request_items = {STATE_TABLE_NAME: {"Keys": keys[offset:offset + 100]}}
+            response = _dynamodb.batch_get_item(RequestItems=request_items)
+            for record in response.get("Responses", {}).get(STATE_TABLE_NAME, []):
+                states[_clean(record.get("source_id"), 160)] = record
+    for item in items:
+        state = states.get(item.get("sourceId"))
+        if item.get("deliveryState") == "unsupported":
+            continue
+        if not state:
+            continue
+        status = _clean(state.get("status"), 30).casefold()
+        item["lastDeliveryAt"] = _epoch_iso(_integer(state.get("updated_at"), 0))
+        item["lastDeliverySlot"] = _clean(state.get("delivery_slot"), 120)
+        item["lastSendData"] = _clean(state.get("send_data"), 40)
+        if status == "delivered":
+            item["deliveryState"] = "delivered"
+            item["deliveryStateLabel"] = "配信済み"
+        elif status == "dispatching":
+            item["deliveryState"] = "dispatching"
+            item["deliveryStateLabel"] = "配信処理中"
+        elif status == "failed":
+            item["deliveryState"] = "undelivered"
+            item["deliveryStateLabel"] = "未配信（前回失敗）"
+
+
+def _dmdata_load_xml(body):
+    source_id = _valid_dmdata_source_id(body.get("sourceId"))
+    xml_text = _dmdata_download_xml(source_id)
+    preview = _parse_xml_summary(xml_text)
+    return {
+        "message": "DMDATAからXMLを読み込みました。内容を確認してから配信してください。",
+        "sourceId": source_id,
+        "xml": xml_text,
+        "xmlSha256": hashlib.sha256(xml_text.encode("utf-8")).hexdigest(),
+        "bytes": len(xml_text.encode("utf-8")),
+        "preview": preview,
+    }
+
+
+def _valid_dmdata_source_id(value):
+    source_id = _clean(value, 160)
+    if not re.fullmatch(r"[A-Fa-f0-9]{64,128}", source_id):
+        raise ValueError("DMDATAの電文IDが不正です。")
+    return source_id
+
+
+def _dmdata_download_xml(source_id):
+    now = time.time()
+    cached = _dmdata_xml_cache.get(source_id)
+    if cached and cached["expires_at"] > now:
+        return cached["value"]
+    raw = _dmdata_request(f"https://data.api.dmdata.jp/v1/{source_id}", "application/xml,text/xml")
+    if len(raw) > MAX_XML_BYTES:
+        raise ValueError("DMDATAのXMLが1.5MBを超えています。")
+    try:
+        xml_text = raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        raise ValueError("DMDATAの電文をUTF-8 XMLとして読み込めませんでした。") from None
+    _parse_xml_summary(xml_text)
+    _dmdata_xml_cache[source_id] = {"expires_at": now + 900, "value": xml_text}
+    _trim_ttl_cache(_dmdata_xml_cache, 12)
+    return xml_text
+
+
+def _dmdata_json(url):
+    raw = _dmdata_request(url, "application/json")
+    try:
+        body = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        raise ValueError("DMDATAの応答形式を確認できませんでした。") from None
+    if not isinstance(body, dict) or body.get("status") != "ok":
+        error = body.get("error") if isinstance(body, dict) and isinstance(body.get("error"), dict) else {}
+        raise ValueError(_clean(error.get("message"), 300) or "DMDATA APIがエラーを返しました。")
+    return body
+
+
+def _dmdata_request(url, accept):
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme != "https" or parsed.hostname not in {"api.dmdata.jp", "data.api.dmdata.jp"}:
+        raise ValueError("DMDATAの接続先が不正です。")
+    api_key = _get_dmdata_api_key()
+    authorization = b64encode(f"{api_key}:".encode("utf-8")).decode("ascii")
+    request = urllib.request.Request(url, headers={
+        "Accept": accept,
+        "Authorization": f"Basic {authorization}",
+        "User-Agent": "dpi-admin-center/1.0",
+    })
+    for attempt in range(2):
+        try:
+            with urllib.request.urlopen(request, timeout=12) as response:
+                raw = response.read(MAX_DMDATA_RESPONSE_BYTES + 1)
+            if len(raw) > MAX_DMDATA_RESPONSE_BYTES:
+                raise ValueError("DMDATAの応答が大きすぎます。検索件数を減らしてください。")
+            _record_dmdata_health(True)
+            return raw
+        except urllib.error.HTTPError as error:
+            if error.code == 429 and attempt == 0:
+                retry_after = error.headers.get("Retry-After", "1") if error.headers else "1"
+                try:
+                    delay = min(2.0, max(0.5, float(retry_after)))
+                except (TypeError, ValueError):
+                    delay = 1.0
+                time.sleep(delay)
+                continue
+            _record_dmdata_health(False, f"HTTP_{error.code}")
+            if error.code in {401, 403}:
+                raise ValueError("DMDATA APIキーまたは権限を確認してください。") from None
+            if error.code == 429:
+                raise ValueError("DMDATAのレート制限に達しました。時間を置いて更新してください。") from None
+            raise ValueError(f"DMDATA APIがHTTP {error.code}を返しました。") from None
+        except urllib.error.URLError:
+            _record_dmdata_health(False, "CONNECTION_ERROR")
+            raise ValueError("DMDATA APIに接続できませんでした。") from None
+    raise ValueError("DMDATA APIに接続できませんでした。")
+
+
+def _get_dmdata_api_key():
+    if not DMDATA_API_KEY_PARAMETER:
+        raise ValueError("DMDATA APIキーの保存先が設定されていません。")
+    now = time.time()
+    if _dmdata_key_cache["expires_at"] > now and _dmdata_key_cache["value"]:
+        return _dmdata_key_cache["value"]
+    response = _client("ssm").get_parameter(Name=DMDATA_API_KEY_PARAMETER, WithDecryption=True)
+    value = str((response.get("Parameter") or {}).get("Value") or "")
+    if not value:
+        raise ValueError("DMDATA APIキーを取得できません。")
+    _dmdata_key_cache.update({"expires_at": now + 300, "value": value})
+    return value
+
+
+def _record_dmdata_health(success, error=""):
+    if not STATE_TABLE_NAME:
+        return
+    now = int(time.time())
+    try:
+        table = _dynamodb.Table(STATE_TABLE_NAME)
+        if success:
+            table.update_item(
+                Key={"pk": "DMDATA#HEALTH"},
+                UpdateExpression=(
+                    "SET #status = :status, last_success_at = :now, last_error_at = :zero, "
+                    "last_error = :empty, updated_at = :now, expires_at = :expires"
+                ),
+                ExpressionAttributeNames={"#status": "status"},
+                ExpressionAttributeValues={
+                    ":status": "normal", ":now": now, ":zero": 0, ":empty": "",
+                    ":expires": now + 31_536_000,
+                },
+            )
+        else:
+            table.update_item(
+                Key={"pk": "DMDATA#HEALTH"},
+                UpdateExpression=(
+                    "SET #status = :status, last_error_at = :now, last_error = :error, "
+                    "updated_at = :now, expires_at = :expires"
+                ),
+                ExpressionAttributeNames={"#status": "status"},
+                ExpressionAttributeValues={
+                    ":status": "abnormal", ":now": now, ":error": _clean(error, 100),
+                    ":expires": now + 31_536_000,
+                },
+            )
+        _delivery_flow_cache["expires_at"] = 0.0
+    except Exception as record_error:
+        print(json.dumps({"event": "dmdata_health_record_failed", "error": type(record_error).__name__}, ensure_ascii=False))
+
+
+def _trim_ttl_cache(cache, maximum):
+    if len(cache) <= maximum:
+        return
+    oldest = sorted(cache.items(), key=lambda item: item[1].get("expires_at", 0))
+    for key, _ in oldest[:len(cache) - maximum]:
+        cache.pop(key, None)
 
 
 def _client(service, region=None):
@@ -341,15 +766,34 @@ def _safe_section(loader):
 
 
 def _lambda_summary():
-    functions = []
-    paginator = _client("lambda").get_paginator("list_functions")
-    for page in paginator.paginate(PaginationConfig={"MaxItems": 500}):
-        functions.extend(page.get("Functions", []))
+    with ThreadPoolExecutor(max_workers=max(1, len(OPERATING_REGIONS))) as executor:
+        regional = list(executor.map(_lambda_region_summary, OPERATING_REGIONS))
+    functions = [item for section in regional for item in section["functions"]]
     return {
         "available": True,
         "count": len(functions),
-        "names": sorted(_clean(item.get("FunctionName"), 100) for item in functions if item.get("FunctionName"))[:100],
+        "regions": [
+            {
+                "region": section["region"],
+                "count": len(section["functions"]),
+                "names": sorted(
+                    _clean(item.get("FunctionName"), 100)
+                    for item in section["functions"]
+                    if item.get("FunctionName")
+                )[:500],
+            }
+            for section in regional
+        ],
+        "names": sorted(_clean(item.get("FunctionName"), 100) for item in functions if item.get("FunctionName"))[:200],
     }
+
+
+def _lambda_region_summary(region):
+    functions = []
+    paginator = _client("lambda", region).get_paginator("list_functions")
+    for page in paginator.paginate(PaginationConfig={"MaxItems": 500}):
+        functions.extend(page.get("Functions", []))
+    return {"region": region, "functions": functions}
 
 
 def _api_gateway_summary():
@@ -365,8 +809,25 @@ def _api_gateway_summary():
 
 
 def _sqs_summary():
-    client = _client("sqs")
-    urls = client.list_queues(MaxResults=1000).get("QueueUrls", [])
+    with ThreadPoolExecutor(max_workers=max(1, len(OPERATING_REGIONS))) as executor:
+        regional = list(executor.map(_sqs_region_summary, OPERATING_REGIONS))
+    queues = [queue for section in regional for queue in section["queues"]]
+    return {
+        "available": True,
+        "count": sum(section["count"] for section in regional),
+        "visibleMessages": sum(section["visibleMessages"] for section in regional),
+        "deadLetterMessages": sum(section["deadLetterMessages"] for section in regional),
+        "regions": regional,
+        "queues": queues,
+    }
+
+
+def _sqs_region_summary(region):
+    client = _client("sqs", region)
+    urls = []
+    paginator = client.get_paginator("list_queues")
+    for page in paginator.paginate(PaginationConfig={"MaxItems": 1000, "PageSize": 1000}):
+        urls.extend(page.get("QueueUrls", []))
     queues = []
     visible = 0
     dead_letter = 0
@@ -380,8 +841,20 @@ def _sqs_summary():
         visible += count
         if "dlq" in name.casefold() or "dead" in name.casefold():
             dead_letter += count
-        queues.append({"name": name[:100], "visible": count, "inFlight": _integer(attributes.get("ApproximateNumberOfMessagesNotVisible"), 0)})
-    return {"available": True, "count": len(urls), "visibleMessages": visible, "deadLetterMessages": dead_letter, "queues": queues}
+        queues.append({
+            "name": name[:100],
+            "region": region,
+            "visible": count,
+            "inFlight": _integer(attributes.get("ApproximateNumberOfMessagesNotVisible"), 0),
+            "deadLetter": "dlq" in name.casefold() or "dead" in name.casefold(),
+        })
+    return {
+        "region": region,
+        "count": len(urls),
+        "visibleMessages": visible,
+        "deadLetterMessages": dead_letter,
+        "queues": queues,
+    }
 
 
 def _dynamodb_summary():
@@ -609,6 +1082,211 @@ def _delivery_directory_summary():
         "channels": len(channels),
         "byType": dict(sorted(by_type.items(), key=lambda item: (-item[1], item[0]))[:100]),
     }
+
+
+def _load_delivery_flow():
+    now = time.time()
+    if _delivery_flow_cache["expires_at"] > now and _delivery_flow_cache["value"] is not None:
+        return _delivery_flow_cache["value"]
+
+    system = _load_flow_system_summary()
+    statistics = _load_delivery_statistics("24h")
+    observed_at = datetime.now(tz=timezone.utc).isoformat()
+    components = []
+
+    dmdata_health = _dmdata_health()
+    components.append({
+        "id": "dmdata-history-api",
+        "layer": "upstream",
+        "name": "DMDATA上流API",
+        "status": dmdata_health["status"],
+        "expectedStopped": dmdata_health["expectedStopped"],
+        "detail": dmdata_health["detail"],
+        "lastConnectivityAt": dmdata_health["lastConnectivityAt"],
+        "lastPassedAt": dmdata_health["lastConnectivityAt"],
+        "passageMs": None,
+    })
+
+    home = system.get("homeServers") or {}
+    for node in home.get("nodes") or []:
+        components.append({
+            "id": f"home-{_clean(node.get('id'), 30)}",
+            "layer": "home",
+            "name": _clean(node.get("name"), 160) or "自宅サーバー",
+            "status": "normal" if node.get("healthy") else "abnormal",
+            "expectedStopped": False,
+            "detail": "ハートビート正常" if node.get("healthy") else "ハートビートが5分以上更新されていません",
+            "lastConnectivityAt": node.get("lastHeartbeat"),
+            "lastPassedAt": node.get("lastHeartbeat"),
+            "passageMs": None,
+        })
+
+    lambda_summary = system.get("lambda") or {}
+    alarm_names = (system.get("alarms") or {}).get("names") or []
+    for region in OPERATING_REGIONS:
+        recent = _flow_recent_for_region(statistics.get("recent") or [], region)
+        region_role = _region_role(region)
+        lambda_region = next((item for item in lambda_summary.get("regions") or [] if item.get("region") == region), {})
+        lambda_count = _integer(lambda_region.get("count"), 0)
+        function_names = set(lambda_region.get("names") or [])
+        required_functions = {
+            f"dpi-delivery-primary-{region_role.upper()}",
+            f"dpi-distributor-{region_role.upper()}",
+            f"dpi-ha-control-{region_role.upper()}",
+        }
+        missing_functions = sorted(required_functions - function_names)
+        relevant_alarms = [name for name in alarm_names if region.casefold() in name.casefold() or region_role in name.casefold()]
+        status = "abnormal" if relevant_alarms or not lambda_summary.get("available") or missing_functions else "normal"
+        components.append({
+            "id": f"aws-fast-{region}",
+            "layer": "aws-fast",
+            "name": f"AWS高速系統（{region_role.upper()}）",
+            "region": region,
+            "status": status,
+            "expectedStopped": False,
+            "detail": (
+                f"Lambda {lambda_count}件 / 必須3機能確認済み"
+                if not missing_functions
+                else f"Lambda {lambda_count}件 / 不足: {', '.join(missing_functions)}"
+            ) + (f" / 警報 {len(relevant_alarms)}件" if relevant_alarms else " / 有効な警報なし"),
+            "lastConnectivityAt": observed_at if lambda_summary.get("available") else None,
+            "lastPassedAt": _epoch_iso(recent.get("updatedEpoch")) if recent else None,
+            "passageMs": recent.get("maxLatencyMs") if recent else None,
+            "lastTitle": recent.get("title") if recent else None,
+        })
+
+    sqs = system.get("sqs") or {}
+    for region in OPERATING_REGIONS:
+        section = next((item for item in sqs.get("regions") or [] if item.get("region") == region), None)
+        recent = _flow_recent_for_region(statistics.get("recent") or [], region)
+        queue_count = _integer((section or {}).get("count"), 0)
+        dlq = _integer((section or {}).get("deadLetterMessages"), 0)
+        status = "abnormal" if not sqs.get("available") or dlq > 0 or queue_count == 0 else "normal"
+        components.append({
+            "id": f"sqs-{region}",
+            "layer": "sqs",
+            "name": f"SQS系統（{_region_role(region).upper()}）",
+            "region": region,
+            "status": status,
+            "expectedStopped": False,
+            "detail": f"キュー {queue_count}件 / 待機 {_integer((section or {}).get('visibleMessages'), 0)}件 / DLQ {dlq}件",
+            "lastConnectivityAt": observed_at if sqs.get("available") else None,
+            "lastPassedAt": _epoch_iso(recent.get("updatedEpoch")) if recent else None,
+            "passageMs": recent.get("maxLatencyMs") if recent else None,
+            "queues": (section or {}).get("queues") or [],
+        })
+
+    backup = system.get("backupInstances") or {}
+    instances = backup.get("instances") or []
+    if not instances:
+        components.append({
+            "id": "backup-unconfigured",
+            "layer": "backup",
+            "name": "バックアップ配信系統",
+            "status": "stopped",
+            "expectedStopped": True,
+            "detail": "管理対象EC2は停止または未登録です",
+            "lastConnectivityAt": observed_at if backup.get("available") else None,
+            "lastPassedAt": None,
+            "passageMs": None,
+        })
+    for instance in instances:
+        state = _clean(instance.get("state"), 30).casefold()
+        healthy = instance.get("instanceStatus") in {"ok", "unknown", "not_applicable"} and instance.get("systemStatus") in {"ok", "unknown", "not_applicable"}
+        if state == "stopped":
+            status = "stopped"
+        elif state == "running" and healthy:
+            status = "normal"
+        else:
+            status = "abnormal"
+        recent = _flow_recent_for_region(statistics.get("recent") or [], _clean(instance.get("region"), 40))
+        components.append({
+            "id": f"backup-{_clean(instance.get('instanceId'), 40)}",
+            "layer": "backup",
+            "name": _clean(instance.get("name"), 160) or _clean(instance.get("instanceId"), 40),
+            "region": _clean(instance.get("region"), 40),
+            "status": status,
+            "expectedStopped": state == "stopped",
+            "detail": f"EC2 {state or 'unknown'} / 役割 {_clean(instance.get('backupRole'), 80) or '未設定'}",
+            "lastConnectivityAt": observed_at if backup.get("available") else None,
+            "lastPassedAt": _epoch_iso(recent.get("updatedEpoch")) if recent else None,
+            "passageMs": recent.get("maxLatencyMs") if recent else None,
+        })
+
+    counts = {"normal": 0, "stopped": 0, "abnormal": 0, "unknown": 0}
+    for component in components:
+        key = component.get("status") if component.get("status") in counts else "unknown"
+        counts[key] += 1
+    value = {
+        "summary": counts,
+        "components": components,
+        "layers": [
+            {"id": "upstream", "label": "上流API"},
+            {"id": "home", "label": "自宅サーバー"},
+            {"id": "aws-fast", "label": "AWS高速系統"},
+            {"id": "sqs", "label": "SQS系統"},
+            {"id": "backup", "label": "バックアップ配信"},
+        ],
+        "costPolicy": "自動ポーリングは行わず、画面更新時に既存のハートビート・監視記録・AWS属性を再利用します。",
+        "observedAt": observed_at,
+    }
+    _delivery_flow_cache.update({"expires_at": now + 45, "value": value})
+    return value
+
+
+def _load_flow_system_summary():
+    now = time.time()
+    if _system_cache["expires_at"] > now and _system_cache["value"] is not None:
+        return _system_cache["value"]
+    if _flow_system_cache["expires_at"] > now and _flow_system_cache["value"] is not None:
+        return _flow_system_cache["value"]
+    loaders = {
+        "lambda": _lambda_summary,
+        "sqs": _sqs_summary,
+        "alarms": _alarm_summary,
+        "backupInstances": _ec2_summary,
+        "homeServers": _home_server_summary,
+    }
+    with ThreadPoolExecutor(max_workers=len(loaders)) as executor:
+        futures = {name: executor.submit(_safe_section, loader) for name, loader in loaders.items()}
+        value = {name: future.result() for name, future in futures.items()}
+    _flow_system_cache.update({"expires_at": now + 45, "value": value})
+    return value
+
+
+def _dmdata_health():
+    if not DMDATA_API_KEY_PARAMETER:
+        return {"status": "abnormal", "expectedStopped": False, "detail": "APIキー保存先が未設定です", "lastConnectivityAt": None}
+    if not STATE_TABLE_NAME:
+        return {"status": "stopped", "expectedStopped": True, "detail": "履歴APIはオンデマンド参照待機中です", "lastConnectivityAt": None}
+    try:
+        record = _dynamodb.Table(STATE_TABLE_NAME).get_item(Key={"pk": "DMDATA#HEALTH"}).get("Item", {})
+    except Exception:
+        return {"status": "stopped", "expectedStopped": True, "detail": "履歴APIはオンデマンド参照待機中です", "lastConnectivityAt": None}
+    if not record:
+        return {"status": "stopped", "expectedStopped": True, "detail": "履歴APIはオンデマンド参照待機中です", "lastConnectivityAt": None}
+    success_at = _integer(record.get("last_success_at"), 0)
+    status = "normal" if _clean(record.get("status"), 30) == "normal" else "abnormal"
+    return {
+        "status": status,
+        "expectedStopped": False,
+        "detail": "最終API呼び出し成功" if status == "normal" else f"最終エラー: {_clean(record.get('last_error'), 100) or '不明'}",
+        "lastConnectivityAt": _epoch_iso(success_at or _integer(record.get("last_error_at"), 0)),
+    }
+
+
+def _flow_recent_for_region(rows, region):
+    region_text = _clean(region, 40).casefold()
+    role = _region_role(region_text)
+    for item in rows:
+        owner = _clean(item.get("ownerRegion"), 80).casefold()
+        if (region_text and region_text in owner) or (role and role in owner):
+            return item
+    return None
+
+
+def _region_role(region):
+    return {"ap-northeast-1": "tokyo", "ap-northeast-3": "osaka"}.get(_clean(region, 40).casefold(), _clean(region, 40).casefold() or "unknown")
 
 
 def _timestamp(value):
@@ -1273,6 +1951,10 @@ def _valid_discord_webhook_url(value):
 def _xml_dispatch(body, actor, request_id):
     xml_text = _xml_text(body)
     preview = _parse_xml_summary(xml_text)
+    dmdata_source = _dmdata_source_from_body(body.get("dmdataSource"))
+    xml_digest = hashlib.sha256(xml_text.encode("utf-8")).hexdigest()
+    if dmdata_source and not hmac.compare_digest(dmdata_source["xmlSha256"], xml_digest):
+        raise ValueError("選択したDMDATA電文とXML本文が一致しません。電文を読み込み直してください。")
     send_data = _clean(body.get("sendData"), 30).casefold()
     delivery_slot = _normalize_delivery_name(body.get("deliverySlot"))
     expected_confirmation = f"XML配信:{delivery_slot}"
@@ -1289,8 +1971,14 @@ def _xml_dispatch(body, actor, request_id):
         raise ValueError("選択した配信枠に有効な配信先URLがありません。")
 
     now = datetime.now(tz=timezone.utc).isoformat()
-    xml_digest = hashlib.sha256(xml_text.encode("utf-8")).hexdigest()
     delivery_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"dpi-admin:{xml_digest}:{delivery_slot}:{send_data}"))
+    _record_delivery_metadata(
+        delivery_id,
+        preview.get("headline") or preview.get("controlTitle") or "気象庁XML",
+        delivery_slot,
+        send_data,
+        dmdata_source,
+    )
     payload = {
         "title": preview.get("headline") or preview.get("controlTitle") or "気象庁XML",
         "url": targets,
@@ -1301,13 +1989,29 @@ def _xml_dispatch(body, actor, request_id):
         "times": now,
         "type": preview.get("controlTitle") or "XML",
         "send_data": send_data,
-        "_home_trace": {"source": "admin-center", "actor": actor, "requested_at": now},
+        "delivery_slot": delivery_slot,
+        **({"dmdata_id": dmdata_source["sourceId"]} if dmdata_source else {}),
+        "_home_trace": {
+            "source": "dmdata-history" if dmdata_source else "admin-center",
+            "actor": actor,
+            "requested_at": now,
+            **({"dmdata_id": dmdata_source["sourceId"]} if dmdata_source else {}),
+        },
     }
     raw_body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     secret = _get_ingest_secret()
     timestamp = str(int(time.time()))
     signature = hmac.new(secret.encode("utf-8"), timestamp.encode("ascii") + b"." + raw_body, hashlib.sha256).hexdigest()
-    results = [_post_signed_ingest(endpoint, raw_body, timestamp, signature) for endpoint in INGEST_ENDPOINTS]
+    if dmdata_source:
+        _record_dmdata_dispatch(dmdata_source, "dispatching", delivery_slot, send_data, delivery_id, preview)
+    try:
+        results = [_post_signed_ingest(endpoint, raw_body, timestamp, signature) for endpoint in INGEST_ENDPOINTS]
+    except Exception:
+        if dmdata_source:
+            _record_dmdata_dispatch(dmdata_source, "failed", delivery_slot, send_data, delivery_id, preview)
+        raise
+    if dmdata_source:
+        _record_dmdata_dispatch(dmdata_source, "delivered", delivery_slot, send_data, delivery_id, preview)
     _audit_operation(actor, "xml.dispatch", request_id, {
         "delivery_slot": delivery_slot,
         "send_data": send_data,
@@ -1315,6 +2019,7 @@ def _xml_dispatch(body, actor, request_id):
         "endpoint_count": len(results),
         "xml_sha256": xml_digest,
         "delivery_id": delivery_id,
+        "dmdata_source_id": dmdata_source["sourceId"] if dmdata_source else None,
     })
     return {
         "message": "XML配信を受け付けました。二重送信は既存の配信IDで抑止されます。",
@@ -1324,7 +2029,91 @@ def _xml_dispatch(body, actor, request_id):
         "deliveryId": delivery_id,
         "endpoints": results,
         "preview": preview,
+        "dmdataSource": dmdata_source,
     }
+
+
+def _dmdata_source_from_body(value):
+    if value in (None, ""):
+        return None
+    if not isinstance(value, dict):
+        raise ValueError("DMDATAの電文情報が不正です。")
+    return {
+        "sourceId": _valid_dmdata_source_id(value.get("sourceId")),
+        "classification": _clean(value.get("classification"), 80),
+        "typeCode": _clean(value.get("typeCode"), 40),
+        "receivedTime": _clean(value.get("receivedTime"), 60),
+        "eventId": _clean(value.get("eventId"), 80),
+        "title": _clean(value.get("title"), 300),
+        "xmlSha256": _valid_sha256(value.get("xmlSha256")),
+    }
+
+
+def _valid_sha256(value):
+    digest = _clean(value, 64).casefold()
+    if not re.fullmatch(r"[a-f0-9]{64}", digest):
+        raise ValueError("DMDATA電文の整合性情報が不正です。電文を読み込み直してください。")
+    return digest
+
+
+def _record_delivery_metadata(delivery_id, title, delivery_slot, send_data, dmdata_source):
+    now = int(time.time())
+    values = {
+        ":metadata_kind": "delivery-metadata",
+        ":delivery_id": delivery_id,
+        ":generation": 1,
+        ":title": _clean(title, 300) or "気象庁XML",
+        ":delivery_slot": delivery_slot,
+        ":send_data": send_data,
+        ":now": now,
+        ":expires": now + 604_800,
+    }
+    update = (
+        "SET #kind = if_not_exists(#kind, :metadata_kind), "
+        "deliveryId = if_not_exists(deliveryId, :delivery_id), "
+        "generation = if_not_exists(generation, :generation), #title = :title, "
+        "deliverySlot = :delivery_slot, sendData = :send_data, "
+        "metadataUpdatedEpoch = :now, expiresAt = if_not_exists(expiresAt, :expires)"
+    )
+    if dmdata_source:
+        update += ", dmdataId = :dmdata_id, source_uuid = :dmdata_id"
+        values[":dmdata_id"] = dmdata_source["sourceId"]
+    _dynamodb.Table(DELIVERY_MONITOR_TABLE_NAME).update_item(
+        Key={"pk": f"delivery#{delivery_id}#g1"},
+        UpdateExpression=update,
+        ExpressionAttributeNames={"#kind": "kind", "#title": "title"},
+        ExpressionAttributeValues=values,
+    )
+
+
+def _record_dmdata_dispatch(source, status, delivery_slot, send_data, delivery_id, preview):
+    if not STATE_TABLE_NAME:
+        return
+    now = int(time.time())
+    _dynamodb.Table(STATE_TABLE_NAME).put_item(Item={
+        "pk": f"DMDATA#SOURCE#{source['sourceId']}",
+        "source_id": source["sourceId"],
+        "classification": source.get("classification") or "",
+        "type_code": source.get("typeCode") or "",
+        "event_id": source.get("eventId") or "",
+        "received_time": source.get("receivedTime") or "",
+        "title": preview.get("headline") or preview.get("controlTitle") or source.get("title") or "",
+        "status": status,
+        "delivery_slot": delivery_slot,
+        "send_data": send_data,
+        "delivery_id": delivery_id,
+        "updated_at": now,
+        "expires_at": now + 31_536_000,
+    })
+    for cached in _dmdata_history_cache.values():
+        for item in cached.get("value", {}).get("items", []):
+            if item.get("sourceId") != source["sourceId"]:
+                continue
+            item["deliveryState"] = "delivered" if status == "delivered" else ("dispatching" if status == "dispatching" else "undelivered")
+            item["deliveryStateLabel"] = {"delivered": "配信済み", "dispatching": "配信処理中", "failed": "未配信（前回失敗）"}.get(status, "未配信")
+            item["lastDeliveryAt"] = _epoch_iso(now)
+            item["lastDeliverySlot"] = delivery_slot
+            item["lastSendData"] = send_data
 
 
 def _xml_text(body):
