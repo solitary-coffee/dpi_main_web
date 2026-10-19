@@ -12,6 +12,7 @@ test('AWS配信統計は最新世代だけを集計し24時間・7日・保持�
     assert.match(source, /"byTitle"/u);
     assert.match(source, /def _delivery_title/u);
     assert.match(source, /"deliverySlot": _delivery_slot/u);
+    assert.match(source, /"deliveryId": _clean\(item\.get\("deliveryId"\)/u);
     assert.match(source, /"seriousErrors"/u);
     assert.match(source, /rows\[:50\]/u);
 });
@@ -37,6 +38,12 @@ test('DMDATA履歴は固定ドメイン・短時間キャッシュ・配信状�
     assert.match(source, /"warningLabel": "警報発表済み"/u);
     assert.match(source, /dmdata_delivery_state_lookup_failed/u);
     assert.match(source, /"deliveryStateLabel"\] = "状態取得失敗"/u);
+    assert.match(source, /def _match_dmdata_monitor_deliveries/u);
+    assert.match(source, /_delivery_identity_cache\[period\]/u);
+    assert.match(source, /_delivery_identity_cache\.get\("7d"\)/u);
+    assert.match(source, /abs\(row\["sourceEpoch"\] - received_epoch\) <= 8/u);
+    assert.match(source, /"配信済み（AWS監視記録）"/u);
+    assert.match(source, /item\["lastDeliveryId"\] = monitored\.get\("deliveryId"\)/u);
     assert.match(template, /DmdataApiKeyParameter/u);
     assert.match(template, /DMDATA_API_KEY_PARAMETER/u);
     const operationalPolicy = template.match(/- Sid: ReadAndWriteOperationalState([\s\S]*?)(?=\n\s+- Sid:|\n\s+FunctionUrlConfig:)/u)?.[1] || '';
@@ -70,6 +77,11 @@ test('配信系統はEC2とLambda・SQSバックアップを分離しSQS稼働�
     assert.match(source, /"label": "EC2"[\s\S]*"label": "AWS高速配信"/u);
     assert.match(source, /def _sqs_activity_state/u);
     assert.match(source, /activity_state = "error" if dlq > 0/u);
+    assert.match(source, /def _sqs_queue_role/u);
+    assert.match(source, /WebSocket配信用SQS/u);
+    assert.match(source, /高可用性候補判定の失敗退避DLQ/u);
+    assert.match(source, /"ec2Details"/u);
+    assert.match(source, /"lastDeliveryId": recent\.get\("deliveryId"\)/u);
     assert.match(source, /"activityLabel": _sqs_activity_label/u);
     assert.match(html, /待機中（正常）|バックアップ待機中/u);
     assert.match(script, /component\.expectedStopped/u);
@@ -78,6 +90,14 @@ test('配信系統はEC2とLambda・SQSバックアップを分離しSQS稼働�
     assert.match(script, /document\.createElement\(tag\)/u);
     assert.match(script, /flow\.routes/u);
     assert.match(script, /flow-route-branches/u);
+    assert.match(script, /stageStatusSummary\(matches\)/u);
+    assert.match(script, /\['abnormal', '異常'\]/u);
+    assert.match(script, /component\.activityState === 'error'/u);
+    assert.match(script, /queue\.role \|\| '用途未分類SQS'/u);
+    assert.match(script, /ec2DetailRows\(component\.ec2Details\)/u);
+    assert.match(script, /直近配信ID/u);
+    assert.match(style, /\.flow-stage-statuses/u);
+    assert.match(style, /\.flow-stage-status/u);
     assert.match(style, /grid-template-columns: repeat\(2/u);
     assert.match(style, /@media \(max-width: 760px\)/u);
     assert.doesNotMatch(script, /setInterval|innerHTML/u);

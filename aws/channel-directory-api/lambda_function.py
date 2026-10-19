@@ -61,6 +61,7 @@ _system_cache = {"expires_at": 0.0, "value": None}
 _flow_system_cache = {"expires_at": 0.0, "value": None}
 _delivery_flow_cache = {"expires_at": 0.0, "value": None}
 _delivery_statistics_cache = {}
+_delivery_identity_cache = {}
 _secret_cache = {"expires_at": 0.0, "value": None}
 _dmdata_key_cache = {"expires_at": 0.0, "value": None}
 _dmdata_history_cache = {}
@@ -276,7 +277,8 @@ def _load_delivery_statistics(period):
             "#kind, deliveryId, generation, eventType, updatedEpoch, targetCount, normalCount, "
             "errorCount, excludedErrorCount, seriousErrorCount, ownerRegion, workerMaxSeconds, "
             "latencyMaxMs, logsCollected, #title, subject, eventTitle, reportTitle, headline, "
-            "deliverySlot, deliverySlots, deliveryType, #app, sendData, send_data, pipeline, #route"
+            "deliverySlot, deliverySlots, deliveryType, #app, sendData, send_data, pipeline, #route, "
+            "statusUpdatedEpoch, lease, dmdataId, dmdata_id, source_uuid, eventId, event_id"
         ),
         "ExpressionAttributeNames": {
             "#kind": "kind",
@@ -310,6 +312,10 @@ def _load_delivery_statistics(period):
         scan_args["ExclusiveStartKey"] = last_key
 
     rows = sorted(latest_by_delivery.values(), key=lambda item: _integer(item.get("updatedEpoch"), 0), reverse=True)
+    _delivery_identity_cache[period] = {
+        "rows": [_delivery_identity_row(item) for item in rows],
+        "expires_at": now + 60,
+    }
     totals = _empty_delivery_totals()
     by_type = {}
     by_title = {}
@@ -371,6 +377,7 @@ def _add_delivery_totals(totals, item):
 
 def _delivery_stat_row(item):
     return {
+        "deliveryId": _clean(item.get("deliveryId"), 200),
         "title": _delivery_title(item),
         "eventType": _clean(item.get("eventType"), 40).casefold() or "unknown",
         "deliverySlot": _delivery_slot(item),
@@ -392,7 +399,35 @@ def _delivery_title(item):
         value = _clean(item.get(key), 300)
         if value:
             return value
-    return _clean(item.get("eventType"), 80) or "タイトル未記録"
+    event_type = _clean(item.get("eventType"), 80).casefold()
+    return {
+        "eew": "緊急地震速報",
+        "eew_sind": "推定震度・サポーター向け地震情報",
+        "zisin": "地震情報",
+        "tunami": "津波情報",
+        "keiho": "警報・注意報",
+        "kisyo": "気象情報",
+        "kisyo2": "気象情報（補助）",
+        "kazan": "火山情報",
+        "sub": "補助情報",
+    }.get(event_type, event_type or "タイトル未記録")
+
+
+def _delivery_identity_row(item):
+    lease = item.get("lease") if isinstance(item.get("lease"), dict) else {}
+    return {
+        "deliveryId": _clean(item.get("deliveryId"), 200),
+        "eventType": _clean(item.get("eventType"), 40).casefold(),
+        "title": _delivery_title(item),
+        "sourceId": _clean(item.get("dmdataId") or item.get("dmdata_id") or item.get("source_uuid"), 200),
+        "eventId": _clean(item.get("eventId") or item.get("event_id"), 80),
+        "sourceEpoch": _integer(lease.get("updatedAtEpoch"), 0),
+        "statusEpoch": _integer(item.get("statusUpdatedEpoch"), 0),
+        "updatedEpoch": _integer(item.get("updatedEpoch"), 0),
+        "targets": _integer(item.get("targetCount"), 0),
+        "normal": _integer(item.get("normalCount"), 0),
+        "errors": _integer(item.get("errorCount"), 0),
+    }
 
 
 def _delivery_slot(item):
@@ -599,6 +634,10 @@ def _attach_dmdata_delivery_states(items):
                 break
             for record in response.get("Responses", {}).get(STATE_TABLE_NAME, []):
                 states[_clean(record.get("source_id"), 160)] = record
+    monitor_states = {} if lookup_failed else _match_dmdata_monitor_deliveries([
+        item for item in items
+        if item.get("sourceId") and item.get("deliveryState") != "unsupported" and item.get("sourceId") not in states
+    ])
     for item in items:
         state = states.get(item.get("sourceId"))
         if item.get("deliveryState") == "unsupported":
@@ -608,6 +647,14 @@ def _attach_dmdata_delivery_states(items):
             item["deliveryStateLabel"] = "状態取得失敗"
             continue
         if not state:
+            monitored = monitor_states.get(item.get("sourceId"))
+            if monitored:
+                item["deliveryState"] = "delivered"
+                item["deliveryStateLabel"] = "配信済み（AWS監視記録）"
+                item["lastDeliveryAt"] = _epoch_iso(monitored.get("sourceEpoch") or monitored.get("statusEpoch") or monitored.get("updatedEpoch"))
+                item["lastDeliverySlot"] = _delivery_event_label(monitored.get("eventType"))
+                item["lastDeliveryId"] = monitored.get("deliveryId")
+                item["lastDeliveryTitle"] = monitored.get("title")
             continue
         status = _clean(state.get("status"), 30).casefold()
         item["lastDeliveryAt"] = _epoch_iso(_integer(state.get("updated_at"), 0))
@@ -622,6 +669,74 @@ def _attach_dmdata_delivery_states(items):
         elif status == "failed":
             item["deliveryState"] = "undelivered"
             item["deliveryStateLabel"] = "未配信（前回失敗）"
+
+
+def _match_dmdata_monitor_deliveries(items):
+    if not items:
+        return {}
+    now = time.time()
+    cached = _delivery_identity_cache.get("7d") or {}
+    if cached.get("expires_at", 0) <= now:
+        _load_delivery_statistics("7d")
+    available = list((_delivery_identity_cache.get("7d") or {}).get("rows") or [])
+    matched = {}
+    used_delivery_ids = set()
+    for item in items:
+        source_id = _clean(item.get("sourceId"), 200)
+        event_id = _clean(item.get("eventId"), 80)
+        expected_types = _dmdata_event_types(item)
+        exact = next((row for row in available if row.get("deliveryId") not in used_delivery_ids and source_id and row.get("sourceId") == source_id), None)
+        if exact is None and event_id:
+            exact = next((row for row in available if row.get("deliveryId") not in used_delivery_ids and row.get("eventId") == event_id and row.get("eventType") in expected_types), None)
+        if exact is None:
+            received_epoch = _iso_epoch(item.get("receivedTime") or item.get("reportTime"))
+            candidates = [
+                row for row in available
+                if row.get("deliveryId") not in used_delivery_ids
+                and row.get("eventType") in expected_types
+                and row.get("sourceEpoch")
+                and received_epoch
+                and abs(row["sourceEpoch"] - received_epoch) <= 8
+            ]
+            exact = min(candidates, key=lambda row: abs(row["sourceEpoch"] - received_epoch), default=None)
+        if exact:
+            matched[source_id] = exact
+            used_delivery_ids.add(exact.get("deliveryId"))
+    return matched
+
+
+def _dmdata_event_types(item):
+    category = _clean(item.get("category"), 30).casefold()
+    text = " ".join(_clean(item.get(key), 500) for key in ("title", "controlTitle", "headline", "typeCode"))
+    if category.startswith("eew"):
+        return {"eew"}
+    if category == "volcano":
+        return {"kazan"}
+    if category == "earthquake":
+        return {"tunami"} if "津波" in text else {"zisin"}
+    if category == "weather" and ("警報" in text or "注意報" in text):
+        return {"keiho"}
+    if category == "weather":
+        return {"kisyo", "kisyo2", "sub"}
+    return set(ALLOWED_SEND_DATA)
+
+
+def _iso_epoch(value):
+    text = _clean(value, 80)
+    if not text:
+        return 0
+    try:
+        return int(datetime.fromisoformat(text.replace("Z", "+00:00")).timestamp())
+    except (TypeError, ValueError, OverflowError):
+        return 0
+
+
+def _delivery_event_label(value):
+    return {
+        "eew": "緊急地震速報", "eew_sind": "推定震度", "zisin": "地震情報",
+        "tunami": "津波情報", "keiho": "警報・注意報", "kisyo": "気象情報",
+        "kisyo2": "気象情報（補助）", "kazan": "火山情報", "sub": "補助情報",
+    }.get(_clean(value, 40).casefold(), _clean(value, 80) or "配信枠不明")
 
 
 def _dmdata_load_xml(body):
@@ -869,12 +984,14 @@ def _sqs_region_summary(region):
         in_flight = _integer(attributes.get("ApproximateNumberOfMessagesNotVisible"), 0)
         delayed = _integer(attributes.get("ApproximateNumberOfMessagesDelayed"), 0)
         name = url.rsplit("/", 1)[-1]
-        is_dead_letter = "dlq" in name.casefold() or "dead" in name.casefold()
+        lowered_name = name.casefold()
+        is_dead_letter = "dlq" in lowered_name or "dead" in lowered_name or "failurequeue" in lowered_name
         visible += count
         if is_dead_letter:
             dead_letter += count
         queues.append({
             "name": name[:100],
+            "role": _sqs_queue_role(name),
             "region": region,
             "visible": count,
             "inFlight": in_flight,
@@ -889,6 +1006,23 @@ def _sqs_region_summary(region):
         "deadLetterMessages": dead_letter,
         "queues": queues,
     }
+
+
+def _sqs_queue_role(name):
+    lowered = _clean(name, 160).casefold()
+    if lowered == "websocketdataqueue":
+        return "WebSocket配信用SQS"
+    if lowered.startswith("dpi-ha-candidate-dlq-"):
+        return "高可用性候補判定の失敗退避DLQ"
+    if lowered.startswith("dpi-ha-candidate-"):
+        return "高可用性候補判定用SQS"
+    if lowered.startswith("dpi-status-dlq-"):
+        return "配信状態通知の失敗退避DLQ"
+    if lowered.startswith("dpi-status-"):
+        return "配信状態通知・WebSocket連携用SQS"
+    if "notificationfailurequeue" in lowered:
+        return "バックアップ通知失敗の退避SQS"
+    return "用途未分類SQS"
 
 
 def _sqs_activity_state(visible, in_flight, delayed, dead_letter=False):
@@ -1199,6 +1333,7 @@ def _load_delivery_flow():
             "lastPassedAt": _epoch_iso(recent.get("updatedEpoch")) if recent else None,
             "passageMs": recent.get("maxLatencyMs") if recent else None,
             "lastTitle": recent.get("title") if recent else None,
+            "lastDeliveryId": recent.get("deliveryId") if recent else None,
         })
 
     sqs = system.get("sqs") or {}
@@ -1226,6 +1361,8 @@ def _load_delivery_flow():
             "lastConnectivityAt": observed_at if sqs.get("available") else None,
             "lastPassedAt": _epoch_iso(recent.get("updatedEpoch")) if recent else None,
             "passageMs": recent.get("maxLatencyMs") if recent else None,
+            "lastTitle": recent.get("title") if recent else None,
+            "lastDeliveryId": recent.get("deliveryId") if recent else None,
             "queues": queues,
         })
 
@@ -1238,6 +1375,7 @@ def _load_delivery_flow():
         for item in sqs.get("regions") or []
     }
     for region in OPERATING_REGIONS:
+        recent = _flow_recent_for_region(statistics.get("recent") or [], region)
         region_role = _region_role(region).upper()
         function_names = function_names_by_region.get(region, set())
         backup_function = f"dpi-delivery-backup-{region_role}"
@@ -1270,6 +1408,8 @@ def _load_delivery_flow():
             "lastConnectivityAt": observed_at if sqs.get("available") and lambda_summary.get("available") else None,
             "lastPassedAt": None,
             "passageMs": None,
+            "lastTitle": recent.get("title") if recent else None,
+            "lastDeliveryId": recent.get("deliveryId") if recent else None,
             "queues": [candidate_queue] if candidate_queue else [],
             "functions": [candidate_function, backup_function],
         })
@@ -1291,6 +1431,7 @@ def _load_delivery_flow():
         if target_queue is None:
             missing.append(f"dpi-ha-candidate-{target_region}")
         activity_state = _queue_component_activity(target_queue)
+        recent = _flow_recent_for_region(statistics.get("recent") or [], target_region)
         status = "abnormal" if missing or activity_state == "error" else "normal"
         components.append({
             "id": f"cross-backup-{source_region}-to-{target_region}",
@@ -1311,6 +1452,8 @@ def _load_delivery_flow():
             "lastConnectivityAt": observed_at if sqs.get("available") and lambda_summary.get("available") else None,
             "lastPassedAt": None,
             "passageMs": None,
+            "lastTitle": recent.get("title") if recent else None,
+            "lastDeliveryId": recent.get("deliveryId") if recent else None,
             "queues": [target_queue] if target_queue else [],
             "functions": [target_candidate, target_backup],
         })
@@ -1352,6 +1495,21 @@ def _load_delivery_flow():
             "lastConnectivityAt": observed_at if backup.get("available") else None,
             "lastPassedAt": _epoch_iso(recent.get("updatedEpoch")) if recent else None,
             "passageMs": recent.get("maxLatencyMs") if recent else None,
+            "lastTitle": recent.get("title") if recent else None,
+            "lastDeliveryId": recent.get("deliveryId") if recent else None,
+            "ec2Details": {
+                "instanceId": instance.get("instanceId"), "state": instance.get("state"),
+                "normalState": instance.get("normalState"), "backupRole": instance.get("backupRole"),
+                "availabilityZone": instance.get("availabilityZone"), "instanceType": instance.get("instanceType"),
+                "architecture": instance.get("architecture"), "imageId": instance.get("imageId"),
+                "platformDetails": instance.get("platformDetails"), "privateIpAddress": instance.get("privateIpAddress"),
+                "publicIpAddress": instance.get("publicIpAddress"), "vpcId": instance.get("vpcId"),
+                "subnetId": instance.get("subnetId"), "monitoringState": instance.get("monitoringState"),
+                "rootDeviceType": instance.get("rootDeviceType"), "virtualizationType": instance.get("virtualizationType"),
+                "ebsOptimized": instance.get("ebsOptimized"), "instanceStatus": instance.get("instanceStatus"),
+                "systemStatus": instance.get("systemStatus"), "securityGroups": instance.get("securityGroups") or [],
+                "volumeIds": instance.get("volumeIds") or [], "launchTime": instance.get("launchTime"),
+            },
         })
 
     counts = {"normal": 0, "stopped": 0, "abnormal": 0, "unknown": 0, "waiting": 0}

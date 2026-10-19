@@ -85,7 +85,12 @@ function routeStage(stage, components, branch = false) {
     const layers = new Set(stage.componentLayers || [stage.id]);
     const matches = components.filter((component) => layers.has(component.layer));
     const heading = el('summary', 'flow-stage-summary');
-    heading.append(el('strong', '', stage.label || stage.id), el('span', 'flow-stage-count', `${number(matches.length)}系統`));
+    const statusSummary = el('span', 'flow-stage-statuses');
+    for (const item of stageStatusSummary(matches)) {
+        statusSummary.append(el('span', `flow-stage-status state-${item.state}`, `${item.label} ${number(item.count)}`));
+    }
+    statusSummary.append(el('span', 'flow-stage-count', `${number(matches.length)}系統`));
+    heading.append(el('strong', '', stage.label || stage.id), statusSummary);
     section.append(heading);
     if (!matches.length) grid.append(el('p', 'empty', '対象系統はありません。'));
     for (const component of matches) grid.append(componentCard(component));
@@ -95,7 +100,7 @@ function routeStage(stage, components, branch = false) {
 
 function componentCard(component) {
     const card = el('details', `flow-component component-${component.status || 'unknown'}`);
-    const displayState = component.status === 'abnormal' ? 'abnormal' : (component.activityState || component.status || 'unknown');
+    const displayState = componentDisplayState(component);
     const head = el('summary', 'flow-component-head');
     head.append(el('strong', '', component.name || component.id), el('span', `flow-state state-${displayState}`, component.activityLabel || statusLabel(component.status)));
     const body = el('div', 'flow-component-body');
@@ -108,8 +113,10 @@ function componentCard(component) {
         ['最終通過', formatDate(component.lastPassedAt)],
         ['直近通過時間', component.passageMs == null ? '未記録' : `${number(component.passageMs)} ms`],
     ];
-    if (component.lastTitle) rows.push(['直近タイトル', component.lastTitle]);
+    if (component.lastTitle) rows.push(['直近配信タイトル', component.lastTitle]);
+    if (component.lastDeliveryId) rows.push(['直近配信ID', component.lastDeliveryId]);
     if ((component.functions || []).length) rows.push(['Lambda', component.functions.join('、')]);
+    if (component.ec2Details) rows.push(...ec2DetailRows(component.ec2Details));
     for (const [label, value] of rows) list.append(el('dt', '', label), el('dd', '', value));
     body.append(list);
     if ((component.queues || []).length) {
@@ -120,8 +127,9 @@ function componentCard(component) {
             const state = queue.activityState || 'unknown';
             const item = el('li', `queue-item queue-${state}`);
             item.append(
-                el('strong', '', queue.name || '名称未取得'),
+                el('strong', '', queue.role || '用途未分類SQS'),
                 el('span', `queue-state state-${state}`, queueStateLabel(queue)),
+                el('code', 'queue-name', queue.name || '名称未取得'),
                 el('small', '', `処理待ち ${number(queue.visible)} / 処理中 ${number(queue.inFlight)} / 遅延待機 ${number(queue.delayed)}${queue.deadLetter ? ' / DLQ' : ''}`),
             );
             queueList.append(item);
@@ -131,6 +139,46 @@ function componentCard(component) {
     }
     card.append(body);
     return card;
+}
+
+function ec2DetailRows(details) {
+    const securityGroups = (details.securityGroups || []).map((group) => group.name ? `${group.name} (${group.id || 'ID不明'})` : group.id).filter(Boolean);
+    return [
+        ['インスタンスID', details.instanceId || '未取得'],
+        ['EC2状態', details.state || '未取得'],
+        ['インスタンス/システム検査', `${healthLabel(details.instanceStatus)} / ${healthLabel(details.systemStatus)}`],
+        ['AZ・タイプ', [details.availabilityZone, details.instanceType, details.architecture].filter(Boolean).join(' / ') || '未取得'],
+        ['OS・AMI', [details.platformDetails, details.imageId].filter(Boolean).join(' / ') || '未取得'],
+        ['ネットワーク', `Private ${details.privateIpAddress || 'なし'} / Public ${details.publicIpAddress || 'なし'}`],
+        ['VPC・サブネット', [details.vpcId, details.subnetId].filter(Boolean).join(' / ') || '未取得'],
+        ['セキュリティグループ', securityGroups.join('、') || '未取得'],
+        ['EBS・ルート', `${(details.volumeIds || []).join('、') || '未取得'} / ${details.rootDeviceType || '種別不明'} / 最適化 ${details.ebsOptimized ? '有効' : '無効'}`],
+        ['監視・仮想化', `${details.monitoringState || '未取得'} / ${details.virtualizationType || '未取得'}`],
+        ['起動日時', formatDate(details.launchTime)],
+        ['通常時状態・役割', `${details.normalState || '未設定'} / ${details.backupRole || '未設定'}`],
+    ];
+}
+
+function healthLabel(value) { return ({ ok: '正常', impaired: '異常', insufficient_data: '確認中', initializing: '初期化中', not_applicable: '対象外', unknown: '未確認' }[value] || value || '未確認'); }
+
+function componentDisplayState(component) {
+    if (component.status === 'abnormal' || component.activityState === 'error') return 'abnormal';
+    return component.activityState || component.status || 'unknown';
+}
+
+function stageStatusSummary(components) {
+    const counts = { abnormal: 0, stopped: 0, unknown: 0, waiting: 0, normal: 0 };
+    for (const component of components) {
+        const state = componentDisplayState(component);
+        counts[state in counts ? state : 'unknown'] += 1;
+    }
+    return [
+        ['abnormal', '異常'],
+        ['stopped', '停止'],
+        ['unknown', '未確認'],
+        ['waiting', '待機中'],
+        ['normal', '正常'],
+    ].filter(([state]) => counts[state] > 0).map(([state, label]) => ({ state, label, count: counts[state] }));
 }
 
 function statusLabel(value) { return ({ normal: '正常', stopped: '停止', abnormal: '異常', unknown: '未確認' }[value] || '未確認'); }

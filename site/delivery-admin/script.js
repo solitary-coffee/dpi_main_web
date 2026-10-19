@@ -37,6 +37,7 @@ function render(stats) {
     const recent = document.getElementById('recent'); recent.replaceChildren();
     for (const item of stats.recent || []) recent.append(row([
         item.title || 'タイトル未記録',
+        item.deliveryId || 'ID未記録',
         eventLabels[item.eventType] || item.eventType,
         item.deliverySlot || '未記録',
         formatEpoch(item.updatedEpoch),
@@ -46,8 +47,8 @@ function render(stats) {
         item.normal,
         item.errors,
         item.logsCollected ? '収集済み' : '未収集',
-    ], [6, 7, 8], [8]));
-    if (!(stats.recent || []).length) recent.append(emptyRow(10));
+    ], [7, 8, 9], [9]));
+    if (!(stats.recent || []).length) recent.append(emptyRow(11));
 }
 
 function renderCards(id, items) { const container = document.getElementById(id); container.replaceChildren(); for (const [label, value] of items) { const card = el('article', 'metric-card'); card.append(el('span', '', label), el('strong', '', typeof value === 'string' ? value : number(value))); container.append(card); } }

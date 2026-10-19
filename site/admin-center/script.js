@@ -311,7 +311,7 @@ function renderDmdataRows() {
     const rows = dmdataItems.filter((item) => {
         if (state !== 'all' && item.deliveryState !== state) return false;
         if (!query) return true;
-        return [item.title, item.controlTitle, item.headline, item.typeCode, item.classification, item.eventId, item.sourceId]
+        return [item.title, item.controlTitle, item.headline, item.typeCode, item.classification, item.eventId, item.sourceId, item.lastDeliveryId, item.lastDeliveryTitle]
             .some((value) => String(value || '').toLocaleLowerCase('ja-JP').includes(query));
     });
     body.replaceChildren();
@@ -337,6 +337,8 @@ function renderDmdataRows() {
         const status = element('td');
         status.append(element('span', `component-status dmdata-${item.deliveryState || 'unknown'}`, item.deliveryStateLabel || item.deliveryState || '不明'));
         if (item.lastDeliveryAt) status.append(element('small', 'block-code', `${formatDate(item.lastDeliveryAt)} / ${item.lastDeliverySlot || '配信枠不明'}`));
+        if (item.lastDeliveryTitle) status.append(element('small', 'block-code', `配信タイトル: ${item.lastDeliveryTitle}`));
+        if (item.lastDeliveryId) status.append(element('code', 'block-code', item.lastDeliveryId));
         const actions = element('td');
         const button = element('button', 'small', item.needsReports ? '各報を表示' : (item.deliveryState === 'delivered' ? 'XMLを再読込' : 'XMLを読み込む'));
         button.type = 'button';
