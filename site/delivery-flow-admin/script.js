@@ -85,7 +85,12 @@ function routeStage(stage, components, branch = false) {
     const layers = new Set(stage.componentLayers || [stage.id]);
     const matches = components.filter((component) => layers.has(component.layer));
     const heading = el('summary', 'flow-stage-summary');
-    heading.append(el('strong', '', stage.label || stage.id), el('span', 'flow-stage-count', `${number(matches.length)}系統`));
+    const statusSummary = el('span', 'flow-stage-statuses');
+    for (const item of stageStatusSummary(matches)) {
+        statusSummary.append(el('span', `flow-stage-status state-${item.state}`, `${item.label} ${number(item.count)}`));
+    }
+    statusSummary.append(el('span', 'flow-stage-count', `${number(matches.length)}系統`));
+    heading.append(el('strong', '', stage.label || stage.id), statusSummary);
     section.append(heading);
     if (!matches.length) grid.append(el('p', 'empty', '対象系統はありません。'));
     for (const component of matches) grid.append(componentCard(component));
@@ -95,7 +100,7 @@ function routeStage(stage, components, branch = false) {
 
 function componentCard(component) {
     const card = el('details', `flow-component component-${component.status || 'unknown'}`);
-    const displayState = component.status === 'abnormal' ? 'abnormal' : (component.activityState || component.status || 'unknown');
+    const displayState = componentDisplayState(component);
     const head = el('summary', 'flow-component-head');
     head.append(el('strong', '', component.name || component.id), el('span', `flow-state state-${displayState}`, component.activityLabel || statusLabel(component.status)));
     const body = el('div', 'flow-component-body');
@@ -131,6 +136,26 @@ function componentCard(component) {
     }
     card.append(body);
     return card;
+}
+
+function componentDisplayState(component) {
+    if (component.status === 'abnormal' || component.activityState === 'error') return 'abnormal';
+    return component.activityState || component.status || 'unknown';
+}
+
+function stageStatusSummary(components) {
+    const counts = { abnormal: 0, stopped: 0, unknown: 0, waiting: 0, normal: 0 };
+    for (const component of components) {
+        const state = componentDisplayState(component);
+        counts[state in counts ? state : 'unknown'] += 1;
+    }
+    return [
+        ['abnormal', '異常'],
+        ['stopped', '停止'],
+        ['unknown', '未確認'],
+        ['waiting', '待機中'],
+        ['normal', '正常'],
+    ].filter(([state]) => counts[state] > 0).map(([state, label]) => ({ state, label, count: counts[state] }));
 }
 
 function statusLabel(value) { return ({ normal: '正常', stopped: '停止', abnormal: '異常', unknown: '未確認' }[value] || '未確認'); }
