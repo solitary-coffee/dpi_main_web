@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 import boto3
 from boto3.dynamodb.conditions import Attr
 from botocore.config import Config
+from botocore.exceptions import ClientError
 
 
 TABLE_NAME = os.environ.get("TABLE_NAME", "EarthquakeData").strip()
@@ -111,7 +112,12 @@ def lambda_handler(event, context):
         except ValueError as error:
             return _response(400, {"success": False, "message": str(error)})
         except Exception as error:
-            print(json.dumps({"event": "dmdata_history_failed", "error": type(error).__name__}, ensure_ascii=False))
+            error_code = error.response.get("Error", {}).get("Code", "") if isinstance(error, ClientError) else ""
+            print(json.dumps({
+                "event": "dmdata_history_failed",
+                "error": type(error).__name__,
+                "error_code": error_code,
+            }, ensure_ascii=False))
             return _response(502, {"success": False, "message": "DMDATAの過去電文を取得できませんでした。"})
     if view == "delivery-flow":
         return _response(200, {
@@ -568,19 +574,31 @@ def _normalize_dmdata_telegram(raw, category, raw_source_id=None):
 
 
 def _attach_dmdata_delivery_states(items):
-    if not STATE_TABLE_NAME:
-        states = {}
-    else:
-        states = {}
+    states = {}
+    lookup_failed = False
+    if STATE_TABLE_NAME:
         keys = [{"pk": f"DMDATA#SOURCE#{item['sourceId']}"} for item in items if item.get("sourceId")]
         for offset in range(0, len(keys), 100):
             request_items = {STATE_TABLE_NAME: {"Keys": keys[offset:offset + 100]}}
-            response = _dynamodb.batch_get_item(RequestItems=request_items)
+            try:
+                response = _dynamodb.batch_get_item(RequestItems=request_items)
+            except ClientError as error:
+                lookup_failed = True
+                print(json.dumps({
+                    "event": "dmdata_delivery_state_lookup_failed",
+                    "error_code": error.response.get("Error", {}).get("Code", "ClientError"),
+                    "table": STATE_TABLE_NAME,
+                }, ensure_ascii=False))
+                break
             for record in response.get("Responses", {}).get(STATE_TABLE_NAME, []):
                 states[_clean(record.get("source_id"), 160)] = record
     for item in items:
         state = states.get(item.get("sourceId"))
         if item.get("deliveryState") == "unsupported":
+            continue
+        if lookup_failed:
+            item["deliveryState"] = "unknown"
+            item["deliveryStateLabel"] = "状態取得失敗"
             continue
         if not state:
             continue
