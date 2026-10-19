@@ -16,6 +16,7 @@ const ADMIN_ASSET_ROOTS = Object.freeze([
     '/site/xml-admin',
     '/site/status-admin',
     '/site/delivery-admin',
+    '/site/delivery-flow-admin',
 ]);
 
 class AdminCenterError extends Error {
@@ -33,7 +34,9 @@ export async function handleAdminCenterRequest(request, env) {
     const isSummaryApi = pathname === '/site/admin-center/api/summary';
     const isActionApi = pathname === '/site/admin-center/api/action';
     const isDeliveryStatsApi = pathname === '/site/delivery-admin/api/summary';
-    const isApi = isSummaryApi || isActionApi || isDeliveryStatsApi;
+    const isDmdataHistoryApi = pathname === '/site/xml-admin/api/dmdata-history';
+    const isDeliveryFlowApi = pathname === '/site/delivery-flow-admin/api/summary';
+    const isApi = isSummaryApi || isActionApi || isDeliveryStatsApi || isDmdataHistoryApi || isDeliveryFlowApi;
     const assetRoot = !isApi ? ADMIN_ASSET_ROOTS.find((root) => pathname === root || pathname.startsWith(`${root}/`)) : null;
     const isAsset = Boolean(assetRoot);
     if (!isApi && !isAsset) return null;
@@ -57,6 +60,18 @@ export async function handleAdminCenterRequest(request, env) {
                 return jsonResponse({ success: false, message: '許可されていない操作です。' }, 405, { Allow: 'GET' });
             }
             return await proxyDeliveryStatistics(url, env, admin);
+        }
+        if (isDmdataHistoryApi) {
+            if (request.method !== 'GET') {
+                return jsonResponse({ success: false, message: '許可されていない操作です。' }, 405, { Allow: 'GET' });
+            }
+            return await proxyDmdataHistory(url, env, admin);
+        }
+        if (isDeliveryFlowApi) {
+            if (request.method !== 'GET') {
+                return jsonResponse({ success: false, message: '許可されていない操作です。' }, 405, { Allow: 'GET' });
+            }
+            return await proxyDeliveryFlow(env, admin);
         }
         if (!['GET', 'HEAD'].includes(request.method)) {
             throw new AdminCenterError(405, '許可されていない操作です。', 'method_not_allowed');
@@ -136,6 +151,7 @@ async function systemSummary(env, admin) {
             { label: 'XML配信', href: '/site/xml-admin/' },
             { label: 'ステータス管理', href: '/site/status-admin/' },
             { label: '配信統計', href: '/site/delivery-admin/' },
+            { label: '配信系統', href: '/site/delivery-flow-admin/' },
             { label: '二次利用申請管理', href: '/site/reuse-admin/' },
             { label: 'お知らせ一括配信', href: '/site/mail-admin/' },
             { label: 'Discordお知らせ', href: '/site/discord-admin/' },
@@ -168,7 +184,7 @@ async function proxyAwsAction(request, env, admin) {
     } catch {
         throw new AdminCenterError(400, 'JSON形式を確認してください。', 'invalid_json');
     }
-    const allowedActions = new Set(['ec2', 'system-mode', 'xml-preview', 'xml-dispatch']);
+    const allowedActions = new Set(['ec2', 'system-mode', 'xml-preview', 'xml-dispatch', 'dmdata-load-xml']);
     if (!payload || typeof payload !== 'object' || !allowedActions.has(clean(payload.action))) {
         throw new AdminCenterError(400, '管理操作を選択してください。', 'invalid_action');
     }
@@ -257,6 +273,7 @@ function auditDetails(payload, result) {
         instanceId: clean(payload.instanceId) || null,
         deliverySlot: clean(payload.deliverySlot) || null,
         sendData: clean(payload.sendData) || null,
+        dmdataSourceId: clean(payload.dmdataSource?.sourceId) || clean(payload.sourceId) || null,
         targetCount: Number(result.targetCount || 0),
     };
 }
@@ -352,6 +369,71 @@ async function proxyDeliveryStatistics(requestUrl, env, admin) {
     } catch (error) {
         if (error instanceof AdminCenterError) throw error;
         throw new AdminCenterError(502, error?.name === 'AbortError' ? 'AWS配信統計がタイムアウトしました。' : 'AWS配信統計に接続できませんでした。', 'aws_delivery_stats_unavailable');
+    } finally {
+        clearTimeout(timeout);
+    }
+}
+
+async function proxyDmdataHistory(requestUrl, env, admin) {
+    const category = clean(requestUrl.searchParams.get('category')) || 'earthquake';
+    if (!['eew', 'earthquake', 'weather', 'volcano'].includes(category)) {
+        throw new AdminCenterError(400, 'DMDATAの情報分類を確認してください。', 'invalid_dmdata_category');
+    }
+    const requestedLimit = Number(requestUrl.searchParams.get('limit') || 20);
+    const limit = Math.min(Math.max(Number.isInteger(requestedLimit) ? requestedLimit : 20, 1), 100);
+    const cursorToken = clean(requestUrl.searchParams.get('cursorToken'));
+    const eventId = clean(requestUrl.searchParams.get('eventId'));
+    if (cursorToken.length > 2_000 || eventId.length > 40) {
+        throw new AdminCenterError(400, 'DMDATAの検索条件が長すぎます。', 'invalid_dmdata_query');
+    }
+    const url = awsEndpoint(env);
+    url.searchParams.set('view', 'dmdata-history');
+    url.searchParams.set('category', category);
+    url.searchParams.set('limit', String(limit));
+    if (cursorToken) url.searchParams.set('cursorToken', cursorToken);
+    if (eventId) url.searchParams.set('eventId', eventId);
+    const body = await fetchAwsJson(url, env, 25_000, 'DMDATAの過去電文を取得できませんでした。');
+    return jsonResponse({ ...body, admin: admin.email });
+}
+
+async function proxyDeliveryFlow(env, admin) {
+    const url = awsEndpoint(env);
+    url.searchParams.set('view', 'delivery-flow');
+    const body = await fetchAwsJson(url, env, 30_000, '配信系統の状態を取得できませんでした。');
+    return jsonResponse({ ...body, admin: admin.email });
+}
+
+function awsEndpoint(env) {
+    const endpoint = clean(env.AWS_CHANNEL_DIRECTORY_URL);
+    const token = clean(env.AWS_CHANNEL_DIRECTORY_TOKEN);
+    if (!endpoint || !token) throw new AdminCenterError(503, 'AWS連携が未設定です。', 'aws_not_configured');
+    try {
+        const url = new URL(endpoint);
+        if (url.protocol !== 'https:') throw new Error('invalid_protocol');
+        url.search = '';
+        return url;
+    } catch {
+        throw new AdminCenterError(503, 'AWS連携URLが不正です。', 'aws_invalid_url');
+    }
+}
+
+async function fetchAwsJson(url, env, timeoutMs, fallbackMessage) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+        const response = await fetch(url, {
+            headers: { Accept: 'application/json', Authorization: `Bearer ${clean(env.AWS_CHANNEL_DIRECTORY_TOKEN)}` },
+            signal: controller.signal,
+        });
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok || body.success !== true) {
+            throw new AdminCenterError(response.status >= 400 && response.status < 500 ? response.status : 502,
+                body.message || `${fallbackMessage}（HTTP ${response.status}）`, 'aws_view_failed');
+        }
+        return body;
+    } catch (error) {
+        if (error instanceof AdminCenterError) throw error;
+        throw new AdminCenterError(502, error?.name === 'AbortError' ? `${fallbackMessage}（タイムアウト）` : fallbackMessage, 'aws_view_unavailable');
     } finally {
         clearTimeout(timeout);
     }

@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="robots" content="noindex,nofollow">
+    <title>配信系統 - DPI-Bot</title>
+    <link rel="icon" href="../../img/dpi.png" type="image/png">
+    <link rel="stylesheet" href="../admin-shell.css">
+    <link rel="stylesheet" href="../admin-center/style.css">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body class="admin-shell">
+    <button id="menu-toggle-btn" type="button" aria-label="メニューを開く"><span></span><span></span><span></span></button>
+    <div class="overlay"></div>
+    <div class="page-container">
+        <nav class="sidebar" aria-label="管理メニュー">
+            <div class="sidebar-header"><h2>管理メニュー</h2></div>
+            <ul>
+                <li><a href="/">公式サイト</a></li>
+                <li><a href="/site/admin-center/">統合管理センター</a></li>
+                <li><a href="/site/system-admin/">システム運用</a></li>
+                <li><a href="/site/ec2-admin/">EC2管理</a></li>
+                <li><a href="/site/xml-admin/">XML配信</a></li>
+                <li><a href="/site/status-admin/">ステータス管理</a></li>
+                <li><a href="/site/delivery-admin/">配信統計</a></li>
+                <li><a href="/site/delivery-flow-admin/" class="active">配信系統</a></li>
+                <li><a href="/site/channel-admin/">配信先検索</a></li>
+                <li><a href="/site/reuse-admin/">二次利用申請管理</a></li>
+                <li><a href="/site/mail-admin/">メール配信管理</a></li>
+                <li><a href="/site/discord-admin/">Discordお知らせ管理</a></li>
+                <li><a href="/site/ip-admin/">IP遮断管理</a></li>
+                <li><a href="/cdn-cgi/access/logout">ログアウト</a></li>
+            </ul>
+        </nav>
+        <main class="main-content">
+            <header class="topbar">
+                <div><p class="eyebrow">DELIVERY FLOW</p><h1>配信系統</h1></div>
+                <div class="admin-bar"><span id="admin-email"></span><button id="refresh-btn" type="button">最新情報に更新</button></div>
+            </header>
+            <div id="global-status" class="status" role="alert" aria-live="assertive"></div>
+
+            <section aria-labelledby="overview-title">
+                <div class="section-heading"><div><p class="eyebrow">OVERVIEW</p><h2 id="overview-title">系統サマリー</h2></div><time id="observed-at"></time></div>
+                <div id="flow-summary" class="metric-grid"></div>
+                <p id="cost-policy" class="cost-policy"></p>
+            </section>
+
+            <section aria-labelledby="flow-title">
+                <div class="section-heading"><div><p class="eyebrow">END TO END</p><h2 id="flow-title">上流から配信まで</h2></div><p>各系統の最終疎通・最終通過・直近通過時間を表示します。</p></div>
+                <div id="flow-layers" class="flow-layers"></div>
+            </section>
+
+            <section aria-labelledby="legend-title">
+                <div class="section-heading"><div><p class="eyebrow">STATUS RULES</p><h2 id="legend-title">判定基準</h2></div></div>
+                <div class="table-wrap"><table><thead><tr><th>状態</th><th>意味</th></tr></thead><tbody>
+                    <tr><td><span class="flow-state state-normal">正常</span></td><td>疎通・リソース・既存監視記録に異常がありません。</td></tr>
+                    <tr><td><span class="flow-state state-stopped">停止</span></td><td>オンデマンド参照待機、またはバックアップ待機中です。待機系の停止は異常に含めません。</td></tr>
+                    <tr><td><span class="flow-state state-abnormal">異常</span></td><td>ハートビート期限切れ、DLQ滞留、CloudWatch警報、ヘルスチェック異常などがあります。</td></tr>
+                </tbody></table></div>
+            </section>
+        </main>
+    </div>
+    <script src="../../script.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>

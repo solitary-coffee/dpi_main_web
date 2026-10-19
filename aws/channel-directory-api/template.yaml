@@ -38,6 +38,10 @@ Parameters:
   IngestHmacParameter:
     Type: String
     Default: /dpi-bot/final-backup/hmac-secret
+  DmdataApiKeyParameter:
+    Type: String
+    Default: /dpi-bot/dmdata/api-key
+    Description: SecureString parameter containing the DMDATA API key used for administrator history lookup.
 
 Resources:
   ChannelDirectoryFunction:
@@ -64,6 +68,7 @@ Resources:
           AUTO_MONITOR_FUNCTION: !Ref AutoMonitorFunction
           INGEST_ENDPOINTS: !Ref IngestEndpoints
           INGEST_HMAC_PARAMETER: !Ref IngestHmacParameter
+          DMDATA_API_KEY_PARAMETER: !Ref DmdataApiKeyParameter
       Policies:
         - DynamoDBReadPolicy:
             TableName: !Ref TableName
@@ -101,6 +106,15 @@ Resources:
                 - dynamodb:Scan
                 - dynamodb:DescribeTable
               Resource: !Sub arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${DeliveryMonitorTableName}
+            - Sid: WriteDeliveryMetadata
+              Effect: Allow
+              Action:
+                - dynamodb:UpdateItem
+              Resource: !Sub arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${DeliveryMonitorTableName}
+              Condition:
+                ForAllValues:StringLike:
+                  dynamodb:LeadingKeys:
+                    - delivery#*
             - Sid: ControlManagedBackupInstances
               Effect: Allow
               Action:
@@ -123,11 +137,13 @@ Resources:
               Resource:
                 - !Sub arn:${AWS::Partition}:lambda:ap-northeast-1:${AWS::AccountId}:function:${AutoMonitorFunction}
                 - !Sub arn:${AWS::Partition}:lambda:ap-northeast-3:${AWS::AccountId}:function:${AutoMonitorFunction}
-            - Sid: ReadIngestSigningParameter
+            - Sid: ReadSecureParameters
               Effect: Allow
               Action:
                 - ssm:GetParameter
-              Resource: !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${IngestHmacParameter}
+              Resource:
+                - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${IngestHmacParameter}
+                - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${DmdataApiKeyParameter}
             - Sid: DecryptIngestSigningParameter
               Effect: Allow
               Action:

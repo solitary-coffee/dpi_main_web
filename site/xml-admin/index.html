@@ -23,6 +23,7 @@
                 <li><a href="/site/xml-admin/" class="active">XML配信</a></li>
                 <li><a href="/site/status-admin/">ステータス管理</a></li>
                 <li><a href="/site/delivery-admin/">配信統計</a></li>
+                <li><a href="/site/delivery-flow-admin/">配信系統</a></li>
                 <li><a href="/site/channel-admin/">配信先検索</a></li>
                 <li><a href="/site/reuse-admin/">二次利用申請管理</a></li>
                 <li><a href="/site/mail-admin/">メール配信管理</a></li>
@@ -38,9 +39,24 @@
             </header>
             <div id="global-status" class="status" role="alert" aria-live="assertive"></div>
 
+            <section aria-labelledby="dmdata-title">
+                <div class="section-heading"><div><p class="eyebrow">DMDATA HISTORY</p><h2 id="dmdata-title">DMDATA過去受信</h2></div><p>管理者が更新した時だけAPIへ接続します。</p></div>
+                <p class="section-description">過去電文を分類別に参照し、選択した1件のXMLだけを読み込みます。緊急地震速報はイベントを選んで各報を表示してください。配信済み判定には既存の配信監視記録と、この画面からの配信記録を使用します。</p>
+                <form id="dmdata-search-form" class="control-form">
+                    <label>情報分類<select id="dmdata-category"><option value="eew">緊急地震速報</option><option value="earthquake" selected>地震・津波関連</option><option value="weather">気象関連</option><option value="volcano">火山関連</option></select></label>
+                    <label>取得件数<select id="dmdata-limit"><option value="20">20件</option><option value="50">50件</option><option value="100">100件</option></select></label>
+                    <label>配信状態<select id="dmdata-state"><option value="all">すべて</option><option value="undelivered">未配信</option><option value="delivered">配信済み</option><option value="unsupported">未対応形式</option></select></label>
+                    <label class="wide">一覧内検索<input id="dmdata-query" type="search" placeholder="タイトル・電文コード・イベントID"></label>
+                    <div class="wide action-row"><button id="dmdata-back-btn" type="button" class="secondary-button" hidden>イベント一覧へ戻る</button><button type="submit">過去受信を取得</button><button id="dmdata-next-btn" type="button" class="secondary-button" hidden>次のページ</button></div>
+                </form>
+                <div id="dmdata-status" class="status" role="status" aria-live="polite"></div>
+                <div class="table-wrap"><table><thead><tr><th>受信日時</th><th>タイトル</th><th>分類・電文</th><th>イベント / 報</th><th>配信状態</th><th>操作</th></tr></thead><tbody id="dmdata-rows"><tr><td colspan="6" class="empty">「過去受信を取得」を押してください。</td></tr></tbody></table></div>
+            </section>
+
             <section aria-labelledby="xml-title">
                 <div class="section-heading"><div><p class="eyebrow">DISPATCH</p><h2 id="xml-title">XML読み込み・配信</h2></div><time id="fetched-at"></time></div>
                 <p class="section-description">内容をプレビューしてから、現在の配信枠を選んで配信します。</p>
+                <div id="dmdata-selected" class="xml-preview" hidden></div>
                 <form id="xml-form" class="xml-form">
                     <label>XMLファイル（最大1.5MB）<input id="xml-file" type="file" accept=".xml,application/xml,text/xml"></label>
                     <label class="wide">XML本文<textarea id="xml-content" rows="9" spellcheck="false" required></textarea></label>

@@ -1,4 +1,8 @@
 let xmlPreviewValid = false;
+let selectedDmdataSource = null;
+let dmdataItems = [];
+let dmdataNextToken = '';
+let dmdataEventId = '';
 
 document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('refresh-btn')?.addEventListener('click', loadSummary);
@@ -7,7 +11,14 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('xml-file')?.addEventListener('change', loadXmlFile);
     document.getElementById('xml-preview-btn')?.addEventListener('click', previewXml);
     document.getElementById('xml-form')?.addEventListener('submit', dispatchXml);
-    for (const id of ['xml-content', 'xml-slot', 'xml-route']) document.getElementById(id)?.addEventListener('input', invalidateXmlPreview);
+    document.getElementById('xml-content')?.addEventListener('input', () => { clearDmdataSource(); invalidateXmlPreview(); });
+    for (const id of ['xml-slot', 'xml-route']) document.getElementById(id)?.addEventListener('input', invalidateXmlPreview);
+    document.getElementById('dmdata-search-form')?.addEventListener('submit', (event) => { event.preventDefault(); loadDmdataHistory(false); });
+    document.getElementById('dmdata-next-btn')?.addEventListener('click', () => loadDmdataHistory(true));
+    document.getElementById('dmdata-back-btn')?.addEventListener('click', () => { dmdataEventId = ''; loadDmdataHistory(false); });
+    document.getElementById('dmdata-query')?.addEventListener('input', renderDmdataRows);
+    document.getElementById('dmdata-state')?.addEventListener('change', renderDmdataRows);
+    document.getElementById('dmdata-category')?.addEventListener('change', () => { dmdataEventId = ''; dmdataItems = []; dmdataNextToken = ''; renderDmdataRows(); });
     if (document.getElementById('mode-form')) updateModeHint();
     loadSummary();
 });
@@ -82,6 +93,7 @@ function renderOperationOverview(local, cloudflare, aws, catalog) {
         { title: 'EC2管理', value: backup?.available ? `${runningInstances}/${backup.count ?? 0}台 稼働` : '取得不可', detail: 'バックアップEC2の詳細・操作', href: '/site/ec2-admin/' },
         { key: 'statuspage', title: 'ステータス管理', value: '読込中…', detail: '稼働状況・インシデント・メンテナンス', href: '/site/status-admin/' },
         { title: 'XML配信', value: `${activeSlots}配信枠`, detail: `AWS配信先 ${aws?.deliveryDirectory?.channels ?? '—'}チャンネル`, href: '/site/xml-admin/' },
+        { title: '配信系統', value: '系統別監視', detail: '上流・自宅・高速・SQS・バックアップ', href: '/site/delivery-flow-admin/' },
         { title: '配信先', value: `${aws?.deliveryDirectory?.servers ?? '—'}サーバー`, detail: '登録チャンネル・配信名を検索', href: '/site/channel-admin/' },
         { title: '最近の運用履歴', value: `${auditCount}件`, detail: '管理操作・申請・遮断の履歴', href: '/site/system-admin/#audit-title' },
     ];
@@ -262,6 +274,133 @@ async function controlEc2(instance, operation, button) {
     } catch { /* runAction already presents the error */ }
 }
 
+async function loadDmdataHistory(nextPage) {
+    const form = document.getElementById('dmdata-search-form');
+    if (!form) return;
+    const submit = form.querySelector('button[type="submit"]');
+    const category = document.getElementById('dmdata-category').value;
+    const limit = document.getElementById('dmdata-limit').value;
+    const params = new URLSearchParams({ category, limit });
+    if (dmdataEventId) params.set('eventId', dmdataEventId);
+    if (nextPage && dmdataNextToken) params.set('cursorToken', dmdataNextToken);
+    if (submit) submit.disabled = true;
+    setDmdataStatus('DMDATAから過去受信を取得しています…', 'info');
+    try {
+        const response = await fetch(`/site/xml-admin/api/dmdata-history?${params}`, { credentials: 'same-origin', headers: { Accept: 'application/json' } });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || data.success !== true) throw new Error(data.message || `取得に失敗しました（HTTP ${response.status}）。`);
+        dmdataItems = data.items || [];
+        dmdataNextToken = data.nextToken || '';
+        document.getElementById('admin-email').textContent = data.admin || document.getElementById('admin-email').textContent;
+        document.getElementById('dmdata-next-btn').hidden = !dmdataNextToken || Boolean(dmdataEventId);
+        document.getElementById('dmdata-back-btn').hidden = !dmdataEventId;
+        renderDmdataRows();
+        setDmdataStatus(`${dmdataItems.length}件を取得しました。APIへの再取得は60秒間抑制されます。`, 'success');
+    } catch (error) {
+        setDmdataStatus(error.message, 'error');
+    } finally {
+        if (submit) submit.disabled = false;
+    }
+}
+
+function renderDmdataRows() {
+    const body = document.getElementById('dmdata-rows');
+    if (!body) return;
+    const query = document.getElementById('dmdata-query')?.value.trim().toLocaleLowerCase('ja-JP') || '';
+    const state = document.getElementById('dmdata-state')?.value || 'all';
+    const rows = dmdataItems.filter((item) => {
+        if (state !== 'all' && item.deliveryState !== state) return false;
+        if (!query) return true;
+        return [item.title, item.controlTitle, item.headline, item.typeCode, item.classification, item.eventId, item.sourceId]
+            .some((value) => String(value || '').toLocaleLowerCase('ja-JP').includes(query));
+    });
+    body.replaceChildren();
+    if (!rows.length) {
+        const tr = document.createElement('tr');
+        const td = element('td', 'empty', dmdataItems.length ? '条件に一致する電文はありません。' : '過去受信はまだ取得していません。');
+        td.colSpan = 6;
+        tr.append(td);
+        body.append(tr);
+        return;
+    }
+    for (const item of rows) {
+        const tr = document.createElement('tr');
+        const title = element('td');
+        title.append(element('strong', '', item.title || '名称未取得'));
+        if (item.headline) title.append(element('small', 'block-code', item.headline));
+        const type = element('td');
+        type.append(element('span', '', item.classification || '—'), element('code', 'block-code', item.typeCode || item.format || '—'));
+        const event = element('td');
+        event.append(element('code', '', item.eventId || '—'));
+        if (item.serial) event.append(element('small', 'block-code', `第${item.serial}報`));
+        const status = element('td');
+        status.append(element('span', `component-status dmdata-${item.deliveryState || 'unknown'}`, item.deliveryStateLabel || item.deliveryState || '不明'));
+        if (item.lastDeliveryAt) status.append(element('small', 'block-code', `${formatDate(item.lastDeliveryAt)} / ${item.lastDeliverySlot || '配信枠不明'}`));
+        const actions = element('td');
+        const button = element('button', 'small', item.needsReports ? '各報を表示' : (item.deliveryState === 'delivered' ? 'XMLを再読込' : 'XMLを読み込む'));
+        button.type = 'button';
+        button.disabled = !item.needsReports && !item.selectable;
+        button.addEventListener('click', () => item.needsReports ? loadDmdataEvent(item.eventId) : loadDmdataXml(item, button));
+        actions.append(button);
+        tr.append(element('td', '', formatDate(item.receivedTime || item.reportTime)), title, type, event, status, actions);
+        body.append(tr);
+    }
+}
+
+async function loadDmdataEvent(eventId) {
+    if (!eventId) return;
+    dmdataEventId = eventId;
+    await loadDmdataHistory(false);
+}
+
+async function loadDmdataXml(item, button) {
+    try {
+        const data = await runAction({ action: 'dmdata-load-xml', sourceId: item.sourceId }, button, false);
+        document.getElementById('xml-content').value = data.xml || '';
+        selectedDmdataSource = {
+            sourceId: item.sourceId,
+            classification: item.classification || '',
+            typeCode: item.typeCode || '',
+            receivedTime: item.receivedTime || '',
+            eventId: item.eventId || '',
+            title: item.title || '',
+            xmlSha256: data.xmlSha256 || '',
+        };
+        renderSelectedDmdata();
+        invalidateXmlPreview();
+        await previewXml();
+        document.getElementById('xml-title')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } catch { /* runAction already presents the error */ }
+}
+
+function renderSelectedDmdata() {
+    const box = document.getElementById('dmdata-selected');
+    if (!box) return;
+    if (!selectedDmdataSource) {
+        box.hidden = true;
+        box.replaceChildren();
+        return;
+    }
+    box.replaceChildren(
+        element('strong', '', `DMDATA選択中: ${selectedDmdataSource.title || selectedDmdataSource.typeCode || '電文'}`),
+        element('code', 'block-code', selectedDmdataSource.sourceId),
+        element('small', 'block-code', `${selectedDmdataSource.classification || '分類不明'} / ${formatDate(selectedDmdataSource.receivedTime)}`),
+    );
+    box.hidden = false;
+}
+
+function clearDmdataSource() {
+    selectedDmdataSource = null;
+    renderSelectedDmdata();
+}
+
+function setDmdataStatus(message, type) {
+    const node = document.getElementById('dmdata-status');
+    if (!node) return;
+    node.textContent = message;
+    node.className = type ? `status ${type}` : 'status';
+}
+
 function updateModeHint() {
     const select = document.getElementById('mode-select');
     const hint = document.getElementById('mode-confirm-hint');
@@ -278,6 +417,7 @@ async function loadXmlFile(event) {
         return;
     }
     document.getElementById('xml-content').value = await file.text();
+    clearDmdataSource();
     invalidateXmlPreview();
 }
 
@@ -303,10 +443,14 @@ async function dispatchXml(event) {
     event.preventDefault();
     if (!xmlPreviewValid) return setStatus('XMLをもう一度確認してください。', 'error');
     if (!window.confirm('選択した配信枠へXMLを配信します。この操作は利用者への通知につながります。続行しますか？')) return;
-    const payload = { action: 'xml-dispatch', xml: document.getElementById('xml-content').value, deliverySlot: document.getElementById('xml-slot').value, sendData: document.getElementById('xml-route').value, confirmation: document.getElementById('xml-confirmation').value.trim() };
+    const payload = { action: 'xml-dispatch', xml: document.getElementById('xml-content').value, deliverySlot: document.getElementById('xml-slot').value, sendData: document.getElementById('xml-route').value, confirmation: document.getElementById('xml-confirmation').value.trim(), dmdataSource: selectedDmdataSource };
     try {
         await runAction(payload, event.submitter, true);
         document.getElementById('xml-confirmation').value = '';
+        if (selectedDmdataSource) {
+            selectedDmdataSource.deliveryState = 'delivered';
+            loadDmdataHistory(false);
+        }
         invalidateXmlPreview();
     } catch { /* runAction already presents the error */ }
 }
