@@ -1211,7 +1211,7 @@ def _load_delivery_flow():
         visible = sum(_integer(queue.get("visible"), 0) for queue in queues if not queue.get("deadLetter"))
         in_flight = sum(_integer(queue.get("inFlight"), 0) for queue in queues if not queue.get("deadLetter"))
         delayed = sum(_integer(queue.get("delayed"), 0) for queue in queues if not queue.get("deadLetter"))
-        activity_state = _sqs_activity_state(visible, in_flight, delayed, dlq > 0)
+        activity_state = "error" if dlq > 0 else _sqs_activity_state(visible, in_flight, delayed)
         status = "abnormal" if not sqs.get("available") or dlq > 0 or queue_count == 0 else "normal"
         components.append({
             "id": f"sqs-{region}",

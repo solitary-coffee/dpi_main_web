@@ -69,6 +69,7 @@ test('配信系統はEC2とLambda・SQSバックアップを分離しSQS稼働�
     assert.match(source, /"label": "上流API"[\s\S]*"label": "自宅サーバー"[\s\S]*"label": "AWS高速配信"[\s\S]*"label": "SQS"[\s\S]*"label": "リージョン内バックアップ配信"[\s\S]*"label": "相互バックアップ配信"/u);
     assert.match(source, /"label": "EC2"[\s\S]*"label": "AWS高速配信"/u);
     assert.match(source, /def _sqs_activity_state/u);
+    assert.match(source, /activity_state = "error" if dlq > 0/u);
     assert.match(source, /"activityLabel": _sqs_activity_label/u);
     assert.match(html, /待機中（正常）|バックアップ待機中/u);
     assert.match(script, /component\.expectedStopped/u);
