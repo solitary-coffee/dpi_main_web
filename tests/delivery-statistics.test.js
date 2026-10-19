@@ -55,8 +55,13 @@ test('配信系統は待機系停止を異常にせず地域別SQSを表示す�
     assert.match(source, /"expectedStopped": state == "stopped"/u);
     assert.match(source, /"lastConnectivityAt"/u);
     assert.match(source, /"lastPassedAt"/u);
+    assert.match(source, /"label": "上流API"[\s\S]*"label": "自宅サーバー"[\s\S]*"label": "AWS高速配信"[\s\S]*"label": "SQS"[\s\S]*"label": "リージョン内バックアップ配信"[\s\S]*"label": "相互バックアップ配信"/u);
+    assert.match(source, /"label": "EC2"[\s\S]*"label": "AWS高速配信"/u);
+    assert.match(source, /def _backup_scope/u);
     assert.match(html, /AWS高速系統|バックアップ待機中/u);
     assert.match(script, /component\.expectedStopped/u);
+    assert.match(script, /flow\.routes/u);
+    assert.match(script, /flow-route-branches/u);
     assert.doesNotMatch(script, /setInterval|innerHTML/u);
 });
 
