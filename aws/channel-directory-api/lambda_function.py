@@ -1199,10 +1199,12 @@ def _load_delivery_flow():
     if not instances:
         components.append({
             "id": "backup-unconfigured",
-            "layer": "backup",
+            "layer": "regional-backup",
             "name": "バックアップ配信系統",
             "status": "stopped",
             "expectedStopped": True,
+            "sourceType": "ec2",
+            "backupScope": "regional",
             "detail": "管理対象EC2は停止または未登録です",
             "lastConnectivityAt": observed_at if backup.get("available") else None,
             "lastPassedAt": None,
@@ -1210,6 +1212,7 @@ def _load_delivery_flow():
         })
     for instance in instances:
         state = _clean(instance.get("state"), 30).casefold()
+        backup_scope = _backup_scope(instance)
         healthy = instance.get("instanceStatus") in {"ok", "unknown", "not_applicable"} and instance.get("systemStatus") in {"ok", "unknown", "not_applicable"}
         if state == "stopped":
             status = "stopped"
@@ -1220,12 +1223,14 @@ def _load_delivery_flow():
         recent = _flow_recent_for_region(statistics.get("recent") or [], _clean(instance.get("region"), 40))
         components.append({
             "id": f"backup-{_clean(instance.get('instanceId'), 40)}",
-            "layer": "backup",
+            "layer": f"{backup_scope}-backup",
             "name": _clean(instance.get("name"), 160) or _clean(instance.get("instanceId"), 40),
             "region": _clean(instance.get("region"), 40),
             "status": status,
             "expectedStopped": state == "stopped",
-            "detail": f"EC2 {state or 'unknown'} / 役割 {_clean(instance.get('backupRole'), 80) or '未設定'}",
+            "sourceType": "ec2",
+            "backupScope": backup_scope,
+            "detail": f"EC2 {state or 'unknown'} / {_backup_scope_label(backup_scope)} / 役割 {_clean(instance.get('backupRole'), 80) or '未設定'}",
             "lastConnectivityAt": observed_at if backup.get("available") else None,
             "lastPassedAt": _epoch_iso(recent.get("updatedEpoch")) if recent else None,
             "passageMs": recent.get("maxLatencyMs") if recent else None,
@@ -1243,13 +1248,56 @@ def _load_delivery_flow():
             {"id": "home", "label": "自宅サーバー"},
             {"id": "aws-fast", "label": "AWS高速系統"},
             {"id": "sqs", "label": "SQS系統"},
-            {"id": "backup", "label": "バックアップ配信"},
+            {"id": "regional-backup", "label": "リージョン内バックアップ配信"},
+            {"id": "cross-backup", "label": "相互バックアップ配信"},
+        ],
+        "routes": [
+            {
+                "id": "home-delivery",
+                "label": "自宅サーバー起点",
+                "sequence": [
+                    {"id": "upstream", "label": "上流API", "componentLayers": ["upstream"]},
+                    {"id": "home", "label": "自宅サーバー", "componentLayers": ["home"]},
+                ],
+                "branches": [
+                    {"id": "aws-fast", "label": "AWS高速配信", "componentLayers": ["aws-fast"]},
+                    {"id": "sqs", "label": "SQS", "componentLayers": ["sqs"]},
+                    {"id": "regional-backup", "label": "リージョン内バックアップ配信", "componentLayers": ["regional-backup"]},
+                    {"id": "cross-backup", "label": "相互バックアップ配信", "componentLayers": ["cross-backup"]},
+                ],
+            },
+            {
+                "id": "ec2-fast-delivery",
+                "label": "EC2起点",
+                "sequence": [
+                    {"id": "ec2", "label": "EC2", "componentLayers": ["regional-backup", "cross-backup"]},
+                    {"id": "aws-fast", "label": "AWS高速配信", "componentLayers": ["aws-fast"]},
+                ],
+                "branches": [],
+            },
         ],
         "costPolicy": "自動ポーリングは行わず、画面更新時に既存のハートビート・監視記録・AWS属性を再利用します。",
         "observedAt": observed_at,
     }
     _delivery_flow_cache.update({"expires_at": now + 45, "value": value})
     return value
+
+
+def _backup_scope(instance):
+    role = _clean(instance.get("backupRole"), 80).casefold()
+    region = _clean(instance.get("region"), 40)
+    primary_region = {
+        "eew-earthquake": "ap-northeast-1",
+        "weather-volcano": "ap-northeast-3",
+    }.get(role)
+    if primary_region:
+        return "regional" if region == primary_region else "cross"
+    normal_state = _clean(instance.get("normalState"), 30).casefold()
+    return "regional" if normal_state == "running" else "cross"
+
+
+def _backup_scope_label(scope):
+    return "リージョン内バックアップ" if scope == "regional" else "相互バックアップ"
 
 
 def _load_flow_system_summary():
