@@ -241,6 +241,8 @@ test('Discordお知らせ画面と配信統計画面を専用タブとして提�
     assert.match(directoryLambda, /_valid_discord_webhook_url/u);
     assert.match(directoryLambda, /failureSummary/u);
     assert.match(directoryLambda, /deduplicateChannels/u);
+    assert.match(directoryLambda, /def _string_list\(value, limit, item_length=2048\):/u);
+    assert.doesNotMatch(directoryLambda, /text = _clean\(item, 100\)/u);
     assert.match(deliveryHtml, /緊急地震速報|情報種別ごとの配信数/u);
     assert.match(deliveryScript, /\/site\/delivery-admin\/api\/summary/u);
     assert.doesNotMatch(discordScript, /innerHTML/u);
