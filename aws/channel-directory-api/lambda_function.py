@@ -61,7 +61,7 @@ _system_cache = {"expires_at": 0.0, "value": None}
 _flow_system_cache = {"expires_at": 0.0, "value": None}
 _delivery_flow_cache = {"expires_at": 0.0, "value": None}
 _delivery_statistics_cache = {}
-_delivery_identity_cache = {"expires_at": 0.0, "rows": []}
+_delivery_identity_cache = {}
 _secret_cache = {"expires_at": 0.0, "value": None}
 _dmdata_key_cache = {"expires_at": 0.0, "value": None}
 _dmdata_history_cache = {}
@@ -312,8 +312,10 @@ def _load_delivery_statistics(period):
         scan_args["ExclusiveStartKey"] = last_key
 
     rows = sorted(latest_by_delivery.values(), key=lambda item: _integer(item.get("updatedEpoch"), 0), reverse=True)
-    _delivery_identity_cache["rows"] = [_delivery_identity_row(item) for item in rows]
-    _delivery_identity_cache["expires_at"] = now + 60
+    _delivery_identity_cache[period] = {
+        "rows": [_delivery_identity_row(item) for item in rows],
+        "expires_at": now + 60,
+    }
     totals = _empty_delivery_totals()
     by_type = {}
     by_title = {}
@@ -673,9 +675,10 @@ def _match_dmdata_monitor_deliveries(items):
     if not items:
         return {}
     now = time.time()
-    if _delivery_identity_cache["expires_at"] <= now:
+    cached = _delivery_identity_cache.get("7d") or {}
+    if cached.get("expires_at", 0) <= now:
         _load_delivery_statistics("7d")
-    available = list(_delivery_identity_cache.get("rows") or [])
+    available = list((_delivery_identity_cache.get("7d") or {}).get("rows") or [])
     matched = {}
     used_delivery_ids = set()
     for item in items:
