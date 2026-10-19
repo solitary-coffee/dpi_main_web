@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 import boto3
 from boto3.dynamodb.conditions import Attr
 from botocore.config import Config
+from botocore.exceptions import ClientError
 
 
 TABLE_NAME = os.environ.get("TABLE_NAME", "EarthquakeData").strip()
@@ -111,7 +112,12 @@ def lambda_handler(event, context):
         except ValueError as error:
             return _response(400, {"success": False, "message": str(error)})
         except Exception as error:
-            print(json.dumps({"event": "dmdata_history_failed", "error": type(error).__name__}, ensure_ascii=False))
+            error_code = error.response.get("Error", {}).get("Code", "") if isinstance(error, ClientError) else ""
+            print(json.dumps({
+                "event": "dmdata_history_failed",
+                "error": type(error).__name__,
+                "error_code": error_code,
+            }, ensure_ascii=False))
             return _response(502, {"success": False, "message": "DMDATAの過去電文を取得できませんでした。"})
     if view == "delivery-flow":
         return _response(200, {
@@ -568,19 +574,31 @@ def _normalize_dmdata_telegram(raw, category, raw_source_id=None):
 
 
 def _attach_dmdata_delivery_states(items):
-    if not STATE_TABLE_NAME:
-        states = {}
-    else:
-        states = {}
+    states = {}
+    lookup_failed = False
+    if STATE_TABLE_NAME:
         keys = [{"pk": f"DMDATA#SOURCE#{item['sourceId']}"} for item in items if item.get("sourceId")]
         for offset in range(0, len(keys), 100):
             request_items = {STATE_TABLE_NAME: {"Keys": keys[offset:offset + 100]}}
-            response = _dynamodb.batch_get_item(RequestItems=request_items)
+            try:
+                response = _dynamodb.batch_get_item(RequestItems=request_items)
+            except ClientError as error:
+                lookup_failed = True
+                print(json.dumps({
+                    "event": "dmdata_delivery_state_lookup_failed",
+                    "error_code": error.response.get("Error", {}).get("Code", "ClientError"),
+                    "table": STATE_TABLE_NAME,
+                }, ensure_ascii=False))
+                break
             for record in response.get("Responses", {}).get(STATE_TABLE_NAME, []):
                 states[_clean(record.get("source_id"), 160)] = record
     for item in items:
         state = states.get(item.get("sourceId"))
         if item.get("deliveryState") == "unsupported":
+            continue
+        if lookup_failed:
+            item["deliveryState"] = "unknown"
+            item["deliveryStateLabel"] = "状態取得失敗"
             continue
         if not state:
             continue
@@ -1181,10 +1199,12 @@ def _load_delivery_flow():
     if not instances:
         components.append({
             "id": "backup-unconfigured",
-            "layer": "backup",
+            "layer": "regional-backup",
             "name": "バックアップ配信系統",
             "status": "stopped",
             "expectedStopped": True,
+            "sourceType": "ec2",
+            "backupScope": "regional",
             "detail": "管理対象EC2は停止または未登録です",
             "lastConnectivityAt": observed_at if backup.get("available") else None,
             "lastPassedAt": None,
@@ -1192,6 +1212,7 @@ def _load_delivery_flow():
         })
     for instance in instances:
         state = _clean(instance.get("state"), 30).casefold()
+        backup_scope = _backup_scope(instance)
         healthy = instance.get("instanceStatus") in {"ok", "unknown", "not_applicable"} and instance.get("systemStatus") in {"ok", "unknown", "not_applicable"}
         if state == "stopped":
             status = "stopped"
@@ -1202,12 +1223,14 @@ def _load_delivery_flow():
         recent = _flow_recent_for_region(statistics.get("recent") or [], _clean(instance.get("region"), 40))
         components.append({
             "id": f"backup-{_clean(instance.get('instanceId'), 40)}",
-            "layer": "backup",
+            "layer": f"{backup_scope}-backup",
             "name": _clean(instance.get("name"), 160) or _clean(instance.get("instanceId"), 40),
             "region": _clean(instance.get("region"), 40),
             "status": status,
             "expectedStopped": state == "stopped",
-            "detail": f"EC2 {state or 'unknown'} / 役割 {_clean(instance.get('backupRole'), 80) or '未設定'}",
+            "sourceType": "ec2",
+            "backupScope": backup_scope,
+            "detail": f"EC2 {state or 'unknown'} / {_backup_scope_label(backup_scope)} / 役割 {_clean(instance.get('backupRole'), 80) or '未設定'}",
             "lastConnectivityAt": observed_at if backup.get("available") else None,
             "lastPassedAt": _epoch_iso(recent.get("updatedEpoch")) if recent else None,
             "passageMs": recent.get("maxLatencyMs") if recent else None,
@@ -1225,13 +1248,56 @@ def _load_delivery_flow():
             {"id": "home", "label": "自宅サーバー"},
             {"id": "aws-fast", "label": "AWS高速系統"},
             {"id": "sqs", "label": "SQS系統"},
-            {"id": "backup", "label": "バックアップ配信"},
+            {"id": "regional-backup", "label": "リージョン内バックアップ配信"},
+            {"id": "cross-backup", "label": "相互バックアップ配信"},
+        ],
+        "routes": [
+            {
+                "id": "home-delivery",
+                "label": "自宅サーバー起点",
+                "sequence": [
+                    {"id": "upstream", "label": "上流API", "componentLayers": ["upstream"]},
+                    {"id": "home", "label": "自宅サーバー", "componentLayers": ["home"]},
+                ],
+                "branches": [
+                    {"id": "aws-fast", "label": "AWS高速配信", "componentLayers": ["aws-fast"]},
+                    {"id": "sqs", "label": "SQS", "componentLayers": ["sqs"]},
+                    {"id": "regional-backup", "label": "リージョン内バックアップ配信", "componentLayers": ["regional-backup"]},
+                    {"id": "cross-backup", "label": "相互バックアップ配信", "componentLayers": ["cross-backup"]},
+                ],
+            },
+            {
+                "id": "ec2-fast-delivery",
+                "label": "EC2起点",
+                "sequence": [
+                    {"id": "ec2", "label": "EC2", "componentLayers": ["regional-backup", "cross-backup"]},
+                    {"id": "aws-fast", "label": "AWS高速配信", "componentLayers": ["aws-fast"]},
+                ],
+                "branches": [],
+            },
         ],
         "costPolicy": "自動ポーリングは行わず、画面更新時に既存のハートビート・監視記録・AWS属性を再利用します。",
         "observedAt": observed_at,
     }
     _delivery_flow_cache.update({"expires_at": now + 45, "value": value})
     return value
+
+
+def _backup_scope(instance):
+    role = _clean(instance.get("backupRole"), 80).casefold()
+    region = _clean(instance.get("region"), 40)
+    primary_region = {
+        "eew-earthquake": "ap-northeast-1",
+        "weather-volcano": "ap-northeast-3",
+    }.get(role)
+    if primary_region:
+        return "regional" if region == primary_region else "cross"
+    normal_state = _clean(instance.get("normalState"), 30).casefold()
+    return "regional" if normal_state == "running" else "cross"
+
+
+def _backup_scope_label(scope):
+    return "リージョン内バックアップ" if scope == "regional" else "相互バックアップ"
 
 
 def _load_flow_system_summary():

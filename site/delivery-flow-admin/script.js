@@ -41,6 +41,10 @@ function renderFlow(flow) {
     const container = document.getElementById('flow-layers');
     container.replaceChildren();
     const components = flow.components || [];
+    if ((flow.routes || []).length) {
+        for (const route of flow.routes) container.append(routePanel(route, components));
+        return;
+    }
     for (const [index, layer] of (flow.layers || []).entries()) {
         const section = el('section', 'flow-layer');
         section.append(el('h3', '', layer.label));
@@ -52,6 +56,38 @@ function renderFlow(flow) {
         if (index > 0) section.classList.add('connected-layer');
         container.append(section);
     }
+}
+
+function routePanel(route, components) {
+    const panel = el('article', 'flow-route');
+    panel.append(el('h3', '', route.label || '配信経路'));
+    const sequence = el('div', 'flow-route-sequence');
+    for (const [index, stage] of (route.sequence || []).entries()) {
+        if (index > 0) sequence.append(el('span', 'flow-route-arrow', ''));
+        sequence.append(routeStage(stage, components));
+    }
+    panel.append(sequence);
+    if ((route.branches || []).length) {
+        const branchWrap = el('div', 'flow-route-branch-wrap');
+        branchWrap.append(el('p', 'flow-branch-label', '自宅サーバーから分岐'));
+        const branches = el('div', 'flow-route-branches');
+        for (const branch of route.branches) branches.append(routeStage(branch, components, true));
+        branchWrap.append(branches);
+        panel.append(branchWrap);
+    }
+    return panel;
+}
+
+function routeStage(stage, components, branch = false) {
+    const section = el('section', branch ? 'flow-route-stage flow-route-branch' : 'flow-route-stage');
+    section.append(el('h4', '', stage.label || stage.id));
+    const grid = el('div', 'flow-component-grid');
+    const layers = new Set(stage.componentLayers || [stage.id]);
+    const matches = components.filter((component) => layers.has(component.layer));
+    if (!matches.length) grid.append(el('p', 'empty', '対象系統はありません。'));
+    for (const component of matches) grid.append(componentCard(component));
+    section.append(grid);
+    return section;
 }
 
 function componentCard(component) {
