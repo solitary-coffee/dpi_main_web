@@ -39,6 +39,8 @@ test('DMDATA履歴は固定ドメイン・短時間キャッシュ・配信状�
     assert.match(source, /dmdata_delivery_state_lookup_failed/u);
     assert.match(source, /"deliveryStateLabel"\] = "状態取得失敗"/u);
     assert.match(source, /def _match_dmdata_monitor_deliveries/u);
+    assert.match(source, /_delivery_identity_cache\[period\]/u);
+    assert.match(source, /_delivery_identity_cache\.get\("7d"\)/u);
     assert.match(source, /abs\(row\["sourceEpoch"\] - received_epoch\) <= 8/u);
     assert.match(source, /"配信済み（AWS監視記録）"/u);
     assert.match(source, /item\["lastDeliveryId"\] = monitored\.get\("deliveryId"\)/u);
