@@ -93,6 +93,7 @@ Resources:
               Effect: Allow
               Action:
                 - dynamodb:GetItem
+                - dynamodb:BatchGetItem
                 - dynamodb:Scan
                 - dynamodb:PutItem
                 - dynamodb:UpdateItem
