@@ -190,19 +190,21 @@ function renderMode(mode) {
     const regions = element('div', 'region-modes');
     for (const region of mode.regions || []) {
         const item = element('article', 'region-mode');
-        item.append(element('strong', '', region.regionRole.toUpperCase()), element('span', '', region.mode), element('small', '', region.reason || '理由なし'), element('time', '', formatDate(region.updatedAt)));
+        item.append(element('strong', '', region.regionRole.toUpperCase()), element('span', '', region.requestedMode ? `要求: ${region.requestedMode}` : region.mode), element('small', '', region.requestedMode ? `自動監視の直近判定: ${region.mode} / ${region.reason || '理由なし'}` : region.reason || '理由なし'), element('time', '', formatDate(region.updatedAt)));
         regions.append(item);
     }
     container.replaceChildren(card, regions);
-    const transitionLabels = { applying: '変更処理中', awaiting_ack: '配信側の反映確認待ち', failed: '変更処理に失敗（一部反映の可能性あり）', legacy_unverified: '配信側の反映は未確認' };
+    const transitionLabels = { applying: '変更処理中', awaiting_ack: '変更要求受付済み（反映状況は各配信元を参照）', failed: '変更処理に失敗（一部反映の可能性あり）', legacy_unverified: '配信側の反映は未確認' };
     container.append(element('p', mode.transitionStatus === 'failed' ? 'status error' : '', `変更番号: ${mode.revision ?? '未取得'} / ${transitionLabels[mode.transitionStatus] || '反映状況不明'}${mode.transitionError ? `（${mode.transitionError}）` : ''}`));
-    container.append(element('p', '', `自動監視設定: ${mode.automaticMonitoringEnabled ? '有効' : '無効'} / 制御: ${mode.controlMode === 'automatic' ? '自動' : '手動固定（監視Lambdaを抑止）'}`));
+    container.append(element('p', '', `自動監視設定: ${mode.automaticMonitoringEnabled ? '有効' : '無効'} / 制御: ${mode.controlMode === 'automatic' ? '自動' : mode.integratedControl ? '手動固定（死活監視は継続）' : '旧方式の手動固定'}`));
+    container.append(element('p', 'section-description', '変更の受付と反映完了は別です。緊急停止は新規送信を抑止します。既に送信中のHTTP通信は取り消せません。停止前・停止中の電文は解除後も再送しません。'));
     if (!mode.runtimeReadiness?.ready) container.append(element('p', 'status error', `新モードは配信側更新待ちです。未確認: ${(mode.runtimeReadiness?.missing || ['制御API']).map(x => nodeLabels[x] || x).join('、')}。設定値だけで停止済みとは判定しません。`));
     const nodes = element('div', 'system-grid');
     for (const node of mode.nodes || []) {
         const item = element('article', 'system-card');
         const requested = node.requested;
-        const applied = node.verified && node.appliedRevision === mode.revision;
+        const applied = node.applicationStatus === 'applied';
+        item.append(element('small', '', `配信側更新: ${node.installed ? '確認済み' : '未確認'}`));
         item.append(element('h3', '', nodeLabels[node.nodeId] || node.nodeId), element('p', '', `設定: ${deliveryModeLabels[requested?.delivery] || '未取得'}${requested?.waitSeconds ? ` / ${requested.waitSeconds}秒` : ''}`), element('p', '', `実測: ${node.verified ? (deliveryModeLabels[node.observed] || '不明') : '未確認'} / ${applied ? '反映確認済み' : '反映未確認'}`), element('time', '', formatDate(node.observedAt)));
         nodes.append(item);
     }

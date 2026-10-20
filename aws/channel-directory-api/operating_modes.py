@@ -1,8 +1,8 @@
 """Versioned operating-mode contract. No network or side effects."""
 PROTOCOL_VERSION = 1
-# Phase 1 is deliberately not an end-to-end stop implementation. Enable only
-# after sender/receiver/ingress/worker adapters and their integration tests land.
-RUNTIME_INTEGRATION_COMPLETE = False
+# Runtime adapters are included. Deployment capability evidence is independently
+# required for every source and AWS region before new modes become available.
+RUNTIME_INTEGRATION_COMPLETE = True
 MODES = {"automatic", "normal", "standby", "backup", "manual", "emergency", "emergency_stop", "failover"}
 NODES = ("home", "tokyo-eew", "tokyo-weather", "osaka-eew", "osaka-weather")
 RUNTIME_COMPONENTS = (*NODES, "aws-tokyo", "aws-osaka")
@@ -47,9 +47,47 @@ def build_plan(mode, overrides=None):
 
 def runtime_readiness(records, now):
     missing = []
+    stale = []
     for node in RUNTIME_COMPONENTS:
         record = records.get(node, {})
-        seen = int(record.get("observed_at") or 0)
-        if record.get("protocol_version") != PROTOCOL_VERSION or not 0 <= now - seen <= 90 or record.get("verified") is not True:
+        try:
+            seen = int(record.get("observed_at") or 0)
+        except (ValueError, TypeError):
+            seen = 0
+        if not (record.get("protocol_version") == PROTOCOL_VERSION
+                and record.get("capability_verified") is True
+                and record.get("installation_id") and record.get("coverage_digest")):
             missing.append(node)
-    return {"ready": not missing, "missing": missing, "protocolVersion": PROTOCOL_VERSION}
+        if record.get("verified") is not True or not 0 <= now - seen <= 90:
+            stale.append(node)
+    return {"ready": not missing, "missing": missing, "stale": stale, "protocolVersion": PROTOCOL_VERSION}
+
+
+def application_status(record, revision, now, requested=None):
+    """Installation proof is never evidence that a live sender has stopped."""
+    if record.get("protocol_version") != PROTOCOL_VERSION or record.get("capability_verified") is not True:
+        return "unconfirmed"
+    try:
+        fresh = 0 <= now - int(record.get("observed_at", 0)) <= 90
+        same_revision = int(record.get("applied_revision", -1)) == revision
+    except (ValueError, TypeError):
+        return "unconfirmed"
+    if not fresh or record.get("verified") is not True:
+        return "unconfirmed"
+    if not same_revision:
+        return "pending"
+    if requested and requested.get("delivery") != "automatic":
+        if record.get("delivery") != requested.get("delivery"):
+            return "pending"
+        if record.get("delivery") == "standby" and record.get("wait_seconds") != requested.get("waitSeconds"):
+            return "pending"
+    return "applied"
+
+
+def stored_plan(mode, overrides=None):
+    if mode == "manual" and isinstance(overrides, dict):
+        from decimal import Decimal
+        overrides = {node: {**policy, "waitSeconds": int(policy["waitSeconds"])
+                            if isinstance(policy.get("waitSeconds"), Decimal) and policy["waitSeconds"] == int(policy["waitSeconds"])
+                            else policy.get("waitSeconds")} for node, policy in overrides.items()}
+    return build_plan(mode, overrides)

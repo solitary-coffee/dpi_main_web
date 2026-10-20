@@ -50,6 +50,7 @@ class XmlTests(unittest.TestCase):
               "INGEST_ENDPOINTS": ["https://example.invalid/tokyo", "https://example.invalid/osaka"],
               "INGEST_HMAC_PARAMETER": "configured", "_load_dispatch_targets": lambda _: ["test-target"],
               "_record_delivery_metadata": Mock(), "_get_ingest_secret": lambda: "not-a-real-secret",
+              "_admin_delivery_check": Mock(),
               "_post_signed_ingest": Mock(return_value={"accepted": True}), "_audit_operation": Mock()}
         exec(compile(tree, "dispatch-extracted", "exec"), ns)
         return ns
@@ -96,12 +97,14 @@ class ModeTests(unittest.TestCase):
             p["home"]["waitSeconds"] = value
             with self.assertRaises(ValueError): build_plan("manual", p)
 
-    def test_unverified_or_stale_runtime_is_never_ready(self):
+    def test_installation_and_live_application_are_distinct(self):
         self.assertFalse(runtime_readiness({}, 100)["ready"])
-        records = {node: {"observed_at": 95, "protocol_version": 1, "verified": True} for node in RUNTIME_COMPONENTS}
+        records = {node: {"observed_at": 95, "protocol_version": 1, "verified": True,
+                          "capability_verified": True, "installation_id": "install", "coverage_digest": "hash"} for node in RUNTIME_COMPONENTS}
         self.assertTrue(runtime_readiness(records, 100)["ready"])
-        self.assertFalse(runtime_readiness(records, 200)["ready"])
-        records["home"]["verified"] = False
+        self.assertTrue(runtime_readiness(records, 200)["ready"])
+        self.assertEqual(set(runtime_readiness(records, 200)["stale"]), set(RUNTIME_COMPONENTS))
+        records["home"]["capability_verified"] = False
         self.assertFalse(runtime_readiness(records, 100)["ready"])
 
 

@@ -17,6 +17,8 @@ def reserve(table, current, *, mode, plan, overrides, actor, reason,
         raise ValueError("別の管理操作でモードが変更されました。最新情報に更新してください。")
     if current.get("transition_status") == "applying" and int(current.get("lease_until", 0)) > now:
         raise ValueError("別のモード変更を処理中です。完了後に最新情報に更新してください。")
+    if mode != "emergency_stop" and int(current.get("monitor_lease_until", 0)) > now:
+        raise ValueError("自動監視がEC2を操作中です。数秒後に最新情報へ更新して再操作してください。")
     item = dict(current)
     item.update(pk=KEY, mode=mode, node_plan=plan, node_overrides=overrides or {},
                 reason=reason, requested_by=actor, requested_at=now,
@@ -31,6 +33,8 @@ def reserve(table, current, *, mode, plan, overrides, actor, reason,
     elif current.get("mode") == "emergency_stop":
         item["discard_before_epoch"] = now
     condition = "(attribute_not_exists(revision) OR revision = :revision) AND (attribute_not_exists(transition_status) OR transition_status <> :applying OR lease_until <= :now)"
+    if mode != "emergency_stop":
+        condition += " AND (attribute_not_exists(monitor_lease_until) OR monitor_lease_until <= :now)"
     table.put_item(Item=item, ConditionExpression=condition,
                    ExpressionAttributeValues={":revision": Decimal(revision),
                                               ":applying": "applying", ":now": now})
@@ -46,3 +50,26 @@ def finish(table, operation, *, status, error=""):
                                    ":revision": operation["revision"],
                                    ":operation": operation["operation_id"]},
     )
+
+
+def acquire_monitor(table, *, owner, now, duration):
+    """Use the SAME authoritative regional table as reserve(), never a replica.
+
+    Emergency stop may preempt this infrastructure lease: gate stops deliveries
+    independently even if an EC2 StartInstances request was already in flight.
+    """
+    table.update_item(
+        Key={"pk": KEY},
+        UpdateExpression="SET monitor_owner=:owner, monitor_lease_until=:until",
+        ConditionExpression="(attribute_not_exists(#mode) OR #mode=:auto) AND (attribute_not_exists(transition_status) OR transition_status <> :applying) AND (attribute_not_exists(monitor_lease_until) OR monitor_lease_until <= :now)",
+        ExpressionAttributeNames={"#mode": "mode"},
+        ExpressionAttributeValues={":owner": owner, ":until": now + duration,
+                                   ":auto": "automatic", ":applying": "applying", ":now": now},
+    )
+
+
+def release_monitor(table, owner):
+    table.update_item(Key={"pk": KEY},
+                      UpdateExpression="REMOVE monitor_owner, monitor_lease_until",
+                      ConditionExpression="monitor_owner=:owner",
+                      ExpressionAttributeValues={":owner": owner})

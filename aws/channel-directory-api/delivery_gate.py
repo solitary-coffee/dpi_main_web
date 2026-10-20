@@ -124,12 +124,14 @@ class DeliveryGate:
         return Decision(record["revision"], record["mode"], policy["delivery"],
                         wait if policy["delivery"] == "standby" else 0)
 
-    def wait(self, node, *, admitted_at, automatic_policy=None):
+    def wait(self, node, *, admitted_at, automatic_policy=None, legacy_fast=False):
         started = self.clock()
         if isinstance(admitted_at, (int, float)) and not isinstance(admitted_at, bool) and math.isfinite(admitted_at):
             started -= max(0, self.epoch() - admitted_at)
         while True:
             decision = self.check(node, admitted_at=admitted_at, automatic_policy=automatic_policy)
+            if legacy_fast and node.endswith("-eew") and decision.mode in {"normal", "standby"}:
+                return Decision(decision.revision, decision.mode, "immediate", 0)
             remaining = decision.wait_seconds - (self.clock() - started)
             if remaining <= 0:
                 return decision
@@ -138,6 +140,7 @@ class DeliveryGate:
 
     def acknowledgement(self, node, *, automatic_policy=None):
         try:
+            before = self._snapshot()
             decision = self.check(node, admitted_at=self.epoch(), automatic_policy=automatic_policy)
             delivery, wait = decision.delivery, decision.wait_seconds
         except DeliveryBlocked as error:
@@ -147,6 +150,8 @@ class DeliveryGate:
         # This ACK only asserts this gate is loaded. Deployment must separately
         # verify that every actual egress calls it before publishing verified=True.
         record = self._snapshot()
+        if record != before:
+            return {"verified": False, "error": "mode_changed_during_observation"}
         return {"protocol_version": 1, "applied_revision": record["revision"],
                 "delivery": delivery, "wait_seconds": wait,
                 "observed_at": int(self.epoch()), "verified": False,
