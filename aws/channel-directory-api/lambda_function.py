@@ -19,6 +19,7 @@ from boto3.dynamodb.conditions import Attr
 from botocore.config import Config
 from botocore.exceptions import ClientError
 from xml_delivery import render_xml
+from mode_transition import reserve as reserve_mode_transition, finish as finish_mode_transition
 from operating_modes import MODES, NODES, RUNTIME_COMPONENTS, LABELS, REGIONAL_MODES, RUNTIME_INTEGRATION_COMPLETE, build_plan, runtime_readiness
 
 
@@ -1257,6 +1258,8 @@ def _system_mode_summary():
         "automaticMonitoringEnabled": control.get("auto_monitor_enabled") is True,
         "runtimeReadiness": readiness,
         "revision": _integer(manual.get("revision"), 0),
+        "transitionStatus": _clean(manual.get("transition_status"), 40) or "legacy_unverified",
+        "transitionError": _clean(manual.get("transition_error"), 300),
         "nodes": [{"nodeId": node, "requested": plan.get(node),
                    "observed": runtime[node].get("delivery"),
                    "observedWaitSeconds": runtime[node].get("wait_seconds"),
@@ -1848,12 +1851,51 @@ def _control_system_mode(body, actor, request_id):
         readiness = runtime_readiness(runtime, int(time.time()))
         if not readiness["ready"]:
             raise ValueError("配信側制御の適用・疎通確認が未完了です: " + ", ".join(readiness["missing"]))
-    current = table.get_item(Key={"pk": MANUAL_MODE_KEY}).get("Item", {})
-    if body.get("expectedRevision") != _integer(current.get("revision"), 0):
-        raise ValueError("別の管理操作でモードが変更されました。最新情報に更新してください。")
+    current = table.get_item(Key={"pk": MANUAL_MODE_KEY}, ConsistentRead=True).get("Item", {})
     previous = current.get("previous_concurrency") if isinstance(current.get("previous_concurrency"), dict) else {}
     changed_instances = []
     now = int(time.time())
+
+    if mode != "automatic" and (not previous or current.get("mode") == "automatic"):
+        previous = {}
+        for region in OPERATING_REGIONS:
+            concurrency = _client("lambda", region).get_function_concurrency(FunctionName=AUTO_MONITOR_FUNCTION)
+            previous[region] = concurrency.get("ReservedConcurrentExecutions", -1)
+    try:
+        operation = reserve_mode_transition(
+            table, current, mode=mode, plan=plan, overrides=body.get("nodeOverrides"),
+            actor=actor, reason=reason, request_id=request_id,
+            expected_revision=body.get("expectedRevision"), now=now,
+            previous_concurrency=previous,
+        )
+    except ClientError as error:
+        if error.response.get("Error", {}).get("Code") == "ConditionalCheckFailedException":
+            raise ValueError("別のモード変更と競合しました。最新情報に更新してください。") from error
+        raise
+
+    try:
+        changed_instances = _apply_reserved_system_mode(mode, current, previous, plan, table, actor, reason, now)
+    except Exception as error:
+        # Retain requested mode and monotonic revision, exposing partial failure.
+        # Do not roll back a stop request or claim the operation was applied.
+        finish_mode_transition(table, operation, status="failed", error=type(error).__name__)
+        _system_cache["expires_at"] = 0.0
+        _flow_system_cache["expires_at"] = 0.0
+        raise
+    finish_mode_transition(table, operation, status="awaiting_ack" if RUNTIME_INTEGRATION_COMPLETE else "legacy_unverified")
+    _audit_operation(actor, "system_mode.change", request_id, {
+        "mode": mode, "reason": reason, "revision": operation["revision"],
+        "changed_instances": changed_instances,
+    })
+    return {
+        "message": f"システムモード「{_mode_label(mode)}」の変更要求を受け付けました。各ノードの反映状況を確認してください。",
+        "mode": mode, "revision": operation["revision"],
+        "changedInstances": changed_instances,
+    }
+
+
+def _apply_reserved_system_mode(mode, current, previous, plan, table, actor, reason, now):
+    changed_instances = []
 
     if mode == "automatic":
         if current:
@@ -1870,33 +1912,17 @@ def _control_system_mode(body, actor, request_id):
                         FunctionName=AUTO_MONITOR_FUNCTION,
                         ReservedConcurrentExecutions=int(saved),
                     )
-        table.delete_item(Key={"pk": MANUAL_MODE_KEY})
         table.update_item(Key={"pk": "CONTROL"}, UpdateExpression="SET auto_monitor_enabled = :enabled",
                           ExpressionAttributeValues={":enabled": True})
         for region in OPERATING_REGIONS:
             _client("lambda", region).invoke(FunctionName=AUTO_MONITOR_FUNCTION, InvocationType="Event", Payload=b"{}")
     else:
-        if not current:
-            for region in OPERATING_REGIONS:
-                concurrency = _client("lambda", region).get_function_concurrency(FunctionName=AUTO_MONITOR_FUNCTION)
-                previous[region] = concurrency.get("ReservedConcurrentExecutions", -1)
         for region in OPERATING_REGIONS:
             _client("lambda", region).put_function_concurrency(
                 FunctionName=AUTO_MONITOR_FUNCTION,
                 ReservedConcurrentExecutions=0,
             )
         changed_instances = _reconcile_instances_for_mode(mode, plan)
-        table.put_item(Item={
-            "pk": MANUAL_MODE_KEY,
-            "mode": mode,
-            "reason": reason,
-            "requested_at": now,
-            "requested_by": actor,
-            "previous_concurrency": previous,
-            "node_overrides": body.get("nodeOverrides") or {},
-            "node_plan": plan,
-            "revision": _integer(current.get("revision"), 0) + 1,
-        })
         regional_mode = REGIONAL_MODES[mode]
         for region_role in ("TOKYO", "OSAKA"):
             table.update_item(
@@ -1909,16 +1935,7 @@ def _control_system_mode(body, actor, request_id):
                     ":reason": f"manual by {actor}: {reason}",
                 },
             )
-    _audit_operation(actor, "system_mode.change", request_id, {
-        "mode": mode,
-        "reason": reason,
-        "changed_instances": changed_instances,
-    })
-    return {
-        "message": f"システムモードを「{_mode_label(mode)}」に変更しました。",
-        "mode": mode,
-        "changedInstances": changed_instances,
-    }
+    return changed_instances
 
 
 def _reconcile_instances_for_mode(mode, plan=None):

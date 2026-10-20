@@ -194,6 +194,8 @@ function renderMode(mode) {
         regions.append(item);
     }
     container.replaceChildren(card, regions);
+    const transitionLabels = { applying: '変更処理中', awaiting_ack: '配信側の反映確認待ち', failed: '変更処理に失敗（一部反映の可能性あり）', legacy_unverified: '配信側の反映は未確認' };
+    container.append(element('p', mode.transitionStatus === 'failed' ? 'status error' : '', `変更番号: ${mode.revision ?? '未取得'} / ${transitionLabels[mode.transitionStatus] || '反映状況不明'}${mode.transitionError ? `（${mode.transitionError}）` : ''}`));
     container.append(element('p', '', `自動監視設定: ${mode.automaticMonitoringEnabled ? '有効' : '無効'} / 制御: ${mode.controlMode === 'automatic' ? '自動' : '手動固定（監視Lambdaを抑止）'}`));
     if (!mode.runtimeReadiness?.ready) container.append(element('p', 'status error', `新モードは配信側更新待ちです。未確認: ${(mode.runtimeReadiness?.missing || ['制御API']).map(x => nodeLabels[x] || x).join('、')}。設定値だけで停止済みとは判定しません。`));
     const nodes = element('div', 'system-grid');
@@ -223,6 +225,12 @@ function renderMode(mode) {
             const wait = element('input'); wait.type = 'number'; wait.min = '1'; wait.max = '300'; wait.value = '3'; wait.id = `node-wait-${id}`;
             waitLabel.append(wait); field.append(input); const group = element('div'); group.append(field, waitLabel); manual.append(group);
         }
+    }
+    for (const node of mode.nodes || []) {
+        const input = document.getElementById(`node-mode-${node.nodeId}`);
+        const wait = document.getElementById(`node-wait-${node.nodeId}`);
+        if (input && ['immediate', 'standby', 'stopped'].includes(node.requested?.delivery)) input.value = node.requested.delivery;
+        if (wait) wait.value = String(node.requested?.waitSeconds > 0 ? node.requested.waitSeconds : 3);
     }
     updateModeHint();
 }
