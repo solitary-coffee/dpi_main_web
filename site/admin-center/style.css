@@ -37,6 +37,9 @@ textarea { resize: vertical; font-family: ui-monospace, SFMono-Regular, Consolas
 label small { color: #9dd3ff; font-weight: 400; }.wide { grid-column: 1 / -1; }.action-row { display: flex; gap: 10px; justify-content: flex-end; }
 button:disabled { cursor: not-allowed; opacity: .45; }.danger-button { background: #a52a25; }.small { padding: 6px 9px; font-size: .78rem; }
 .mode-current { display: grid; gap: 12px; margin-bottom: 18px; }.mode-badge { width: fit-content; padding: 8px 12px; border-radius: 999px; background: #18486d; font-weight: 800; }.mode-normal { background: #665013; }.mode-failover { background: #742823; }
+.mode-plan-card { display: grid; gap: 8px; min-width: 0; padding: 15px; border: 1px solid #59616b; border-radius: 8px; background: #333940; }
+.mode-plan-card h3 { margin: 0; font-size: 1rem; }.mode-plan-state { font-size: 1.08rem; }.mode-plan-card small { color: #c8d0d8; }
+.state-immediate { color: #78dea6; }.state-standby, .state-automatic { color: #ffd479; }.state-stopped { color: #ffb0a9; }
 .region-modes { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 10px; }.region-mode { display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; padding: 13px; border-radius: 7px; background: #333940; }.region-mode span { color: #9dd3ff; font-weight: 800; text-align: right; }.region-mode small, .region-mode time { grid-column: 1 / -1; color: #c8d0d8; }
 .block-code { display: block; margin-top: 5px; color: #b9c3cc; font-size: .75rem; }.ec2-actions { display: flex; min-width: 185px; gap: 6px; }.state { font-weight: 800; }.state-running { color: #78dea6; }.state-stopped { color: #ffb0a9; }
 .xml-preview { padding: 16px; border: 1px solid #5d6772; border-radius: 8px; background: #333940; }.xml-preview h3 { margin-bottom: 12px; }

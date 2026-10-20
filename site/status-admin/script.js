@@ -118,10 +118,12 @@ function renderRecords(containerId, records, isMaintenance) {
 async function submitIncident(event) {
     event.preventDefault();
     const id = value('incident-id');
+    const actionLabel = id ? 'インシデントを更新' : 'インシデントを作成';
+    if (!window.confirm(`${actionLabel}します。${document.getElementById('incident-notify').checked ? '\n購読者への通知も送信されます。' : ''}\n続行しますか？`)) return;
     const payload = {
         name: value('incident-name'), status: value('incident-status'), impact: value('incident-impact'),
         body: value('incident-body'), componentStatus: value('incident-component-status'), componentIds: checkedValues('incident-components'),
-        notify: document.getElementById('incident-notify').checked, confirmation: value('incident-confirmation'),
+        notify: document.getElementById('incident-notify').checked, confirmation: id ? `UPDATE:${id}` : 'CREATE INCIDENT',
     };
     const path = id ? `/site/status-admin/api/incidents/${id}` : '/site/status-admin/api/incidents';
     try {
@@ -137,6 +139,8 @@ async function submitMaintenance(event) {
     const scheduledFor = isoInput('maintenance-start', '開始日時');
     const scheduledUntil = isoInput('maintenance-end', '終了日時');
     if (!scheduledFor || !scheduledUntil) return;
+    const actionLabel = id ? 'メンテナンスを更新' : 'メンテナンスを作成';
+    if (!window.confirm(`${actionLabel}します。通知設定とコンポーネント状態の変更内容を確認してください。\n続行しますか？`)) return;
     const payload = {
         name: value('maintenance-name'), status: value('maintenance-status'), body: value('maintenance-body'), impact: 'none',
         scheduledFor, scheduledUntil,
@@ -144,7 +148,7 @@ async function submitMaintenance(event) {
         notify: checked('maintenance-notify'), remindPrior: checked('maintenance-remind'), autoStart: checked('maintenance-auto-start'),
         autoComplete: checked('maintenance-auto-complete'), autoComponentMaintenance: checked('maintenance-auto-state'),
         autoComponentOperational: checked('maintenance-auto-operational'), notifyAtStart: checked('maintenance-notify-start'),
-        notifyAtEnd: checked('maintenance-notify-end'), confirmation: value('maintenance-confirmation'),
+        notifyAtEnd: checked('maintenance-notify-end'), confirmation: id ? `UPDATE:${id}` : 'CREATE MAINTENANCE',
     };
     const path = id ? `/site/status-admin/api/maintenances/${id}` : '/site/status-admin/api/maintenances';
     try {
@@ -161,8 +165,6 @@ function editIncident(record) {
     setValue('incident-impact', record.impactOverride || 'none');
     setValue('incident-body', record.body);
     renderComponentChecks('incident-components', record.componentIds);
-    setValue('incident-confirmation', '');
-    document.getElementById('incident-confirm-hint').textContent = `「UPDATE:${record.id}」と入力してください。`;
     document.getElementById('incident-submit').textContent = 'インシデントを更新';
     document.getElementById('incident-form-title').scrollIntoView({ behavior: 'smooth' });
 }
@@ -182,8 +184,6 @@ function editMaintenance(record) {
     document.getElementById('maintenance-notify-start').checked = record.notifyAtStart === true;
     document.getElementById('maintenance-notify-end').checked = record.notifyAtEnd === true;
     renderComponentChecks('maintenance-components', record.componentIds);
-    setValue('maintenance-confirmation', '');
-    document.getElementById('maintenance-confirm-hint').textContent = `「UPDATE:${record.id}」と入力してください。`;
     document.getElementById('maintenance-submit').textContent = 'メンテナンスを更新';
     document.getElementById('maintenance-form-title').scrollIntoView({ behavior: 'smooth' });
 }
@@ -192,7 +192,6 @@ function resetIncidentForm() {
     document.getElementById('incident-form').reset();
     setValue('incident-id', '');
     setValue('incident-component-status', 'degraded_performance');
-    document.getElementById('incident-confirm-hint').textContent = '「CREATE INCIDENT」と入力してください。';
     document.getElementById('incident-submit').textContent = 'インシデントを作成';
     renderComponentChecks('incident-components');
 }
@@ -202,7 +201,6 @@ function resetMaintenanceForm() {
     setValue('maintenance-id', '');
     setValue('maintenance-status', 'scheduled');
     setValue('maintenance-component-status', 'under_maintenance');
-    document.getElementById('maintenance-confirm-hint').textContent = '「CREATE MAINTENANCE」と入力してください。';
     document.getElementById('maintenance-submit').textContent = 'メンテナンスを作成';
     renderComponentChecks('maintenance-components');
 }
@@ -217,11 +215,10 @@ async function updateComponent(component, status, button) {
 
 async function deleteRecord(record, isMaintenance, button) {
     const confirmation = `DELETE:${record.id}`;
-    const input = window.prompt(`${record.name} を削除します。この操作は元に戻せません。\n確認のため次を入力してください:\n${confirmation}`);
-    if (input === null) return;
+    if (!window.confirm(`${record.name} を削除します。この操作は元に戻せません。\n続行しますか？`)) return;
     const kind = isMaintenance ? 'maintenances' : 'incidents';
     try {
-        await runMutation(`/site/status-admin/api/${kind}/${record.id}`, 'DELETE', { confirmation: input }, button);
+        await runMutation(`/site/status-admin/api/${kind}/${record.id}`, 'DELETE', { confirmation }, button);
         await loadSummary();
     } catch { /* runMutation displays the error */ }
 }

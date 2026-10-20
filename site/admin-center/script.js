@@ -2,6 +2,7 @@ let xmlPreviewValid = false;
 let xmlPreviewDigest = '';
 let xmlPreviewSequence = 0;
 let systemModeRevision = null;
+let systemModePlans = {};
 const modeLabels = { automatic: '自動監視', normal: '通常モード', standby: 'スタンバイモード', backup: 'バックアップモード', manual: '手動モード', emergency: '緊急モード', emergency_stop: '緊急停止モード', failover: 'バックアップ固定（旧設定）' };
 const nodeLabels = { home: '自宅サーバー', 'tokyo-eew': '東京 EC2：EEW・地震・津波', 'tokyo-weather': '東京 EC2：気象・火山', 'osaka-eew': '大阪 EC2：EEW・地震・津波', 'osaka-weather': '大阪 EC2：気象・火山' };
 const deliveryModeLabels = { immediate: '即時配信', standby: '待機して配信', stopped: '配信停止', automatic: '自動判定' };
@@ -185,6 +186,7 @@ function renderMode(mode) {
         return;
     }
     systemModeRevision = Number.isInteger(mode.revision) ? mode.revision : null;
+    systemModePlans = mode.availablePlans || {};
     const modeName = modeLabels[mode.controlMode] || mode.controlMode;
     const card = element('div', `mode-badge mode-${mode.controlMode}`, `制御: ${modeName}`);
     const regions = element('div', 'region-modes');
@@ -225,6 +227,8 @@ function renderMode(mode) {
             for (const key of ['immediate', 'standby', 'stopped']) { const option = element('option', '', deliveryModeLabels[key]); option.value = key; input.append(option); }
             const waitLabel = element('label', '', '待機秒数（待機配信時のみ）');
             const wait = element('input'); wait.type = 'number'; wait.min = '1'; wait.max = '300'; wait.value = '3'; wait.id = `node-wait-${id}`;
+            input.addEventListener('change', renderSelectedModePlan);
+            wait.addEventListener('input', renderSelectedModePlan);
             waitLabel.append(wait); field.append(input); const group = element('div'); group.append(field, waitLabel); manual.append(group);
         }
     }
@@ -303,22 +307,20 @@ async function changeSystemMode(event) {
     event.preventDefault();
     const mode = document.getElementById('mode-select').value;
     const reason = document.getElementById('mode-reason').value.trim();
-    const confirmation = document.getElementById('mode-confirmation').value.trim();
+    const confirmation = `MODE:${mode.toUpperCase()}`;
     if (systemModeRevision === null) return setStatus('最新情報を取得してから操作してください。', 'error');
     const nodeOverrides = mode === 'manual' ? Object.fromEntries(Object.keys(nodeLabels).map(id => [id, { delivery: document.getElementById(`node-mode-${id}`).value, waitSeconds: Number(document.getElementById(`node-wait-${id}`).value) }])) : undefined;
-    if (!window.confirm('システムモードを変更します。対象EC2の起動状態が変化する場合があります。続行しますか？')) return;
+    if (!window.confirm(`${modeLabels[mode] || mode}へ変更します。\n画面に表示された自宅サーバー・各EC2の動作が適用され、対象EC2の起動状態が変化する場合があります。続行しますか？`)) return;
     try {
         await runAction({ action: 'system-mode', mode, reason, confirmation, expectedRevision: systemModeRevision, nodeOverrides }, event.submitter, true);
-        document.getElementById('mode-confirmation').value = '';
     } catch { /* runAction already presents the error */ }
 }
 
 async function controlEc2(instance, operation, button) {
     const confirmation = `${operation}:${instance.instanceId}`;
-    const input = window.prompt(`${instance.name} に「${button.textContent}」を実行します。\n確認のため次を入力してください:\n${confirmation}`);
-    if (input === null) return;
+    if (!window.confirm(`${instance.name}（${instance.instanceId}）に「${button.textContent}」を実行します。続行しますか？`)) return;
     try {
-        await runAction({ action: 'ec2', region: instance.region, instanceId: instance.instanceId, operation, confirmation: input }, button, true);
+        await runAction({ action: 'ec2', region: instance.region, instanceId: instance.instanceId, operation, confirmation }, button, true);
     } catch { /* runAction already presents the error */ }
 }
 
@@ -456,14 +458,42 @@ function setDmdataStatus(message, type) {
 
 function updateModeHint() {
     const select = document.getElementById('mode-select');
-    const hint = document.getElementById('mode-confirm-hint');
-    if (!select || !hint) return;
-    hint.textContent = `「MODE:${select.value.toUpperCase()}」と入力してください。`;
+    if (!select) return;
     const descriptions = { automatic: '既存の死活監視で通常・スタンバイ・バックアップを自動判定します。', normal: '既存の通常時配置・待機時間を使用します。', standby: '既存のBACKUP_STANDBYに準拠します。', backup: '既存のBACKUPに準拠します。', manual: '自宅と4台のEC2を個別に設定します。', emergency: '自宅の生死に関係なくEC2などの配信待機をなくします。停止中EC2の起動には時間がかかります。', emergency_stop: '全配信元とAWS送信段で配信を停止します。既にDiscordが受信した通知は取り消せません。', failover: '従来のEC2全台起動・バックアップ固定設定です。' };
     const description = document.getElementById('mode-description');
     if (description) description.textContent = descriptions[select.value] || '';
     const manual = document.getElementById('manual-node-settings');
     if (manual) manual.hidden = select.value !== 'manual';
+    renderSelectedModePlan();
+}
+
+function renderSelectedModePlan() {
+    const container = document.getElementById('selected-mode-plan');
+    const select = document.getElementById('mode-select');
+    if (!container || !select) return;
+    const mode = select.value;
+    const plan = mode === 'manual'
+        ? Object.fromEntries(Object.keys(nodeLabels).map((id) => {
+            const delivery = document.getElementById(`node-mode-${id}`)?.value || 'stopped';
+            const waitSeconds = delivery === 'standby' ? Number(document.getElementById(`node-wait-${id}`)?.value || 3) : 0;
+            return [id, { delivery, waitSeconds }];
+        }))
+        : systemModePlans[mode];
+    if (!plan) {
+        container.replaceChildren(element('p', 'empty', 'モード動作を取得できません。最新情報に更新してください。'));
+        return;
+    }
+    container.replaceChildren(...Object.entries(nodeLabels).map(([id, label]) => {
+        const policy = plan[id] || {};
+        const card = element('article', 'mode-plan-card');
+        card.append(
+            element('span', 'eyebrow', id === 'home' ? 'HOME SERVER' : 'EC2'),
+            element('h3', '', label),
+            element('strong', `mode-plan-state state-${policy.delivery || 'unknown'}`, deliveryModeLabels[policy.delivery] || '未取得'),
+            element('small', '', policy.delivery === 'standby' ? `待機時間 ${policy.waitSeconds ?? '—'}秒後に配信` : policy.delivery === 'immediate' ? '待機時間なしで配信' : policy.delivery === 'stopped' ? '新規配信を停止' : '死活監視の判定に従う'),
+        );
+        return card;
+    }));
 }
 
 async function loadXmlFile(event) {
@@ -523,10 +553,10 @@ async function dispatchXml(event) {
     event.preventDefault();
     if (!xmlPreviewValid) return setStatus('XMLをもう一度確認してください。', 'error');
     if (!window.confirm('選択した配信枠へXMLを配信します。この操作は利用者への通知につながります。続行しますか？')) return;
-    const payload = { action: 'xml-dispatch', xml: document.getElementById('xml-content').value, deliverySlot: document.getElementById('xml-slot').value, sendData: document.getElementById('xml-route').value, confirmation: document.getElementById('xml-confirmation').value.trim(), dmdataSource: selectedDmdataSource, previewDigest: xmlPreviewDigest };
+    const deliverySlot = document.getElementById('xml-slot').value;
+    const payload = { action: 'xml-dispatch', xml: document.getElementById('xml-content').value, deliverySlot, sendData: document.getElementById('xml-route').value, confirmation: `XML配信:${deliverySlot}`, dmdataSource: selectedDmdataSource, previewDigest: xmlPreviewDigest };
     try {
         await runAction(payload, event.submitter, true);
-        document.getElementById('xml-confirmation').value = '';
         if (selectedDmdataSource) {
             selectedDmdataSource.deliveryState = 'delivered';
             loadDmdataHistory(false);
@@ -567,10 +597,7 @@ function invalidateXmlPreview() {
 }
 
 function updateXmlHint() {
-    const select = document.getElementById('xml-slot');
-    const hint = document.getElementById('xml-confirm-hint');
-    if (!select || !hint) return;
-    hint.textContent = select.value ? `「XML配信:${select.value}」と入力してください。` : '配信枠を選択してください。';
+    // The backend confirmation token is generated after the popup is accepted.
 }
 
 function renderXmlSlots(catalog, awsCounts) {

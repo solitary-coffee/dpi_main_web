@@ -51,9 +51,9 @@
                 <form id="mode-form" class="control-form">
                     <label>変更後のモード<select id="mode-select" required><option value="automatic">自動監視（既存の死活監視に準拠）</option><option value="normal">通常モード</option><option value="standby" disabled>スタンバイモード（配信側更新待ち）</option><option value="backup" disabled>バックアップモード（配信側更新待ち）</option><option value="manual" disabled>手動モード（配信側更新待ち）</option><option value="emergency" disabled>緊急モード（配信側更新待ち）</option><option value="emergency_stop" disabled>緊急停止モード（配信側更新待ち）</option><option value="failover">バックアップ固定（旧設定）</option></select></label>
                     <p id="mode-description" class="section-description"></p>
+                    <fieldset class="wide"><legend>選択中モードでの各配信元の動作</legend><p>変更前に、自宅サーバーと4台のEC2がどの動作になるかを確認できます。</p><div id="selected-mode-plan" class="system-grid"></div></fieldset>
                     <fieldset id="manual-node-settings" hidden><legend>手動モード：各配信元の動作</legend><p>待機配信は他系統の配信済み確認と組み合わせます。二重配信防止は無効化しません。</p><div id="manual-node-controls" class="system-grid"></div></fieldset>
                     <label>変更理由<input id="mode-reason" type="text" maxlength="300" placeholder="手動変更時は4文字以上"></label>
-                    <label>確認入力<input id="mode-confirmation" type="text" autocomplete="off" required><small id="mode-confirm-hint"></small></label>
                     <button type="submit" class="danger-button">モードを変更</button>
                 </form>
             </section>

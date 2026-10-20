@@ -1282,6 +1282,10 @@ def _system_mode_summary():
         "revision": _integer(manual.get("revision"), 0),
         "transitionStatus": _clean(manual.get("transition_status"), 40) or "legacy_unverified",
         "transitionError": _clean(manual.get("transition_error"), 300),
+        "availablePlans": {
+            mode_name: build_plan(mode_name)
+            for mode_name in ("automatic", "normal", "standby", "backup", "emergency", "emergency_stop", "failover")
+        },
         "nodes": [{"nodeId": node, "requested": plan.get(node),
                    "observed": runtime[node].get("delivery"),
                    "observedWaitSeconds": runtime[node].get("wait_seconds"),
