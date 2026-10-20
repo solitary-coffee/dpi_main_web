@@ -23,6 +23,7 @@ from delivery_gate import DeliveryGate, DeliveryBlocked
 from operating_modes import application_status, stored_plan
 from mode_transition import reserve as reserve_mode_transition, finish as finish_mode_transition
 from operating_modes import MODES, NODES, RUNTIME_COMPONENTS, LABELS, REGIONAL_MODES, RUNTIME_INTEGRATION_COMPLETE, build_plan, runtime_readiness
+from json_support import json_default
 
 
 TABLE_NAME = os.environ.get("TABLE_NAME", "EarthquakeData").strip()
@@ -2790,6 +2791,6 @@ def _response(status, body, headers=None):
             "x-content-type-options": "nosniff",
             **(headers or {}),
         },
-        "body": json.dumps(body, ensure_ascii=False, separators=(",", ":")),
+        "body": json.dumps(body, ensure_ascii=False, separators=(",", ":"), default=json_default),
     }
 

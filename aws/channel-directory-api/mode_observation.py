@@ -80,8 +80,14 @@ def publish(table, node, evidence):
             return False
     values = dict(evidence)
     values["pk"] = f"MODE_RUNTIME#{node}"
-    table.put_item(Item=values,
-                   ConditionExpression="attribute_not_exists(installation_id) OR (installation_id=:id AND (attribute_not_exists(observed_at) OR observed_at <= :at)) OR (installation_id=:old AND installed_at < :installed)",
-                   ExpressionAttributeValues={":id": evidence.get("installation_id", ""), ":at": evidence.get("observed_at", 0),
-                                              ":old": current.get("installation_id", ""), ":installed": evidence.get("installed_at", 0)})
+    try:
+        table.put_item(Item=values,
+                       ConditionExpression="attribute_not_exists(installation_id) OR (installation_id=:id AND (attribute_not_exists(observed_at) OR observed_at <= :at)) OR (installation_id=:old AND installed_at < :installed)",
+                       ExpressionAttributeValues={":id": evidence.get("installation_id", ""), ":at": evidence.get("observed_at", 0),
+                                                  ":old": current.get("installation_id", ""), ":installed": evidence.get("installed_at", 0)})
+    except Exception as error:
+        response = getattr(error, "response", {})
+        if response.get("Error", {}).get("Code") == "ConditionalCheckFailedException":
+            return False
+        raise
     return True
