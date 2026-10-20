@@ -1339,6 +1339,7 @@ def _load_delivery_flow():
         "id": "dmdata-history-api",
         "layer": "upstream",
         "name": "DMDATA上流API",
+        "regionLabel": "共通",
         "status": dmdata_health["status"],
         "expectedStopped": dmdata_health["expectedStopped"],
         "detail": dmdata_health["detail"],
@@ -1353,6 +1354,7 @@ def _load_delivery_flow():
             "id": f"home-{_clean(node.get('id'), 30)}",
             "layer": "home",
             "name": _clean(node.get("name"), 160) or "自宅サーバー",
+            "regionLabel": "自宅サーバー",
             "status": "normal" if node.get("healthy") else "abnormal",
             "expectedStopped": False,
             "detail": "ハートビート正常" if node.get("healthy") else "ハートビートが5分以上更新されていません",
@@ -1382,6 +1384,7 @@ def _load_delivery_flow():
             "layer": "aws-fast",
             "name": f"AWS高速系統（{region_role.upper()}）",
             "region": region,
+            "regionLabel": "東京リージョン" if region == "ap-northeast-1" else "大阪リージョン",
             "status": status,
             "expectedStopped": False,
             "detail": (
@@ -1413,6 +1416,7 @@ def _load_delivery_flow():
             "layer": "sqs",
             "name": f"SQS系統（{_region_role(region).upper()}）",
             "region": region,
+            "regionLabel": "東京リージョン" if region == "ap-northeast-1" else "大阪リージョン",
             "status": status,
             "expectedStopped": False,
             "activityState": activity_state,
@@ -1454,6 +1458,7 @@ def _load_delivery_flow():
             "layer": "regional-backup",
             "name": f"リージョン内バックアップ（{region_role}）",
             "region": region,
+            "regionLabel": "東京リージョン" if region == "ap-northeast-1" else "大阪リージョン",
             "status": status,
             "expectedStopped": False,
             "standby": activity_state == "waiting",
@@ -1498,6 +1503,9 @@ def _load_delivery_flow():
             "layer": "cross-backup",
             "name": f"相互バックアップ（{source_role} → {target_role}）",
             "region": target_region,
+            "sourceRegion": source_region,
+            "targetRegion": target_region,
+            "regionLabel": ("東京 → 大阪" if source_region == "ap-northeast-1" else "大阪 → 東京"),
             "status": status,
             "expectedStopped": False,
             "standby": activity_state == "waiting",
@@ -1525,6 +1533,7 @@ def _load_delivery_flow():
             "id": "ec2-unconfigured",
             "layer": "ec2",
             "name": "EC2受信・送信系統",
+            "regionLabel": "東京／大阪リージョン",
             "status": "stopped",
             "expectedStopped": True,
             "sourceType": "ec2",
@@ -1548,6 +1557,7 @@ def _load_delivery_flow():
             "layer": "ec2",
             "name": _clean(instance.get("name"), 160) or _clean(instance.get("instanceId"), 40),
             "region": _clean(instance.get("region"), 40),
+            "regionLabel": "東京リージョン" if _clean(instance.get("region"), 40) == "ap-northeast-1" else "大阪リージョン",
             "status": status,
             "expectedStopped": state == "stopped",
             "sourceType": "ec2",
@@ -2021,6 +2031,9 @@ def _reconcile_instances_for_mode(mode, plan=None):
 def _xml_preview(body):
     xml_text = _xml_text(body)
     summary = _parse_xml_summary(xml_text)
+    dmdata_source = body.get("dmdataSource")
+    if isinstance(dmdata_source, dict):
+        summary["typeCode"] = _clean(dmdata_source.get("typeCode"), 30).upper()
     route = _clean(body.get("sendData"), 30).casefold()
     slot = _normalize_delivery_name(body.get("deliverySlot"))
     if route not in ALLOWED_SEND_DATA or not slot:
@@ -2446,6 +2459,8 @@ def _xml_dispatch(body, actor, request_id):
     xml_digest = hashlib.sha256(xml_text.encode("utf-8")).hexdigest()
     if dmdata_source and not hmac.compare_digest(dmdata_source["xmlSha256"], xml_digest):
         raise ValueError("選択したDMDATA電文とXML本文が一致しません。電文を読み込み直してください。")
+    if dmdata_source:
+        preview["typeCode"] = _clean(dmdata_source.get("typeCode"), 30).upper()
     send_data = _clean(body.get("sendData"), 30).casefold()
     delivery_slot = _normalize_delivery_name(body.get("deliverySlot"))
     expected_confirmation = f"XML配信:{delivery_slot}"
