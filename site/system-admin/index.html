@@ -46,10 +46,12 @@
             </section>
 
             <section aria-labelledby="mode-title">
-                <div class="section-heading"><div><p class="eyebrow">SYSTEM MODE</p><h2 id="mode-title">システムモード</h2></div><p>自動監視、通常固定、フェイルオーバー固定を切り替えます。</p></div>
+                <div class="section-heading"><div><p class="eyebrow">SYSTEM MODE</p><h2 id="mode-title">システムモード</h2></div><p>自動監視と手動固定を区別し、設定値と各配信元の反映状況を表示します。</p></div>
                 <div id="mode-current" class="mode-current"></div>
                 <form id="mode-form" class="control-form">
-                    <label>変更後のモード<select id="mode-select" required><option value="automatic">自動監視</option><option value="normal">通常固定</option><option value="failover">フェイルオーバー固定</option></select></label>
+                    <label>変更後のモード<select id="mode-select" required><option value="automatic">自動監視（既存の死活監視に準拠）</option><option value="normal">通常モード</option><option value="standby" disabled>スタンバイモード（配信側更新待ち）</option><option value="backup" disabled>バックアップモード（配信側更新待ち）</option><option value="manual" disabled>手動モード（配信側更新待ち）</option><option value="emergency" disabled>緊急モード（配信側更新待ち）</option><option value="emergency_stop" disabled>緊急停止モード（配信側更新待ち）</option><option value="failover">バックアップ固定（旧設定）</option></select></label>
+                    <p id="mode-description" class="section-description"></p>
+                    <fieldset id="manual-node-settings" hidden><legend>手動モード：各配信元の動作</legend><p>待機配信は他系統の配信済み確認と組み合わせます。二重配信防止は無効化しません。</p><div id="manual-node-controls" class="system-grid"></div></fieldset>
                     <label>変更理由<input id="mode-reason" type="text" maxlength="300" placeholder="手動変更時は4文字以上"></label>
                     <label>確認入力<input id="mode-confirmation" type="text" autocomplete="off" required><small id="mode-confirm-hint"></small></label>
                     <button type="submit" class="danger-button">モードを変更</button>

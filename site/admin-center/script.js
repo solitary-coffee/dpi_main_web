@@ -1,4 +1,10 @@
 let xmlPreviewValid = false;
+let xmlPreviewDigest = '';
+let xmlPreviewSequence = 0;
+let systemModeRevision = null;
+const modeLabels = { automatic: '自動監視', normal: '通常モード', standby: 'スタンバイモード', backup: 'バックアップモード', manual: '手動モード', emergency: '緊急モード', emergency_stop: '緊急停止モード', failover: 'バックアップ固定（旧設定）' };
+const nodeLabels = { home: '自宅サーバー', 'tokyo-eew': '東京 EC2：EEW・地震・津波', 'tokyo-weather': '東京 EC2：気象・火山', 'osaka-eew': '大阪 EC2：EEW・地震・津波', 'osaka-weather': '大阪 EC2：気象・火山' };
+const deliveryModeLabels = { immediate: '即時配信', standby: '待機して配信', stopped: '配信停止', automatic: '自動判定' };
 let selectedDmdataSource = null;
 let dmdataItems = [];
 let dmdataNextToken = '';
@@ -76,7 +82,7 @@ function renderOperationOverview(local, cloudflare, aws, catalog) {
     if (!container) return;
     const mode = aws?.systemMode;
     const modeName = mode?.available
-        ? ({ automatic: '自動監視', normal: '通常固定', failover: 'フェイルオーバー固定' }[mode.controlMode] || mode.controlMode)
+        ? (modeLabels[mode.controlMode] || mode.controlMode)
         : '取得不可';
     const home = aws?.homeServers;
     const backup = aws?.backupInstances;
@@ -178,16 +184,56 @@ function renderMode(mode) {
         container.replaceChildren(element('p', 'empty', `取得できません${mode?.error ? `（${mode.error}）` : ''}`));
         return;
     }
-    const modeName = { automatic: '自動監視', normal: '通常固定', failover: 'フェイルオーバー固定' }[mode.controlMode] || mode.controlMode;
+    systemModeRevision = Number.isInteger(mode.revision) ? mode.revision : null;
+    const modeName = modeLabels[mode.controlMode] || mode.controlMode;
     const card = element('div', `mode-badge mode-${mode.controlMode}`, `制御: ${modeName}`);
     const regions = element('div', 'region-modes');
     for (const region of mode.regions || []) {
         const item = element('article', 'region-mode');
-        item.append(element('strong', '', region.regionRole.toUpperCase()), element('span', '', region.mode), element('small', '', region.reason || '理由なし'), element('time', '', formatDate(region.updatedAt)));
+        item.append(element('strong', '', region.regionRole.toUpperCase()), element('span', '', region.requestedMode ? `要求: ${region.requestedMode}` : region.mode), element('small', '', region.requestedMode ? `自動監視の直近判定: ${region.mode} / ${region.reason || '理由なし'}` : region.reason || '理由なし'), element('time', '', formatDate(region.updatedAt)));
         regions.append(item);
     }
     container.replaceChildren(card, regions);
-    document.getElementById('mode-select').value = ['automatic', 'normal', 'failover'].includes(mode.controlMode) ? mode.controlMode : 'automatic';
+    const transitionLabels = { applying: '変更処理中', awaiting_ack: '変更要求受付済み（反映状況は各配信元を参照）', failed: '変更処理に失敗（一部反映の可能性あり）', legacy_unverified: '配信側の反映は未確認' };
+    container.append(element('p', mode.transitionStatus === 'failed' ? 'status error' : '', `変更番号: ${mode.revision ?? '未取得'} / ${transitionLabels[mode.transitionStatus] || '反映状況不明'}${mode.transitionError ? `（${mode.transitionError}）` : ''}`));
+    container.append(element('p', '', `自動監視設定: ${mode.automaticMonitoringEnabled ? '有効' : '無効'} / 制御: ${mode.controlMode === 'automatic' ? '自動' : mode.integratedControl ? '手動固定（死活監視は継続）' : '旧方式の手動固定'}`));
+    container.append(element('p', 'section-description', '変更の受付と反映完了は別です。緊急停止は新規送信を抑止します。既に送信中のHTTP通信は取り消せません。停止前・停止中の電文は解除後も再送しません。'));
+    if (!mode.runtimeReadiness?.ready) container.append(element('p', 'status error', `新モードは配信側更新待ちです。未確認: ${(mode.runtimeReadiness?.missing || ['制御API']).map(x => nodeLabels[x] || x).join('、')}。設定値だけで停止済みとは判定しません。`));
+    const nodes = element('div', 'system-grid');
+    for (const node of mode.nodes || []) {
+        const item = element('article', 'system-card');
+        const requested = node.requested;
+        const applied = node.applicationStatus === 'applied';
+        item.append(element('small', '', `配信側更新: ${node.installed ? '確認済み' : '未確認'}`));
+        item.append(element('h3', '', nodeLabels[node.nodeId] || node.nodeId), element('p', '', `設定: ${deliveryModeLabels[requested?.delivery] || '未取得'}${requested?.waitSeconds ? ` / ${requested.waitSeconds}秒` : ''}`), element('p', '', `実測: ${node.verified ? (deliveryModeLabels[node.observed] || '不明') : '未確認'} / ${applied ? '反映確認済み' : '反映未確認'}`), element('time', '', formatDate(node.observedAt)));
+        nodes.append(item);
+    }
+    container.append(nodes);
+    const select = document.getElementById('mode-select');
+    for (const option of select.options) {
+        if (!['automatic', 'normal', 'failover'].includes(option.value)) {
+            option.disabled = !mode.runtimeReadiness?.ready;
+            option.textContent = `${modeLabels[option.value]}${option.disabled ? '（配信側更新待ち）' : ''}`;
+        }
+    }
+    select.value = modeLabels[mode.controlMode] ? mode.controlMode : 'automatic';
+    const manual = document.getElementById('manual-node-controls');
+    if (manual && !manual.children.length) {
+        for (const [id, label] of Object.entries(nodeLabels)) {
+            const field = element('label', '', label);
+            const input = element('select'); input.id = `node-mode-${id}`;
+            for (const key of ['immediate', 'standby', 'stopped']) { const option = element('option', '', deliveryModeLabels[key]); option.value = key; input.append(option); }
+            const waitLabel = element('label', '', '待機秒数（待機配信時のみ）');
+            const wait = element('input'); wait.type = 'number'; wait.min = '1'; wait.max = '300'; wait.value = '3'; wait.id = `node-wait-${id}`;
+            waitLabel.append(wait); field.append(input); const group = element('div'); group.append(field, waitLabel); manual.append(group);
+        }
+    }
+    for (const node of mode.nodes || []) {
+        const input = document.getElementById(`node-mode-${node.nodeId}`);
+        const wait = document.getElementById(`node-wait-${node.nodeId}`);
+        if (input && ['immediate', 'standby', 'stopped'].includes(node.requested?.delivery)) input.value = node.requested.delivery;
+        if (wait) wait.value = String(node.requested?.waitSeconds > 0 ? node.requested.waitSeconds : 3);
+    }
     updateModeHint();
 }
 
@@ -258,9 +304,11 @@ async function changeSystemMode(event) {
     const mode = document.getElementById('mode-select').value;
     const reason = document.getElementById('mode-reason').value.trim();
     const confirmation = document.getElementById('mode-confirmation').value.trim();
+    if (systemModeRevision === null) return setStatus('最新情報を取得してから操作してください。', 'error');
+    const nodeOverrides = mode === 'manual' ? Object.fromEntries(Object.keys(nodeLabels).map(id => [id, { delivery: document.getElementById(`node-mode-${id}`).value, waitSeconds: Number(document.getElementById(`node-wait-${id}`).value) }])) : undefined;
     if (!window.confirm('システムモードを変更します。対象EC2の起動状態が変化する場合があります。続行しますか？')) return;
     try {
-        await runAction({ action: 'system-mode', mode, reason, confirmation }, event.submitter, true);
+        await runAction({ action: 'system-mode', mode, reason, confirmation, expectedRevision: systemModeRevision, nodeOverrides }, event.submitter, true);
         document.getElementById('mode-confirmation').value = '';
     } catch { /* runAction already presents the error */ }
 }
@@ -411,6 +459,11 @@ function updateModeHint() {
     const hint = document.getElementById('mode-confirm-hint');
     if (!select || !hint) return;
     hint.textContent = `「MODE:${select.value.toUpperCase()}」と入力してください。`;
+    const descriptions = { automatic: '既存の死活監視で通常・スタンバイ・バックアップを自動判定します。', normal: '既存の通常時配置・待機時間を使用します。', standby: '既存のBACKUP_STANDBYに準拠します。', backup: '既存のBACKUPに準拠します。', manual: '自宅と4台のEC2を個別に設定します。', emergency: '自宅の生死に関係なくEC2などの配信待機をなくします。停止中EC2の起動には時間がかかります。', emergency_stop: '全配信元とAWS送信段で配信を停止します。既にDiscordが受信した通知は取り消せません。', failover: '従来のEC2全台起動・バックアップ固定設定です。' };
+    const description = document.getElementById('mode-description');
+    if (description) description.textContent = descriptions[select.value] || '';
+    const manual = document.getElementById('manual-node-settings');
+    if (manual) manual.hidden = select.value !== 'manual';
 }
 
 async function loadXmlFile(event) {
@@ -428,19 +481,41 @@ async function loadXmlFile(event) {
 
 async function previewXml() {
     const button = document.getElementById('xml-preview-btn');
+    invalidateXmlPreview();
+    const sequence = xmlPreviewSequence;
     try {
-        const data = await runAction({ action: 'xml-preview', xml: document.getElementById('xml-content').value }, button, false);
+        const data = await runAction({ action: 'xml-preview', xml: document.getElementById('xml-content').value, deliverySlot: document.getElementById('xml-slot').value, sendData: document.getElementById('xml-route').value }, button, false);
+        if (sequence !== xmlPreviewSequence) return;
         const preview = data.preview || {};
         const box = document.getElementById('xml-preview');
         const list = element('dl');
         for (const [label, value] of [['電文種別', preview.controlTitle], ['見出し', preview.headline], ['イベントID', preview.eventId], ['発表時刻', preview.reportDateTime], ['対象時刻', preview.targetDateTime], ['発表元', preview.publishingOffice], ['状態', preview.status], ['サイズ', `${Number(data.bytes || 0).toLocaleString('ja-JP')} bytes`]]) list.append(element('dt', '', label), element('dd', '', value || '—'));
         box.replaceChildren(element('h3', '', 'XMLプレビュー'), list);
+        box.append(element('p', '', data.formatNote || ''), element('p', '', `実際に送信するメッセージ: ${data.messageCount || 0}通 / 配信先`));
+        for (const [index, message] of (data.messages || []).entries()) {
+            const messageBox = element('article', 'discord-message-preview');
+            messageBox.append(element('h4', '', `${index + 1}. ${message.username || 'DPI-Bot'}`));
+            for (const embed of message.embeds || []) {
+                const card = element('div', 'discord-embed-preview');
+                if (Number.isInteger(embed.color)) card.style.borderLeftColor = `#${embed.color.toString(16).padStart(6, '0')}`;
+                card.append(element('strong', '', embed.title || ''), element('pre', 'embed-description', embed.description || ''));
+                const fields = element('dl', 'embed-fields');
+                for (const field of embed.fields || []) fields.append(element('dt', '', field.name), element('dd', '', field.value));
+                card.append(fields, element('small', '', embed.footer?.text || ''));
+                messageBox.append(card);
+            }
+            box.append(messageBox);
+        }
+        const raw = element('details');
+        raw.append(element('summary', '', '送信JSONを確認'), element('pre', 'embed-description', JSON.stringify(data.messages || [], null, 2)));
+        box.append(raw);
         box.hidden = false;
-        xmlPreviewValid = true;
-        document.getElementById('xml-send-btn').disabled = false;
+        xmlPreviewDigest = data.previewDigest || '';
+        xmlPreviewValid = Boolean(xmlPreviewDigest && data.messages?.length);
+        document.getElementById('xml-send-btn').disabled = !xmlPreviewValid;
         updateXmlHint();
     } catch {
-        invalidateXmlPreview();
+        if (sequence === xmlPreviewSequence) invalidateXmlPreview();
     }
 }
 
@@ -448,7 +523,7 @@ async function dispatchXml(event) {
     event.preventDefault();
     if (!xmlPreviewValid) return setStatus('XMLをもう一度確認してください。', 'error');
     if (!window.confirm('選択した配信枠へXMLを配信します。この操作は利用者への通知につながります。続行しますか？')) return;
-    const payload = { action: 'xml-dispatch', xml: document.getElementById('xml-content').value, deliverySlot: document.getElementById('xml-slot').value, sendData: document.getElementById('xml-route').value, confirmation: document.getElementById('xml-confirmation').value.trim(), dmdataSource: selectedDmdataSource };
+    const payload = { action: 'xml-dispatch', xml: document.getElementById('xml-content').value, deliverySlot: document.getElementById('xml-slot').value, sendData: document.getElementById('xml-route').value, confirmation: document.getElementById('xml-confirmation').value.trim(), dmdataSource: selectedDmdataSource, previewDigest: xmlPreviewDigest };
     try {
         await runAction(payload, event.submitter, true);
         document.getElementById('xml-confirmation').value = '';
@@ -480,6 +555,8 @@ async function runAction(payload, button, refreshAfter) {
 }
 
 function invalidateXmlPreview() {
+    xmlPreviewSequence += 1;
+    xmlPreviewDigest = '';
     const preview = document.getElementById('xml-preview');
     const sendButton = document.getElementById('xml-send-btn');
     if (!preview || !sendButton) return;

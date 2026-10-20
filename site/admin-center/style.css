@@ -82,3 +82,8 @@ button:disabled { cursor: not-allowed; opacity: .45; }.danger-button { backgroun
 .configuration-notice { border-color: #a07818; background: #4b3a13; }
 @media (max-width: 680px) { .main-content { width: min(100% - 20px, 1180px); padding-top: 18px; }.topbar, .section-heading { align-items: flex-start; flex-direction: column; }section { padding: 18px 14px; } }
 @media (max-width: 820px) { .control-form, .xml-form, .statuspage-form { grid-template-columns: 1fr; }.wide, .statuspage-form .wide { grid-column: auto; }.ec2-grid { grid-template-columns: 1fr; } }
+.discord-message-preview { margin-block: 1rem; min-width: 0; }
+.discord-embed-preview { padding: 1rem; border-left: 4px solid #3498db; border-radius: 4px; background: #23272a; color: #f2f3f5; min-width: 0; }
+.embed-description { white-space: pre-wrap; overflow-wrap: anywhere; font-family: inherit; max-height: 32rem; overflow-y: auto; }
+.embed-fields { display: grid; grid-template-columns: minmax(6rem, 1fr) minmax(0, 3fr); gap: .5rem; }
+.embed-fields dd { margin: 0; overflow-wrap: anywhere; }
