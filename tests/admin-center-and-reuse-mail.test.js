@@ -62,6 +62,23 @@ test('統合管理センターは概要だけを表示し操作は専用タブ�
     }
 });
 
+test('危険操作は確認文字列を入力させずポップアップ確認しモード動作を常時表示する', async () => {
+    const [system, xml, status, adminScript, statusScript] = await Promise.all([
+        readFile(new URL('../site/system-admin/index.html', import.meta.url), 'utf8'),
+        readFile(new URL('../site/xml-admin/index.html', import.meta.url), 'utf8'),
+        readFile(new URL('../site/status-admin/index.html', import.meta.url), 'utf8'),
+        readFile(new URL('../site/admin-center/script.js', import.meta.url), 'utf8'),
+        readFile(new URL('../site/status-admin/script.js', import.meta.url), 'utf8'),
+    ]);
+    assert.match(system, /id="selected-mode-plan"/u);
+    assert.doesNotMatch(`${system}${xml}${status}`, /id="(?:mode|xml|incident|maintenance)-confirmation"/u);
+    assert.doesNotMatch(`${adminScript}${statusScript}`, /window\.prompt/u);
+    assert.match(adminScript, /window\.confirm/u);
+    assert.match(adminScript, /confirmation = `MODE:/u);
+    assert.match(adminScript, /confirmation: `XML配信:/u);
+    assert.match(statusScript, /window\.confirm/u);
+});
+
 test('すべての管理画面から用途別タブへ移動できる', async () => {
     const pages = ['admin-center', 'system-admin', 'ec2-admin', 'xml-admin', 'status-admin', 'delivery-admin', 'delivery-flow-admin', 'channel-admin', 'reuse-admin', 'mail-admin', 'discord-admin', 'ip-admin'];
     const expected = ['/site/admin-center/', '/site/system-admin/', '/site/ec2-admin/', '/site/xml-admin/', '/site/status-admin/', '/site/delivery-admin/', '/site/delivery-flow-admin/', '/site/channel-admin/', '/site/reuse-admin/', '/site/mail-admin/', '/site/discord-admin/', '/site/ip-admin/'];
