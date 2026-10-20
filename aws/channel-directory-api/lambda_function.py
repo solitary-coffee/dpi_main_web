@@ -18,6 +18,8 @@ import boto3
 from boto3.dynamodb.conditions import Attr
 from botocore.config import Config
 from botocore.exceptions import ClientError
+from xml_delivery import render_xml
+from operating_modes import MODES, NODES, RUNTIME_COMPONENTS, LABELS, REGIONAL_MODES, RUNTIME_INTEGRATION_COMPLETE, build_plan, runtime_readiness
 
 
 TABLE_NAME = os.environ.get("TABLE_NAME", "EarthquakeData").strip()
@@ -42,7 +44,7 @@ SNOWFLAKE_LENGTHS = {17, 18, 19, 20}
 RESERVED_FIELDS = {"id", "Ch_Name", "app", "time", "URL", "url"}
 MANAGED_INSTANCE_TAG = "dpi:backup-managed"
 MANUAL_MODE_KEY = "ADMIN#SYSTEM_MODE"
-ALLOWED_SYSTEM_MODES = {"automatic", "normal", "failover"}
+ALLOWED_SYSTEM_MODES = MODES
 ALLOWED_EC2_ACTIONS = {"start", "stop", "reboot"}
 ALLOWED_SEND_DATA = {"eew", "zisin", "tunami", "keiho", "sub", "eew_sind", "kisyo", "kisyo2", "kazan"}
 DELIVERY_PREFIX_RE = re.compile(r"^(?:\[[^\]]+\])+", re.UNICODE)
@@ -1207,16 +1209,33 @@ def _home_server_summary():
     }
 
 
+def _mode_runtime_records():
+    response = _dynamodb.batch_get_item(RequestItems={STATE_TABLE_NAME: {
+        "Keys": [{"pk": f"MODE_RUNTIME#{node}"} for node in RUNTIME_COMPONENTS],
+        "ConsistentRead": True,
+    }})
+    rows = {row.get("pk"): row for row in response.get("Responses", {}).get(STATE_TABLE_NAME, [])}
+    return {node: rows.get(f"MODE_RUNTIME#{node}", {}) for node in RUNTIME_COMPONENTS}
+
+
 def _system_mode_summary():
     if not STATE_TABLE_NAME:
         return {"available": False, "configured": False, "controlMode": "unknown", "regions": []}
     table = _dynamodb.Table(STATE_TABLE_NAME)
     manual = table.get_item(
         Key={"pk": MANUAL_MODE_KEY},
-        ProjectionExpression="#pk, #mode, requested_at, requested_by, reason",
-        ExpressionAttributeNames={"#pk": "pk", "#mode": "mode"},
+        ConsistentRead=True,
     ).get("Item", {})
     control_mode = _clean(manual.get("mode"), 40).casefold() or "automatic"
+    control = table.get_item(Key={"pk": "CONTROL"}, ConsistentRead=True).get("Item", {})
+    runtime = _mode_runtime_records()
+    readiness = runtime_readiness(runtime, int(time.time()))
+    readiness["integrationComplete"] = RUNTIME_INTEGRATION_COMPLETE
+    readiness["ready"] = readiness["ready"] and RUNTIME_INTEGRATION_COMPLETE
+    try:
+        plan = build_plan(control_mode, manual.get("node_overrides"))
+    except ValueError:
+        plan = {}
     regions = []
     for region_role in ("TOKYO", "OSAKA"):
         record = table.get_item(
@@ -1234,6 +1253,16 @@ def _system_mode_summary():
         "available": True,
         "configured": True,
         "controlMode": control_mode,
+        "modeLabel": LABELS.get(control_mode, control_mode),
+        "automaticMonitoringEnabled": control.get("auto_monitor_enabled") is True,
+        "runtimeReadiness": readiness,
+        "revision": _integer(manual.get("revision"), 0),
+        "nodes": [{"nodeId": node, "requested": plan.get(node),
+                   "observed": runtime[node].get("delivery"),
+                   "observedWaitSeconds": runtime[node].get("wait_seconds"),
+                   "observedAt": _epoch_iso(_integer(runtime[node].get("observed_at"), 0)),
+                   "appliedRevision": _integer(runtime[node].get("applied_revision"), -1),
+                   "verified": node not in readiness["missing"]} for node in NODES],
         "requestedAt": _epoch_iso(_integer(manual.get("requested_at"), 0)),
         "requestedBy": _clean(manual.get("requested_by"), 254),
         "reason": _clean(manual.get("reason"), 300),
@@ -1801,7 +1830,8 @@ def _control_system_mode(body, actor, request_id):
     expected_confirmation = f"MODE:{mode.upper()}"
     reason = _clean(body.get("reason"), 300)
     if mode not in ALLOWED_SYSTEM_MODES:
-        raise ValueError("システムモードを自動・通常固定・フェイルオーバー固定から選択してください。")
+        raise ValueError("システムモードを選択してください。")
+    plan = build_plan(mode, body.get("nodeOverrides"))
     if not hmac.compare_digest(_clean(body.get("confirmation"), 100), expected_confirmation):
         raise ValueError(f"確認欄に {expected_confirmation} と入力してください。")
     if mode != "automatic" and len(reason) < 4:
@@ -1810,7 +1840,17 @@ def _control_system_mode(body, actor, request_id):
         raise ValueError("システムモード用テーブルが設定されていません。")
 
     table = _dynamodb.Table(STATE_TABLE_NAME)
+    # New controls must never claim to stop systems without runtime support.
+    if mode not in {"automatic", "normal", "failover"}:
+        if not RUNTIME_INTEGRATION_COMPLETE:
+            raise ValueError("新モードの配信側実装は準備中です。自宅・EC2・AWS全系統の対応完了後に利用できます。")
+        runtime = _mode_runtime_records()
+        readiness = runtime_readiness(runtime, int(time.time()))
+        if not readiness["ready"]:
+            raise ValueError("配信側制御の適用・疎通確認が未完了です: " + ", ".join(readiness["missing"]))
     current = table.get_item(Key={"pk": MANUAL_MODE_KEY}).get("Item", {})
+    if body.get("expectedRevision") != _integer(current.get("revision"), 0):
+        raise ValueError("別の管理操作でモードが変更されました。最新情報に更新してください。")
     previous = current.get("previous_concurrency") if isinstance(current.get("previous_concurrency"), dict) else {}
     changed_instances = []
     now = int(time.time())
@@ -1831,6 +1871,8 @@ def _control_system_mode(body, actor, request_id):
                         ReservedConcurrentExecutions=int(saved),
                     )
         table.delete_item(Key={"pk": MANUAL_MODE_KEY})
+        table.update_item(Key={"pk": "CONTROL"}, UpdateExpression="SET auto_monitor_enabled = :enabled",
+                          ExpressionAttributeValues={":enabled": True})
         for region in OPERATING_REGIONS:
             _client("lambda", region).invoke(FunctionName=AUTO_MONITOR_FUNCTION, InvocationType="Event", Payload=b"{}")
     else:
@@ -1843,7 +1885,7 @@ def _control_system_mode(body, actor, request_id):
                 FunctionName=AUTO_MONITOR_FUNCTION,
                 ReservedConcurrentExecutions=0,
             )
-        changed_instances = _reconcile_instances_for_mode(mode)
+        changed_instances = _reconcile_instances_for_mode(mode, plan)
         table.put_item(Item={
             "pk": MANUAL_MODE_KEY,
             "mode": mode,
@@ -1851,8 +1893,11 @@ def _control_system_mode(body, actor, request_id):
             "requested_at": now,
             "requested_by": actor,
             "previous_concurrency": previous,
+            "node_overrides": body.get("nodeOverrides") or {},
+            "node_plan": plan,
+            "revision": _integer(current.get("revision"), 0) + 1,
         })
-        regional_mode = "NORMAL" if mode == "normal" else "FAILOVER"
+        regional_mode = REGIONAL_MODES[mode]
         for region_role in ("TOKYO", "OSAKA"):
             table.update_item(
                 Key={"pk": f"MODE#{region_role}"},
@@ -1876,7 +1921,7 @@ def _control_system_mode(body, actor, request_id):
     }
 
 
-def _reconcile_instances_for_mode(mode):
+def _reconcile_instances_for_mode(mode, plan=None):
     changed = []
     for region in OPERATING_REGIONS:
         instances = _managed_instances_for_region(region)
@@ -1884,7 +1929,9 @@ def _reconcile_instances_for_mode(mode):
         start_ids = []
         stop_ids = []
         for instance in instances:
-            desired = "running" if mode == "failover" else instance.get("normalState")
+            if mode == "emergency_stop":
+                continue  # Keep the control agents online to acknowledge stopping.
+            desired = "running" if mode in {"failover", "backup", "standby", "emergency", "manual"} else instance.get("normalState")
             current = instance.get("state")
             if desired == "running" and current == "stopped":
                 start_ids.append(instance["instanceId"])
@@ -1901,7 +1948,13 @@ def _reconcile_instances_for_mode(mode):
 
 def _xml_preview(body):
     xml_text = _xml_text(body)
-    return {"preview": _parse_xml_summary(xml_text), "bytes": len(xml_text.encode("utf-8"))}
+    summary = _parse_xml_summary(xml_text)
+    route = _clean(body.get("sendData"), 30).casefold()
+    slot = _normalize_delivery_name(body.get("deliverySlot"))
+    if route not in ALLOWED_SEND_DATA or not slot:
+        raise ValueError("配信枠と配信経路を選択してからプレビューしてください。")
+    return {"preview": summary, "bytes": len(xml_text.encode("utf-8")),
+            **render_xml(xml_text, summary, route, slot)}
 
 
 def _discord_announcement_preview(body):
@@ -2324,8 +2377,11 @@ def _xml_dispatch(body, actor, request_id):
         raise ValueError("XMLの配信経路を選択してください。")
     if not delivery_slot:
         raise ValueError("配信枠を選択してください。")
-    if not hmac.compare_digest(_clean(body.get("confirmation"), 180), expected_confirmation):
+    if not hmac.compare_digest(_clean(body.get("confirmation"), 180).encode("utf-8"), expected_confirmation.encode("utf-8")):
         raise ValueError(f"確認欄に {expected_confirmation} と入力してください。")
+    rendered = render_xml(xml_text, preview, send_data, delivery_slot)
+    if not hmac.compare_digest(_clean(body.get("previewDigest"), 64), rendered["previewDigest"]):
+        raise ValueError("プレビューと送信内容が一致しません。もう一度プレビューしてください。")
     if not INGEST_ENDPOINTS or not INGEST_HMAC_PARAMETER:
         raise ValueError("XML配信先が設定されていません。")
     targets = _load_dispatch_targets(delivery_slot)
@@ -2333,7 +2389,7 @@ def _xml_dispatch(body, actor, request_id):
         raise ValueError("選択した配信枠に有効な配信先URLがありません。")
 
     now = datetime.now(tz=timezone.utc).isoformat()
-    delivery_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"dpi-admin:{xml_digest}:{delivery_slot}:{send_data}"))
+    delivery_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"dpi-admin:{rendered['previewDigest']}"))
     _record_delivery_metadata(
         delivery_id,
         preview.get("headline") or preview.get("controlTitle") or "気象庁XML",
@@ -2342,9 +2398,9 @@ def _xml_dispatch(body, actor, request_id):
         dmdata_source,
     )
     payload = {
-        "title": preview.get("headline") or preview.get("controlTitle") or "気象庁XML",
+        "title": rendered["messages"][0],
         "url": targets,
-        "data": xml_text,
+        "data": send_data,
         "id": delivery_id,
         "delivery_id": delivery_id,
         "source_uuid": delivery_id,
@@ -2360,14 +2416,19 @@ def _xml_dispatch(body, actor, request_id):
             **({"dmdata_id": dmdata_source["sourceId"]} if dmdata_source else {}),
         },
     }
-    raw_body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     secret = _get_ingest_secret()
-    timestamp = str(int(time.time()))
-    signature = hmac.new(secret.encode("utf-8"), timestamp.encode("ascii") + b"." + raw_body, hashlib.sha256).hexdigest()
     if dmdata_source:
         _record_dmdata_dispatch(dmdata_source, "dispatching", delivery_slot, send_data, delivery_id, preview)
     try:
-        results = [_post_signed_ingest(endpoint, raw_body, timestamp, signature) for endpoint in INGEST_ENDPOINTS]
+        results = []
+        for index, message in enumerate(rendered["messages"]):
+            chunk_id = delivery_id if index == 0 else str(uuid.uuid5(uuid.NAMESPACE_URL, f"{delivery_id}:embed:{index}"))
+            chunk_payload = {**payload, "title": message, "id": chunk_id, "delivery_id": chunk_id}
+            raw_body = json.dumps(chunk_payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+            timestamp = str(int(time.time()))
+            signature = hmac.new(secret.encode("utf-8"), timestamp.encode("ascii") + b"." + raw_body, hashlib.sha256).hexdigest()
+            for endpoint in INGEST_ENDPOINTS:
+                results.append(_post_signed_ingest(endpoint, raw_body, timestamp, signature))
     except Exception:
         if dmdata_source:
             _record_dmdata_dispatch(dmdata_source, "failed", delivery_slot, send_data, delivery_id, preview)
@@ -2389,6 +2450,7 @@ def _xml_dispatch(body, actor, request_id):
         "sendData": send_data,
         "targetCount": len(targets),
         "deliveryId": delivery_id,
+        "messageCount": rendered["messageCount"],
         "endpoints": results,
         "preview": preview,
         "dmdataSource": dmdata_source,
@@ -2622,7 +2684,7 @@ def _ec2_operation_label(operation):
 
 
 def _mode_label(mode):
-    return {"automatic": "自動", "normal": "通常固定", "failover": "フェイルオーバー固定"}.get(mode, mode)
+    return LABELS.get(mode, mode)
 
 
 def _clean(value, limit):
