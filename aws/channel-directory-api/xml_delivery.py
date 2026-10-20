@@ -186,34 +186,55 @@ def _warning_embed(head, control, body):
     return embed
 
 
-def _tsunami_embed(head, control, body):
-    lines = []
+def _tsunami_embeds(head, control, body):
+    grouped = {}
+    detailed = {}
     for item in _descendants(next(iter(_descendants(body, "Tsunami")), body), "Item"):
         area = _first_text(_child(item, "Area"), "Name")
         category = _first_text(next(iter(_descendants(item, "Category")), None), "Name")
         first_height = next(iter(_descendants(item, "FirstHeight")), None)
         max_height = next(iter(_descendants(item, "MaxHeight")), None)
-        details = [value for value in (category,
-                   _attribute(first_height, "description") or _text(first_height),
-                   _attribute(max_height, "description") or _text(max_height)) if value]
-        if area and details:
-            lines.append(f"{area}: {' / '.join(details)}")
+        if area and category:
+            grouped.setdefault(category, []).append(area)
+            height = _attribute(max_height, "description") or _first_text(max_height, "TsunamiHeight") or _text(max_height)
+            arrival = _first_text(first_height, "ArrivalTime")
+            condition = _first_text(first_height, "Condition")
+            details = " ".join(value for value in (_jst(arrival) if arrival else condition, height) if value)
+            if details:
+                detailed.setdefault(category, []).append(f"{area}  {details}")
     fallback = _first_text(body, "Text")
-    description = "\n".join(value for value in (_headline(head), _code(lines) if lines else fallback) if value)
-    embed = {"title": _title(head, control, with_serial=bool(_first_text(head, "Serial"))),
-             "description": description or "本文情報なし", "color": EMBED_COLOR}
-    if lines:
-        embed["footer"] = {"text": "[!]がついている区域は更新、[↑]は上昇中を示します"}
-    return embed
+    lines = [f"<{category}>\n{','.join(areas)}" for category, areas in grouped.items()]
+    publishing_office = _first_text(control, "PublishingOffice")
+    status = _first_text(control, "Status")
+    base_title = _first_text(head, "Title") or _first_text(control, "Title") or "津波情報"
+    title = f"{base_title}{f' {publishing_office}' if publishing_office else ''} 発表{f' ({status})' if status else ''}"
+    footer = {"text": "[!]がついている区域は更新、[↑]は上昇中を示します"}
+    embeds = [{"title": title,
+               "description": "\n".join(value for value in (_headline(head), _code(lines) if lines else fallback) if value) or "本文情報なし",
+               "color": EMBED_COLOR, "footer": footer}]
+    for category, detail_lines in detailed.items():
+        embeds.append({"title": title, "description": f"**■■{category}■■**\n{_code(detail_lines)}",
+                       "color": EMBED_COLOR, "footer": footer})
+    return embeds
 
 
 def _notice_embed(head, control, body, weather=False):
     body_text = _first_text(body, "Text")
     if not body_text:
         body_text = _first_text(next(iter(_descendants(body, "Comment")), None), "Text")
-    description = "\n".join(value for value in (_headline(head), _code([body_text]) if body_text else "") if value)
-    return {"title": _title(head, control, with_serial=weather and bool(_first_text(head, "Serial"))),
-            "description": description or "本文情報なし", "color": EMBED_COLOR}
+    headline = _headline(head)
+    description = "\n".join(value for value in (headline, _code([body_text]) if body_text else "") if value)
+    if weather:
+        base_title = _first_text(head, "Title") or _first_text(control, "Title") or "気象情報"
+        serial = _first_text(head, "Serial")
+        info_type = _first_text(head, "InfoType")
+        title = f"{base_title}{f' 第{serial}報' if serial else ''}{f'({info_type})' if info_type else ''}"
+    else:
+        title = _title(head, control)
+    embed = {"title": title, "description": description or "本文情報なし", "color": EMBED_COLOR}
+    if weather:
+        embed["footer"] = {"text": "[!]がついている区域は更新、[↑]は上昇中を示します"}
+    return embed
 
 
 def _split_description(embed, limit=3500):
@@ -254,7 +275,7 @@ def render_xml(xml_text, summary, route, slot):
     elif route in {"eew", "eew_sind"}:
         embeds, username = [_eew_embed(head, control, body)], "DPI-Bot"
     elif route == "tunami":
-        embeds, username = [_tsunami_embed(head, control, body)], "DPI-Bot"
+        embeds, username = _tsunami_embeds(head, control, body), "DPI-Bot"
     elif route == "keiho":
         embeds, username = [_warning_embed(head, control, body)], "DPI-Bot"
     else:

@@ -52,6 +52,15 @@ class XmlTests(unittest.TestCase):
         self.assertIn("東京地方: 【!】大雨警報（発表）", embed["description"])
         self.assertIn("【!】", embed["footer"]["text"])
 
+    def test_weather_title_matches_existing_sender(self):
+        xml = '''<Report><Control><Title>府県気象情報</Title><Status>通常</Status></Control><Head><Title>大雨に関する東京都気象情報</Title>
+        <InfoType>発表</InfoType><Serial>3</Serial><Headline><Text>大雨に警戒してください。</Text></Headline></Head>
+        <Body><Comment><Text>今後の情報に留意してください。</Text></Comment></Body></Report>'''
+        embed = render_xml(xml, SUMMARY, "kisyo", "気象情報")["messages"][0]["embeds"][0]
+        self.assertEqual(embed["title"], "大雨に関する東京都気象情報 第3報(発表)")
+        self.assertIn("今後の情報に留意してください。", embed["description"])
+        self.assertIn("[!]", embed["footer"]["text"])
+
     def test_namespace_unicode_split_without_loss(self):
         text = "長い本文" * 2000
         result = render_xml(f'<Report xmlns="urn:jma"><Body><Text>{text}</Text></Body></Report>', SUMMARY, "zisin", "地震")
