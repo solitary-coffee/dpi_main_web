@@ -19,6 +19,11 @@ from delivery_gate import DeliveryGate, DeliveryBlocked
 
 
 class EvidenceTests(unittest.TestCase):
+    class AwsError(RuntimeError):
+        def __init__(self, code):
+            super().__init__(code)
+            self.response = {'Error': {'Code': code, 'Message': code}}
+
     def setUp(self):
         self.manifest = {'installation_id': 'new', 'created_at': 50,
                          'members': {'home_sender': 'a', 'home_fallback': 'b'},
@@ -60,6 +65,29 @@ class EvidenceTests(unittest.TestCase):
         table.get_item.return_value = {'Item': {'installation_id': 'new', 'installed_at': 200}}
         self.assertFalse(publish(table, 'home', {'installation_id': 'old', 'installed_at': 100}))
         table.put_item.assert_not_called()
+
+    def test_stale_evidence_condition_is_a_benign_noop(self):
+        table = Mock()
+        table.get_item.return_value = {'Item': {
+            'installation_id': 'same', 'installed_at': 100, 'observed_at': 200,
+        }}
+        table.put_item.side_effect = self.AwsError('ConditionalCheckFailedException')
+
+        accepted = publish(table, 'home', {
+            'installation_id': 'same', 'installed_at': 100, 'observed_at': 0,
+        })
+
+        self.assertFalse(accepted)
+
+    def test_publish_still_raises_unexpected_aws_errors(self):
+        table = Mock()
+        table.get_item.return_value = {'Item': {}}
+        table.put_item.side_effect = self.AwsError('AccessDeniedException')
+
+        with self.assertRaises(self.AwsError):
+            publish(table, 'home', {
+                'installation_id': 'same', 'installed_at': 100, 'observed_at': 200,
+            })
 
     def test_dynamodb_decimal_wait_can_be_displayed(self):
         from decimal import Decimal
