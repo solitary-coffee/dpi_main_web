@@ -5,6 +5,8 @@ import os
 from pathlib import Path
 import time
 
+from operating_modes import PROTOCOL_VERSION
+
 
 def digest(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
@@ -42,7 +44,7 @@ def aggregate(manifest, rows, now, expected_pids=None):
     fresh = all(r.get("verified") is True and 0 <= now - int(r.get("observed_at", 0)) <= 90 for r in chosen)
     verified = capable and fresh and not missing_pids and len(revisions) == 1 and len(policies) == 1
     policy = next(iter(policies)) if len(policies) == 1 else (None, None)
-    return {"protocol_version": 1, "installation_id": installation,
+    return {"protocol_version": PROTOCOL_VERSION, "installation_id": installation,
             "coverage_digest": digest(manifest.get("files") or allowed), "capability_verified": capable,
             "installed_at": manifest.get("created_at", 0),
             "verified": verified, "missing_members": missing, "missing_pids": missing_pids,

@@ -28,6 +28,7 @@ LAYOUTS = {
     'weather': {'dpi_aws_sender_core.py': 'home_sender', 'wss_hais_new_aws.py': 'weather_sender'},
     'worker': {'lambda_function.py': 'worker'},
     'ingress': {'control/lambda_function.py': 'ingress'},
+    'candidate': {'candidate/lambda_function.py': 'candidate'},
     'heartbeat': {'home_heartbeat.py': 'heartbeat'},
     'monitor': {'auto_failover_monitor.py': 'monitor'},
 }
@@ -39,7 +40,7 @@ def sha(data):
     return hashlib.sha256(data).hexdigest()
 
 
-def prepare_bundle(root, kind, node, region, authority, table):
+def prepare_bundle(root, kind, node, region, authority, table, allow_upgrade=False):
     targets = dict(LAYOUTS[kind])
     mandatory = set(targets.values())
     if kind in {'home', 'weather'}:
@@ -59,9 +60,12 @@ def prepare_bundle(root, kind, node, region, authority, table):
     for relative, role in targets.items():
         path = root / relative
         source = path.read_text(encoding='utf-8')
-        # An already-patched checkout must be restored/updated first. Silently
-        # patching patches or mixing original versions would invalidate evidence.
-        output = prepare_module.prepare(role, source).encode()
+        if prepare_module.MARKER in source:
+            if not allow_upgrade:
+                raise ValueError('Already patched: restore the original snapshot or use the verified AWS upgrade workflow')
+            output = prepare_module.upgrade_v1(role, source).encode()
+        else:
+            output = prepare_module.prepare(role, source).encode()
         files[relative] = output
         tree = ast.parse(output.decode())
         calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call) and ast.unparse(n.func) == 'mode_hooks.register']
@@ -72,7 +76,7 @@ def prepare_bundle(root, kind, node, region, authority, table):
     manifest = {'installation_id': installation, 'created_at': int(time.time()), 'node': node,
                 'members': members, 'optional_members': optional,
                 'files': {name: sha(data) for name, data in files.items()}}
-    runtime_root = Path('/var/task') if kind in {'worker', 'ingress', 'heartbeat', 'monitor'} else root
+    runtime_root = Path('/var/task') if kind in {'worker', 'ingress', 'candidate', 'heartbeat', 'monitor'} else root
     state = runtime_root / '.dpi-mode'
     config = {'DPI_MODE_ENABLED': '1', 'DPI_MODE_NODE': node,
               'DPI_MODE_REGION': region, 'DPI_MODE_AUTHORITY_REGION': authority,
@@ -91,10 +95,13 @@ def main():
     parser.add_argument('--region', required=True, choices=('ap-northeast-1', 'ap-northeast-3'))
     parser.add_argument('--authority-region', default='ap-northeast-1')
     parser.add_argument('--table', default='DPI-BackupFleetState-v51')
+    parser.add_argument('--upgrade-v2', action='store_true', help='upgrade an existing verified V1 hook installation')
     parser.add_argument('--apply', action='store_true')
     args = parser.parse_args()
     root = args.root.resolve()
-    files, manifest, config = prepare_bundle(root, args.kind, args.node, args.region, args.authority_region, args.table)
+    files, manifest, config = prepare_bundle(root, args.kind, args.node, args.region,
+                                             args.authority_region, args.table,
+                                             allow_upgrade=args.upgrade_v2)
     print(json.dumps({'node': args.node, 'kind': args.kind, 'files': sorted(files),
                       'apply': args.apply, 'restart_required': True}, ensure_ascii=False, indent=2))
     if not args.apply:

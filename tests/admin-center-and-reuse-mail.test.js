@@ -53,6 +53,7 @@ test('統合管理センターは概要だけを表示し操作は専用タブ�
     assert.match(overview, /id="operation-overview"/u);
     assert.doesNotMatch(overview, /id="mode-form"|id="ec2-rows"|id="xml-form"/u);
     assert.match(system, /id="system-panels"[\s\S]*id="mode-form"[\s\S]*id="audit-rows"/u);
+    assert.match(system, /value="maintenance"[\s\S]*id="maintenance-route-controls"[\s\S]*id="test-delivery-form"/u);
     assert.match(ec2, /id="ec2-rows"/u);
     assert.match(xml, /id="xml-form"[\s\S]*id="delivery-slots"/u);
     for (const html of [overview, system, ec2, xml]) {
@@ -60,6 +61,18 @@ test('統合管理センターは概要だけを表示し操作は専用タブ�
         assert.match(html, /\/site\/ec2-admin\//u);
         assert.match(html, /\/site\/xml-admin\//u);
     }
+});
+
+test('試験配信APIは専用表示をAWSへ転送し送信操作を許可する', async () => {
+    const worker = await readFile(new URL('../worker/admin-center.js', import.meta.url), 'utf8');
+    const system = await readFile(new URL('../site/system-admin/index.html', import.meta.url), 'utf8');
+    const script = await readFile(new URL('../site/admin-center/script.js', import.meta.url), 'utf8');
+    assert.match(worker, /\/site\/system-admin\/api\/test-delivery/u);
+    assert.match(worker, /'test-delivery-preview', 'test-delivery'/u);
+    assert.match(system, /配信枠「配信テスト」/u);
+    assert.match(script, /test-delivery-preview/u);
+    assert.match(script, /test-delivery/u);
+    assert.match(script, /window\.confirm\(`配信枠「配信テスト」/u);
 });
 
 test('危険操作は確認文字列を入力させずポップアップ確認しモード動作を常時表示する', async () => {

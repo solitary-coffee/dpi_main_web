@@ -11,7 +11,7 @@ import threading
 import time
 from dataclasses import dataclass
 
-from operating_modes import NODES, build_plan
+from operating_modes import PROTOCOL_VERSION, NODES, ROUTES, build_plan, stored_route_plan, notification_policy
 
 
 class DeliveryBlocked(RuntimeError):
@@ -47,11 +47,14 @@ def validate_record(record):
     mode = record.get("mode")
     overrides = record.get("node_overrides") or None
     # Normalize Decimal waits through strict integral validation.
-    if mode == "manual" and isinstance(overrides, dict):
+    if mode in {"manual", "maintenance"} and isinstance(overrides, dict):
         overrides = {node: {**p, "waitSeconds": _integer(p["waitSeconds"])} for node, p in overrides.items()}
     plan = build_plan(mode, overrides)
     cutoff = _integer(record.get("discard_before_epoch", 0))
-    return {"revision": revision, "mode": mode, "plan": plan, "cutoff": cutoff}
+    route_overrides = record.get("route_overrides") or None
+    route_plan = stored_route_plan(mode, route_overrides)
+    return {"revision": revision, "mode": mode, "plan": plan, "routes": route_plan,
+            "notifications": notification_policy(mode), "cutoff": cutoff}
 
 
 class DeliveryGate:
@@ -138,6 +141,29 @@ class DeliveryGate:
             # Refresh shared cache at its normal interval, not once per webhook.
             self.sleep(min(0.1, remaining))
 
+    def route(self, route_id):
+        if route_id not in ROUTES:
+            raise DeliveryBlocked("unknown_delivery_route")
+        record = self._snapshot()
+        if record["mode"] == "emergency_stop":
+            raise DeliveryBlocked("emergency_stop")
+        policy = record["routes"][route_id]
+        if not policy["enabled"]:
+            raise DeliveryBlocked("maintenance_route_stopped")
+        enabled = sorted(int(value["priority"]) for value in record["routes"].values()
+                         if value["enabled"])
+        priority = int(policy["priority"])
+        rank = enabled.index(priority) if record["mode"] == "maintenance" else 0
+        return {"route": route_id, "priority": priority,
+                "waitSeconds": rank * 3,
+                "revision": record["revision"], "mode": record["mode"]}
+
+    def notification_allowed(self, kind):
+        record = self._snapshot()
+        policy = record["notifications"]
+        return (not policy["suppressNonEssential"]
+                or str(kind) in set(policy["allowedKinds"]))
+
     def acknowledgement(self, node, *, automatic_policy=None):
         try:
             before = self._snapshot()
@@ -152,7 +178,7 @@ class DeliveryGate:
         record = self._snapshot()
         if record != before:
             return {"verified": False, "error": "mode_changed_during_observation"}
-        return {"protocol_version": 1, "applied_revision": record["revision"],
+        return {"protocol_version": PROTOCOL_VERSION, "applied_revision": record["revision"],
                 "delivery": delivery, "wait_seconds": wait,
                 "observed_at": int(self.epoch()), "verified": False,
                 "gate_loaded": True}

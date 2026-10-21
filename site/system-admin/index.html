@@ -49,13 +49,31 @@
                 <div class="section-heading"><div><p class="eyebrow">SYSTEM MODE</p><h2 id="mode-title">システムモード</h2></div><p>自動監視と手動固定を区別し、設定値と各配信元の反映状況を表示します。</p></div>
                 <div id="mode-current" class="mode-current"></div>
                 <form id="mode-form" class="control-form">
-                    <label>変更後のモード<select id="mode-select" required><option value="automatic">自動監視（既存の死活監視に準拠）</option><option value="normal">通常モード</option><option value="standby" disabled>スタンバイモード（配信側更新待ち）</option><option value="backup" disabled>バックアップモード（配信側更新待ち）</option><option value="manual" disabled>手動モード（配信側更新待ち）</option><option value="emergency" disabled>緊急モード（配信側更新待ち）</option><option value="emergency_stop" disabled>緊急停止モード（配信側更新待ち）</option><option value="failover">バックアップ固定（旧設定）</option></select></label>
+                    <label>変更後のモード<select id="mode-select" required><option value="automatic">自動監視（既存の死活監視に準拠）</option><option value="normal">通常モード</option><option value="standby" disabled>スタンバイモード（配信側更新待ち）</option><option value="backup" disabled>バックアップモード（配信側更新待ち）</option><option value="manual" disabled>手動モード（配信側更新待ち）</option><option value="maintenance" disabled>メンテナンスモード（配信側更新待ち）</option><option value="emergency" disabled>緊急モード（配信側更新待ち）</option><option value="emergency_stop" disabled>緊急停止モード（配信側更新待ち）</option><option value="failover">バックアップ固定（旧設定）</option></select></label>
                     <p id="mode-description" class="section-description"></p>
                     <fieldset class="wide"><legend>選択中モードでの各配信元の動作</legend><p>変更前に、自宅サーバーと4台のEC2がどの動作になるかを確認できます。</p><div id="selected-mode-plan" class="system-grid"></div></fieldset>
-                    <fieldset id="manual-node-settings" hidden><legend>手動モード：各配信元の動作</legend><p>待機配信は他系統の配信済み確認と組み合わせます。二重配信防止は無効化しません。</p><div id="manual-node-controls" class="system-grid"></div></fieldset>
+                    <fieldset id="manual-node-settings" class="wide" hidden><legend>各配信元のカスタム動作</legend><p>手動・メンテナンスモードで使用します。待機配信でも二重配信防止は無効化しません。</p><div id="manual-node-controls" class="system-grid"></div></fieldset>
+                    <fieldset id="maintenance-route-settings" class="wide" hidden><legend>メンテナンス中の配信系統</legend><p>使用する系統と優先順位を指定します。無効にした系統への新規投入を停止します。</p><div id="maintenance-route-controls" class="route-control-grid"></div><p class="configuration-notice maintenance-notice">メンテナンス中は通常の運用通知を抑止します。重大障害・セキュリティ・試験配信と試験失敗の通知は維持します。</p></fieldset>
                     <label>変更理由<input id="mode-reason" type="text" maxlength="300" placeholder="手動変更時は4文字以上"></label>
                     <button type="submit" class="danger-button">モードを変更</button>
                 </form>
+            </section>
+
+            <section aria-labelledby="test-delivery-title">
+                <div class="section-heading"><div><p class="eyebrow">DELIVERY TEST</p><h2 id="test-delivery-title">試験配信</h2></div><button id="test-delivery-refresh" type="button" class="secondary-button">実行状況を更新</button></div>
+                <p class="section-description">配信枠「配信テスト」だけを使用し、選択したLambda・配信系統を実際に通してDiscordへ試験送信します。実災害の配信枠には送信しません。</p>
+                <div id="test-delivery-status" class="status" role="status" aria-live="polite"></div>
+                <form id="test-delivery-form" class="test-delivery-form">
+                    <fieldset><legend>試験開始元</legend><div id="test-source-controls" class="option-grid"></div></fieldset>
+                    <fieldset><legend>配信系統</legend><div id="test-route-controls" class="option-grid"></div></fieldset>
+                    <fieldset class="wide"><legend>試験対象Lambda</legend><div class="action-row test-select-actions"><button id="test-functions-all" type="button" class="secondary-button">すべて選択</button><button id="test-functions-clear" type="button" class="secondary-button">選択解除</button></div><div id="test-function-controls" class="test-function-groups"></div></fieldset>
+                    <label>Embedタイトル<input id="test-delivery-title-input" maxlength="100" value="DPI-Bot 配信系統試験"></label>
+                    <label class="wide">管理者メモ<textarea id="test-delivery-note" maxlength="500" rows="3" placeholder="任意。試験目的や確認事項"></textarea></label>
+                    <div class="action-row wide"><button id="test-delivery-preview-btn" type="button" class="secondary-button">Embedを確認</button><button id="test-delivery-submit" type="submit" class="danger-button">試験配信を開始</button></div>
+                </form>
+                <div id="test-delivery-preview" class="xml-preview" hidden></div>
+                <div class="section-heading subsection-heading"><div><h3>最近の試験実行</h3><p>各Lambda・系統の正常終了、異常終了、所要時間を表示します。</p></div></div>
+                <div id="test-delivery-runs" class="record-list"></div>
             </section>
 
             <section aria-labelledby="audit-title">

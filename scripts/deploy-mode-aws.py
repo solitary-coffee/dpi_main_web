@@ -30,7 +30,9 @@ WORKER = re.compile(r'^(?:new_(?:EEW|EEW_SIND|ZISIN|TUNAMI|KEIHO|TOKYO_SUB|kisyo
 COUNTS = {'ap-northeast-1': {'new_EEW': 16, 'new_EEW_SIND': 10, 'new_ZISIN': 16, 'new_TUNAMI': 10, 'new_KEIHO': 10, 'new_TOKYO_SUB': 10},
           'ap-northeast-3': {'new_kisyo': 10, 'new_kisyo2': 10, 'new_KAZAN': 10, 'new_OSAKA_SUB': 10}}
 PROBE_MODULE = {'worker': 'lambda_function', 'ingress': 'control.lambda_function',
+                'candidate': 'candidate.lambda_function',
                 'heartbeat': 'home_heartbeat', 'monitor': 'auto_failover_monitor'}
+PROTOCOL_VERSION = 2
 
 
 def code_hash(data):
@@ -40,6 +42,7 @@ def code_hash(data):
 def kind_for(name):
     if WORKER.fullmatch(name): return 'worker'
     if name in {'dpi-ha-control-TOKYO', 'dpi-ha-control-OSAKA'}: return 'ingress'
+    if name in {'dpi-ha-candidate-TOKYO', 'dpi-ha-candidate-OSAKA'}: return 'candidate'
     if name == 'dpi-backup-home-heartbeat': return 'heartbeat'
     if name == 'dpi-backup-auto-failover-monitor': return 'monitor'
     return None
@@ -75,7 +78,8 @@ def prepare(session, directory, account, table):
         functions = [f for page in client.get_paginator('list_functions').paginate() for f in page['Functions']]
         names = {f['FunctionName'] for f in functions}
         required = {f'{prefix}_{i}' for prefix, count in COUNTS[region].items() for i in range(1, count + 1)}
-        required |= {'dpi-ha-control-' + ('TOKYO' if region == REGIONS[0] else 'OSAKA'), 'dpi-backup-home-heartbeat', 'dpi-backup-auto-failover-monitor'}
+        suffix = 'TOKYO' if region == REGIONS[0] else 'OSAKA'
+        required |= {'dpi-ha-control-' + suffix, 'dpi-ha-candidate-' + suffix, 'dpi-backup-home-heartbeat', 'dpi-backup-auto-failover-monitor'}
         if required - names:
             raise ValueError(f'{region}: required functions missing: {sorted(required - names)}')
         for fn in functions:
@@ -84,8 +88,6 @@ def prepare(session, directory, account, table):
             name = fn['FunctionName']
             response = client.get_function(FunctionName=name)
             config = response['Configuration']
-            if config['Handler'] == 'mode_lambda_entry.handler':
-                raise ValueError(f'{name}: already installed. Resume its existing rollout plan instead.')
             old_sha = config['CodeSha256']
             if old_sha not in downloaded:
                 with urllib.request.urlopen(response['Code']['Location'], timeout=60) as stream:
@@ -97,10 +99,19 @@ def prepare(session, directory, account, table):
             (work / 'original.zip').write_bytes(original)
             source = work / 'source'
             unpack(original, source)
+            existing_settings = {}
+            if config['Handler'] == 'mode_lambda_entry.handler':
+                settings_path = source / 'mode_runtime_config.json'
+                if not settings_path.is_file():
+                    raise ValueError(f'{name}: installed runtime config is missing')
+                existing_settings = json.loads(settings_path.read_text())
             node = 'aws-tokyo' if region == REGIONS[0] else 'aws-osaka'
-            files, manifest, settings = installer.prepare_bundle(source, kind, node, region, REGIONS[0], table)
+            files, manifest, settings = installer.prepare_bundle(
+                source, kind, node, region, REGIONS[0], table,
+                allow_upgrade=config['Handler'] == 'mode_lambda_entry.handler')
             manifest['installation_id'] = plan['installation_id']
-            settings.update(DPI_MODE_ORIGINAL_HANDLER=config['Handler'], DPI_MODE_PROBE_MODULE=PROBE_MODULE[kind])
+            original_handler = existing_settings.get('DPI_MODE_ORIGINAL_HANDLER', config['Handler'])
+            settings.update(DPI_MODE_ORIGINAL_HANDLER=original_handler, DPI_MODE_PROBE_MODULE=PROBE_MODULE[kind])
             for relative, data in files.items(): (source / relative).write_bytes(data)
             (source / '.dpi-mode').mkdir(exist_ok=True)
             (source / '.dpi-mode/manifest.json').write_text(json.dumps(manifest))
@@ -109,7 +120,8 @@ def prepare(session, directory, account, table):
             if len(candidate) > 50 * 1024 * 1024: raise ValueError('Deployment ZIP exceeds direct upload limit')
             (work / 'prepared.zip').write_bytes(candidate)
             plan['functions'].append({'region': region, 'name': name, 'kind': kind,
-                                      'original_handler': config['Handler'], 'role': config['Role'].split('/')[-1],
+                                      'original_handler': original_handler, 'current_handler': config['Handler'],
+                                      'role': config['Role'].split('/')[-1],
                                       'old_sha': old_sha, 'new_sha': code_hash(candidate), 'members': manifest['members']})
             shutil.rmtree(source)
     (directory / 'plan.json').write_text(json.dumps(plan, indent=2))
@@ -126,7 +138,7 @@ def apply(session, directory, account):
         current = client.get_function_configuration(FunctionName=fn['name'])
         if current['CodeSha256'] not in {fn['old_sha'], fn['new_sha']}:
             raise ValueError(f"{fn['name']}: changed since preparation")
-        if current['Handler'] not in {fn['original_handler'], 'mode_lambda_entry.handler'} or current['Role'].split('/')[-1] != fn['role']:
+        if current['Handler'] not in {fn.get('current_handler', fn['original_handler']), fn['original_handler'], 'mode_lambda_entry.handler'} or current['Role'].split('/')[-1] != fn['role']:
             raise ValueError(f"{fn['name']}: handler/role changed since preparation")
         for filename, expected in [('original.zip', fn['old_sha']), ('prepared.zip', fn['new_sha'])]:
             if code_hash((directory / fn['region'] / fn['name'] / filename).read_bytes()) != expected:
@@ -152,7 +164,7 @@ def apply(session, directory, account):
     for region in REGIONS:
         functions = {fn['name']: fn['new_sha'] for fn in plan['functions'] if fn['region'] == region}
         node = 'aws-tokyo' if region == REGIONS[0] else 'aws-osaka'
-        state.put_item(Item={'pk': f'MODE_RUNTIME#{node}', 'protocol_version': 1,
+        state.put_item(Item={'pk': f'MODE_RUNTIME#{node}', 'protocol_version': PROTOCOL_VERSION,
                             'installation_id': plan['installation_id'], 'installed_at': plan['created_at'],
                             'coverage_digest': hashlib.sha256(json.dumps(functions, sort_keys=True).encode()).hexdigest(),
                             'capability_verified': True, 'verified': False, 'functions': functions,
@@ -168,7 +180,7 @@ def rollback_function(client, directory, fn):
                                 ZipFile=(directory / fn['region'] / fn['name'] / 'original.zip').read_bytes())
     client.get_waiter('function_updated_v2').wait(FunctionName=fn['name'])
     current = client.get_function_configuration(FunctionName=fn['name'])
-    client.update_function_configuration(FunctionName=fn['name'], RevisionId=current['RevisionId'], Handler=fn['original_handler'])
+    client.update_function_configuration(FunctionName=fn['name'], RevisionId=current['RevisionId'], Handler=fn.get('current_handler', fn['original_handler']))
     client.get_waiter('function_updated_v2').wait(FunctionName=fn['name'])
 
 
@@ -183,7 +195,7 @@ def deploy_function(client, directory, fn):
             current = client.get_function_configuration(FunctionName=fn['name'])
         if current['CodeSha256'] != fn['new_sha']:
             raise ValueError('Function changed outside this plan')
-        if current['Handler'] == fn['original_handler']:
+        if current['Handler'] == fn['original_handler'] and fn['original_handler'] != 'mode_lambda_entry.handler':
             client.update_function_configuration(FunctionName=fn['name'], RevisionId=current['RevisionId'], Handler='mode_lambda_entry.handler')
             client.get_waiter('function_updated_v2').wait(FunctionName=fn['name'])
         elif current['Handler'] != 'mode_lambda_entry.handler':

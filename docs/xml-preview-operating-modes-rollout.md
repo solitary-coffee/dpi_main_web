@@ -27,6 +27,7 @@ PRには管理画面、管理API、配信ランタイムの更新スクリプト
 | スタンバイ | 即時 | 基本2台即時、補助2台3秒待機 |
 | バックアップ | 稼働時は即時 | 全台待機なし |
 | 手動 | 即時/待機/配信停止 | 4台を個別指定。配信停止指定では不要な起動をしない |
+| メンテナンス | 即時/待機/配信停止を個別指定 | 4台を個別指定。高速・SQS・リージョン内・相互バックアップも有効/停止/優先順位を指定 |
 | 緊急 | 即時 | 自宅の生死に関わらず待機なし。EC2の起動時間は別途必要 |
 | 緊急停止 | 配信停止 | 配信停止。稼働中の制御エージェントは維持 |
 
@@ -52,8 +53,8 @@ AWSのコード更新は秘密情報を取得・表示する必要がない。�
 ```bash
 git clone https://github.com/solitary-coffee/dpi_main_web.git
 cd dpi_main_web
-python3 scripts/deploy-mode-aws.py --directory "$HOME/dpi-mode-rollout-v1"
-python3 scripts/deploy-mode-aws.py --directory "$HOME/dpi-mode-rollout-v1" --apply
+python3 scripts/deploy-mode-aws.py --directory "$HOME/dpi-mode-rollout-v2"
+python3 scripts/deploy-mode-aws.py --directory "$HOME/dpi-mode-rollout-v2" --apply
 ```
 
 既存のチェックアウトでは、変更を退避したうえで `git switch main` / `git pull --ff-only origin main` を行う。
@@ -74,7 +75,8 @@ PutRolePolicy、状態テーブルの更新が必要。スクリプトは既存�
 ### EC2と自宅
 
 `install-mode-runtime.py` は既存ソースの挿入点を厳密に検証する。
-ソースの版が異なる/既にパッチ済みの場合は停止し、推測で書き換えない。
+V1適用済み環境から更新する場合だけ `--upgrade-v2` を付ける。未適用ソースへこの指定は使えず、
+ソースの版やV1マーカーが一致しない場合は推測で書き換えず停止する。
 本番の私有ソースは公開リポジトリへ含めない。
 
 | 対象 | kind | node | root | 再起動サービス |
@@ -96,7 +98,7 @@ EC2はブラウザーのSystems Manager Session Managerから実行できる。
 ```bash
 sudo systemctl stop dpi-bot-final-backup.service
 sudo python3 scripts/install-mode-runtime.py eew \
-  --root /opt/dpi-bot-final-backup/app --node tokyo-eew --region ap-northeast-1 --apply
+  --root /opt/dpi-bot-final-backup/app --node tokyo-eew --region ap-northeast-1 --upgrade-v2 --apply
 sudo systemctl start dpi-bot-final-backup.service
 ```
 
@@ -108,7 +110,7 @@ sudo systemctl start dpi-bot-final-backup.service
 
 ```bash
 python3 scripts/install-mode-runtime.py home \
-  --root /path/to/dpi_code/Di --node home --region ap-northeast-1 --apply
+  --root /path/to/dpi_code/Di --node home --region ap-northeast-1 --upgrade-v2 --apply
 ```
 
 `/path/to/dpi_code/Di` は実際の設置場所へ置き換える。自宅のパスやサービス管理方式はインストーラーが推測しない。
@@ -136,6 +138,8 @@ python3 scripts/restore-mode-runtime.py --root /actual/runtime/root \
 - 常駐ノードの証跡更新は30秒ごと。送信先ごとのDynamoDB読み取りはしない。
   Lambdaの常時プローブやEC2の常時起動は追加しない。
 - 管理操作リース180秒は管理APIのTimeout=120秒より長い。Timeoutを延長する場合はリースも見直す。
+- 試験配信は「配信テスト」枠だけを使用する。Lambda一覧は60秒キャッシュし、実行状態は実行中のIDだけを4秒間隔で取得する。
+  履歴は最大40実行に制限し、全Lambda試験でも各Lambdaへ送信先を1件ずつ割り当てる。
 
 ## 検証
 

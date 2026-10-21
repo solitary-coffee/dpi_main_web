@@ -36,7 +36,8 @@ export async function handleAdminCenterRequest(request, env) {
     const isDeliveryStatsApi = pathname === '/site/delivery-admin/api/summary';
     const isDmdataHistoryApi = pathname === '/site/xml-admin/api/dmdata-history';
     const isDeliveryFlowApi = pathname === '/site/delivery-flow-admin/api/summary';
-    const isApi = isSummaryApi || isActionApi || isDeliveryStatsApi || isDmdataHistoryApi || isDeliveryFlowApi;
+    const isTestDeliveryApi = pathname === '/site/system-admin/api/test-delivery';
+    const isApi = isSummaryApi || isActionApi || isDeliveryStatsApi || isDmdataHistoryApi || isDeliveryFlowApi || isTestDeliveryApi;
     const assetRoot = !isApi ? ADMIN_ASSET_ROOTS.find((root) => pathname === root || pathname.startsWith(`${root}/`)) : null;
     const isAsset = Boolean(assetRoot);
     if (!isApi && !isAsset) return null;
@@ -72,6 +73,12 @@ export async function handleAdminCenterRequest(request, env) {
                 return jsonResponse({ success: false, message: '許可されていない操作です。' }, 405, { Allow: 'GET' });
             }
             return await proxyDeliveryFlow(env, admin);
+        }
+        if (isTestDeliveryApi) {
+            if (request.method !== 'GET') {
+                return jsonResponse({ success: false, message: '許可されていない操作です。' }, 405, { Allow: 'GET' });
+            }
+            return await proxyTestDelivery(url, env, admin);
         }
         if (!['GET', 'HEAD'].includes(request.method)) {
             throw new AdminCenterError(405, '許可されていない操作です。', 'method_not_allowed');
@@ -184,7 +191,10 @@ async function proxyAwsAction(request, env, admin) {
     } catch {
         throw new AdminCenterError(400, 'JSON形式を確認してください。', 'invalid_json');
     }
-    const allowedActions = new Set(['ec2', 'system-mode', 'xml-preview', 'xml-dispatch', 'dmdata-load-xml']);
+    const allowedActions = new Set([
+        'ec2', 'system-mode', 'xml-preview', 'xml-dispatch', 'dmdata-load-xml',
+        'test-delivery-preview', 'test-delivery',
+    ]);
     if (!payload || typeof payload !== 'object' || !allowedActions.has(clean(payload.action))) {
         throw new AdminCenterError(400, '管理操作を選択してください。', 'invalid_action');
     }
@@ -274,6 +284,10 @@ function auditDetails(payload, result) {
         deliverySlot: clean(payload.deliverySlot) || null,
         sendData: clean(payload.sendData) || null,
         dmdataSourceId: clean(payload.dmdataSource?.sourceId) || clean(payload.sourceId) || null,
+        testRunId: clean(result.run?.runId) || clean(result.runId) || null,
+        testFunctions: stringArray(payload.functions).slice(0, 150),
+        testRoutes: stringArray(payload.routes),
+        testSources: stringArray(payload.sources),
         targetCount: Number(result.targetCount || 0),
     };
 }
@@ -400,6 +414,18 @@ async function proxyDeliveryFlow(env, admin) {
     const url = awsEndpoint(env);
     url.searchParams.set('view', 'delivery-flow');
     const body = await fetchAwsJson(url, env, 30_000, '配信系統の状態を取得できませんでした。');
+    return jsonResponse({ ...body, admin: admin.email });
+}
+
+async function proxyTestDelivery(requestUrl, env, admin) {
+    const runId = clean(requestUrl.searchParams.get('runId'));
+    if (runId.length > 120) {
+        throw new AdminCenterError(400, '試験配信IDが長すぎます。', 'invalid_test_run_id');
+    }
+    const url = awsEndpoint(env);
+    url.searchParams.set('view', 'test-delivery');
+    if (runId) url.searchParams.set('runId', runId);
+    const body = await fetchAwsJson(url, env, 30_000, '試験配信情報を取得できませんでした。');
     return jsonResponse({ ...body, admin: admin.email });
 }
 

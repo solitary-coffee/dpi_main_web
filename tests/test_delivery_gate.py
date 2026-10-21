@@ -9,7 +9,7 @@ from unittest.mock import Mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / 'aws/channel-directory-api'))
 from delivery_gate import DeliveryGate, DeliveryBlocked, validate_record
-from operating_modes import build_plan, runtime_readiness
+from operating_modes import PROTOCOL_VERSION, build_plan, build_route_plan, notification_policy, runtime_readiness
 from mode_transition import reserve, finish
 
 
@@ -169,6 +169,8 @@ class TransitionTests(unittest.TestCase):
         apply = Mock(side_effect=OSError('regional API unavailable'))
         finished = Mock()
         ns = {'_clean': lambda v, n: str(v or '')[:n], 'build_plan': build_plan,
+              'build_route_plan': build_route_plan, 'notification_policy': notification_policy,
+              'PROTOCOL_VERSION': PROTOCOL_VERSION,
               'os': __import__('os'), 'MODE_AUTHORITY_REGION': 'ap-northeast-1',
               'hmac': __import__('hmac'), 'time': __import__('time'),
               'ALLOWED_SYSTEM_MODES': {'automatic', 'normal'}, 'STATE_TABLE_NAME': 'state',
