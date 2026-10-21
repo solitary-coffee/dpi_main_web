@@ -101,8 +101,14 @@ test('配信系統はEC2とLambda・SQSバックアップを分離しSQS稼働�
     assert.match(script, /東京リージョン/u);
     assert.match(script, /大阪リージョン/u);
     assert.match(script, /flow-region-badge/u);
+    assert.match(script, /Lambda内訳/u);
+    assert.match(script, /queue\.region \|\| component\.targetRegion \|\| component\.region/u);
+    assert.match(script, /resourceRegionLabel/u);
+    assert.match(script, /\['リージョン', details\.region/u);
     assert.match(source, /"sourceRegion": source_region/u);
     assert.match(source, /"targetRegion": target_region/u);
+    assert.match(source, /"functions": sorted\(function_names\)/u);
+    assert.match(style, /\.resource-region-badge/u);
     assert.match(script, /直近配信ID/u);
     assert.match(style, /\.flow-stage-statuses/u);
     assert.match(style, /\.flow-stage-status/u);
