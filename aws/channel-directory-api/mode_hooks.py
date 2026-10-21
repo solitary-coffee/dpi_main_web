@@ -101,13 +101,22 @@ def admitted_at(payload):
         return None
 
 
-def wait_source(\n    received_at,\n    automatic_policy=None,\n    legacy_fast=False,\n    upstream_timing=None,\n):
+def wait_source(
+    received_at,
+    automatic_policy=None,
+    legacy_fast=False,
+    upstream_timing=None,
+):
     if enabled():
         policy = automatic_policy or (lambda: {"delivery": "immediate", "waitSeconds": 0})
         return _get_gate().wait(_node(), admitted_at=received_at, automatic_policy=policy, legacy_fast=legacy_fast)
 
 
-def check_source(\n    received_at,\n    automatic_policy=None,\n    upstream_timing=None,\n):
+def check_source(
+    received_at,
+    automatic_policy=None,
+    upstream_timing=None,
+):
     if enabled():
         policy = automatic_policy or (lambda: {"delivery": "immediate", "waitSeconds": 0})
         return _get_gate().check(_node(), admitted_at=received_at, automatic_policy=policy)
