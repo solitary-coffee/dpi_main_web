@@ -26,9 +26,9 @@ class XmlTests(unittest.TestCase):
         self.assertEqual(a["messages"][0]["allowed_mentions"], {"parse": []})
         for route, slot in [("eew", "地震情報"), ("zisin", "別の枠")]:
             self.assertNotEqual(a["previewDigest"], render_xml(XML, SUMMARY, route, slot)["previewDigest"])
-        self.assertEqual(a["rendererVersion"], "xml-production-embed-v2")
-        self.assertIn("同じ種別別Embed形式", a["formatNote"])
-        self.assertEqual(a["messages"][0]["username"], "防災情報提供BOT")
+        self.assertEqual(a["rendererVersion"], "xml-production-embed-v3")
+        self.assertIn("自宅サーバーの電文コード別Embed構成", a["formatNote"])
+        self.assertEqual(a["messages"][0]["username"], "DPI-Bot")
         self.assertEqual(a["messages"][0]["embeds"][0]["color"], 15258703)
         self.assertNotIn("Body /", a["messages"][0]["embeds"][0]["description"])
 
@@ -40,17 +40,28 @@ class XmlTests(unittest.TestCase):
         <Intensity><Observation><MaxInt>4</MaxInt></Observation></Intensity><Comments><ForecastComment><Text>津波の心配はありません。</Text></ForecastComment></Comments>
         </Body></Report>'''
         embed = render_xml(xml, SUMMARY, "zisin", "地震情報")["messages"][0]["embeds"][0]
-        self.assertEqual(embed["title"], "震源・震度情報[第2報](発表|通常)")
-        for expected in ("各地の震度情報", "最大震度:4", "震源:東京湾 マグニチュード4.2", "北緯35度 東経140度", "発生時間:20日10時0分", "津波の心配はありません。"):
+        self.assertEqual(embed["title"], "震源・震度情報[第2報](発表)")
+        for expected in ("最大震度:4", "震源:東京湾 マグニチュード4.2", "北緯35度 東経140度", "発生時間:20日10時0分", "津波の心配はありません。", "＊印は気象庁以外の震度観測点"):
             self.assertIn(expected, embed["description"])
 
-    def test_warning_uses_area_and_kind_layout(self):
+    def test_weather_warning_uses_weather_sender_frame(self):
         xml = '''<Report><Control><Title>気象警報</Title><Status>通常</Status></Control><Head><Title>気象警報・注意報</Title><InfoType>発表</InfoType>
         <Headline><Text>東京都に警報を発表しました。</Text></Headline></Head><Body><Warning><Item><Kind><Name>大雨警報</Name><Status>発表</Status></Kind>
         <Area><Name>東京地方</Name></Area></Item></Warning></Body></Report>'''
-        embed = render_xml(xml, SUMMARY, "keiho", "気象警報")["messages"][0]["embeds"][0]
-        self.assertIn("東京地方: 【!】大雨警報（発表）", embed["description"])
-        self.assertIn("【!】", embed["footer"]["text"])
+        embed = render_xml(xml, SUMMARY, "kisyo", "気象警報")["messages"][0]["embeds"][0]
+        self.assertEqual(embed["title"], "気象警報・注意報(発表)")
+        self.assertIn("東京都に警報を発表しました。", embed["description"])
+        self.assertNotIn("footer", embed)
+
+    def test_eew_warning_uses_dedicated_production_frame(self):
+        xml = '''<Report><Control><Title>緊急地震速報（警報）</Title><Status>通常</Status></Control><Head><Title>緊急地震速報（警報）</Title><InfoType>発表</InfoType><Serial>1</Serial>
+        <Headline><Text>強い揺れに警戒してください。</Text><Information><Item><Areas><Area><Name>東京都</Name></Area></Areas></Item></Information></Headline></Head>
+        <Body><Comments><WarningComment><Text>周囲の安全を確保してください。</Text></WarningComment></Comments></Body></Report>'''
+        summary = {**SUMMARY, "typeCode": "VXSE43"}
+        message = render_xml(xml, summary, "keiho", "緊急地震速報_警報")["messages"][0]
+        self.assertEqual(message["username"], "緊急地震速報(警報)")
+        self.assertEqual(message["embeds"][0]["color"], 15548997)
+        self.assertIn("**東京都**", message["embeds"][0]["description"])
 
     def test_weather_title_matches_existing_sender(self):
         xml = '''<Report><Control><Title>府県気象情報</Title><Status>通常</Status></Control><Head><Title>大雨に関する東京都気象情報</Title>
@@ -59,7 +70,16 @@ class XmlTests(unittest.TestCase):
         embed = render_xml(xml, SUMMARY, "kisyo", "気象情報")["messages"][0]["embeds"][0]
         self.assertEqual(embed["title"], "大雨に関する東京都気象情報 第3報(発表)")
         self.assertIn("今後の情報に留意してください。", embed["description"])
-        self.assertIn("[!]", embed["footer"]["text"])
+        self.assertNotIn("footer", embed)
+
+    def test_multiple_intensity_embeds_are_batched_like_home_sender(self):
+        xml = '''<Report><Control><Title>地震情報</Title><Status>通常</Status></Control><Head><Title>震源・震度情報</Title><InfoType>発表</InfoType><Serial>1</Serial><Headline><Text>各地の震度情報</Text></Headline></Head><Body>
+        <Earthquake><OriginTime>2026-10-20T10:00:00+09:00</OriginTime><Hypocenter><Area><Name>東京湾</Name></Area></Hypocenter></Earthquake>
+        <Intensity><Observation><MaxInt>4</MaxInt><Pref><Name>東京都</Name><Area><Name>東京23区</Name><MaxInt>4</MaxInt></Area></Pref><Pref><Name>千葉県</Name><Area><Name>千葉市</Name><MaxInt>3</MaxInt></Area></Pref></Observation></Intensity></Body></Report>'''
+        result = render_xml(xml, {**SUMMARY, "typeCode": "VXSE53"}, "zisin", "地震情報")
+        self.assertEqual(result["messageCount"], 1)
+        self.assertEqual(result["embedCount"], 3)
+        self.assertEqual(len(result["messages"][0]["embeds"]), 3)
 
     def test_namespace_unicode_split_without_loss(self):
         text = "長い本文" * 2000

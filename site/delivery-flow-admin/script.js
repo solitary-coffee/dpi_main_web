@@ -85,12 +85,20 @@ function routeStage(stage, components, branch = false) {
     const layers = new Set(stage.componentLayers || [stage.id]);
     const matches = components.filter((component) => layers.has(component.layer));
     const heading = el('summary', 'flow-stage-summary');
+    const headingText = el('span', 'flow-stage-heading');
+    headingText.append(el('strong', '', stage.label || stage.id));
+    const regions = [...new Set(matches.map(componentRegionLabel).filter(Boolean))];
+    if (regions.length) {
+        const regionList = el('span', 'flow-stage-regions');
+        for (const region of regions) regionList.append(el('span', 'flow-region-badge', region));
+        headingText.append(regionList);
+    }
     const statusSummary = el('span', 'flow-stage-statuses');
     for (const item of stageStatusSummary(matches)) {
         statusSummary.append(el('span', `flow-stage-status state-${item.state}`, `${item.label} ${number(item.count)}`));
     }
     statusSummary.append(el('span', 'flow-stage-count', `${number(matches.length)}系統`));
-    heading.append(el('strong', '', stage.label || stage.id), statusSummary);
+    heading.append(headingText, statusSummary);
     section.append(heading);
     if (!matches.length) grid.append(el('p', 'empty', '対象系統はありません。'));
     for (const component of matches) grid.append(componentCard(component));
@@ -102,7 +110,11 @@ function componentCard(component) {
     const card = el('details', `flow-component component-${component.status || 'unknown'}`);
     const displayState = componentDisplayState(component);
     const head = el('summary', 'flow-component-head');
-    head.append(el('strong', '', component.name || component.id), el('span', `flow-state state-${displayState}`, component.activityLabel || statusLabel(component.status)));
+    const identity = el('span', 'flow-component-identity');
+    identity.append(el('strong', '', component.name || component.id));
+    const region = componentRegionLabel(component);
+    if (region) identity.append(el('span', 'flow-region-badge', region));
+    head.append(identity, el('span', `flow-state state-${displayState}`, component.activityLabel || statusLabel(component.status)));
     const body = el('div', 'flow-component-body');
     body.append(el('p', 'flow-detail', component.detail || '詳細なし'));
     if (component.expectedStopped) body.append(el('p', 'expected-note', '待機系統のため停止中でも異常判定しません。'));
@@ -164,6 +176,21 @@ function healthLabel(value) { return ({ ok: '正常', impaired: '異常', insuff
 function componentDisplayState(component) {
     if (component.status === 'abnormal' || component.activityState === 'error') return 'abnormal';
     return component.activityState || component.status || 'unknown';
+}
+
+function componentRegionLabel(component) {
+    if (component.regionLabel) return component.regionLabel;
+    if (component.sourceRegion && component.targetRegion) return `${regionLabel(component.sourceRegion)} → ${regionLabel(component.targetRegion)}`;
+    return component.region ? regionLabel(component.region) : '';
+}
+
+function regionLabel(region) {
+    return ({
+        'ap-northeast-1': '東京リージョン',
+        'ap-northeast-3': '大阪リージョン',
+        home: '自宅サーバー',
+        global: '共通',
+    }[region] || region || '');
 }
 
 function stageStatusSummary(components) {

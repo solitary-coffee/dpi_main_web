@@ -44,6 +44,9 @@ test('DMDATA履歴は固定ドメイン・短時間キャッシュ・配信状�
     assert.match(source, /abs\(row\["sourceEpoch"\] - received_epoch\) <= 8/u);
     assert.match(source, /"配信済み（AWS監視記録）"/u);
     assert.match(source, /item\["lastDeliveryId"\] = monitored\.get\("deliveryId"\)/u);
+    assert.match(source, /summary\["typeCode"\].*dmdata_source\.get\("typeCode"\)/u);
+    assert.match(script, /dmdataSource: selectedDmdataSource/u);
+    assert.match(script, /function routeForDmdataItem/u);
     assert.match(template, /DmdataApiKeyParameter/u);
     assert.match(template, /DMDATA_API_KEY_PARAMETER/u);
     const operationalPolicy = template.match(/- Sid: ReadAndWriteOperationalState([\s\S]*?)(?=\n\s+- Sid:|\n\s+FunctionUrlConfig:)/u)?.[1] || '';
@@ -95,6 +98,11 @@ test('配信系統はEC2とLambda・SQSバックアップを分離しSQS稼働�
     assert.match(script, /component\.activityState === 'error'/u);
     assert.match(script, /queue\.role \|\| '用途未分類SQS'/u);
     assert.match(script, /ec2DetailRows\(component\.ec2Details\)/u);
+    assert.match(script, /東京リージョン/u);
+    assert.match(script, /大阪リージョン/u);
+    assert.match(script, /flow-region-badge/u);
+    assert.match(source, /"sourceRegion": source_region/u);
+    assert.match(source, /"targetRegion": target_region/u);
     assert.match(script, /直近配信ID/u);
     assert.match(style, /\.flow-stage-statuses/u);
     assert.match(style, /\.flow-stage-status/u);

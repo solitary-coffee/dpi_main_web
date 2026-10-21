@@ -420,12 +420,25 @@ async function loadDmdataXml(item, button) {
             isWarning: Boolean(item.isWarning),
             xmlSha256: data.xmlSha256 || '',
         };
-        if (String(item.category || '').startsWith('eew')) document.getElementById('xml-route').value = 'eew';
+        const route = routeForDmdataItem(item);
+        if (route) document.getElementById('xml-route').value = route;
         renderSelectedDmdata();
         invalidateXmlPreview();
         await previewXml();
         document.getElementById('xml-title')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     } catch { /* runAction already presents the error */ }
+}
+
+function routeForDmdataItem(item) {
+    const typeCode = String(item.typeCode || '').toUpperCase();
+    const category = String(item.category || '').toLowerCase();
+    if (typeCode === 'VXSE43') return 'keiho';
+    if (['VXSE42', 'VXSE44', 'VXSE45', 'VXSE47'].includes(typeCode) || category.startsWith('eew')) return 'eew';
+    if (typeCode.startsWith('VXSE') || typeCode.startsWith('VYSE')) return 'zisin';
+    if (typeCode.startsWith('VTSE')) return 'tunami';
+    if (typeCode.startsWith('VFVO') || category === 'volcano') return 'kazan';
+    if (category === 'weather') return 'kisyo';
+    return '';
 }
 
 function renderSelectedDmdata() {
@@ -514,14 +527,14 @@ async function previewXml() {
     invalidateXmlPreview();
     const sequence = xmlPreviewSequence;
     try {
-        const data = await runAction({ action: 'xml-preview', xml: document.getElementById('xml-content').value, deliverySlot: document.getElementById('xml-slot').value, sendData: document.getElementById('xml-route').value }, button, false);
+        const data = await runAction({ action: 'xml-preview', xml: document.getElementById('xml-content').value, deliverySlot: document.getElementById('xml-slot').value, sendData: document.getElementById('xml-route').value, dmdataSource: selectedDmdataSource }, button, false);
         if (sequence !== xmlPreviewSequence) return;
         const preview = data.preview || {};
         const box = document.getElementById('xml-preview');
         const list = element('dl');
-        for (const [label, value] of [['電文種別', preview.controlTitle], ['見出し', preview.headline], ['イベントID', preview.eventId], ['発表時刻', preview.reportDateTime], ['対象時刻', preview.targetDateTime], ['発表元', preview.publishingOffice], ['状態', preview.status], ['サイズ', `${Number(data.bytes || 0).toLocaleString('ja-JP')} bytes`]]) list.append(element('dt', '', label), element('dd', '', value || '—'));
+        for (const [label, value] of [['電文種別', preview.controlTitle], ['電文コード', data.typeCode || preview.typeCode], ['見出し', preview.headline], ['イベントID', preview.eventId], ['発表時刻', preview.reportDateTime], ['対象時刻', preview.targetDateTime], ['発表元', preview.publishingOffice], ['状態', preview.status], ['サイズ', `${Number(data.bytes || 0).toLocaleString('ja-JP')} bytes`]]) list.append(element('dt', '', label), element('dd', '', value || '—'));
         box.replaceChildren(element('h3', '', 'XMLプレビュー'), list);
-        box.append(element('p', '', data.formatNote || ''), element('p', '', `実際に送信するメッセージ: ${data.messageCount || 0}通 / 配信先`));
+        box.append(element('p', '', data.formatNote || ''), element('p', '', `実際に送信するDiscordメッセージ: ${data.messageCount || 0}通（Embed ${data.embedCount || 0}件）`));
         for (const [index, message] of (data.messages || []).entries()) {
             const messageBox = element('article', 'discord-message-preview');
             messageBox.append(element('h4', '', `${index + 1}. ${message.username || 'DPI-Bot'}`));

@@ -36,6 +36,10 @@
 .flow-route-stage { position: relative; margin: 0; padding: 16px; border: 1px solid #526270; border-radius: 9px; background: #293139; }
 .flow-stage-summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; cursor: pointer; color: #bce0ff; }
 .flow-stage-summary > strong { min-width: 0; overflow-wrap: anywhere; }
+.flow-stage-heading, .flow-component-identity { display: flex; min-width: 0; align-items: flex-start; flex-wrap: wrap; gap: 7px; }
+.flow-stage-heading > strong, .flow-component-identity > strong { min-width: 0; overflow-wrap: anywhere; }
+.flow-stage-regions { display: inline-flex; flex-wrap: wrap; gap: 5px; }
+.flow-region-badge { display: inline-flex; flex: 0 0 auto; padding: 3px 8px; border: 1px solid #4b91c5; border-radius: 999px; background: #173a54; color: #d8efff; font-size: .72rem; font-weight: 800; line-height: 1.25; }
 .flow-stage-statuses { display: flex; flex: 0 1 auto; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
 .flow-stage-status { display: inline-flex; flex: 0 0 auto; padding: 3px 8px; border-radius: 999px; font-size: .75rem; font-weight: 800; }
 .flow-stage-count { flex: 0 0 auto; padding: 3px 8px; border-radius: 999px; background: #3b4752; color: #dce6ee; font-size: .78rem; }
