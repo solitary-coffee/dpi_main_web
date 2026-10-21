@@ -64,6 +64,10 @@ function renderFlow(flow) {
     const container = document.getElementById('flow-layers');
     container.replaceChildren();
     const components = flow.components || [];
+    if (flow.flowGraph) {
+        container.append(unifiedFlowPanel(flow.flowGraph, components));
+        return;
+    }
     if ((flow.routes || []).length) {
         for (const route of flow.routes) container.append(routePanel(route, components));
         return;
@@ -79,6 +83,70 @@ function renderFlow(flow) {
         if (index > 0) section.classList.add('connected-layer');
         container.append(section);
     }
+}
+
+function unifiedFlowPanel(graph, components) {
+    const panel = el('article', 'flow-graph');
+
+    const sourceSection = el('section', 'flow-source-section');
+    sourceSection.append(el('h3', 'flow-graph-section-title', '受付APIへの入力元'));
+    const sourceGrid = el('div', 'flow-source-grid');
+    for (const source of (graph.sources || [])) {
+        const sourceCard = el('article', 'flow-source-card');
+        sourceCard.append(el('h4', '', source.label || '入力元'));
+        if (source.description) sourceCard.append(el('p', 'flow-route-description', source.description));
+        const sequence = el('div', 'flow-compact-sequence');
+        for (const [index, stage] of (source.sequence || []).entries()) {
+            if (index > 0) sequence.append(el('span', 'flow-route-arrow', ''));
+            sequence.append(routeStage(stage, components));
+        }
+        sourceCard.append(sequence);
+        sourceGrid.append(sourceCard);
+    }
+    sourceSection.append(sourceGrid);
+    panel.append(sourceSection, flowConnector('共通の受付へ合流'));
+
+    const ingress = el('section', 'flow-common-stage flow-common-ingress');
+    ingress.append(routeStage(graph.ingress || { id: 'api-ingress', label: '受付API・HA制御' }, components));
+    panel.append(ingress, flowConnector('受付後に優先経路へ分岐'));
+
+    const pathSection = el('section', 'flow-path-section');
+    pathSection.append(el('h3', 'flow-graph-section-title', '受付API・HA制御からDiscord配信までの候補経路'));
+    const pathGrid = el('div', 'flow-path-grid');
+    for (const path of (graph.paths || [])) {
+        const pathCard = el('article', 'flow-path-card');
+        const titleRow = el('div', 'flow-route-title-row');
+        if (path.priority) titleRow.append(el('span', 'flow-priority-number flow-route-priority', path.priority));
+        titleRow.append(el('h4', '', path.label || '候補経路'));
+        pathCard.append(titleRow);
+        if (path.description) pathCard.append(el('p', 'flow-route-description', path.description));
+        const sequence = el('div', 'flow-compact-sequence');
+        for (const [index, stage] of (path.sequence || []).entries()) {
+            if (index > 0) sequence.append(el('span', 'flow-route-arrow', ''));
+            sequence.append(routeStage(stage, components));
+        }
+        pathCard.append(sequence);
+        pathGrid.append(pathCard);
+    }
+    pathSection.append(pathGrid);
+    panel.append(pathSection, flowConnector('最初に到達した候補だけを採用'));
+
+    if (graph.gate) {
+        const gate = el('section', 'flow-common-stage flow-common-gate');
+        gate.append(routeStage(graph.gate, components));
+        panel.append(gate, flowConnector('所有権を取得した1系統だけが通過'));
+    }
+
+    const exit = el('section', 'flow-common-stage flow-common-exit');
+    exit.append(routeStage(graph.exit || { id: 'discord-delivery', label: 'Discord配信Lambda' }, components));
+    panel.append(exit);
+    return panel;
+}
+
+function flowConnector(label) {
+    const connector = el('div', 'flow-graph-connector');
+    connector.append(el('span', '', label));
+    return connector;
 }
 
 function routePanel(route, components) {

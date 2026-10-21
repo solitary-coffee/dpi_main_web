@@ -80,6 +80,14 @@ test('配信系統はEC2とLambda・SQSバックアップを分離しSQS稼働�
     assert.match(source, /"priority": "優先1"[\s\S]*"priority": "優先2"[\s\S]*"priority": "優先3"/u);
     assert.match(source, /"label": "高速判定・分散"[\s\S]*"label": "MRSC所有権判定"[\s\S]*"label": "Discord配信Lambda"/u);
     assert.match(source, /"label": "EC2"[\s\S]*"label": "受付API・HA制御"[\s\S]*"label": "高速判定・分散"/u);
+    const flowGraph = source.match(/"flowGraph": \{([\s\S]*?)\n\s+\},\n\s+"costPolicy"/u)?.[1] || '';
+    assert.match(flowGraph, /"sources"/u);
+    assert.match(flowGraph, /"paths"/u);
+    assert.match(flowGraph, /"gate"/u);
+    assert.match(flowGraph, /"exit"/u);
+    assert.equal((flowGraph.match(/"componentLayers": \["api-ingress"\]/gu) || []).length, 1);
+    assert.equal((flowGraph.match(/"componentLayers": \["lease"\]/gu) || []).length, 1);
+    assert.equal((flowGraph.match(/"componentLayers": \["discord-delivery"\]/gu) || []).length, 1);
     assert.match(source, /def _sqs_activity_state/u);
     assert.match(source, /activity_state = "error" if dlq > 0/u);
     assert.match(source, /def _sqs_queue_role/u);
@@ -122,6 +130,10 @@ test('配信系統はEC2とLambda・SQSバックアップを分離しSQS稼働�
     assert.match(script, /flow-priority-rules/u);
     assert.match(script, /flow-route-priority/u);
     assert.match(script, /stage\.note/u);
+    assert.match(script, /unifiedFlowPanel\(flow\.flowGraph, components\)/u);
+    assert.match(script, /flowConnector\('共通の受付へ合流'\)/u);
+    assert.match(style, /\.flow-path-grid/u);
+    assert.match(style, /\.flow-common-exit/u);
     assert.match(html, /配信順と優先経路/u);
     assert.match(html, /flow-primary-assignments/u);
     assert.match(script, /直近配信ID/u);

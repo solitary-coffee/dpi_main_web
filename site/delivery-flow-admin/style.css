@@ -17,6 +17,24 @@
 .flow-assignment-card code { color: #9dd3ff; overflow-wrap: anywhere; }
 .flow-assignment-card p { margin: 0; color: #dce3ea; font-size: .85rem; }
 .flow-layers { display: grid; gap: 34px; }
+.flow-graph { display: grid; gap: 0; margin: 0; padding: 20px; border: 1px solid #4b5661; border-radius: 12px; background: #20262c; }
+.flow-graph-section-title { margin: 0 0 13px; color: #9dd3ff; font-size: 1rem; text-align: center; }
+.flow-source-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.flow-source-card, .flow-path-card { min-width: 0; margin: 0; padding: 15px; border: 1px solid #526270; border-radius: 9px; background: #252d34; }
+.flow-source-card h4, .flow-path-card h4 { margin: 0; color: #cfe7fa; overflow-wrap: anywhere; }
+.flow-compact-sequence { display: grid; gap: 28px; margin-top: 13px; }
+.flow-common-stage { width: min(100%, 920px); margin: 0 auto; }
+.flow-common-stage > .flow-route-stage { border-width: 2px; border-color: #75bfff; background: #263744; }
+.flow-common-gate > .flow-route-stage { border-color: #78dea6; background: #263a33; }
+.flow-common-exit > .flow-route-stage { border-color: #9a86ff; background: #322e43; }
+.flow-graph-connector { position: relative; display: flex; min-height: 70px; align-items: center; justify-content: center; }
+.flow-graph-connector::before { position: absolute; top: 0; bottom: 0; left: 50%; width: 3px; background: #75bfff; content: ""; }
+.flow-graph-connector::after { position: absolute; bottom: 0; left: calc(50% - 5px); border-width: 7px 6px 0; border-style: solid; border-color: #75bfff transparent transparent; content: ""; }
+.flow-graph-connector span { z-index: 1; padding: 4px 9px; border: 1px solid #4b91c5; border-radius: 999px; background: #173a54; color: #d8efff; font-size: .72rem; font-weight: 800; text-align: center; }
+.flow-path-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.flow-path-card { border-top: 4px solid #75bfff; }
+.flow-path-card .flow-route-title-row { align-items: flex-start; }
+.flow-path-card .flow-route-description { min-height: 3.7em; }
 .flow-layer { position: relative; margin: 0; padding: 17px; background: #242a30; }
 .flow-layer.connected-layer::before { position: absolute; top: -30px; left: 50%; width: 3px; height: 26px; background: #75bfff; content: ""; }
 .flow-layer.connected-layer::after { position: absolute; top: -9px; left: calc(50% - 5px); border-width: 7px 6px 0; border-style: solid; border-color: #75bfff transparent transparent; content: ""; }
@@ -82,5 +100,6 @@
 .queue-item small { grid-column: 1 / -1; color: #c8d0d8; }
 .queue-state { align-self: start; padding: 3px 7px; border-radius: 999px; font-size: .72rem; font-weight: 800; }
 @media (max-width: 1380px) { .flow-route-branch::before { display: none; } }
+@media (max-width: 1100px) { .flow-path-grid { grid-template-columns: minmax(0, 1fr); }.flow-path-card .flow-route-description { min-height: 0; } }
 @media (max-width: 900px) { .flow-priority-rules { grid-template-columns: minmax(0, 1fr); } }
-@media (max-width: 760px) { .flow-primary-assignments, .flow-component-grid, .flow-route-branches { grid-template-columns: minmax(0, 1fr); }.flow-component dl { grid-template-columns: 1fr; }.flow-component dd { text-align: left; }.flow-route-branch-wrap { border-top: 0; }.flow-route-branch-wrap::before { display: none; }.flow-stage-summary { align-items: stretch; flex-direction: column; }.flow-stage-statuses { justify-content: flex-start; }.flow-component-head { align-items: stretch; flex-direction: column; }.flow-state { align-self: flex-start; }.resource-item { align-items: stretch; flex-direction: column; }.resource-region-badge { align-self: flex-start; }.queue-item { grid-template-columns: minmax(0, 1fr); }.queue-name, .queue-item small { grid-column: 1; }.queue-state { justify-self: start; } }
+@media (max-width: 760px) { .flow-graph { padding: 12px; }.flow-source-grid, .flow-primary-assignments, .flow-component-grid, .flow-route-branches { grid-template-columns: minmax(0, 1fr); }.flow-component dl { grid-template-columns: 1fr; }.flow-component dd { text-align: left; }.flow-route-branch-wrap { border-top: 0; }.flow-route-branch-wrap::before { display: none; }.flow-stage-summary { align-items: stretch; flex-direction: column; }.flow-stage-statuses { justify-content: flex-start; }.flow-component-head { align-items: stretch; flex-direction: column; }.flow-state { align-self: flex-start; }.resource-item { align-items: stretch; flex-direction: column; }.resource-region-badge { align-self: flex-start; }.queue-item { grid-template-columns: minmax(0, 1fr); }.queue-name, .queue-item small { grid-column: 1; }.queue-state { justify-self: start; } }
