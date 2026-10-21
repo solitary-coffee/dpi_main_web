@@ -33,6 +33,7 @@ MONITORED_TABLE_NAMES = [name.strip() for name in os.environ.get("MONITORED_TABL
 STATE_TABLE_NAME = os.environ.get("STATE_TABLE_NAME", HOME_SERVER_TABLE_NAME or "DPI-BackupFleetState-v51").strip()
 MODE_AUTHORITY_REGION = os.environ.get("MODE_AUTHORITY_REGION", "ap-northeast-1").strip()
 DELIVERY_MONITOR_TABLE_NAME = os.environ.get("DELIVERY_MONITOR_TABLE_NAME", "DPI-DeliveryMonitor-v1").strip()
+DELIVERY_LEASE_TABLE_NAME = os.environ.get("DELIVERY_LEASE_TABLE_NAME", "DPI-DeliveryLease").strip()
 OPERATING_REGIONS = [name.strip() for name in os.environ.get("OPERATING_REGIONS", "ap-northeast-1,ap-northeast-3").split(",") if name.strip()]
 AUTO_MONITOR_FUNCTION = os.environ.get("AUTO_MONITOR_FUNCTION", "dpi-backup-auto-failover-monitor").strip()
 INGEST_ENDPOINTS = [url.strip() for url in os.environ.get("INGEST_ENDPOINTS", "").split(",") if url.strip()]
@@ -1047,6 +1048,47 @@ def _sqs_queue_role(name):
     return "用途未分類SQS"
 
 
+def _discord_delivery_families(region):
+    """Active dedicated Discord worker families used by the live dispatcher."""
+    if region == "ap-northeast-1":
+        return [
+            ("eew", "緊急地震速報", "new_EEW", 16),
+            ("zisin", "地震情報", "new_ZISIN", 16),
+            ("tunami", "津波情報", "new_TUNAMI", 10),
+            ("keiho", "緊急地震速報・警報", "new_KEIHO", 10),
+            ("eew_sind", "緊急地震速報・震度", "new_EEW_SIND", 10),
+            ("sub", "東京補助配信", "new_TOKYO_SUB", 10),
+        ]
+    return [
+        ("kisyo", "気象情報", "new_kisyo", 10),
+        ("kisyo2", "気象情報・第2系統", "new_kisyo2", 10),
+        ("kazan", "火山情報", "new_KAZAN", 10),
+        ("sub", "大阪補助配信", "new_OSAKA_SUB", 10),
+    ]
+
+
+def _lease_table_summary():
+    table = _client("dynamodb").describe_table(TableName=DELIVERY_LEASE_TABLE_NAME).get("Table", {})
+    replicas = table.get("Replicas") or []
+    replica_states = [
+        {
+            "region": _clean(item.get("RegionName"), 40),
+            "status": _clean(item.get("ReplicaStatus"), 40),
+        }
+        for item in replicas
+    ]
+    active = table.get("TableStatus") == "ACTIVE" and all(
+        item.get("status") in {"ACTIVE", "REGION_DISABLED"} for item in replica_states
+    )
+    return {
+        "available": True,
+        "name": DELIVERY_LEASE_TABLE_NAME,
+        "status": "normal" if active else "abnormal",
+        "tableStatus": table.get("TableStatus"),
+        "replicas": replica_states,
+    }
+
+
 def _sqs_activity_state(visible, in_flight, delayed, dead_letter=False):
     if dead_letter and visible > 0:
         return "error"
@@ -1369,35 +1411,55 @@ def _load_delivery_flow():
         recent = _flow_recent_for_region(statistics.get("recent") or [], region)
         region_role = _region_role(region)
         lambda_region = next((item for item in lambda_summary.get("regions") or [] if item.get("region") == region), {})
-        lambda_count = _integer(lambda_region.get("count"), 0)
         function_names = set(lambda_region.get("names") or [])
-        required_functions = {
-            f"dpi-delivery-primary-{region_role.upper()}",
+        control_function = f"dpi-ha-control-{region_role.upper()}"
+        fast_functions = {
+            f"dpi-ha-candidate-{region_role.upper()}",
             f"dpi-distributor-{region_role.upper()}",
-            f"dpi-ha-control-{region_role.upper()}",
         }
-        missing_functions = sorted(required_functions - function_names)
+        missing_control = [] if control_function in function_names else [control_function]
+        missing_functions = sorted(fast_functions - function_names)
         relevant_alarms = [name for name in alarm_names if region.casefold() in name.casefold() or region_role in name.casefold()]
+        ingress_status = "abnormal" if not lambda_summary.get("available") or missing_control else "normal"
+        components.append({
+            "id": f"api-ingress-{region}",
+            "layer": "api-ingress",
+            "name": f"受付API・HA制御（{region_role.upper()}）",
+            "region": region,
+            "regionLabel": "東京リージョン" if region == "ap-northeast-1" else "大阪リージョン",
+            "status": ingress_status,
+            "expectedStopped": False,
+            "detail": (
+                f"HTTP API → {control_function} / control-inline 有効"
+                if not missing_control else f"不足: {control_function}"
+            ),
+            "lastConnectivityAt": observed_at if lambda_summary.get("available") else None,
+            "lastPassedAt": _epoch_iso(recent.get("updatedEpoch")) if recent else None,
+            "passageMs": recent.get("maxLatencyMs") if recent else None,
+            "lastTitle": recent.get("title") if recent else None,
+            "lastDeliveryId": recent.get("deliveryId") if recent else None,
+            "functions": [control_function],
+        })
         status = "abnormal" if relevant_alarms or not lambda_summary.get("available") or missing_functions else "normal"
         components.append({
             "id": f"aws-fast-{region}",
             "layer": "aws-fast",
-            "name": f"AWS高速系統（{region_role.upper()}）",
+            "name": f"高速判定・分散系統（{region_role.upper()}）",
             "region": region,
             "regionLabel": "東京リージョン" if region == "ap-northeast-1" else "大阪リージョン",
             "status": status,
             "expectedStopped": False,
             "detail": (
-                f"Lambda {lambda_count}件 / 必須3機能確認済み"
+                "候補判定Lambda・分散Lambdaを確認済み"
                 if not missing_functions
-                else f"Lambda {lambda_count}件 / 不足: {', '.join(missing_functions)}"
+                else f"不足: {', '.join(missing_functions)}"
             ) + (f" / 警報 {len(relevant_alarms)}件" if relevant_alarms else " / 有効な警報なし"),
             "lastConnectivityAt": observed_at if lambda_summary.get("available") else None,
             "lastPassedAt": _epoch_iso(recent.get("updatedEpoch")) if recent else None,
             "passageMs": recent.get("maxLatencyMs") if recent else None,
             "lastTitle": recent.get("title") if recent else None,
             "lastDeliveryId": recent.get("deliveryId") if recent else None,
-            "functions": sorted(function_names),
+            "functions": sorted(fast_functions),
         })
 
     sqs = system.get("sqs") or {}
@@ -1435,6 +1497,87 @@ def _load_delivery_flow():
         item.get("region"): set(item.get("names") or [])
         for item in lambda_summary.get("regions") or []
     }
+
+    lease = system.get("deliveryLease") or {}
+    replica_labels = []
+    for replica in lease.get("replicas") or []:
+        replica_region = _clean(replica.get("region"), 40)
+        replica_labels.append(
+            f"{('東京' if replica_region == 'ap-northeast-1' else '大阪' if replica_region == 'ap-northeast-3' else replica_region)}: "
+            f"{_clean(replica.get('status'), 40) or 'UNKNOWN'}"
+        )
+    components.append({
+        "id": "mrsc-delivery-lease",
+        "layer": "lease",
+        "name": "MRSC配信リース（DPI-DeliveryLease）",
+        "regionLabel": "東京／大阪共通",
+        "status": lease.get("status") if lease.get("available") else "unknown",
+        "expectedStopped": False,
+        "detail": (
+            f"配信所有権を先に取得した1系統だけを通過 / Table {_clean(lease.get('tableStatus'), 40) or 'UNKNOWN'}"
+            + (f" / レプリカ {'、'.join(replica_labels)}" if replica_labels else "")
+            if lease.get("available") else "DPI-DeliveryLeaseの状態を取得できませんでした"
+        ),
+        "lastConnectivityAt": observed_at if lease.get("available") else None,
+        "lastPassedAt": None,
+        "passageMs": None,
+    })
+
+    for region in OPERATING_REGIONS:
+        recent = _flow_recent_for_region(statistics.get("recent") or [], region)
+        region_role = _region_role(region).upper()
+        function_names = function_names_by_region.get(region, set())
+        region_label = "東京リージョン" if region == "ap-northeast-1" else "大阪リージョン"
+        for delivery_type, family_label, prefix, shard_count in _discord_delivery_families(region):
+            expected_functions = [f"{prefix}_{index}" for index in range(1, shard_count + 1)]
+            missing = [name for name in expected_functions if name not in function_names]
+            components.append({
+                "id": f"discord-delivery-{region}-{delivery_type}",
+                "layer": "discord-delivery",
+                "name": f"Discord配信Lambda：{family_label}",
+                "region": region,
+                "regionLabel": region_label,
+                "status": "abnormal" if not lambda_summary.get("available") or missing else "normal",
+                "expectedStopped": False,
+                "detail": (
+                    f"専用送信シャード {shard_count}/{shard_count}件を確認"
+                    if not missing else f"専用送信シャード {shard_count - len(missing)}/{shard_count}件 / 不足: {', '.join(missing)}"
+                ),
+                "lastConnectivityAt": observed_at if lambda_summary.get("available") else None,
+                "lastPassedAt": _epoch_iso(recent.get("updatedEpoch")) if recent else None,
+                "passageMs": recent.get("maxLatencyMs") if recent else None,
+                "lastTitle": recent.get("title") if recent else None,
+                "lastDeliveryId": recent.get("deliveryId") if recent else None,
+                "functions": expected_functions,
+            })
+        fallback_functions = [
+            f"dpi-delivery-primary-{region_role}",
+            f"dpi-delivery-backup-{region_role}",
+        ]
+        fallback_missing = [name for name in fallback_functions if name not in function_names]
+        components.append({
+            "id": f"discord-delivery-fallback-{region}",
+            "layer": "discord-delivery",
+            "name": f"共通・バックアップDiscord配信Lambda（{region_role}）",
+            "region": region,
+            "regionLabel": region_label,
+            "status": "abnormal" if not lambda_summary.get("available") or fallback_missing else "normal",
+            "expectedStopped": False,
+            "standby": True,
+            "activityState": "waiting",
+            "activityLabel": "フォールバック待機中（正常）",
+            "detail": (
+                "通常時は専用送信シャードを優先し、専用系統未対応時またはバックアップ時に使用"
+                if not fallback_missing else f"不足: {', '.join(fallback_missing)}"
+            ),
+            "lastConnectivityAt": observed_at if lambda_summary.get("available") else None,
+            "lastPassedAt": _epoch_iso(recent.get("updatedEpoch")) if recent else None,
+            "passageMs": recent.get("maxLatencyMs") if recent else None,
+            "lastTitle": recent.get("title") if recent else None,
+            "lastDeliveryId": recent.get("deliveryId") if recent else None,
+            "functions": fallback_functions,
+        })
+
     sqs_sections = {
         item.get("region"): item
         for item in sqs.get("regions") or []
@@ -1443,13 +1586,12 @@ def _load_delivery_flow():
         recent = _flow_recent_for_region(statistics.get("recent") or [], region)
         region_role = _region_role(region).upper()
         function_names = function_names_by_region.get(region, set())
-        backup_function = f"dpi-delivery-backup-{region_role}"
         candidate_function = f"dpi-ha-candidate-{region_role}"
         candidate_queue = next((
             queue for queue in (sqs_sections.get(region) or {}).get("queues") or []
             if queue.get("name") == f"dpi-ha-candidate-{region}"
         ), None)
-        missing = [name for name in (candidate_function, backup_function) if name not in function_names]
+        missing = [candidate_function] if candidate_function not in function_names else []
         if candidate_queue is None:
             missing.append(f"dpi-ha-candidate-{region}")
         activity_state = _queue_component_activity(candidate_queue)
@@ -1468,7 +1610,7 @@ def _load_delivery_flow():
             "sourceType": "lambda-sqs",
             "backupScope": "regional",
             "detail": (
-                f"候補SQS → {candidate_function} → {backup_function}"
+                f"候補SQS（担当側は待機0秒）→ {candidate_function} → MRSC判定 → Discord配信Lambda"
                 if not missing else f"不足リソース: {', '.join(missing)}"
             ),
             "lastConnectivityAt": observed_at if sqs.get("available") and lambda_summary.get("available") else None,
@@ -1477,7 +1619,7 @@ def _load_delivery_flow():
             "lastTitle": recent.get("title") if recent else None,
             "lastDeliveryId": recent.get("deliveryId") if recent else None,
             "queues": [candidate_queue] if candidate_queue else [],
-            "functions": [candidate_function, backup_function],
+            "functions": [candidate_function],
         })
 
     for source_region in OPERATING_REGIONS:
@@ -1487,13 +1629,12 @@ def _load_delivery_flow():
         source_role = _region_role(source_region).upper()
         target_role = _region_role(target_region).upper()
         target_functions = function_names_by_region.get(target_region, set())
-        target_backup = f"dpi-delivery-backup-{target_role}"
         target_candidate = f"dpi-ha-candidate-{target_role}"
         target_queue = next((
             queue for queue in (sqs_sections.get(target_region) or {}).get("queues") or []
             if queue.get("name") == f"dpi-ha-candidate-{target_region}"
         ), None)
-        missing = [name for name in (target_candidate, target_backup) if name not in target_functions]
+        missing = [target_candidate] if target_candidate not in target_functions else []
         if target_queue is None:
             missing.append(f"dpi-ha-candidate-{target_region}")
         activity_state = _queue_component_activity(target_queue)
@@ -1515,7 +1656,7 @@ def _load_delivery_flow():
             "sourceType": "lambda-sqs",
             "backupScope": "cross",
             "detail": (
-                f"{source_role}系統障害時に{target_role}の候補SQS・Lambdaで引継ぎ"
+                f"{target_role}の候補SQSで通常3秒待機し、{source_role}がMRSC未取得の場合だけ引継ぎ"
                 if not missing else f"引継ぎ先の不足リソース: {', '.join(missing)}"
             ),
             "lastConnectivityAt": observed_at if sqs.get("available") and lambda_summary.get("available") else None,
@@ -1524,7 +1665,7 @@ def _load_delivery_flow():
             "lastTitle": recent.get("title") if recent else None,
             "lastDeliveryId": recent.get("deliveryId") if recent else None,
             "queues": [target_queue] if target_queue else [],
-            "functions": [target_candidate, target_backup],
+            "functions": [target_candidate],
         })
 
     backup = system.get("backupInstances") or {}
@@ -1597,33 +1738,98 @@ def _load_delivery_flow():
         "layers": [
             {"id": "upstream", "label": "上流API"},
             {"id": "home", "label": "自宅サーバー"},
+            {"id": "api-ingress", "label": "受付API・HA制御"},
             {"id": "aws-fast", "label": "AWS高速系統"},
             {"id": "sqs", "label": "SQS系統"},
             {"id": "regional-backup", "label": "リージョン内バックアップ配信"},
             {"id": "cross-backup", "label": "相互バックアップ配信"},
+            {"id": "lease", "label": "MRSC配信リース"},
+            {"id": "discord-delivery", "label": "Discord配信Lambda"},
             {"id": "ec2", "label": "EC2"},
+        ],
+        "priorityRules": [
+            {
+                "priority": "優先1",
+                "title": "担当リージョンの高速経路",
+                "detail": "受付APIからcontrol-inlineで高速判定へ進みます。候補SQSへの耐久保存を確認後、待機なしでMRSC所有権を取得します。",
+            },
+            {
+                "priority": "優先2",
+                "title": "担当リージョンの候補SQS",
+                "detail": "担当側の候補SQSは待機0秒です。高速処理が完了しなくても候補LambdaがMRSC所有権を取得して配信を継続します。",
+            },
+            {
+                "priority": "優先3",
+                "title": "非担当リージョンの相互バックアップ",
+                "detail": "非担当側は通常3秒待機します。先行系統がMRSCを取得済みなら配信を抑止し、未取得の場合だけバックアップ配信します。",
+            },
+        ],
+        "primaryAssignments": [
+            {"region": "ap-northeast-1", "regionLabel": "東京リージョン", "types": ["緊急地震速報", "地震情報", "津波情報", "警報・震度系"]},
+            {"region": "ap-northeast-3", "regionLabel": "大阪リージョン", "types": ["気象情報", "火山情報", "その他"]},
         ],
         "routes": [
             {
-                "id": "home-delivery",
-                "label": "自宅サーバー起点",
+                "id": "source-to-ingress",
+                "label": "上流API・自宅サーバーから受付APIまで",
+                "description": "DMDATA等の上流情報を自宅サーバーが受信し、担当リージョンの受付APIへ送信します。",
                 "sequence": [
                     {"id": "upstream", "label": "上流API", "componentLayers": ["upstream"]},
                     {"id": "home", "label": "自宅サーバー", "componentLayers": ["home"]},
+                    {"id": "api-ingress", "label": "受付API・HA制御", "componentLayers": ["api-ingress"]},
                 ],
-                "branches": [
-                    {"id": "aws-fast", "label": "AWS高速配信", "componentLayers": ["aws-fast"]},
-                    {"id": "sqs", "label": "SQS", "componentLayers": ["sqs"]},
-                    {"id": "regional-backup", "label": "リージョン内バックアップ配信", "componentLayers": ["regional-backup"]},
-                    {"id": "cross-backup", "label": "相互バックアップ配信", "componentLayers": ["cross-backup"]},
-                ],
+                "branches": [],
             },
             {
-                "id": "ec2-fast-delivery",
+                "id": "priority-1-fast",
+                "priority": "優先1",
+                "label": "担当リージョン高速経路",
+                "description": "受付後の最優先経路です。高速系統には候補判定・分散処理だけを表示し、Discord送信Lambdaは別枠にしています。",
+                "sequence": [
+                    {"id": "api-ingress", "label": "受付API・HA制御", "componentLayers": ["api-ingress"]},
+                    {"id": "aws-fast", "label": "高速判定・分散", "note": "control-inline・待機なし", "componentLayers": ["aws-fast"]},
+                    {"id": "lease", "label": "MRSC所有権判定", "note": "最初の1系統だけ通過", "componentLayers": ["lease"]},
+                    {"id": "discord-delivery", "label": "Discord配信Lambda", "componentLayers": ["discord-delivery"]},
+                ],
+                "branches": [],
+            },
+            {
+                "id": "priority-2-local-sqs",
+                "priority": "優先2",
+                "label": "担当リージョン候補SQS経路",
+                "description": "高速処理と並行して保存される耐久経路です。担当側はDelaySeconds 0で直ちに候補判定へ進みます。",
+                "sequence": [
+                    {"id": "api-ingress", "label": "受付API・HA制御", "componentLayers": ["api-ingress"]},
+                    {"id": "sqs", "label": "候補SQS（担当側）", "note": "待機0秒", "componentLayers": ["sqs"]},
+                    {"id": "regional-backup", "label": "同一リージョン候補判定", "componentLayers": ["regional-backup"]},
+                    {"id": "lease", "label": "MRSC所有権判定", "note": "高速側が取得済みなら抑止", "componentLayers": ["lease"]},
+                    {"id": "discord-delivery", "label": "Discord配信Lambda", "componentLayers": ["discord-delivery"]},
+                ],
+                "branches": [],
+            },
+            {
+                "id": "priority-3-cross-backup",
+                "priority": "優先3",
+                "label": "相互バックアップ経路",
+                "description": "非担当リージョンの引継ぎ経路です。通常3秒待機し、先行系統が配信できなかった場合だけ送信します。",
+                "sequence": [
+                    {"id": "api-ingress", "label": "受付API・HA制御", "componentLayers": ["api-ingress"]},
+                    {"id": "cross-backup", "label": "非担当側候補SQS・Lambda", "note": "通常3秒待機", "componentLayers": ["cross-backup"]},
+                    {"id": "lease", "label": "MRSC所有権判定", "note": "未取得時のみ通過", "componentLayers": ["lease"]},
+                    {"id": "discord-delivery", "label": "バックアップDiscord配信Lambda", "componentLayers": ["discord-delivery"]},
+                ],
+                "branches": [],
+            },
+            {
+                "id": "ec2-ingress",
                 "label": "EC2起点",
+                "description": "EC2から送信する場合も受付API以降は同じ優先制御とMRSC二重配信防止を通過します。",
                 "sequence": [
                     {"id": "ec2", "label": "EC2", "componentLayers": ["ec2"]},
-                    {"id": "aws-fast", "label": "AWS高速配信", "componentLayers": ["aws-fast"]},
+                    {"id": "api-ingress", "label": "受付API・HA制御", "componentLayers": ["api-ingress"]},
+                    {"id": "aws-fast", "label": "高速判定・分散", "componentLayers": ["aws-fast"]},
+                    {"id": "lease", "label": "MRSC所有権判定", "componentLayers": ["lease"]},
+                    {"id": "discord-delivery", "label": "Discord配信Lambda", "componentLayers": ["discord-delivery"]},
                 ],
                 "branches": [],
             },
@@ -1678,6 +1884,7 @@ def _load_flow_system_summary():
     loaders = {
         "lambda": _lambda_summary,
         "sqs": _sqs_summary,
+        "deliveryLease": _lease_table_summary,
         "alarms": _alarm_summary,
         "backupInstances": _ec2_summary,
         "homeServers": _home_server_summary,
