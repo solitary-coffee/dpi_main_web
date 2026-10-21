@@ -1768,72 +1768,75 @@ def _load_delivery_flow():
             {"region": "ap-northeast-1", "regionLabel": "東京リージョン", "types": ["緊急地震速報", "地震情報", "津波情報", "警報・震度系"]},
             {"region": "ap-northeast-3", "regionLabel": "大阪リージョン", "types": ["気象情報", "火山情報", "その他"]},
         ],
-        "routes": [
-            {
-                "id": "source-to-ingress",
-                "label": "上流API・自宅サーバーから受付APIまで",
-                "description": "DMDATA等の上流情報を自宅サーバーが受信し、担当リージョンの受付APIへ送信します。",
-                "sequence": [
-                    {"id": "upstream", "label": "上流API", "componentLayers": ["upstream"]},
-                    {"id": "home", "label": "自宅サーバー", "componentLayers": ["home"]},
-                    {"id": "api-ingress", "label": "受付API・HA制御", "componentLayers": ["api-ingress"]},
-                ],
-                "branches": [],
+        "flowGraph": {
+            "sources": [
+                {
+                    "id": "home-source",
+                    "label": "上流API → 自宅サーバー",
+                    "description": "DMDATA等の上流情報を自宅サーバーが受信して受付APIへ送信します。",
+                    "sequence": [
+                        {"id": "upstream", "label": "上流API", "componentLayers": ["upstream"]},
+                        {"id": "home", "label": "自宅サーバー", "componentLayers": ["home"]},
+                    ],
+                },
+                {
+                    "id": "ec2-source",
+                    "label": "EC2起点",
+                    "description": "EC2からの送信も共通の受付API・HA制御へ合流します。",
+                    "sequence": [
+                        {"id": "ec2", "label": "EC2", "componentLayers": ["ec2"]},
+                    ],
+                },
+            ],
+            "ingress": {
+                "id": "api-ingress",
+                "label": "受付API・HA制御",
+                "note": "すべての起点がここへ合流し、担当リージョンと配信候補を決定",
+                "componentLayers": ["api-ingress"],
             },
-            {
-                "id": "priority-1-fast",
-                "priority": "優先1",
-                "label": "担当リージョン高速経路",
-                "description": "受付後の最優先経路です。高速系統には候補判定・分散処理だけを表示し、Discord送信Lambdaは別枠にしています。",
-                "sequence": [
-                    {"id": "api-ingress", "label": "受付API・HA制御", "componentLayers": ["api-ingress"]},
-                    {"id": "aws-fast", "label": "高速判定・分散", "note": "control-inline・待機なし", "componentLayers": ["aws-fast"]},
-                    {"id": "lease", "label": "MRSC所有権判定", "note": "最初の1系統だけ通過", "componentLayers": ["lease"]},
-                    {"id": "discord-delivery", "label": "Discord配信Lambda", "componentLayers": ["discord-delivery"]},
-                ],
-                "branches": [],
+            "paths": [
+                {
+                    "id": "priority-1-fast",
+                    "priority": "優先1",
+                    "label": "担当リージョン高速経路",
+                    "description": "control-inlineで待機せず、高速判定・分散処理を実行します。",
+                    "sequence": [
+                        {"id": "aws-fast", "label": "高速判定・分散", "note": "control-inline・待機なし", "componentLayers": ["aws-fast"]},
+                    ],
+                },
+                {
+                    "id": "priority-2-local-sqs",
+                    "priority": "優先2",
+                    "label": "担当リージョン候補SQS経路",
+                    "description": "高速処理と並行する耐久経路です。担当側は待機0秒で候補判定します。",
+                    "sequence": [
+                        {"id": "sqs", "label": "候補SQS（担当側）", "note": "待機0秒", "componentLayers": ["sqs"]},
+                        {"id": "regional-backup", "label": "同一リージョン候補判定", "componentLayers": ["regional-backup"]},
+                    ],
+                },
+                {
+                    "id": "priority-3-cross-backup",
+                    "priority": "優先3",
+                    "label": "相互バックアップ経路",
+                    "description": "非担当リージョンで通常3秒待機し、先行経路が失敗した場合だけ引き継ぎます。",
+                    "sequence": [
+                        {"id": "cross-backup", "label": "非担当側候補SQS・Lambda", "note": "通常3秒待機", "componentLayers": ["cross-backup"]},
+                    ],
+                },
+            ],
+            "gate": {
+                "id": "lease",
+                "label": "MRSC所有権判定",
+                "note": "優先経路のうち最初に所有権を取得した1系統だけが通過",
+                "componentLayers": ["lease"],
             },
-            {
-                "id": "priority-2-local-sqs",
-                "priority": "優先2",
-                "label": "担当リージョン候補SQS経路",
-                "description": "高速処理と並行して保存される耐久経路です。担当側はDelaySeconds 0で直ちに候補判定へ進みます。",
-                "sequence": [
-                    {"id": "api-ingress", "label": "受付API・HA制御", "componentLayers": ["api-ingress"]},
-                    {"id": "sqs", "label": "候補SQS（担当側）", "note": "待機0秒", "componentLayers": ["sqs"]},
-                    {"id": "regional-backup", "label": "同一リージョン候補判定", "componentLayers": ["regional-backup"]},
-                    {"id": "lease", "label": "MRSC所有権判定", "note": "高速側が取得済みなら抑止", "componentLayers": ["lease"]},
-                    {"id": "discord-delivery", "label": "Discord配信Lambda", "componentLayers": ["discord-delivery"]},
-                ],
-                "branches": [],
+            "exit": {
+                "id": "discord-delivery",
+                "label": "Discord配信Lambda",
+                "note": "所有権を取得した経路だけが配信種別別Lambdaへ到達",
+                "componentLayers": ["discord-delivery"],
             },
-            {
-                "id": "priority-3-cross-backup",
-                "priority": "優先3",
-                "label": "相互バックアップ経路",
-                "description": "非担当リージョンの引継ぎ経路です。通常3秒待機し、先行系統が配信できなかった場合だけ送信します。",
-                "sequence": [
-                    {"id": "api-ingress", "label": "受付API・HA制御", "componentLayers": ["api-ingress"]},
-                    {"id": "cross-backup", "label": "非担当側候補SQS・Lambda", "note": "通常3秒待機", "componentLayers": ["cross-backup"]},
-                    {"id": "lease", "label": "MRSC所有権判定", "note": "未取得時のみ通過", "componentLayers": ["lease"]},
-                    {"id": "discord-delivery", "label": "バックアップDiscord配信Lambda", "componentLayers": ["discord-delivery"]},
-                ],
-                "branches": [],
-            },
-            {
-                "id": "ec2-ingress",
-                "label": "EC2起点",
-                "description": "EC2から送信する場合も受付API以降は同じ優先制御とMRSC二重配信防止を通過します。",
-                "sequence": [
-                    {"id": "ec2", "label": "EC2", "componentLayers": ["ec2"]},
-                    {"id": "api-ingress", "label": "受付API・HA制御", "componentLayers": ["api-ingress"]},
-                    {"id": "aws-fast", "label": "高速判定・分散", "componentLayers": ["aws-fast"]},
-                    {"id": "lease", "label": "MRSC所有権判定", "componentLayers": ["lease"]},
-                    {"id": "discord-delivery", "label": "Discord配信Lambda", "componentLayers": ["discord-delivery"]},
-                ],
-                "branches": [],
-            },
-        ],
+        },
         "costPolicy": "自動ポーリングは行わず、画面更新時に既存のハートビート・監視記録・AWS属性を再利用します。",
         "observedAt": observed_at,
     }
