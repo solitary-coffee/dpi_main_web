@@ -39,6 +39,28 @@ function renderFlow(flow) {
     document.getElementById('observed-at').textContent = `確認: ${formatDate(flow.observedAt)}`;
     document.getElementById('cost-policy').textContent = flow.costPolicy || '';
 
+    const priorityBox = document.getElementById('flow-priority-rules');
+    priorityBox.replaceChildren(...(flow.priorityRules || []).map((rule) => {
+        const card = el('article', 'flow-priority-card');
+        card.append(
+            el('span', 'flow-priority-number', rule.priority || '経路'),
+            el('strong', '', rule.title || '配信経路'),
+            el('p', '', rule.detail || ''),
+        );
+        return card;
+    }));
+
+    const assignmentBox = document.getElementById('flow-primary-assignments');
+    assignmentBox.replaceChildren(...(flow.primaryAssignments || []).map((assignment) => {
+        const item = el('article', 'flow-assignment-card');
+        item.append(
+            el('strong', '', assignment.regionLabel || resourceRegionLabel(assignment.region)),
+            el('code', '', assignment.region || ''),
+            el('p', '', (assignment.types || []).join('、') || '担当種別なし'),
+        );
+        return item;
+    }));
+
     const container = document.getElementById('flow-layers');
     container.replaceChildren();
     const components = flow.components || [];
@@ -61,7 +83,13 @@ function renderFlow(flow) {
 
 function routePanel(route, components) {
     const panel = el('article', 'flow-route');
-    panel.append(el('h3', '', route.label || '配信経路'));
+    const header = el('header', 'flow-route-header');
+    const titleRow = el('div', 'flow-route-title-row');
+    if (route.priority) titleRow.append(el('span', 'flow-priority-number flow-route-priority', route.priority));
+    titleRow.append(el('h3', '', route.label || '配信経路'));
+    header.append(titleRow);
+    if (route.description) header.append(el('p', 'flow-route-description', route.description));
+    panel.append(header);
     const sequence = el('div', 'flow-route-sequence');
     for (const [index, stage] of (route.sequence || []).entries()) {
         if (index > 0) sequence.append(el('span', 'flow-route-arrow', ''));
@@ -100,6 +128,7 @@ function routeStage(stage, components, branch = false) {
     statusSummary.append(el('span', 'flow-stage-count', `${number(matches.length)}系統`));
     heading.append(headingText, statusSummary);
     section.append(heading);
+    if (stage.note) section.append(el('p', 'flow-stage-note', stage.note));
     if (!matches.length) grid.append(el('p', 'empty', '対象系統はありません。'));
     for (const component of matches) grid.append(componentCard(component));
     section.append(grid);
