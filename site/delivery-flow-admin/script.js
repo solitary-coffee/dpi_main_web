@@ -127,19 +127,39 @@ function componentCard(component) {
     ];
     if (component.lastTitle) rows.push(['直近配信タイトル', component.lastTitle]);
     if (component.lastDeliveryId) rows.push(['直近配信ID', component.lastDeliveryId]);
-    if ((component.functions || []).length) rows.push(['Lambda', component.functions.join('、')]);
     if (component.ec2Details) rows.push(...ec2DetailRows(component.ec2Details));
     for (const [label, value] of rows) list.append(el('dt', '', label), el('dd', '', value));
     body.append(list);
+    if ((component.functions || []).length) {
+        const functionSection = el('section', 'resource-breakdown lambda-breakdown');
+        functionSection.append(el('h5', '', 'Lambda内訳'));
+        const functionList = el('ul', 'resource-list');
+        for (const entry of component.functions) {
+            const functionName = typeof entry === 'string' ? entry : entry.name;
+            const functionRegion = typeof entry === 'string'
+                ? (component.targetRegion || component.region)
+                : (entry.region || component.targetRegion || component.region);
+            const item = el('li', 'resource-item');
+            item.append(el('code', 'resource-name', functionName || '名称未取得'));
+            if (functionRegion) item.append(el('span', 'flow-region-badge resource-region-badge', resourceRegionLabel(functionRegion)));
+            functionList.append(item);
+        }
+        functionSection.append(functionList);
+        body.append(functionSection);
+    }
     if ((component.queues || []).length) {
-        const queueSection = el('section', 'queue-breakdown');
+        const queueSection = el('section', 'resource-breakdown queue-breakdown');
         queueSection.append(el('h5', '', 'キュー内訳'));
         const queueList = el('ul', 'queue-list');
         for (const queue of component.queues) {
             const state = queue.activityState || 'unknown';
             const item = el('li', `queue-item queue-${state}`);
+            const queueRegion = queue.region || component.targetRegion || component.region;
+            const queueIdentity = el('span', 'queue-identity');
+            queueIdentity.append(el('strong', '', queue.role || '用途未分類SQS'));
+            if (queueRegion) queueIdentity.append(el('span', 'flow-region-badge resource-region-badge', resourceRegionLabel(queueRegion)));
             item.append(
-                el('strong', '', queue.role || '用途未分類SQS'),
+                queueIdentity,
                 el('span', `queue-state state-${state}`, queueStateLabel(queue)),
                 el('code', 'queue-name', queue.name || '名称未取得'),
                 el('small', '', `処理待ち ${number(queue.visible)} / 処理中 ${number(queue.inFlight)} / 遅延待機 ${number(queue.delayed)}${queue.deadLetter ? ' / DLQ' : ''}`),
@@ -157,6 +177,7 @@ function ec2DetailRows(details) {
     const securityGroups = (details.securityGroups || []).map((group) => group.name ? `${group.name} (${group.id || 'ID不明'})` : group.id).filter(Boolean);
     return [
         ['インスタンスID', details.instanceId || '未取得'],
+        ['リージョン', details.region ? resourceRegionLabel(details.region) : (details.regionLabel || '未取得')],
         ['EC2状態', details.state || '未取得'],
         ['インスタンス/システム検査', `${healthLabel(details.instanceStatus)} / ${healthLabel(details.systemStatus)}`],
         ['AZ・タイプ', [details.availabilityZone, details.instanceType, details.architecture].filter(Boolean).join(' / ') || '未取得'],
@@ -191,6 +212,11 @@ function regionLabel(region) {
         home: '自宅サーバー',
         global: '共通',
     }[region] || region || '');
+}
+
+function resourceRegionLabel(region) {
+    const label = regionLabel(region);
+    return label === region ? region : `${label} (${region})`;
 }
 
 function stageStatusSummary(components) {

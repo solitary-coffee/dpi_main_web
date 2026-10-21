@@ -75,7 +75,7 @@
                     <label>進行状況<select id="maintenance-status" required><option value="scheduled">予定</option><option value="in_progress">実施中</option><option value="verifying">確認中</option><option value="completed">完了</option></select></label>
                     <label>開始日時<input id="maintenance-start" type="datetime-local" required></label>
                     <label>終了日時<input id="maintenance-end" type="datetime-local" required></label>
-                    <label>対象の状態<select id="maintenance-component-status"><option value="under_maintenance">メンテナンス中</option><option value="operational">正常稼働</option><option value="degraded_performance">パフォーマンス低下</option><option value="partial_outage">部分停止</option><option value="major_outage">重大障害</option></select></label>
+                    <label>実施中の対象状態<select id="maintenance-component-status"><option value="under_maintenance">メンテナンス中</option><option value="operational">正常稼働</option><option value="degraded_performance">パフォーマンス低下</option><option value="partial_outage">部分停止</option><option value="major_outage">重大障害</option></select><small>「予定」で保存した時点では変更しません。開始時の自動変更を有効にした場合、または「実施中」へ更新した場合に反映します。</small></label>
                     <label class="wide">案内内容<textarea id="maintenance-body" rows="5" maxlength="2000" required></textarea></label>
                     <fieldset class="wide"><legend>対象コンポーネント</legend><div id="maintenance-components" class="component-checks"></div></fieldset>
                     <div class="wide option-grid">

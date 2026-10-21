@@ -168,8 +168,15 @@ function validateIncident(input, isMaintenance, incidentId) {
         impact_override: impact,
         deliver_notifications: input.notify === true,
         component_ids: componentIds,
-        components: Object.fromEntries(componentIds.map((id) => [id, componentStatus])),
     };
+    // Statuspage applies the `components` status map immediately, even when the
+    // incident itself is only scheduled. Keep the component association via
+    // `component_ids`; Statuspage's auto-transition changes it at the start.
+    // An explicitly in-progress maintenance (and every normal incident) may
+    // still update the selected components immediately.
+    if (!isMaintenance || status !== 'scheduled') {
+        incident.components = Object.fromEntries(componentIds.map((id) => [id, componentStatus]));
+    }
     if (isMaintenance) {
         const scheduledFor = isoDate(input.scheduledFor, '開始日時');
         const scheduledUntil = isoDate(input.scheduledUntil, '終了日時');

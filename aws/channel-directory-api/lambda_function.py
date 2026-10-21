@@ -1397,6 +1397,7 @@ def _load_delivery_flow():
             "passageMs": recent.get("maxLatencyMs") if recent else None,
             "lastTitle": recent.get("title") if recent else None,
             "lastDeliveryId": recent.get("deliveryId") if recent else None,
+            "functions": sorted(function_names),
         })
 
     sqs = system.get("sqs") or {}
@@ -1569,6 +1570,8 @@ def _load_delivery_flow():
             "lastDeliveryId": recent.get("deliveryId") if recent else None,
             "ec2Details": {
                 "instanceId": instance.get("instanceId"), "state": instance.get("state"),
+                "region": instance.get("region"),
+                "regionLabel": "東京リージョン" if instance.get("region") == "ap-northeast-1" else "大阪リージョン",
                 "normalState": instance.get("normalState"), "backupRole": instance.get("backupRole"),
                 "availabilityZone": instance.get("availabilityZone"), "instanceType": instance.get("instanceType"),
                 "architecture": instance.get("architecture"), "imageId": instance.get("imageId"),

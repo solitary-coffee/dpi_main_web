@@ -125,6 +125,13 @@ test('メンテナンスの日時と自動遷移設定を検証する', () => {
     }, true, null);
     assert.equal(incident.scheduled_auto_in_progress, true);
     assert.equal(incident.scheduled_auto_completed, true);
-    assert.deepEqual(incident.components, { component001: 'under_maintenance' });
+    assert.deepEqual(incident.component_ids, ['component001']);
+    assert.equal(incident.components, undefined);
+    const active = __test.validateIncident({
+        name: '定期メンテナンス', body: '更新作業を実施します。', status: 'in_progress', impact: 'none',
+        scheduledFor: '2026-10-18T00:00:00Z', scheduledUntil: '2026-10-18T01:00:00Z',
+        componentIds: ['component001'], componentStatus: 'under_maintenance',
+    }, true, null);
+    assert.deepEqual(active.components, { component001: 'under_maintenance' });
     assert.throws(() => __test.validateIncident({ ...incident, scheduledFor: 'invalid', scheduledUntil: 'invalid' }, true, null), /開始日時/u);
 });
