@@ -10,7 +10,8 @@ KEY = "ADMIN#SYSTEM_MODE"
 LEASE_SECONDS = 180
 
 
-def reserve(table, current, *, mode, plan, overrides, actor, reason,
+def reserve(table, current, *, mode, plan, overrides, route_plan=None,
+            route_overrides=None, notification_policy=None, actor, reason,
             request_id, expected_revision, now, previous_concurrency):
     revision = int(current.get("revision", 0))
     if type(expected_revision) is not int or expected_revision != revision:
@@ -21,6 +22,8 @@ def reserve(table, current, *, mode, plan, overrides, actor, reason,
         raise ValueError("自動監視がEC2を操作中です。数秒後に最新情報へ更新して再操作してください。")
     item = dict(current)
     item.update(pk=KEY, mode=mode, node_plan=plan, node_overrides=overrides or {},
+                route_plan=route_plan or {}, route_overrides=route_overrides or {},
+                notification_policy=notification_policy or {},
                 reason=reason, requested_by=actor, requested_at=now,
                 revision=revision + 1, operation_id=request_id,
                 transition_status="applying", transition_error="",

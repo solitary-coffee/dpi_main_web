@@ -20,10 +20,19 @@ from botocore.config import Config
 from botocore.exceptions import ClientError
 from xml_delivery import render_xml
 from delivery_gate import DeliveryGate, DeliveryBlocked
-from operating_modes import application_status, stored_plan
+from operating_modes import application_status, stored_plan, stored_route_plan
 from mode_transition import reserve as reserve_mode_transition, finish as finish_mode_transition
-from operating_modes import MODES, NODES, RUNTIME_COMPONENTS, LABELS, REGIONAL_MODES, RUNTIME_INTEGRATION_COMPLETE, build_plan, runtime_readiness
+from operating_modes import (MODES, NODES, ROUTES, RUNTIME_COMPONENTS, LABELS,
+                             REGIONAL_MODES, RUNTIME_INTEGRATION_COMPLETE,
+                             PROTOCOL_VERSION, build_plan, build_route_plan,
+                             notification_policy, runtime_readiness)
 from json_support import json_default
+from test_delivery import (TEST_SLOT, TEST_RUN_TTL_SECONDS, ROUTES as TEST_ROUTES,
+                           build_message as build_test_message,
+                           candidate_event as build_test_candidate_event,
+                           discover_functions,
+                           validate_request as validate_test_request,
+                           worker_event as build_test_worker_event)
 
 
 TABLE_NAME = os.environ.get("TABLE_NAME", "EarthquakeData").strip()
@@ -74,6 +83,7 @@ _secret_cache = {"expires_at": 0.0, "value": None}
 _dmdata_key_cache = {"expires_at": 0.0, "value": None}
 _dmdata_history_cache = {}
 _dmdata_xml_cache = {}
+_test_inventory_cache = {"expires_at": 0.0, "value": None}
 _discord_rate_lock = threading.Lock()
 _discord_next_request_at = 0.0
 _admin_mode_gate = None
@@ -94,6 +104,8 @@ def _admin_delivery_check(admitted_at):
 
 
 def lambda_handler(event, context):
+    if isinstance(event, dict) and event.get("_dpi_admin_test_runner") is True:
+        return _run_test_delivery_internal(event)
     if not _authorized(event):
         return _response(401, {"success": False, "message": "認証に失敗しました。"})
     method = event.get("requestContext", {}).get("http", {}).get("method", "GET").upper()
@@ -149,6 +161,15 @@ def lambda_handler(event, context):
             "flow": _load_delivery_flow(),
             "observedAt": datetime.now(tz=timezone.utc).isoformat(),
         })
+    if view == "test-delivery":
+        try:
+            return _response(200, {
+                "success": True,
+                **_test_delivery_summary(_clean(params.get("runId"), 80)),
+                "observedAt": datetime.now(tz=timezone.utc).isoformat(),
+            })
+        except ValueError as error:
+            return _response(400, {"success": False, "message": str(error)})
     query = _clean(params.get("q"), 120).casefold()
     delivery = _clean(params.get("delivery"), 100).casefold()
     limit = _parse_limit(params.get("limit"))
@@ -217,6 +238,10 @@ def _handle_action(body):
         result = _xml_dispatch(body, actor, request_id)
     elif action == "dmdata-load-xml":
         result = _dmdata_load_xml(body)
+    elif action == "test-delivery-preview":
+        result = _test_delivery_preview(body, actor)
+    elif action == "test-delivery":
+        result = _start_test_delivery(body, actor, request_id)
     elif action == "discord-announcement-preview":
         result = _discord_announcement_preview(body)
     elif action == "discord-announcement":
@@ -1295,10 +1320,17 @@ def _system_mode_summary():
     readiness = runtime_readiness(runtime, int(time.time()))
     readiness["integrationComplete"] = RUNTIME_INTEGRATION_COMPLETE
     readiness["ready"] = readiness["ready"] and RUNTIME_INTEGRATION_COMPLETE
+    maintenance_readiness = runtime_readiness(runtime, int(time.time()), PROTOCOL_VERSION)
+    maintenance_readiness["integrationComplete"] = RUNTIME_INTEGRATION_COMPLETE
+    maintenance_readiness["ready"] = maintenance_readiness["ready"] and RUNTIME_INTEGRATION_COMPLETE
     try:
         plan = stored_plan(control_mode, manual.get("node_overrides"))
     except ValueError:
         plan = {}
+    try:
+        route_plan = stored_route_plan(control_mode, manual.get("route_overrides"))
+    except ValueError:
+        route_plan = build_route_plan("normal")
     regions = []
     for region_role in ("TOKYO", "OSAKA"):
         record = table.get_item(
@@ -1321,6 +1353,7 @@ def _system_mode_summary():
         "automaticMonitoringEnabled": control.get("auto_monitor_enabled") is True,
         "integratedControl": readiness["ready"],
         "runtimeReadiness": readiness,
+        "maintenanceReadiness": maintenance_readiness,
         "revision": _integer(manual.get("revision"), 0),
         "transitionStatus": _clean(manual.get("transition_status"), 40) or "legacy_unverified",
         "transitionError": _clean(manual.get("transition_error"), 300),
@@ -1328,6 +1361,8 @@ def _system_mode_summary():
             mode_name: build_plan(mode_name)
             for mode_name in ("automatic", "normal", "standby", "backup", "emergency", "emergency_stop", "failover")
         },
+        "routePlan": route_plan,
+        "notificationPolicy": manual.get("notification_policy") or notification_policy(control_mode),
         "nodes": [{"nodeId": node, "requested": plan.get(node),
                    "observed": runtime[node].get("delivery"),
                    "observedWaitSeconds": runtime[node].get("wait_seconds"),
@@ -2087,7 +2122,11 @@ def _control_system_mode(body, actor, request_id):
     reason = _clean(body.get("reason"), 300)
     if mode not in ALLOWED_SYSTEM_MODES:
         raise ValueError("システムモードを選択してください。")
-    plan = build_plan(mode, body.get("nodeOverrides"))
+    node_overrides = body.get("nodeOverrides")
+    route_overrides = body.get("routeOverrides")
+    plan = build_plan(mode, node_overrides)
+    route_plan = build_route_plan(mode, route_overrides)
+    notify_policy = notification_policy(mode)
     if not hmac.compare_digest(_clean(body.get("confirmation"), 100), expected_confirmation):
         raise ValueError(f"確認欄に {expected_confirmation} と入力してください。")
     if mode != "automatic" and len(reason) < 4:
@@ -2096,7 +2135,8 @@ def _control_system_mode(body, actor, request_id):
         raise ValueError("システムモード用テーブルが設定されていません。")
 
     table = _dynamodb.Table(STATE_TABLE_NAME)
-    readiness = runtime_readiness(_mode_runtime_records(), int(time.time()))
+    runtime_records = _mode_runtime_records()
+    readiness = runtime_readiness(runtime_records, int(time.time()))
     integrated = RUNTIME_INTEGRATION_COMPLETE and readiness["ready"]
     # New controls must never claim to stop systems without runtime support.
     if mode not in {"automatic", "normal", "failover"}:
@@ -2104,6 +2144,10 @@ def _control_system_mode(body, actor, request_id):
             raise ValueError("新モードの配信側実装は準備中です。自宅・EC2・AWS全系統の対応完了後に利用できます。")
         if not readiness["ready"]:
             raise ValueError("配信側制御の適用・疎通確認が未完了です: " + ", ".join(readiness["missing"]))
+    if mode == "maintenance":
+        maintenance_readiness = runtime_readiness(runtime_records, int(time.time()), PROTOCOL_VERSION)
+        if not maintenance_readiness["ready"]:
+            raise ValueError("メンテナンス制御V2の適用・疎通確認が未完了です: " + ", ".join(maintenance_readiness["missing"]))
     current = table.get_item(Key={"pk": MANUAL_MODE_KEY}, ConsistentRead=True).get("Item", {})
     previous = current.get("previous_concurrency") if isinstance(current.get("previous_concurrency"), dict) else {}
     changed_instances = []
@@ -2116,7 +2160,9 @@ def _control_system_mode(body, actor, request_id):
             previous[region] = concurrency.get("ReservedConcurrentExecutions", -1)
     try:
         operation = reserve_mode_transition(
-            table, current, mode=mode, plan=plan, overrides=body.get("nodeOverrides"),
+            table, current, mode=mode, plan=plan, overrides=node_overrides,
+            route_plan=route_plan, route_overrides=route_overrides,
+            notification_policy=notify_policy,
             actor=actor, reason=reason, request_id=request_id,
             expected_revision=body.get("expectedRevision"), now=now,
             previous_concurrency=previous,
@@ -2138,6 +2184,7 @@ def _control_system_mode(body, actor, request_id):
     finish_mode_transition(table, operation, status="awaiting_ack" if integrated else "legacy_unverified")
     _audit_operation(actor, "system_mode.change", request_id, {
         "mode": mode, "reason": reason, "revision": operation["revision"],
+        "route_plan": route_plan, "notification_policy": notify_policy,
         "changed_instances": changed_instances,
     })
     return {
@@ -2220,7 +2267,7 @@ def _reconcile_instances_for_mode(mode, plan=None):
         for instance in instances:
             if mode == "emergency_stop":
                 continue  # Keep the control agents online to acknowledge stopping.
-            desired = "running" if mode in {"failover", "backup", "standby", "emergency", "manual"} else instance.get("normalState")
+            desired = "running" if mode in {"failover", "backup", "standby", "emergency", "manual", "maintenance"} else instance.get("normalState")
             current = instance.get("state")
             if mode == "manual":
                 node = instance.get("modeNode")
@@ -2228,6 +2275,11 @@ def _reconcile_instances_for_mode(mode, plan=None):
                     raise ValueError("EC2と配信元の対応を確認できません: " + instance["instanceId"])
                 if plan[node]["delivery"] == "stopped":
                     desired = current  # Do not incur a boot just to keep a stopped sender stopped.
+            elif mode == "maintenance":
+                node = instance.get("modeNode")
+                if node not in (plan or {}):
+                    raise ValueError("EC2と配信元の対応を確認できません: " + instance["instanceId"])
+                desired = "stopped" if plan[node]["delivery"] == "stopped" else "running"
             if desired == "running" and current == "stopped":
                 start_ids.append(instance["instanceId"])
             elif desired == "stopped" and current == "running":
@@ -2239,6 +2291,326 @@ def _reconcile_instances_for_mode(mode, plan=None):
             client.stop_instances(InstanceIds=stop_ids)
             changed.extend({"region": region, "instanceId": value, "operation": "stop"} for value in stop_ids)
     return changed
+
+
+def _test_delivery_inventory():
+    now = time.monotonic()
+    if _test_inventory_cache["expires_at"] > now and _test_inventory_cache["value"] is not None:
+        return _test_inventory_cache["value"]
+    rows = {}
+    for region in OPERATING_REGIONS:
+        client = _client("lambda", region)
+        rows[region] = [function for page in client.get_paginator("list_functions").paginate()
+                        for function in page.get("Functions", [])]
+    value = discover_functions(rows)
+    _test_inventory_cache.update({"expires_at": now + 60, "value": value})
+    return value
+
+
+def _test_delivery_targets():
+    return [value for value in _load_dispatch_targets(TEST_SLOT)
+            if _valid_discord_webhook_url(value)]
+
+
+def _public_test_run(item):
+    if not isinstance(item, dict):
+        return None
+    return {
+        "runId": _clean(item.get("run_id"), 80),
+        "status": _clean(item.get("status"), 40),
+        "requestedBy": _clean(item.get("requested_by"), 254),
+        "requestedAt": _epoch_iso(_integer(item.get("requested_at"), 0)),
+        "startedAt": _epoch_iso(_integer(item.get("started_at"), 0)),
+        "completedAt": _epoch_iso(_integer(item.get("completed_at"), 0)),
+        "sources": _string_list(item.get("sources"), 20, 40),
+        "routes": _string_list(item.get("routes"), 20, 40),
+        "functionCount": _integer(item.get("function_count"), 0),
+        "targetCount": _integer(item.get("target_count"), 0),
+        "successCount": _integer(item.get("success_count"), 0),
+        "failureCount": _integer(item.get("failure_count"), 0),
+        "pendingCount": _integer(item.get("pending_count"), 0),
+        "steps": item.get("steps") if isinstance(item.get("steps"), list) else [],
+        "error": _clean(item.get("error"), 300),
+    }
+
+
+def _update_test_run_index(run_id):
+    table = _dynamodb.Table(STATE_TABLE_NAME)
+    key = "ADMIN#TEST_RUN_INDEX"
+    current = table.get_item(Key={"pk": key}, ConsistentRead=True).get("Item", {})
+    previous = [_clean(value, 80) for value in current.get("run_ids", [])]
+    ordered = [run_id, *[value for value in previous if value and value != run_id]]
+    retained, evicted = ordered[:40], ordered[40:]
+    table.put_item(Item={"pk": key, "run_ids": retained, "updated_at": int(time.time())})
+    if evicted:
+        with table.batch_writer() as batch:
+            for value in evicted:
+                batch.delete_item(Key={"pk": f"ADMIN#TEST_RUN#{value}"})
+
+
+def _test_delivery_summary(run_id=""):
+    if not STATE_TABLE_NAME:
+        raise ValueError("試験配信の状態テーブルが設定されていません。")
+    table = _dynamodb.Table(STATE_TABLE_NAME)
+    inventory = _test_delivery_inventory()
+    targets = _test_delivery_targets()
+    if run_id:
+        item = table.get_item(Key={"pk": f"ADMIN#TEST_RUN#{run_id}"}, ConsistentRead=True).get("Item")
+        if not item:
+            raise ValueError("指定した試験実行は見つかりません。")
+        runs = [_public_test_run(item)]
+    else:
+        index = table.get_item(Key={"pk": "ADMIN#TEST_RUN_INDEX"}, ConsistentRead=True).get("Item", {})
+        run_ids = [_clean(value, 80) for value in index.get("run_ids", [])[:20]]
+        rows = {}
+        if run_ids:
+            response = _dynamodb.batch_get_item(RequestItems={STATE_TABLE_NAME: {
+                "Keys": [{"pk": f"ADMIN#TEST_RUN#{value}"} for value in run_ids],
+                "ConsistentRead": True,
+            }})
+            rows = {item.get("run_id"): item for item in response.get("Responses", {}).get(STATE_TABLE_NAME, [])}
+        runs = [_public_test_run(rows[value]) for value in run_ids if value in rows]
+    return {
+        "configured": True,
+        "testSlot": TEST_SLOT,
+        "testSlotTargetCount": len(targets),
+        "functions": inventory,
+        "routes": [{"id": route, "label": {
+            "fast": "高速系統", "sqs": "SQS系統",
+            "regional-backup": "リージョン内バックアップ",
+            "cross-region-backup": "相互バックアップ",
+        }[route]} for route in TEST_ROUTES],
+        "runs": runs,
+    }
+
+
+def _test_delivery_preview(body, actor):
+    inventory = _test_delivery_inventory()
+    request = validate_test_request(body, inventory)
+    targets = _test_delivery_targets()
+    if not targets:
+        raise ValueError("配信枠「配信テスト」に有効なDiscord Webhookがありません。")
+    run_id = "preview-" + uuid.uuid4().hex[:12]
+    messages = []
+    for source in request["sources"]:
+        for route in request["routes"]:
+            messages.append(build_test_message(
+                run_id, title=request["title"], source=source, route=route,
+                requested_by=actor, note=request["note"], status="プレビュー",
+            ))
+    for region, name in request["functions"][:10]:
+        messages.append(build_test_message(
+            run_id, title=request["title"], source=request["sources"][0],
+            function_name=f"{region} / {name}", requested_by=actor,
+            note=request["note"], status="プレビュー",
+        ))
+    return {
+        "message": "試験配信プレビューを作成しました。",
+        "preview": messages[:20],
+        "plannedSteps": len(request["sources"]) * len(request["routes"]) + len(request["functions"]),
+        "testSlot": TEST_SLOT,
+        "testSlotTargetCount": len(targets),
+    }
+
+
+def _start_test_delivery(body, actor, request_id):
+    if not STATE_TABLE_NAME:
+        raise ValueError("試験配信の状態テーブルが設定されていません。")
+    inventory = _test_delivery_inventory()
+    request = validate_test_request(body, inventory)
+    targets = _test_delivery_targets()
+    if not targets:
+        raise ValueError("配信枠「配信テスト」に有効なDiscord Webhookがありません。")
+    _admin_delivery_check(time.time())
+    run_id = uuid.uuid4().hex[:20]
+    runner_token = uuid.uuid4().hex
+    now = int(time.time())
+    item = {
+        "pk": f"ADMIN#TEST_RUN#{run_id}", "run_id": run_id,
+        "runner_token": runner_token, "status": "queued", "requested_by": actor,
+        "requested_at": now, "expires_at": now + TEST_RUN_TTL_SECONDS,
+        "sources": request["sources"], "routes": request["routes"],
+        "functions": [{"region": region, "name": name} for region, name in request["functions"]],
+        "function_count": len(request["functions"]), "target_count": len(targets),
+        "title": request["title"], "note": request["note"], "steps": [],
+        "success_count": 0, "failure_count": 0, "pending_count": 0,
+    }
+    _dynamodb.Table(STATE_TABLE_NAME).put_item(
+        Item=item, ConditionExpression="attribute_not_exists(pk)")
+    _update_test_run_index(run_id)
+    function_name = os.environ.get("AWS_LAMBDA_FUNCTION_NAME", "dpi-channel-directory-api")
+    response = _client("lambda", MODE_AUTHORITY_REGION).invoke(
+        FunctionName=function_name, InvocationType="Event",
+        Payload=json.dumps({"_dpi_admin_test_runner": True, "runId": run_id,
+                            "runnerToken": runner_token}, separators=(",", ":")).encode("utf-8"),
+    )
+    if int(response.get("StatusCode", 0)) != 202:
+        raise ValueError("試験配信のバックグラウンド実行を開始できませんでした。")
+    _audit_operation(actor, "test_delivery.start", request_id, {
+        "run_id": run_id, "sources": request["sources"], "routes": request["routes"],
+        "function_count": len(request["functions"]), "target_count": len(targets),
+    })
+    return {"message": "試験配信を開始しました。結果は実行一覧へ順次反映されます。",
+            "runId": run_id, "status": "queued", "plannedSteps": len(request["sources"]) * len(request["routes"]) + len(request["functions"])}
+
+
+def _test_invoke_worker(run_id, actor, source, target, url, title, note):
+    region, name = target["region"], target["name"]
+    event = build_test_worker_event(
+        run_id, region=region, function_name=name, source=source, url=url,
+        title=title, note=note, requested_by=actor,
+    )
+    started = time.monotonic()
+    try:
+        client = boto3.client("lambda", region_name=region, config=Config(
+            connect_timeout=2, read_timeout=5,
+            retries={"total_max_attempts": 1, "mode": "standard"},
+        ))
+        response = client.invoke(FunctionName=name, InvocationType="Event",
+                                 Payload=json.dumps(event, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+        accepted = _integer(response.get("StatusCode"), 0) == 202
+        return {"kind": "lambda", "region": region, "name": name,
+                "deliveryId": event["delivery_id"],
+                "status": "accepted" if accepted else "failure",
+                "elapsedMs": round((time.monotonic() - started) * 1000),
+                "detail": "Lambda非同期実行を受付" if accepted else "Lambda非同期実行を拒否"}
+    except Exception as error:
+        return {"kind": "lambda", "region": region, "name": name, "status": "failure",
+                "elapsedMs": round((time.monotonic() - started) * 1000), "error": type(error).__name__}
+
+
+def _candidate_queue_url(region):
+    response = _client("sqs", region).list_queues(QueueNamePrefix=f"dpi-ha-candidate-{region}")
+    exact = [value for value in response.get("QueueUrls", [])
+             if value.rstrip("/").endswith(f"/dpi-ha-candidate-{region}")]
+    if len(exact) != 1:
+        raise ValueError(f"{region} の候補SQSを一意に確認できません。")
+    return exact[0]
+
+
+def _region_for_source(source):
+    return "ap-northeast-3" if source.startswith("osaka-") else "ap-northeast-1"
+
+
+def _opposite_region(region):
+    return "ap-northeast-3" if region == "ap-northeast-1" else "ap-northeast-1"
+
+
+def _test_submit_route(run_id, actor, source, route, url, title, note):
+    source_region = _region_for_source(source)
+    target_region = _opposite_region(source_region) if route == "cross-region-backup" else source_region
+    primary_region = _opposite_region(target_region) if route == "regional-backup" else source_region
+    event = build_test_candidate_event(
+        run_id, target_region=target_region, primary_region=primary_region,
+        accepted_region=source_region, source=source, route=route, urls=[url],
+        title=title, note=note, requested_by=actor,
+    )
+    delivery_id = event["delivery_id"]
+    started = time.monotonic()
+    try:
+        _record_delivery_metadata(delivery_id, title, TEST_SLOT, "test", None)
+        if route == "fast":
+            endpoints = [value for value in INGEST_ENDPOINTS
+                         if _endpoint_region(urllib.parse.urlparse(value).hostname) == target_region]
+            if len(endpoints) != 1:
+                raise ValueError("高速系統の受付APIを一意に確認できません。")
+            raw = json.dumps(event, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+            stamp = str(int(time.time()))
+            signature = hmac.new(_get_ingest_secret().encode("utf-8"),
+                                 stamp.encode("ascii") + b"." + raw, hashlib.sha256).hexdigest()
+            accepted = _post_signed_ingest(endpoints[0], raw, stamp, signature).get("accepted") is True
+            detail = "受付APIへ到達" if accepted else "受付APIが拒否"
+        else:
+            queue_url = _candidate_queue_url(target_region)
+            response = _client("sqs", target_region).send_message(
+                QueueUrl=queue_url,
+                MessageBody=json.dumps(event, ensure_ascii=False, separators=(",", ":")),
+            )
+            accepted = bool(response.get("MessageId"))
+            detail = "候補SQSへ到達" if accepted else "候補SQSが拒否"
+        return {"kind": "route", "route": route, "source": source,
+                "region": target_region, "deliveryId": delivery_id,
+                "status": "accepted" if accepted else "failure", "detail": detail,
+                "elapsedMs": round((time.monotonic() - started) * 1000)}
+    except Exception as error:
+        return {"kind": "route", "route": route, "source": source,
+                "region": target_region, "deliveryId": delivery_id, "status": "failure",
+                "elapsedMs": round((time.monotonic() - started) * 1000), "error": type(error).__name__}
+
+
+def _test_wait_route(step, timeout_seconds=35):
+    if step.get("status") != "accepted":
+        return step
+    table = _dynamodb.Table(DELIVERY_MONITOR_TABLE_NAME)
+    deadline = time.monotonic() + timeout_seconds
+    key = {"pk": f"delivery#{step['deliveryId']}#g1"}
+    while time.monotonic() < deadline:
+        row = table.get_item(Key=key, ConsistentRead=True).get("Item", {})
+        target = _integer(row.get("targetCount"), 0)
+        normal = _integer(row.get("normalCount"), 0)
+        errors = _integer(row.get("errorCount"), 0) + _integer(row.get("seriousErrorCount"), 0)
+        if target > 0 and normal + errors >= target:
+            return {**step, "status": "success" if errors == 0 else "failure",
+                    "targetCount": target, "successCount": normal, "errorCount": errors,
+                    "detail": "全処理が正常終了" if errors == 0 else "配信処理に異常あり"}
+        time.sleep(1)
+    return {**step, "status": "timeout", "detail": "終了確認が時間内に届きませんでした"}
+
+
+def _run_test_delivery_internal(event):
+    if not STATE_TABLE_NAME:
+        return {"ok": False, "error": "state_table_not_configured"}
+    run_id = _clean(event.get("runId"), 80)
+    token = _clean(event.get("runnerToken"), 80)
+    table = _dynamodb.Table(STATE_TABLE_NAME)
+    item = table.get_item(Key={"pk": f"ADMIN#TEST_RUN#{run_id}"}, ConsistentRead=True).get("Item", {})
+    if not item or not hmac.compare_digest(token, _clean(item.get("runner_token"), 80)):
+        return {"ok": False, "error": "invalid_runner_token"}
+    if item.get("status") not in {"queued", "running"}:
+        return {"ok": True, "reused": True, "status": item.get("status")}
+    item.update(status="running", started_at=int(time.time()), error="")
+    table.put_item(Item=item)
+    targets = _test_delivery_targets()
+    try:
+        if not targets:
+            raise ValueError("test_slot_empty")
+        actor = _clean(item.get("requested_by"), 254)
+        title = _clean(item.get("title"), 100) or "DPI-Bot 配信系統試験"
+        note = _clean(item.get("note"), 500)
+        sources = _string_list(item.get("sources"), 20, 40) or ["admin"]
+        functions = [value for value in (item.get("functions") or []) if isinstance(value, dict)]
+        steps = []
+        with ThreadPoolExecutor(max_workers=6) as executor:
+            futures = []
+            for index, target in enumerate(functions):
+                futures.append(executor.submit(
+                    _test_invoke_worker, run_id, actor, sources[index % len(sources)], target,
+                    targets[index % len(targets)], title, note,
+                ))
+            for source in sources:
+                for index, route in enumerate(_string_list(item.get("routes"), 20, 40)):
+                    futures.append(executor.submit(
+                        _test_submit_route, run_id, actor, source, route,
+                        targets[index % len(targets)], title, note,
+                    ))
+            steps = [future.result() for future in futures]
+        accepted_steps = [step for step in steps if step.get("status") == "accepted"]
+        if accepted_steps:
+            with ThreadPoolExecutor(max_workers=min(20, len(accepted_steps))) as executor:
+                completed_steps = list(executor.map(_test_wait_route, accepted_steps))
+            iterator = iter(completed_steps)
+            steps = [next(iterator) if step.get("status") == "accepted" else step for step in steps]
+        successes = sum(step.get("status") == "success" for step in steps)
+        failures = sum(step.get("status") in {"failure", "timeout"} for step in steps)
+        pending = len(steps) - successes - failures
+        item.update(status="completed" if failures == 0 and pending == 0 else "completed_with_errors",
+                    completed_at=int(time.time()), steps=steps, success_count=successes,
+                    failure_count=failures, pending_count=pending)
+    except Exception as error:
+        item.update(status="failed", completed_at=int(time.time()), error=type(error).__name__,
+                    failure_count=_integer(item.get("failure_count"), 0) + 1)
+    table.put_item(Item=item)
+    return {"ok": item.get("status") == "completed", "runId": run_id, "status": item.get("status")}
 
 
 def _xml_preview(body):
