@@ -24,6 +24,7 @@
                 <li><a href="/site/status-admin/">ステータス管理</a></li>
                 <li><a href="/site/delivery-admin/">配信統計</a></li>
                 <li><a href="/site/delivery-flow-admin/">配信系統</a></li>
+                <li><a href="/site/audit-admin/">監査ログ</a></li>
                 <li><a href="/site/channel-admin/">配信先検索</a></li>
                 <li><a href="/site/reuse-admin/">二次利用申請管理</a></li>
                 <li><a href="/site/mail-admin/">メール配信管理</a></li>
@@ -47,16 +48,16 @@
 
             <section aria-labelledby="dynamodb-backup-title">
                 <div class="section-heading"><div><p class="eyebrow">DYNAMODB BACKUP</p><h2 id="dynamodb-backup-title">DynamoDBバックアップ状況</h2></div></div>
-                <p class="section-description">東京・大阪のDPI-Bot関連テーブルについて、ポイントインタイムリカバリ（PITR）、復元可能期間、最新オンデマンドバックアップを表示します。</p>
+                <p class="section-description">東京・大阪のDPI-Bot関連テーブルだけを対象に、ポイントインタイムリカバリ（PITR）、復元可能期間、最終バックアップを表示します。</p>
                 <div id="dynamodb-backup-summary" class="metric-grid"></div>
-                <div class="table-wrap operational-table"><table><thead><tr><th>リージョン</th><th>テーブル</th><th>状態</th><th>PITR</th><th>復元可能期間</th><th>最新オンデマンド</th><th>削除保護</th></tr></thead><tbody id="dynamodb-backup-rows"></tbody></table></div>
+                <div class="table-wrap operational-table"><table><thead><tr><th>リージョン</th><th>テーブル</th><th>状態</th><th>PITR</th><th>復元可能期間</th><th>最終バックアップ</th><th>削除保護</th></tr></thead><tbody id="dynamodb-backup-rows"></tbody></table></div>
             </section>
 
             <section aria-labelledby="cloudwatch-alarm-title">
                 <div class="section-heading"><div><p class="eyebrow">CLOUDWATCH ALARMS</p><h2 id="cloudwatch-alarm-title">CloudWatchアラーム状況</h2></div></div>
-                <p class="section-description">東京・大阪の全アラームについて、現在状態、監視対象、判定条件、通知アクションの有効・停止を表示します。</p>
+                <p class="section-description">DPI-Botのアラームを一覧表示します。行をクリックすると判定条件、通知状態、最新の状態遷移を確認できます。</p>
                 <div id="cloudwatch-alarm-summary" class="metric-grid"></div>
-                <div class="table-wrap operational-table"><table><thead><tr><th>状態</th><th>リージョン</th><th>アラーム</th><th>監視対象</th><th>判定</th><th>通知</th><th>状態更新</th></tr></thead><tbody id="cloudwatch-alarm-rows"></tbody></table></div>
+                <div class="table-wrap operational-table"><table><thead><tr><th>状態</th><th>リージョン</th><th>アラーム</th><th>通知</th><th>最終状態変更</th><th>詳細</th></tr></thead><tbody id="cloudwatch-alarm-rows"></tbody></table></div>
             </section>
 
             <section aria-labelledby="mode-title">
@@ -90,10 +91,6 @@
                 <div id="test-delivery-runs" class="record-list"></div>
             </section>
 
-            <section aria-labelledby="audit-title">
-                <div class="section-heading"><div><p class="eyebrow">AUDIT</p><h2 id="audit-title">最近の管理操作・遮断</h2></div></div>
-                <div class="table-wrap"><table><thead><tr><th>日時</th><th>種別</th><th>内容</th><th>実行者</th></tr></thead><tbody id="audit-rows"></tbody></table></div>
-            </section>
         </main>
     </div>
     <script src="../../script.js"></script>

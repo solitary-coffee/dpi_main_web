@@ -29,7 +29,7 @@ test('分割した運用管理画面をAccess認証で保護し末尾スラッ�
     };
     try {
         const headers = { 'cf-access-jwt-assertion': token };
-        for (const root of ['/site/admin-center', '/site/system-admin', '/site/ec2-admin', '/site/xml-admin', '/site/status-admin', '/site/delivery-admin', '/site/delivery-flow-admin']) {
+        for (const root of ['/site/admin-center', '/site/system-admin', '/site/ec2-admin', '/site/xml-admin', '/site/status-admin', '/site/delivery-admin', '/site/delivery-flow-admin', '/site/audit-admin']) {
             const canonical = await handleAdminCenterRequest(new Request(`https://dpi-bot.com${root}/`, { headers }), adminEnv);
             assert.equal(canonical.status, 200, root);
             assert.equal(await canonical.text(), 'admin page', root);
@@ -52,7 +52,8 @@ test('統合管理センターは概要だけを表示し操作は専用タブ�
     ]);
     assert.match(overview, /id="operation-overview"/u);
     assert.doesNotMatch(overview, /id="mode-form"|id="ec2-rows"|id="xml-form"/u);
-    assert.match(system, /id="system-panels"[\s\S]*id="mode-form"[\s\S]*id="audit-rows"/u);
+    assert.match(system, /id="system-panels"[\s\S]*id="mode-form"/u);
+    assert.doesNotMatch(system, /id="audit-rows"/u);
     assert.match(system, /value="maintenance"[\s\S]*id="maintenance-route-controls"[\s\S]*id="test-delivery-form"/u);
     assert.match(system, /id="dynamodb-backup-summary"[\s\S]*id="dynamodb-backup-rows"/u);
     assert.match(system, /id="cloudwatch-alarm-summary"[\s\S]*id="cloudwatch-alarm-rows"/u);
@@ -87,8 +88,25 @@ test('システム運用画面はDynamoDBバックアップとCloudWatchアラ�
     assert.match(template, /dynamodb:ListBackups/u);
     assert.match(api, /def _dynamodb_region_summary/u);
     assert.match(api, /def _alarm_region_summary/u);
+    assert.match(api, /def _alarm_state_history/u);
+    assert.match(api, /lastBackupAt/u);
     assert.match(script, /renderDynamoDbBackups\(data\.aws\?\.dynamoDb\)/u);
     assert.match(script, /renderCloudWatchAlarms\(data\.aws\?\.alarms\)/u);
+    assert.match(script, /previousState/u);
+});
+
+test('監査ログは専用タブへ分離し絞り込みAPIを備える', async () => {
+    const [system, audit, auditScript, worker] = await Promise.all([
+        readFile(new URL('../site/system-admin/index.html', import.meta.url), 'utf8'),
+        readFile(new URL('../site/audit-admin/index.html', import.meta.url), 'utf8'),
+        readFile(new URL('../site/audit-admin/script.js', import.meta.url), 'utf8'),
+        readFile(new URL('../worker/admin-center.js', import.meta.url), 'utf8'),
+    ]);
+    assert.doesNotMatch(system, /id="audit-rows"/u);
+    assert.match(audit, /id="audit-filter-form"[\s\S]*id="audit-rows"/u);
+    assert.match(auditScript, /audit-type[\s\S]*audit-actor[\s\S]*audit-action[\s\S]*audit-query/u);
+    assert.match(worker, /\/site\/audit-admin\/api\/logs/u);
+    assert.match(worker, /admin_audit_events[\s\S]*reuse_application_events[\s\S]*ip_block_audit/u);
 });
 
 test('危険操作は確認文字列を入力させずポップアップ確認しモード動作を常時表示する', async () => {
@@ -109,8 +127,8 @@ test('危険操作は確認文字列を入力させずポップアップ確認�
 });
 
 test('すべての管理画面から用途別タブへ移動できる', async () => {
-    const pages = ['admin-center', 'system-admin', 'ec2-admin', 'xml-admin', 'status-admin', 'delivery-admin', 'delivery-flow-admin', 'channel-admin', 'reuse-admin', 'mail-admin', 'discord-admin', 'ip-admin'];
-    const expected = ['/site/admin-center/', '/site/system-admin/', '/site/ec2-admin/', '/site/xml-admin/', '/site/status-admin/', '/site/delivery-admin/', '/site/delivery-flow-admin/', '/site/channel-admin/', '/site/reuse-admin/', '/site/mail-admin/', '/site/discord-admin/', '/site/ip-admin/'];
+    const pages = ['admin-center', 'system-admin', 'ec2-admin', 'xml-admin', 'status-admin', 'delivery-admin', 'delivery-flow-admin', 'audit-admin', 'channel-admin', 'reuse-admin', 'mail-admin', 'discord-admin', 'ip-admin'];
+    const expected = ['/site/admin-center/', '/site/system-admin/', '/site/ec2-admin/', '/site/xml-admin/', '/site/status-admin/', '/site/delivery-admin/', '/site/delivery-flow-admin/', '/site/audit-admin/', '/site/channel-admin/', '/site/reuse-admin/', '/site/mail-admin/', '/site/discord-admin/', '/site/ip-admin/'];
     for (const page of pages) {
         const html = await readFile(new URL(`../site/${page}/index.html`, import.meta.url), 'utf8');
         const sidebar = html.match(/<nav class="sidebar"[\s\S]*?<ul>([\s\S]*?)<\/ul>/u)?.[1] || '';

@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="robots" content="noindex,nofollow">
+    <title>監査ログ - DPI-Bot</title>
+    <link rel="icon" href="../../img/dpi.png" type="image/png">
+    <link rel="stylesheet" href="../admin-shell.css">
+    <link rel="stylesheet" href="../admin-center/style.css">
+</head>
+<body class="admin-shell" data-admin-page="audit">
+    <button id="menu-toggle-btn" type="button" aria-label="メニューを開く"><span></span><span></span><span></span></button>
+    <div class="overlay"></div>
+    <div class="page-container">
+        <nav class="sidebar" aria-label="管理メニュー">
+            <div class="sidebar-header"><h2>管理メニュー</h2></div>
+            <ul>
+                <li><a href="/">公式サイト</a></li>
+                <li><a href="/site/admin-center/">統合管理センター</a></li>
+                <li><a href="/site/system-admin/">システム運用</a></li>
+                <li><a href="/site/ec2-admin/">EC2管理</a></li>
+                <li><a href="/site/xml-admin/">XML配信</a></li>
+                <li><a href="/site/status-admin/">ステータス管理</a></li>
+                <li><a href="/site/delivery-admin/">配信統計</a></li>
+                <li><a href="/site/delivery-flow-admin/">配信系統</a></li>
+                <li><a href="/site/audit-admin/" class="active">監査ログ</a></li>
+                <li><a href="/site/channel-admin/">配信先検索</a></li>
+                <li><a href="/site/reuse-admin/">二次利用申請管理</a></li>
+                <li><a href="/site/mail-admin/">メール配信管理</a></li>
+                <li><a href="/site/discord-admin/">Discordお知らせ管理</a></li>
+                <li><a href="/site/ip-admin/">IP遮断管理</a></li>
+                <li><a href="/cdn-cgi/access/logout">ログアウト</a></li>
+            </ul>
+        </nav>
+        <main class="main-content">
+            <header class="topbar">
+                <div><p class="eyebrow">AUDIT LOG</p><h1>監査ログ</h1></div>
+                <div class="admin-bar"><span id="admin-email"></span><button id="refresh-btn" type="button">最新情報に更新</button></div>
+            </header>
+            <div id="global-status" class="status" role="alert" aria-live="assertive"></div>
+            <section aria-labelledby="audit-title">
+                <div class="section-heading"><div><p class="eyebrow">OPERATIONS HISTORY</p><h2 id="audit-title">すべての操作履歴</h2></div><time id="fetched-at"></time></div>
+                <form id="audit-filter-form" class="audit-filter-form">
+                    <label>種別<select id="audit-type"><option value="">すべて</option><option value="admin">管理操作</option><option value="reuse">二次利用申請</option><option value="ip">IP遮断</option></select></label>
+                    <label>実行者<input id="audit-actor" type="search" maxlength="120" placeholder="メール・ユーザー名"></label>
+                    <label>操作名<input id="audit-action" type="search" maxlength="120" placeholder="system_mode.change など"></label>
+                    <label>開始日<input id="audit-from" type="date"></label>
+                    <label>終了日<input id="audit-to" type="date"></label>
+                    <label class="wide">キーワード<input id="audit-query" type="search" maxlength="200" placeholder="対象ID・内容・IPアドレスなど"></label>
+                    <div class="action-row wide"><button type="submit">絞り込む</button><button id="audit-reset" type="button" class="secondary-button">条件をリセット</button></div>
+                </form>
+                <p id="audit-count" class="section-description"></p>
+                <div class="table-wrap operational-table"><table><thead><tr><th>日時</th><th>種別</th><th>操作</th><th>対象・内容</th><th>実行者</th><th>詳細</th></tr></thead><tbody id="audit-rows"></tbody></table></div>
+                <div class="action-row audit-pagination"><button id="audit-prev" type="button" class="secondary-button">前の100件</button><button id="audit-next" type="button" class="secondary-button">次の100件</button></div>
+            </section>
+        </main>
+    </div>
+    <script src="../../script.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>
