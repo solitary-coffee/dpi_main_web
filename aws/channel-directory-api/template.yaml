@@ -82,6 +82,8 @@ Resources:
                 - sqs:GetQueueAttributes
                 - dynamodb:ListTables
                 - dynamodb:DescribeTable
+                - dynamodb:DescribeContinuousBackups
+                - dynamodb:ListBackups
                 - cloudwatch:DescribeAlarms
                 - logs:DescribeLogGroups
                 - ec2:DescribeInstances

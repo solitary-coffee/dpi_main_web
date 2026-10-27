@@ -1,3 +1,5 @@
+import { publicMaintenanceGate } from './maintenance.js';
+import { isPrivateAssetPath } from './private-assets.js';
 import { handleNewsletterQueue, handleNewsletterRequest } from './newsletter.js';
 import { blockResponseForRequest } from './ip-block.js';
 import { handleIpAdminRequest } from './ip-admin.js';
@@ -39,6 +41,11 @@ class ContactError extends Error {
 
 export default {
     async fetch(request, env, ctx) {
+        if (isPrivateAssetPath(new URL(request.url).pathname)) {
+            return new Response('Not Found', { status: 404, headers: { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' } });
+        }
+        const maintenance = await publicMaintenanceGate(request, env, 'main');
+        if (maintenance) return maintenance;
         const url = new URL(request.url);
         const pathname = url.pathname.replace(/\/+$/, '') || '/';
 

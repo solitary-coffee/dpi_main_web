@@ -54,6 +54,9 @@ button:disabled { cursor: not-allowed; opacity: .45; }.danger-button { backgroun
 .danger-button { background: #a82c25; }
 .muted { color: #c8d0d8; }
 .metric-card.compact { min-height: 72px; margin-bottom: 16px; }
+.operational-table { margin-top: 16px; }
+.operational-table td { min-width: 110px; }
+.operational-table td:nth-child(2), .operational-table td:nth-child(3) { overflow-wrap: anywhere; }
 .ec2-grid, .component-grid, .record-list { display: grid; gap: 14px; margin-top: 16px; }
 .ec2-grid { grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); }
 .ec2-card, .component-card, .record-card { padding: 18px; border: 1px solid #5d6772; border-radius: 8px; background: #333940; }

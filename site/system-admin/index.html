@@ -45,6 +45,20 @@
                 <div id="system-panels" class="system-grid"></div>
             </section>
 
+            <section aria-labelledby="dynamodb-backup-title">
+                <div class="section-heading"><div><p class="eyebrow">DYNAMODB BACKUP</p><h2 id="dynamodb-backup-title">DynamoDBバックアップ状況</h2></div></div>
+                <p class="section-description">東京・大阪のDPI-Bot関連テーブルについて、ポイントインタイムリカバリ（PITR）、復元可能期間、最新オンデマンドバックアップを表示します。</p>
+                <div id="dynamodb-backup-summary" class="metric-grid"></div>
+                <div class="table-wrap operational-table"><table><thead><tr><th>リージョン</th><th>テーブル</th><th>状態</th><th>PITR</th><th>復元可能期間</th><th>最新オンデマンド</th><th>削除保護</th></tr></thead><tbody id="dynamodb-backup-rows"></tbody></table></div>
+            </section>
+
+            <section aria-labelledby="cloudwatch-alarm-title">
+                <div class="section-heading"><div><p class="eyebrow">CLOUDWATCH ALARMS</p><h2 id="cloudwatch-alarm-title">CloudWatchアラーム状況</h2></div></div>
+                <p class="section-description">東京・大阪の全アラームについて、現在状態、監視対象、判定条件、通知アクションの有効・停止を表示します。</p>
+                <div id="cloudwatch-alarm-summary" class="metric-grid"></div>
+                <div class="table-wrap operational-table"><table><thead><tr><th>状態</th><th>リージョン</th><th>アラーム</th><th>監視対象</th><th>判定</th><th>通知</th><th>状態更新</th></tr></thead><tbody id="cloudwatch-alarm-rows"></tbody></table></div>
+            </section>
+
             <section aria-labelledby="mode-title">
                 <div class="section-heading"><div><p class="eyebrow">SYSTEM MODE</p><h2 id="mode-title">システムモード</h2></div><p>自動監視と手動固定を区別し、設定値と各配信元の反映状況を表示します。</p></div>
                 <div id="mode-current" class="mode-current"></div>

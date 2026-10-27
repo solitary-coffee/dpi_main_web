@@ -54,6 +54,8 @@ test('統合管理センターは概要だけを表示し操作は専用タブ�
     assert.doesNotMatch(overview, /id="mode-form"|id="ec2-rows"|id="xml-form"/u);
     assert.match(system, /id="system-panels"[\s\S]*id="mode-form"[\s\S]*id="audit-rows"/u);
     assert.match(system, /value="maintenance"[\s\S]*id="maintenance-route-controls"[\s\S]*id="test-delivery-form"/u);
+    assert.match(system, /id="dynamodb-backup-summary"[\s\S]*id="dynamodb-backup-rows"/u);
+    assert.match(system, /id="cloudwatch-alarm-summary"[\s\S]*id="cloudwatch-alarm-rows"/u);
     assert.match(ec2, /id="ec2-rows"/u);
     assert.match(xml, /id="xml-form"[\s\S]*id="delivery-slots"/u);
     for (const html of [overview, system, ec2, xml]) {
@@ -73,6 +75,20 @@ test('試験配信APIは専用表示をAWSへ転送し送信操作を許可す�
     assert.match(script, /test-delivery-preview/u);
     assert.match(script, /test-delivery/u);
     assert.match(script, /window\.confirm\(`配信枠「配信テスト」/u);
+});
+
+test('システム運用画面はDynamoDBバックアップとCloudWatchアラーム詳細を描画する', async () => {
+    const [template, api, script] = await Promise.all([
+        readFile(new URL('../aws/channel-directory-api/template.yaml', import.meta.url), 'utf8'),
+        readFile(new URL('../aws/channel-directory-api/lambda_function.py', import.meta.url), 'utf8'),
+        readFile(new URL('../site/admin-center/script.js', import.meta.url), 'utf8'),
+    ]);
+    assert.match(template, /dynamodb:DescribeContinuousBackups/u);
+    assert.match(template, /dynamodb:ListBackups/u);
+    assert.match(api, /def _dynamodb_region_summary/u);
+    assert.match(api, /def _alarm_region_summary/u);
+    assert.match(script, /renderDynamoDbBackups\(data\.aws\?\.dynamoDb\)/u);
+    assert.match(script, /renderCloudWatchAlarms\(data\.aws\?\.alarms\)/u);
 });
 
 test('危険操作は確認文字列を入力させずポップアップ確認しモード動作を常時表示する', async () => {

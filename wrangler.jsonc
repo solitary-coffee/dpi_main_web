@@ -9,6 +9,13 @@
     "run_worker_first": true
   },
 
+  "kv_namespaces": [
+    {
+      "binding": "DPI_MAINTENANCE_KV",
+      "id": "2dbad207714d49a5b03f9fc4ceb7b293"
+    }
+  ],
+
   "send_email": [
     {
       "name": "CONTACT_EMAIL"

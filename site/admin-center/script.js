@@ -63,6 +63,8 @@ function render(data) {
     renderOperationOverview(data.local, data.cloudflare, data.aws, data.deliveryCatalog);
     renderLinks(data.links);
     renderSystems(data.cloudflare, data.aws);
+    renderDynamoDbBackups(data.aws?.dynamoDb);
+    renderCloudWatchAlarms(data.aws?.alarms);
     renderMode(data.aws?.systemMode);
     renderEc2(data.aws?.backupInstances);
     renderAudit(data.local);
@@ -186,6 +188,112 @@ function renderSystems(cloudflare, aws) {
         card.append(list);
         return card;
     }));
+}
+
+function renderDynamoDbBackups(summary) {
+    const metrics = document.getElementById('dynamodb-backup-summary');
+    const body = document.getElementById('dynamodb-backup-rows');
+    if (!metrics || !body) return;
+    const rows = summary?.available ? (summary.tables || []) : [];
+    const cards = summary?.available ? [
+        ['対象テーブル', summary.count ?? rows.length],
+        ['PITR有効', summary.pitrEnabled ?? 0],
+        ['PITR無効', summary.pitrDisabled ?? 0],
+        ['取得エラー', summary.backupErrors ?? 0],
+    ] : [['取得状態', '取得不可']];
+    metrics.replaceChildren(...cards.map(([label, value]) => {
+        const card = element('article', 'metric-card compact');
+        card.append(element('span', '', label), element('strong', '', String(value)));
+        return card;
+    }));
+    body.replaceChildren();
+    if (!rows.length) {
+        appendEmptyRow(body, 7, summary?.error ? `バックアップ状況を取得できません（${summary.error}）` : '対象テーブルはありません。');
+        return;
+    }
+    for (const table of rows) {
+        const row = document.createElement('tr');
+        const pitr = element('span', `component-status ${table.pitrStatus === 'ENABLED' ? 'status-ok' : table.pitrStatus === 'DISABLED' ? 'status-impaired' : 'status-initializing'}`, table.pitrStatus === 'ENABLED' ? 'PITR有効' : table.pitrStatus === 'DISABLED' ? 'PITR無効' : '取得不可');
+        const restore = table.pitrStatus === 'ENABLED'
+            ? `${formatDate(table.earliestRestorableAt)} ～ ${formatDate(table.latestRestorableAt)}${table.recoveryPeriodDays ? `（${table.recoveryPeriodDays}日）` : ''}`
+            : '—';
+        const latest = table.latestOnDemandBackup
+            ? `${formatDate(table.latestOnDemandBackup.createdAt)} / ${table.latestOnDemandBackup.status || '不明'}`
+            : 'なし';
+        const tableCell = element('td');
+        tableCell.append(element('strong', '', table.name || '—'));
+        if (table.backupError) tableCell.append(element('small', 'block-code', `取得エラー: ${table.backupError}`));
+        row.append(
+            element('td', '', regionName(table.region)),
+            tableCell,
+            element('td', '', table.status || '—'),
+            element('td'),
+            element('td', '', restore),
+            element('td', '', latest),
+            element('td', '', table.deletionProtectionEnabled ? '有効' : '無効'),
+        );
+        row.children[3].append(pitr);
+        body.append(row);
+    }
+}
+
+function renderCloudWatchAlarms(summary) {
+    const metrics = document.getElementById('cloudwatch-alarm-summary');
+    const body = document.getElementById('cloudwatch-alarm-rows');
+    if (!metrics || !body) return;
+    const alarms = summary?.available ? (summary.items || []) : [];
+    const cards = summary?.available ? [
+        ['警報中', summary.active ?? 0],
+        ['正常', summary.ok ?? 0],
+        ['データ不足', summary.insufficientData ?? 0],
+        ['通知停止中', summary.actionsDisabled ?? 0],
+        ['合計', summary.total ?? alarms.length],
+    ] : [['取得状態', '取得不可']];
+    metrics.replaceChildren(...cards.map(([label, value]) => {
+        const card = element('article', 'metric-card compact');
+        card.append(element('span', '', label), element('strong', '', String(value)));
+        return card;
+    }));
+    body.replaceChildren();
+    if (!alarms.length) {
+        appendEmptyRow(body, 7, summary?.error ? `アラーム状況を取得できません（${summary.error}）` : 'CloudWatchアラームはありません。');
+        return;
+    }
+    for (const alarm of alarms) {
+        const row = document.createElement('tr');
+        const stateClass = alarm.state === 'ALARM' ? 'status-major_outage' : alarm.state === 'OK' ? 'status-ok' : 'status-investigating';
+        const name = element('td');
+        name.append(element('strong', '', alarm.name || '—'));
+        if (alarm.description) name.append(element('small', 'block-code', alarm.description));
+        const metric = alarm.namespace || alarm.metric
+            ? `${alarm.namespace || '式'}${alarm.metric ? ` / ${alarm.metric}` : ''}${alarm.statistic ? ` / ${alarm.statistic}` : ''}`
+            : (alarm.type === 'composite' ? '複合アラーム' : 'メトリクス式');
+        const evaluation = [
+            alarm.datapointsToAlarm && alarm.evaluationPeriods ? `${alarm.datapointsToAlarm}/${alarm.evaluationPeriods}` : null,
+            alarm.periodSeconds ? `${alarm.periodSeconds}秒` : null,
+            alarm.threshold != null ? `しきい値 ${alarm.threshold}` : null,
+            alarm.treatMissingData ? `欠損=${alarm.treatMissingData}` : null,
+        ].filter(Boolean).join(' / ') || '—';
+        const notifications = alarm.actionsEnabled
+            ? `有効（警報 ${alarm.alarmActionCount ?? 0} / 復旧 ${alarm.okActionCount ?? 0}）`
+            : '停止中';
+        const state = element('td');
+        state.append(element('span', `component-status ${stateClass}`, alarm.state || 'UNKNOWN'));
+        row.append(state, element('td', '', regionName(alarm.region)), name, element('td', '', metric), element('td', '', evaluation), element('td', alarm.actionsEnabled ? '' : 'state-stopped', notifications), element('td', '', formatDate(alarm.stateUpdatedAt)));
+        body.append(row);
+    }
+}
+
+function appendEmptyRow(body, columns, message) {
+    const row = document.createElement('tr');
+    const cell = element('td', 'empty', message);
+    cell.colSpan = columns;
+    row.append(cell);
+    body.append(row);
+}
+
+function regionName(region) {
+    return region === 'ap-northeast-1' ? '東京' : region === 'ap-northeast-3' ? '大阪' : (region || '—');
 }
 
 function renderMode(mode) {

@@ -1127,33 +1127,163 @@ def _sqs_activity_state(visible, in_flight, delayed, dead_letter=False):
 
 
 def _dynamodb_summary():
-    client = _client("dynamodb")
+    with ThreadPoolExecutor(max_workers=max(1, len(OPERATING_REGIONS))) as executor:
+        regions = list(executor.map(_dynamodb_region_summary, OPERATING_REGIONS))
+    tables = [table for region in regions for table in region["tables"]]
+    return {
+        "available": True,
+        "count": len(tables),
+        "pitrEnabled": sum(table["pitrStatus"] == "ENABLED" for table in tables),
+        "pitrDisabled": sum(table["pitrStatus"] == "DISABLED" for table in tables),
+        "backupErrors": sum(bool(table.get("backupError")) for table in tables),
+        "regions": regions,
+        "tables": tables,
+    }
+
+
+def _dynamodb_region_summary(region):
+    client = _client("dynamodb", region)
     names = []
     paginator = client.get_paginator("list_tables")
     for page in paginator.paginate(PaginationConfig={"MaxItems": 500}):
         names.extend(page.get("TableNames", []))
-    selected = []
-    requested = set(MONITORED_TABLE_NAMES)
-    if HOME_SERVER_TABLE_NAME:
-        requested.add(HOME_SERVER_TABLE_NAME)
-    if STATE_TABLE_NAME:
-        requested.add(STATE_TABLE_NAME)
-    for name in sorted(requested):
-        if name not in names:
-            selected.append({"name": name[:100], "status": "NOT_FOUND", "itemCount": 0})
-            continue
-        table = client.describe_table(TableName=name).get("Table", {})
-        selected.append({"name": name[:100], "status": table.get("TableStatus"), "itemCount": _integer(table.get("ItemCount"), 0)})
-    return {"available": True, "count": len(names), "tables": selected}
+    selected = sorted(name for name in names if _is_dpi_table(name))
+    with ThreadPoolExecutor(max_workers=min(8, max(1, len(selected)))) as executor:
+        tables = list(executor.map(lambda name: _safe_dynamodb_table_backup(client, region, name), selected))
+    return {"region": region, "discoveredCount": len(names), "count": len(tables), "tables": tables}
+
+
+def _is_dpi_table(name):
+    if name in set(MONITORED_TABLE_NAMES) | {
+        TABLE_NAME, HOME_SERVER_TABLE_NAME, STATE_TABLE_NAME,
+        DELIVERY_MONITOR_TABLE_NAME, DELIVERY_LEASE_TABLE_NAME,
+    }:
+        return True
+    lowered = _clean(name, 200).casefold()
+    return any(marker in lowered for marker in (
+        "dpi", "earthquake", "webhook", "websocket", "delivery",
+        "backup", "statusstate", "weeklymerged", "connectionstable",
+    ))
+
+
+def _dynamodb_table_backup(client, region, name):
+    table = client.describe_table(TableName=name).get("Table", {})
+    continuous = client.describe_continuous_backups(TableName=name).get("ContinuousBackupsDescription", {})
+    pitr = continuous.get("PointInTimeRecoveryDescription") or {}
+    backups = client.list_backups(TableName=name, Limit=10).get("BackupSummaries", [])
+    available = [item for item in backups if item.get("BackupStatus") in {"AVAILABLE", "CREATING"}]
+    latest = max(available, key=lambda item: item.get("BackupCreationDateTime") or datetime.min.replace(tzinfo=timezone.utc), default=None)
+    return {
+        "region": region,
+        "name": _clean(name, 100),
+        "status": _clean(table.get("TableStatus"), 40),
+        "itemCount": _integer(table.get("ItemCount"), 0),
+        "deletionProtectionEnabled": table.get("DeletionProtectionEnabled") is True,
+        "continuousBackupsStatus": _clean(continuous.get("ContinuousBackupsStatus"), 40),
+        "pitrStatus": _clean(pitr.get("PointInTimeRecoveryStatus"), 40) or "UNKNOWN",
+        "recoveryPeriodDays": _integer(pitr.get("RecoveryPeriodInDays"), 0) or None,
+        "earliestRestorableAt": _datetime_iso(pitr.get("EarliestRestorableDateTime")),
+        "latestRestorableAt": _datetime_iso(pitr.get("LatestRestorableDateTime")),
+        "latestOnDemandBackup": _public_dynamodb_backup(latest),
+    }
+
+
+def _safe_dynamodb_table_backup(client, region, name):
+    try:
+        return _dynamodb_table_backup(client, region, name)
+    except ClientError as error:
+        return {
+            "region": region,
+            "name": _clean(name, 100),
+            "status": "UNKNOWN",
+            "pitrStatus": "UNKNOWN",
+            "backupError": _clean(error.response.get("Error", {}).get("Code"), 100) or "ClientError",
+        }
+
+
+def _public_dynamodb_backup(backup):
+    if not isinstance(backup, dict):
+        return None
+    return {
+        "name": _clean(backup.get("BackupName"), 160),
+        "status": _clean(backup.get("BackupStatus"), 40),
+        "type": _clean(backup.get("BackupType"), 40),
+        "createdAt": _datetime_iso(backup.get("BackupCreationDateTime")),
+        "expiresAt": _datetime_iso(backup.get("BackupExpiryDateTime")),
+        "sizeBytes": _integer(backup.get("BackupSizeBytes"), 0),
+    }
+
+
+def _datetime_iso(value):
+    if isinstance(value, datetime):
+        return value.astimezone(timezone.utc).isoformat()
+    return _clean(value, 80) or None
 
 
 def _alarm_summary():
+    with ThreadPoolExecutor(max_workers=max(1, len(OPERATING_REGIONS))) as executor:
+        regions = list(executor.map(_alarm_region_summary, OPERATING_REGIONS))
+    alarms = [alarm for region in regions for alarm in region["alarms"]]
+    active = [alarm for alarm in alarms if alarm["state"] == "ALARM"]
+    return {
+        "available": True,
+        "total": len(alarms),
+        "active": len(active),
+        "ok": sum(alarm["state"] == "OK" for alarm in alarms),
+        "insufficientData": sum(alarm["state"] == "INSUFFICIENT_DATA" for alarm in alarms),
+        "actionsDisabled": sum(not alarm["actionsEnabled"] for alarm in alarms),
+        "names": sorted(alarm["name"] for alarm in active if alarm["name"])[:100],
+        "regions": regions,
+        "items": alarms,
+    }
+
+
+def _alarm_region_summary(region):
+    client = _client("cloudwatch", region)
     alarms = []
-    paginator = _client("cloudwatch").get_paginator("describe_alarms")
-    for page in paginator.paginate(StateValue="ALARM", PaginationConfig={"MaxItems": 200}):
-        alarms.extend(page.get("MetricAlarms", []))
-        alarms.extend(page.get("CompositeAlarms", []))
-    return {"available": True, "active": len(alarms), "names": sorted(_clean(item.get("AlarmName"), 120) for item in alarms if item.get("AlarmName"))[:100]}
+    paginator = client.get_paginator("describe_alarms")
+    for page in paginator.paginate(PaginationConfig={"MaxItems": 500}):
+        alarms.extend(_public_alarm(item, region, "metric") for item in page.get("MetricAlarms", []))
+        alarms.extend(_public_alarm(item, region, "composite") for item in page.get("CompositeAlarms", []))
+    alarms.sort(key=lambda item: (item["state"] != "ALARM", item["state"] != "INSUFFICIENT_DATA", item["name"].casefold()))
+    return {
+        "region": region,
+        "total": len(alarms),
+        "active": sum(item["state"] == "ALARM" for item in alarms),
+        "ok": sum(item["state"] == "OK" for item in alarms),
+        "insufficientData": sum(item["state"] == "INSUFFICIENT_DATA" for item in alarms),
+        "alarms": alarms,
+    }
+
+
+def _public_alarm(alarm, region, alarm_type):
+    dimensions = alarm.get("Dimensions") or []
+    return {
+        "region": region,
+        "type": alarm_type,
+        "name": _clean(alarm.get("AlarmName"), 160),
+        "description": _clean(alarm.get("AlarmDescription"), 500),
+        "state": _clean(alarm.get("StateValue"), 40) or "UNKNOWN",
+        "stateReason": _clean(alarm.get("StateReason"), 500),
+        "stateUpdatedAt": _datetime_iso(alarm.get("StateUpdatedTimestamp")),
+        "configurationUpdatedAt": _datetime_iso(alarm.get("AlarmConfigurationUpdatedTimestamp")),
+        "actionsEnabled": alarm.get("ActionsEnabled") is True,
+        "alarmActionCount": len(alarm.get("AlarmActions") or []),
+        "okActionCount": len(alarm.get("OKActions") or []),
+        "namespace": _clean(alarm.get("Namespace"), 120),
+        "metric": _clean(alarm.get("MetricName"), 120),
+        "statistic": _clean(alarm.get("ExtendedStatistic") or alarm.get("Statistic"), 80),
+        "periodSeconds": _integer(alarm.get("Period"), 0) or None,
+        "evaluationPeriods": _integer(alarm.get("EvaluationPeriods"), 0) or None,
+        "datapointsToAlarm": _integer(alarm.get("DatapointsToAlarm"), 0) or None,
+        "threshold": alarm.get("Threshold"),
+        "comparisonOperator": _clean(alarm.get("ComparisonOperator"), 80),
+        "treatMissingData": _clean(alarm.get("TreatMissingData"), 40) or "missing",
+        "dimensions": [
+            {"name": _clean(item.get("Name"), 100), "value": _clean(item.get("Value"), 200)}
+            for item in dimensions[:20]
+        ],
+    }
 
 
 def _log_summary():
