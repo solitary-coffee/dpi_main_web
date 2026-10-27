@@ -57,6 +57,18 @@ button:disabled { cursor: not-allowed; opacity: .45; }.danger-button { backgroun
 .operational-table { margin-top: 16px; }
 .operational-table td { min-width: 110px; }
 .operational-table td:nth-child(2), .operational-table td:nth-child(3) { overflow-wrap: anywhere; }
+.alarm-summary-row { cursor: pointer; }
+.alarm-summary-row:hover, .alarm-summary-row:focus { background: rgba(117, 191, 255, .08); outline: none; }
+.alarm-detail-row[hidden], .audit-detail-row[hidden] { display: none; }
+.alarm-detail { background: rgba(15, 23, 42, .2); }
+.alarm-detail-grid { display: grid; grid-template-columns: minmax(8rem, 12rem) 1fr; gap: .55rem 1rem; margin: 0; }
+.alarm-detail-grid dt { font-weight: 700; }
+.alarm-detail-grid dd { margin: 0; overflow-wrap: anywhere; text-align: left; }
+.audit-filter-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); gap: 1rem; margin-bottom: 1rem; }
+.audit-filter-form label { display: grid; gap: .4rem; }
+.audit-filter-form .wide { grid-column: 1 / -1; }
+.audit-pagination { justify-content: flex-end; margin-top: 1rem; }
+.audit-json { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: .82rem; }
 .ec2-grid, .component-grid, .record-list { display: grid; gap: 14px; margin-top: 16px; }
 .ec2-grid { grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); }
 .ec2-card, .component-card, .record-card { padding: 18px; border: 1px solid #5d6772; border-radius: 8px; background: #333940; }

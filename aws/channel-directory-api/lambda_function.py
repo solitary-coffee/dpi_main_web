@@ -1160,10 +1160,21 @@ def _is_dpi_table(name):
     }:
         return True
     lowered = _clean(name, 200).casefold()
-    return any(marker in lowered for marker in (
-        "dpi", "earthquake", "webhook", "websocket", "delivery",
-        "backup", "statusstate", "weeklymerged", "connectionstable",
-    ))
+    exact = {
+        "connectionstable8000b8a1",
+        "websocketmonitordata",
+        "webhookdata",
+        "webhookdatas",
+        "weeklymergeddata",
+        "new_websocketconnections_1",
+        "dpi-infos",
+    }
+    prefixes = (
+        "dpi-", "dpi_", "dpi-bot-", "dpi-ha-", "dpi-status-",
+        "dpi-websocket", "dpi-delivery", "api-info-connectionstable",
+        "aws-info-dpi-", "aws-infos-connectionstable", "backup-notifier-",
+    )
+    return lowered in exact or lowered.startswith(prefixes)
 
 
 def _dynamodb_table_backup(client, region, name):
@@ -1173,6 +1184,15 @@ def _dynamodb_table_backup(client, region, name):
     backups = client.list_backups(TableName=name, Limit=10).get("BackupSummaries", [])
     available = [item for item in backups if item.get("BackupStatus") in {"AVAILABLE", "CREATING"}]
     latest = max(available, key=lambda item: item.get("BackupCreationDateTime") or datetime.min.replace(tzinfo=timezone.utc), default=None)
+    latest_on_demand = _public_dynamodb_backup(latest)
+    pitr_latest = pitr.get("LatestRestorableDateTime")
+    last_backup_at = latest.get("BackupCreationDateTime") if latest else None
+    last_backup_type = "オンデマンド"
+    last_backup_status = latest.get("BackupStatus") if latest else None
+    if pitr_latest and (not last_backup_at or pitr_latest > last_backup_at):
+        last_backup_at = pitr_latest
+        last_backup_type = "PITR最新復元点"
+        last_backup_status = pitr.get("PointInTimeRecoveryStatus")
     return {
         "region": region,
         "name": _clean(name, 100),
@@ -1184,7 +1204,10 @@ def _dynamodb_table_backup(client, region, name):
         "recoveryPeriodDays": _integer(pitr.get("RecoveryPeriodInDays"), 0) or None,
         "earliestRestorableAt": _datetime_iso(pitr.get("EarliestRestorableDateTime")),
         "latestRestorableAt": _datetime_iso(pitr.get("LatestRestorableDateTime")),
-        "latestOnDemandBackup": _public_dynamodb_backup(latest),
+        "latestOnDemandBackup": latest_on_demand,
+        "lastBackupAt": _datetime_iso(last_backup_at),
+        "lastBackupType": last_backup_type if last_backup_at else None,
+        "lastBackupStatus": _clean(last_backup_status, 40) or None,
     }
 
 
@@ -1240,15 +1263,16 @@ def _alarm_summary():
 
 def _alarm_region_summary(region):
     client = _client("cloudwatch", region)
+    history = _alarm_state_history(client)
     alarms = []
     paginator = client.get_paginator("describe_alarms")
     for page in paginator.paginate(PaginationConfig={"MaxItems": 500}):
         alarms.extend(
-            _public_alarm(item, region, "metric")
+            _public_alarm(item, region, "metric", history.get(item.get("AlarmName"), {}))
             for item in page.get("MetricAlarms", [])
             if _is_dpi_alarm(item)
         )
-        alarms.extend(_public_alarm(item, region, "composite") for item in page.get("CompositeAlarms", []))
+        alarms.extend(_public_alarm(item, region, "composite", history.get(item.get("AlarmName"), {})) for item in page.get("CompositeAlarms", []))
     alarms.sort(key=lambda item: (item["state"] != "ALARM", item["state"] != "INSUFFICIENT_DATA", item["name"].casefold()))
     return {
         "region": region,
@@ -1269,8 +1293,36 @@ def _is_dpi_alarm(alarm):
     return not table_name or _is_dpi_table(table_name)
 
 
-def _public_alarm(alarm, region, alarm_type):
+def _alarm_state_history(client):
+    latest = {}
+    paginator = client.get_paginator("describe_alarm_history")
+    for page in paginator.paginate(
+        HistoryItemType="StateUpdate",
+        ScanBy="TimestampDescending",
+        PaginationConfig={"MaxItems": 500},
+    ):
+        for item in page.get("AlarmHistoryItems", []):
+            name = item.get("AlarmName")
+            if not name or name in latest:
+                continue
+            try:
+                data = json.loads(item.get("HistoryData") or "{}")
+            except (TypeError, ValueError):
+                data = {}
+            old_state = data.get("oldState") or {}
+            new_state = data.get("newState") or {}
+            latest[name] = {
+                "at": _datetime_iso(item.get("Timestamp")),
+                "previous": _clean(old_state.get("stateValue"), 40) or None,
+                "current": _clean(new_state.get("stateValue"), 40) or None,
+                "reason": _clean(new_state.get("stateReason") or item.get("HistorySummary"), 1000) or None,
+            }
+    return latest
+
+
+def _public_alarm(alarm, region, alarm_type, history=None):
     dimensions = alarm.get("Dimensions") or []
+    history = history or {}
     return {
         "region": region,
         "type": alarm_type,
@@ -1279,6 +1331,11 @@ def _public_alarm(alarm, region, alarm_type):
         "state": _clean(alarm.get("StateValue"), 40) or "UNKNOWN",
         "stateReason": _clean(alarm.get("StateReason"), 500),
         "stateUpdatedAt": _datetime_iso(alarm.get("StateUpdatedTimestamp")),
+        "stateTransitionedAt": _datetime_iso(alarm.get("StateTransitionedTimestamp")),
+        "lastStateChangeAt": history.get("at") or _datetime_iso(alarm.get("StateTransitionedTimestamp")) or _datetime_iso(alarm.get("StateUpdatedTimestamp")),
+        "previousState": history.get("previous"),
+        "currentState": history.get("current") or _clean(alarm.get("StateValue"), 40) or "UNKNOWN",
+        "stateChangeReason": history.get("reason"),
         "configurationUpdatedAt": _datetime_iso(alarm.get("AlarmConfigurationUpdatedTimestamp")),
         "actionsEnabled": alarm.get("ActionsEnabled") is True,
         "alarmActionCount": len(alarm.get("AlarmActions") or []),

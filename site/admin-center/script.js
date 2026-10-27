@@ -67,7 +67,6 @@ function render(data) {
     renderCloudWatchAlarms(data.aws?.alarms);
     renderMode(data.aws?.systemMode);
     renderEc2(data.aws?.backupInstances);
-    renderAudit(data.local);
     renderSlots(data.deliveryCatalog, data.aws?.deliveryDirectory?.byType || {}, data.local?.deliverySlotCounts || {});
     renderXmlSlots(data.deliveryCatalog, data.aws?.deliveryDirectory?.byType || {});
 }
@@ -105,7 +104,7 @@ function renderOperationOverview(local, cloudflare, aws, catalog) {
     const awsSlots = aws?.deliveryDirectory?.byType || {};
     const endedSlots = new Set((catalog || []).filter((slot) => slot.status === 'ended').map((slot) => slot.id));
     const activeSlots = Object.entries(awsSlots).filter(([id, count]) => Number(count || 0) > 0 && !endedSlots.has(id)).length;
-    const auditCount = Number(local?.auditEvents?.length || 0) + Number(local?.reuseEvents?.length || 0);
+    const auditCount = Number(local?.auditCount || 0);
     const items = [
         { title: 'システム運用', value: modeName, detail: aws?.available ? `AWS警報 ${aws.alarms?.active ?? '—'}件 / Cloudflare ${cloudflare?.worker || '—'}` : (aws?.message || 'AWS情報を取得できません'), href: '/site/system-admin/' },
         { title: '自宅サーバー', value: home?.available ? `正常 ${home.healthy ?? 0}台` : '取得不可', detail: home?.available ? `異常・期限切れ ${home.unhealthy ?? 0}台` : (home?.error || '状態を確認できません'), href: '/site/system-admin/' },
@@ -114,7 +113,7 @@ function renderOperationOverview(local, cloudflare, aws, catalog) {
         { title: 'XML配信', value: `${activeSlots}配信枠`, detail: `AWS配信先 ${aws?.deliveryDirectory?.channels ?? '—'}チャンネル`, href: '/site/xml-admin/' },
         { title: '配信系統', value: '系統別監視', detail: '上流・自宅・高速・SQS・バックアップ', href: '/site/delivery-flow-admin/' },
         { title: '配信先', value: `${aws?.deliveryDirectory?.servers ?? '—'}サーバー`, detail: '登録チャンネル・配信名を検索', href: '/site/channel-admin/' },
-        { title: '最近の運用履歴', value: `${auditCount}件`, detail: '管理操作・申請・遮断の履歴', href: '/site/system-admin/#audit-title' },
+        { title: '監査ログ', value: `${auditCount}件`, detail: '管理操作・申請・遮断の履歴', href: '/site/audit-admin/' },
     ];
     container.replaceChildren(...items.map((item) => {
         const card = element('a', 'feature-card');
@@ -217,8 +216,8 @@ function renderDynamoDbBackups(summary) {
         const restore = table.pitrStatus === 'ENABLED'
             ? `${formatDate(table.earliestRestorableAt)} ～ ${formatDate(table.latestRestorableAt)}${table.recoveryPeriodDays ? `（${table.recoveryPeriodDays}日）` : ''}`
             : '—';
-        const latest = table.latestOnDemandBackup
-            ? `${formatDate(table.latestOnDemandBackup.createdAt)} / ${table.latestOnDemandBackup.status || '不明'}`
+        const latest = table.lastBackupAt
+            ? `${formatDate(table.lastBackupAt)} / ${table.lastBackupType || '種別不明'}${table.lastBackupStatus ? ` / ${table.lastBackupStatus}` : ''}`
             : 'なし';
         const tableCell = element('td');
         tableCell.append(element('strong', '', table.name || '—'));
@@ -256,18 +255,17 @@ function renderCloudWatchAlarms(summary) {
     }));
     body.replaceChildren();
     if (!alarms.length) {
-        appendEmptyRow(body, 7, summary?.error ? `アラーム状況を取得できません（${summary.error}）` : 'CloudWatchアラームはありません。');
+        appendEmptyRow(body, 6, summary?.error ? `アラーム状況を取得できません（${summary.error}）` : 'CloudWatchアラームはありません。');
         return;
     }
     for (const alarm of alarms) {
         const row = document.createElement('tr');
+        row.className = 'alarm-summary-row';
+        row.tabIndex = 0;
         const stateClass = alarm.state === 'ALARM' ? 'status-major_outage' : alarm.state === 'OK' ? 'status-ok' : 'status-investigating';
         const name = element('td');
         name.append(element('strong', '', alarm.name || '—'));
         if (alarm.description) name.append(element('small', 'block-code', alarm.description));
-        const metric = alarm.namespace || alarm.metric
-            ? `${alarm.namespace || '式'}${alarm.metric ? ` / ${alarm.metric}` : ''}${alarm.statistic ? ` / ${alarm.statistic}` : ''}`
-            : (alarm.type === 'composite' ? '複合アラーム' : 'メトリクス式');
         const evaluation = [
             alarm.datapointsToAlarm && alarm.evaluationPeriods ? `${alarm.datapointsToAlarm}/${alarm.evaluationPeriods}` : null,
             alarm.periodSeconds ? `${alarm.periodSeconds}秒` : null,
@@ -279,8 +277,41 @@ function renderCloudWatchAlarms(summary) {
             : '停止中';
         const state = element('td');
         state.append(element('span', `component-status ${stateClass}`, alarm.state || 'UNKNOWN'));
-        row.append(state, element('td', '', regionName(alarm.region)), name, element('td', '', metric), element('td', '', evaluation), element('td', alarm.actionsEnabled ? '' : 'state-stopped', notifications), element('td', '', formatDate(alarm.stateUpdatedAt)));
-        body.append(row);
+        const toggleCell = element('td');
+        const toggle = element('button', 'small secondary-button', '詳細');
+        toggle.type = 'button';
+        toggle.setAttribute('aria-expanded', 'false');
+        toggleCell.append(toggle);
+        row.append(state, element('td', '', regionName(alarm.region)), name, element('td', alarm.actionsEnabled ? '' : 'state-stopped', notifications), element('td', '', formatDate(alarm.lastStateChangeAt || alarm.stateTransitionedAt || alarm.stateUpdatedAt)), toggleCell);
+
+        const detailRow = document.createElement('tr');
+        detailRow.className = 'alarm-detail-row';
+        detailRow.hidden = true;
+        const detail = element('td', 'alarm-detail');
+        detail.colSpan = 6;
+        const transition = alarm.previousState
+            ? `${alarm.previousState} → ${alarm.currentState || alarm.state}`
+            : `現在 ${alarm.currentState || alarm.state || 'UNKNOWN'}`;
+        const list = element('dl', 'alarm-detail-grid');
+        for (const [label, value] of [
+            ['状態遷移', `${transition}（${formatDate(alarm.lastStateChangeAt || alarm.stateTransitionedAt || alarm.stateUpdatedAt)}）`],
+            ['判定条件', evaluation],
+            ['通知', notifications],
+            ['状態理由', alarm.stateChangeReason || alarm.stateReason || '—'],
+            ['設定最終変更', formatDate(alarm.configurationUpdatedAt)],
+            ['説明', alarm.description || '—'],
+        ]) list.append(element('dt', '', label), element('dd', '', value));
+        detail.append(list);
+        detailRow.append(detail);
+        const toggleDetail = () => {
+            detailRow.hidden = !detailRow.hidden;
+            toggle.textContent = detailRow.hidden ? '詳細' : '閉じる';
+            toggle.setAttribute('aria-expanded', String(!detailRow.hidden));
+        };
+        toggle.addEventListener('click', (event) => { event.stopPropagation(); toggleDetail(); });
+        row.addEventListener('click', toggleDetail);
+        row.addEventListener('keydown', (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); toggleDetail(); } });
+        body.append(row, detailRow);
     }
 }
 
@@ -971,30 +1002,6 @@ function renderXmlSlots(catalog, awsCounts) {
     }
     if (available.some((slot) => slot.id === current)) select.value = current;
     updateXmlHint();
-}
-
-function renderAudit(local) {
-    const body = document.getElementById('audit-rows');
-    if (!body) return;
-    const rows = [
-        ...(local.auditEvents || []).map((event) => ({ at: event.created_at, type: '管理操作', content: `${event.action} / ${event.entity_type}${event.entity_id ? ` / ${event.entity_id}` : ''}`, actor: event.actor })),
-        ...(local.reuseEvents || []).map((event) => ({ at: event.created_at, type: '二次利用申請', content: `${event.event_type} / ${event.application_id}${event.message ? ` / ${event.message}` : ''}`, actor: event.actor })),
-        ...(local.activeBlocks || []).map((rule) => ({ at: rule.created_at, type: 'IP遮断', content: `${rule.network}: ${rule.reason}`, actor: rule.created_by })),
-    ].sort((a, b) => String(b.at).localeCompare(String(a.at))).slice(0, 30);
-    body.replaceChildren();
-    if (!rows.length) {
-        const row = document.createElement('tr');
-        const cell = element('td', 'empty', '表示できる履歴はありません。');
-        cell.colSpan = 4;
-        row.append(cell);
-        body.append(row);
-        return;
-    }
-    for (const item of rows) {
-        const row = document.createElement('tr');
-        row.append(element('td', '', formatDate(item.at)), element('td', '', item.type), element('td', '', item.content), element('td', '', item.actor || '—'));
-        body.append(row);
-    }
 }
 
 function renderSlots(catalog, awsCounts, reuseCounts) {

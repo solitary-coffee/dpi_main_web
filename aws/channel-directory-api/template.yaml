@@ -85,6 +85,7 @@ Resources:
                 - dynamodb:DescribeContinuousBackups
                 - dynamodb:ListBackups
                 - cloudwatch:DescribeAlarms
+                - cloudwatch:DescribeAlarmHistory
                 - logs:DescribeLogGroups
                 - ec2:DescribeInstances
                 - ec2:DescribeInstanceStatus
