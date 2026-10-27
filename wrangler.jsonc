@@ -44,6 +44,12 @@
       "database_name": "dpi-newsletter",
       "database_id": "8c0bbd9c-e3ac-4298-baa4-e98439882d3b",
       "migrations_dir": "migrations"
+    },
+    {
+      "binding": "ACCESS_LOG_DB",
+      "database_name": "dpi-newsletter",
+      "database_id": "8c0bbd9c-e3ac-4298-baa4-e98439882d3b",
+      "migrations_dir": "migrations"
     }
   ],
 
