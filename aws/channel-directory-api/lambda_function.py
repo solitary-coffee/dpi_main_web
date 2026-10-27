@@ -1243,7 +1243,11 @@ def _alarm_region_summary(region):
     alarms = []
     paginator = client.get_paginator("describe_alarms")
     for page in paginator.paginate(PaginationConfig={"MaxItems": 500}):
-        alarms.extend(_public_alarm(item, region, "metric") for item in page.get("MetricAlarms", []))
+        alarms.extend(
+            _public_alarm(item, region, "metric")
+            for item in page.get("MetricAlarms", [])
+            if _is_dpi_alarm(item)
+        )
         alarms.extend(_public_alarm(item, region, "composite") for item in page.get("CompositeAlarms", []))
     alarms.sort(key=lambda item: (item["state"] != "ALARM", item["state"] != "INSUFFICIENT_DATA", item["name"].casefold()))
     return {
@@ -1254,6 +1258,15 @@ def _alarm_region_summary(region):
         "insufficientData": sum(item["state"] == "INSUFFICIENT_DATA" for item in alarms),
         "alarms": alarms,
     }
+
+
+def _is_dpi_alarm(alarm):
+    table_name = next(
+        (_clean(item.get("Value"), 200) for item in alarm.get("Dimensions") or []
+         if item.get("Name") == "TableName"),
+        "",
+    )
+    return not table_name or _is_dpi_table(table_name)
 
 
 def _public_alarm(alarm, region, alarm_type):
