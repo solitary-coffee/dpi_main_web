@@ -17,6 +17,7 @@ const ADMIN_ASSET_ROOTS = Object.freeze([
     '/site/status-admin',
     '/site/delivery-admin',
     '/site/delivery-flow-admin',
+    '/site/audit-admin',
 ]);
 
 class AdminCenterError extends Error {
@@ -37,7 +38,8 @@ export async function handleAdminCenterRequest(request, env) {
     const isDmdataHistoryApi = pathname === '/site/xml-admin/api/dmdata-history';
     const isDeliveryFlowApi = pathname === '/site/delivery-flow-admin/api/summary';
     const isTestDeliveryApi = pathname === '/site/system-admin/api/test-delivery';
-    const isApi = isSummaryApi || isActionApi || isDeliveryStatsApi || isDmdataHistoryApi || isDeliveryFlowApi || isTestDeliveryApi;
+    const isAuditApi = pathname === '/site/audit-admin/api/logs';
+    const isApi = isSummaryApi || isActionApi || isDeliveryStatsApi || isDmdataHistoryApi || isDeliveryFlowApi || isTestDeliveryApi || isAuditApi;
     const assetRoot = !isApi ? ADMIN_ASSET_ROOTS.find((root) => pathname === root || pathname.startsWith(`${root}/`)) : null;
     const isAsset = Boolean(assetRoot);
     if (!isApi && !isAsset) return null;
@@ -80,6 +82,12 @@ export async function handleAdminCenterRequest(request, env) {
             }
             return await proxyTestDelivery(url, env, admin);
         }
+        if (isAuditApi) {
+            if (request.method !== 'GET') {
+                return jsonResponse({ success: false, message: '許可されていない操作です。' }, 405, { Allow: 'GET' });
+            }
+            return await auditLogSummary(url, env, admin);
+        }
         if (!['GET', 'HEAD'].includes(request.method)) {
             throw new AdminCenterError(405, '許可されていない操作です。', 'method_not_allowed');
         }
@@ -115,16 +123,15 @@ async function systemSummary(env, admin) {
     const database = env.NEWSLETTER_DB || env.REUSE_DB || env.IP_BLOCK_DB;
     if (!database) throw new AdminCenterError(503, '管理データベースが設定されていません。', 'database_not_configured');
 
-    const [reuse, campaigns, subscribers, blocks, audit, reuseEvents, approvedReuse, aws] = await Promise.all([
+    const [reuse, campaigns, subscribers, blocks, auditCount, reuseEventCount, ipAuditCount, approvedReuse, aws] = await Promise.all([
         groupedCounts(database, 'SELECT status, COUNT(*) AS count FROM reuse_applications GROUP BY status'),
         groupedCounts(database, 'SELECT status, COUNT(*) AS count FROM newsletter_campaigns GROUP BY status'),
         groupedCounts(database, 'SELECT status, COUNT(*) AS count FROM newsletter_subscribers GROUP BY status'),
         queryRows(database, `SELECT id, network, reason, created_by, created_at, updated_by, updated_at
             FROM ip_block_rules WHERE enabled = 1 ORDER BY created_at DESC LIMIT 20`),
-        queryRows(database, `SELECT id, actor, action, entity_type, entity_id, created_at
-            FROM admin_audit_events ORDER BY created_at DESC LIMIT 30`),
-        queryRows(database, `SELECT id, application_id, event_type, actor, message, created_at
-            FROM reuse_application_events ORDER BY created_at DESC LIMIT 30`),
+        queryScalar(database, 'SELECT COUNT(*) AS count FROM admin_audit_events'),
+        queryScalar(database, 'SELECT COUNT(*) AS count FROM reuse_application_events'),
+        queryScalar(database, 'SELECT COUNT(*) AS count FROM ip_block_audit'),
         queryRows(database, `SELECT id, delivery_types, channel_mappings
             FROM reuse_applications WHERE status = 'approved'`),
         fetchAwsSummary(env),
@@ -146,8 +153,7 @@ async function systemSummary(env, admin) {
             campaigns,
             subscribers,
             activeBlocks: blocks,
-            auditEvents: audit,
-            reuseEvents,
+            auditCount: Number(auditCount || 0) + Number(reuseEventCount || 0) + Number(ipAuditCount || 0),
             deliverySlotCounts: countApprovedDeliverySlots(approvedReuse),
         },
         aws,
@@ -159,6 +165,7 @@ async function systemSummary(env, admin) {
             { label: 'ステータス管理', href: '/site/status-admin/' },
             { label: '配信統計', href: '/site/delivery-admin/' },
             { label: '配信系統', href: '/site/delivery-flow-admin/' },
+            { label: '監査ログ', href: '/site/audit-admin/' },
             { label: '二次利用申請管理', href: '/site/reuse-admin/' },
             { label: 'お知らせ一括配信', href: '/site/mail-admin/' },
             { label: 'Discordお知らせ', href: '/site/discord-admin/' },
@@ -166,6 +173,85 @@ async function systemSummary(env, admin) {
             { label: 'IP遮断管理', href: '/site/ip-admin/' },
         ],
     });
+}
+
+async function auditLogSummary(url, env, admin) {
+    const database = env.NEWSLETTER_DB || env.REUSE_DB || env.IP_BLOCK_DB;
+    if (!database) throw new AdminCenterError(503, '管理データベースが設定されていません。', 'database_not_configured');
+    const [adminRows, reuseRows, ipRows] = await Promise.all([
+        queryRows(database, `SELECT id, actor, action, entity_type, entity_id, details_json, created_at
+            FROM admin_audit_events ORDER BY created_at DESC`),
+        queryRows(database, `SELECT id, application_id, event_type, actor, message, created_at
+            FROM reuse_application_events ORDER BY created_at DESC`),
+        queryRows(database, `SELECT id, action, rule_id, network, reason, actor_email, actor_subject, actor_ip, ray_id, created_at
+            FROM ip_block_audit ORDER BY created_at DESC`),
+    ]);
+    const items = [
+        ...adminRows.map((item) => ({
+            id: item.id, at: item.created_at, type: 'admin', typeLabel: '管理操作',
+            action: item.action, actor: item.actor,
+            content: [item.entity_type, item.entity_id].filter(Boolean).join(' / '),
+            details: { entityType: item.entity_type, entityId: item.entity_id || null, ...parseAuditDetails(item.details_json) },
+        })),
+        ...reuseRows.map((item) => ({
+            id: item.id, at: item.created_at, type: 'reuse', typeLabel: '二次利用申請',
+            action: item.event_type, actor: item.actor,
+            content: [item.application_id, item.message].filter(Boolean).join(' / '),
+            details: { applicationId: item.application_id, message: item.message || null },
+        })),
+        ...ipRows.map((item) => ({
+            id: item.id, at: item.created_at, type: 'ip', typeLabel: 'IP遮断',
+            action: item.action, actor: item.actor_email,
+            content: [item.network, item.reason].filter(Boolean).join(' / '),
+            details: { ruleId: item.rule_id, network: item.network, reason: item.reason, actorSubject: item.actor_subject || null, actorIp: item.actor_ip || null, rayId: item.ray_id || null },
+        })),
+    ].sort((a, b) => String(b.at).localeCompare(String(a.at)));
+
+    const type = clean(url.searchParams.get('type')).toLowerCase();
+    const actor = clean(url.searchParams.get('actor')).toLowerCase();
+    const action = clean(url.searchParams.get('action')).toLowerCase();
+    const query = clean(url.searchParams.get('q')).toLowerCase();
+    const from = clean(url.searchParams.get('from'));
+    const to = clean(url.searchParams.get('to'));
+    if (type && !['admin', 'reuse', 'ip'].includes(type)) throw new AdminCenterError(400, '監査ログの種別を確認してください。', 'invalid_audit_type');
+    if ((from && !/^\d{4}-\d{2}-\d{2}$/u.test(from)) || (to && !/^\d{4}-\d{2}-\d{2}$/u.test(to))) {
+        throw new AdminCenterError(400, '期間は日付形式で指定してください。', 'invalid_audit_date');
+    }
+    const filtered = items.filter((item) => {
+        const at = String(item.at || '');
+        const haystack = `${item.typeLabel} ${item.action} ${item.content} ${item.actor} ${JSON.stringify(item.details)}`.toLowerCase();
+        return (!type || item.type === type)
+            && (!actor || String(item.actor || '').toLowerCase().includes(actor))
+            && (!action || String(item.action || '').toLowerCase().includes(action))
+            && (!query || haystack.includes(query))
+            && (!from || at >= `${from}T00:00:00`)
+            && (!to || at <= `${to}T23:59:59.999`);
+    });
+    const limit = boundedInteger(url.searchParams.get('limit'), 100, 20, 200);
+    const offset = boundedInteger(url.searchParams.get('offset'), 0, 0, Math.max(0, filtered.length));
+    return jsonResponse({
+        success: true,
+        admin: admin.email,
+        fetchedAt: new Date().toISOString(),
+        total: filtered.length,
+        offset,
+        limit,
+        items: filtered.slice(offset, offset + limit),
+    });
+}
+
+function parseAuditDetails(value) {
+    try {
+        const parsed = JSON.parse(clean(value) || '{}');
+        return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+    } catch {
+        return {};
+    }
+}
+
+function boundedInteger(value, fallback, minimum, maximum) {
+    const parsed = Number.parseInt(String(value ?? ''), 10);
+    return Number.isInteger(parsed) ? Math.min(maximum, Math.max(minimum, parsed)) : fallback;
 }
 
 async function proxyAwsAction(request, env, admin) {
@@ -319,6 +405,11 @@ async function queryRows(database, sql) {
         console.warn('Admin center local query unavailable', { errorName: error?.name || 'Error' });
         return [];
     }
+}
+
+async function queryScalar(database, sql) {
+    const rows = await queryRows(database, sql);
+    return Number(rows[0]?.count || 0);
 }
 
 async function fetchAwsSummary(env) {
