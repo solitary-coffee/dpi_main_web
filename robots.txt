@@ -1,0 +1,20 @@
+# Public DPI-Bot pages may be crawled. Management pages and APIs are excluded.
+# Crawl preferences only; authentication and authorization remain required.
+User-agent: *
+Disallow: /api$
+Disallow: /api/
+Disallow: /site/admin-center
+Disallow: /site/audit-admin
+Disallow: /site/channel-admin
+Disallow: /site/delivery-admin
+Disallow: /site/delivery-flow-admin
+Disallow: /site/discord-admin
+Disallow: /site/ec2-admin
+Disallow: /site/ip-admin
+Disallow: /site/mail-admin
+Disallow: /site/reuse-admin
+Disallow: /site/status-admin
+Disallow: /site/system-admin
+Disallow: /site/xml-admin
+
+Sitemap: https://dpi-bot.com/sitemap.xml
