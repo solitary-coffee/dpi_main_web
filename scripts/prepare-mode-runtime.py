@@ -12,7 +12,7 @@ from pathlib import Path
 
 MARKER = '# DPI_MODE_HOOKS_V1'
 ROLES = ('home_sender', 'home_fallback', 'home_health', 'eew_receiver',
-         'eew_ingest', 'weather_sender', 'ingress', 'worker', 'heartbeat', 'monitor', 'direct_discord', 'training', 'legacy_sender')
+         'eew_ingest', 'weather_sender', 'ingress', 'candidate', 'worker', 'heartbeat', 'monitor', 'direct_discord', 'training', 'legacy_sender')
 
 
 def prepare(role, source):
@@ -120,6 +120,19 @@ def prepare(role, source):
                 '    if mode_error:\n'
                 '        return _response(503 if mode_error["retryable"] else 409, {"accepted": False, **mode_error})\n'
                 '    final_backup_event_key = _final_backup_event_key(payload)')
+        replace('    """Acquire MRSC while SQS is being written, then dispatch after durability."""',
+                '    """Acquire MRSC while SQS is being written, then dispatch after durability."""\n'
+                '    if not mode_hooks.route_allowed("fast"):\n'
+                '        return {"attempted": False, "mode": "control-inline", "result": "suppressed-by-maintenance"}\n'
+                '    mode_hooks.wait_route("fast")')
+    elif role == 'candidate':
+        replace('            _process(payload, context)',
+                '            _dpi_route = mode_hooks.candidate_route(payload)\n'
+                '            if not mode_hooks.route_allowed(_dpi_route):\n'
+                '                print(json.dumps({"route": _dpi_route, "result": "suppressed-by-maintenance"}))\n'
+                '                continue\n'
+                '            mode_hooks.wait_route(_dpi_route)\n'
+                '            _process(payload, context)')
     elif role == 'worker':
         for old, new in (
             ('def _send_one(session, url, message):', 'def _send_one(session, url, message, mode_context=None):'),
@@ -144,12 +157,19 @@ def prepare(role, source):
         replace(anchor, anchor +
                 '    if mode_hooks.enabled() and 200 <= status < 300 and body.get("ok"):\n'
                 '        record = _ddb.get_item(Key={"pk": "ADMIN#SYSTEM_MODE"}, ConsistentRead=True).get("Item", {})\n'
-                '        fields = ("mode", "revision", "node_overrides", "discard_before_epoch")\n'
+                '        fields = ("mode", "revision", "node_overrides", "route_overrides", "notification_policy", "discard_before_epoch")\n'
                 '        body["operating_mode"] = json.loads(json.dumps({k: record[k] for k in fields if k in record}, default=int))\n')
         replace('    # Also prove this regional control plane is receiving home traffic.',
                 '    mode_hooks.accept_home_evidence(_ddb, payload)\n\n'
                 '    # Also prove this regional control plane is receiving home traffic.')
     elif role == 'monitor':
+        replace('def _notify(text: str) -> None:',
+                'def _notify(text: str, kind: str = "operational") -> None:\n'
+                '    if not mode_hooks.notification_allowed(kind):\n'
+                '        print("Slack notification suppressed by maintenance mode")\n'
+                '        return')
+        replace('            _notify(f"【DPI-Bot 自動監視エラー】\\nController: {REGION_ROLE}\\n対象: {key}\\n{type(exc).__name__}: {str(exc)[:500]}")',
+                '            _notify(f"【DPI-Bot 自動監視エラー】\\nController: {REGION_ROLE}\\n対象: {key}\\n{type(exc).__name__}: {str(exc)[:500]}", "critical")')
         replace('def lambda_handler(event, context):', 'def _mode_legacy_handler(event, context):')
         replace('            _reconcile(key, home, now, decision)',
                 '            if not mode_hooks.monitor_allows_actions():\n'
@@ -179,11 +199,51 @@ def prepare(role, source):
     position = guards[0].lineno - 1 if guards else len(lines)
     lines.insert(position, f'\nmode_hooks.register({member!r}, __file__)\n\n')
     output = ''.join(lines)
-    if role in {'worker', 'monitor', 'ingress', 'heartbeat'}:
+    if role in {'worker', 'monitor', 'ingress', 'candidate', 'heartbeat'}:
         anchor = 'def lambda_handler(event, context):\n'
         output = output.replace(anchor, anchor + '    if event.get("_dpi_mode_probe") is True and mode_hooks.enabled():\n        return mode_hooks.probe()\n', 1)
     compile(output, f'<prepared-{role}>', 'exec')
     return output
+
+
+def upgrade_v1(role, source):
+    """Upgrade an already verified V1 runtime source without stacking V1 hooks."""
+    if MARKER not in source:
+        raise ValueError(f'{role}: V1 runtime marker missing')
+
+    def replace(old, new):
+        nonlocal source
+        if source.count(old) != 1:
+            raise ValueError(f'{role}: expected exactly one V1 upgrade point: {old[:90]!r}')
+        source = source.replace(old, new, 1)
+
+    if role == 'ingress' and 'suppressed-by-maintenance' not in source:
+        replace('    """Acquire MRSC while SQS is being written, then dispatch after durability."""',
+                '    """Acquire MRSC while SQS is being written, then dispatch after durability."""\n'
+                '    if not mode_hooks.route_allowed("fast"):\n'
+                '        return {"attempted": False, "mode": "control-inline", "result": "suppressed-by-maintenance"}\n'
+                '    mode_hooks.wait_route("fast")')
+    elif role == 'heartbeat' and '"route_overrides"' not in source:
+        replace('fields = ("mode", "revision", "node_overrides", "discard_before_epoch")',
+                'fields = ("mode", "revision", "node_overrides", "route_overrides", "notification_policy", "discard_before_epoch")')
+    elif role == 'monitor' and 'notification_allowed(kind)' not in source:
+        replace('def _notify(text: str) -> None:',
+                'def _notify(text: str, kind: str = "operational") -> None:\n'
+                '    if not mode_hooks.notification_allowed(kind):\n'
+                '        print("Slack notification suppressed by maintenance mode")\n'
+                '        return')
+        replace('            _notify(f"【DPI-Bot 自動監視エラー】\\nController: {REGION_ROLE}\\n対象: {key}\\n{type(exc).__name__}: {str(exc)[:500]}")',
+                '            _notify(f"【DPI-Bot 自動監視エラー】\\nController: {REGION_ROLE}\\n対象: {key}\\n{type(exc).__name__}: {str(exc)[:500]}", "critical")')
+    elif role == 'candidate' and 'candidate_route(payload)' not in source:
+        replace('            _process(payload, context)',
+                '            _dpi_route = mode_hooks.candidate_route(payload)\n'
+                '            if not mode_hooks.route_allowed(_dpi_route):\n'
+                '                print(json.dumps({"route": _dpi_route, "result": "suppressed-by-maintenance"}))\n'
+                '                continue\n'
+                '            mode_hooks.wait_route(_dpi_route)\n'
+                '            _process(payload, context)')
+    compile(source, f'<upgraded-{role}>', 'exec')
+    return source
 
 
 def main():

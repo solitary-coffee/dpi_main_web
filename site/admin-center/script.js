@@ -3,9 +3,13 @@ let xmlPreviewDigest = '';
 let xmlPreviewSequence = 0;
 let systemModeRevision = null;
 let systemModePlans = {};
-const modeLabels = { automatic: '自動監視', normal: '通常モード', standby: 'スタンバイモード', backup: 'バックアップモード', manual: '手動モード', emergency: '緊急モード', emergency_stop: '緊急停止モード', failover: 'バックアップ固定（旧設定）' };
+let systemMaintenanceReady = false;
+const modeLabels = { automatic: '自動監視', normal: '通常モード', standby: 'スタンバイモード', backup: 'バックアップモード', manual: '手動モード', maintenance: 'メンテナンスモード', emergency: '緊急モード', emergency_stop: '緊急停止モード', failover: 'バックアップ固定（旧設定）' };
 const nodeLabels = { home: '自宅サーバー', 'tokyo-eew': '東京 EC2：EEW・地震・津波', 'tokyo-weather': '東京 EC2：気象・火山', 'osaka-eew': '大阪 EC2：EEW・地震・津波', 'osaka-weather': '大阪 EC2：気象・火山' };
 const deliveryModeLabels = { immediate: '即時配信', standby: '待機して配信', stopped: '配信停止', automatic: '自動判定' };
+const routeLabels = { fast: '高速系統', sqs: 'SQS系統', 'regional-backup': 'リージョン内バックアップ', 'cross-region-backup': '相互バックアップ' };
+const testSourceLabels = { admin: '管理サイト', home: '自宅サーバー', 'tokyo-eew': '東京EC2（EEW・地震・津波）', 'tokyo-weather': '東京EC2（気象・火山）', 'osaka-eew': '大阪EC2（EEW・地震・津波）', 'osaka-weather': '大阪EC2（気象・火山）' };
+let testDeliveryPollTimer = null;
 let selectedDmdataSource = null;
 let dmdataItems = [];
 let dmdataNextToken = '';
@@ -27,6 +31,12 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('dmdata-state')?.addEventListener('change', renderDmdataRows);
     document.getElementById('dmdata-category')?.addEventListener('change', () => { dmdataEventId = ''; dmdataItems = []; dmdataNextToken = ''; renderDmdataRows(); });
     if (document.getElementById('mode-form')) updateModeHint();
+    document.getElementById('test-delivery-refresh')?.addEventListener('click', () => loadTestDelivery(true));
+    document.getElementById('test-delivery-preview-btn')?.addEventListener('click', previewTestDelivery);
+    document.getElementById('test-delivery-form')?.addEventListener('submit', startTestDelivery);
+    document.getElementById('test-functions-all')?.addEventListener('click', () => setTestFunctions(true));
+    document.getElementById('test-functions-clear')?.addEventListener('click', () => setTestFunctions(false));
+    if (document.getElementById('test-delivery-form')) loadTestDelivery(false);
     loadSummary();
 });
 
@@ -53,6 +63,8 @@ function render(data) {
     renderOperationOverview(data.local, data.cloudflare, data.aws, data.deliveryCatalog);
     renderLinks(data.links);
     renderSystems(data.cloudflare, data.aws);
+    renderDynamoDbBackups(data.aws?.dynamoDb);
+    renderCloudWatchAlarms(data.aws?.alarms);
     renderMode(data.aws?.systemMode);
     renderEc2(data.aws?.backupInstances);
     renderAudit(data.local);
@@ -178,6 +190,112 @@ function renderSystems(cloudflare, aws) {
     }));
 }
 
+function renderDynamoDbBackups(summary) {
+    const metrics = document.getElementById('dynamodb-backup-summary');
+    const body = document.getElementById('dynamodb-backup-rows');
+    if (!metrics || !body) return;
+    const rows = summary?.available ? (summary.tables || []) : [];
+    const cards = summary?.available ? [
+        ['対象テーブル', summary.count ?? rows.length],
+        ['PITR有効', summary.pitrEnabled ?? 0],
+        ['PITR無効', summary.pitrDisabled ?? 0],
+        ['取得エラー', summary.backupErrors ?? 0],
+    ] : [['取得状態', '取得不可']];
+    metrics.replaceChildren(...cards.map(([label, value]) => {
+        const card = element('article', 'metric-card compact');
+        card.append(element('span', '', label), element('strong', '', String(value)));
+        return card;
+    }));
+    body.replaceChildren();
+    if (!rows.length) {
+        appendEmptyRow(body, 7, summary?.error ? `バックアップ状況を取得できません（${summary.error}）` : '対象テーブルはありません。');
+        return;
+    }
+    for (const table of rows) {
+        const row = document.createElement('tr');
+        const pitr = element('span', `component-status ${table.pitrStatus === 'ENABLED' ? 'status-ok' : table.pitrStatus === 'DISABLED' ? 'status-impaired' : 'status-initializing'}`, table.pitrStatus === 'ENABLED' ? 'PITR有効' : table.pitrStatus === 'DISABLED' ? 'PITR無効' : '取得不可');
+        const restore = table.pitrStatus === 'ENABLED'
+            ? `${formatDate(table.earliestRestorableAt)} ～ ${formatDate(table.latestRestorableAt)}${table.recoveryPeriodDays ? `（${table.recoveryPeriodDays}日）` : ''}`
+            : '—';
+        const latest = table.latestOnDemandBackup
+            ? `${formatDate(table.latestOnDemandBackup.createdAt)} / ${table.latestOnDemandBackup.status || '不明'}`
+            : 'なし';
+        const tableCell = element('td');
+        tableCell.append(element('strong', '', table.name || '—'));
+        if (table.backupError) tableCell.append(element('small', 'block-code', `取得エラー: ${table.backupError}`));
+        row.append(
+            element('td', '', regionName(table.region)),
+            tableCell,
+            element('td', '', table.status || '—'),
+            element('td'),
+            element('td', '', restore),
+            element('td', '', latest),
+            element('td', '', table.deletionProtectionEnabled ? '有効' : '無効'),
+        );
+        row.children[3].append(pitr);
+        body.append(row);
+    }
+}
+
+function renderCloudWatchAlarms(summary) {
+    const metrics = document.getElementById('cloudwatch-alarm-summary');
+    const body = document.getElementById('cloudwatch-alarm-rows');
+    if (!metrics || !body) return;
+    const alarms = summary?.available ? (summary.items || []) : [];
+    const cards = summary?.available ? [
+        ['警報中', summary.active ?? 0],
+        ['正常', summary.ok ?? 0],
+        ['データ不足', summary.insufficientData ?? 0],
+        ['通知停止中', summary.actionsDisabled ?? 0],
+        ['合計', summary.total ?? alarms.length],
+    ] : [['取得状態', '取得不可']];
+    metrics.replaceChildren(...cards.map(([label, value]) => {
+        const card = element('article', 'metric-card compact');
+        card.append(element('span', '', label), element('strong', '', String(value)));
+        return card;
+    }));
+    body.replaceChildren();
+    if (!alarms.length) {
+        appendEmptyRow(body, 7, summary?.error ? `アラーム状況を取得できません（${summary.error}）` : 'CloudWatchアラームはありません。');
+        return;
+    }
+    for (const alarm of alarms) {
+        const row = document.createElement('tr');
+        const stateClass = alarm.state === 'ALARM' ? 'status-major_outage' : alarm.state === 'OK' ? 'status-ok' : 'status-investigating';
+        const name = element('td');
+        name.append(element('strong', '', alarm.name || '—'));
+        if (alarm.description) name.append(element('small', 'block-code', alarm.description));
+        const metric = alarm.namespace || alarm.metric
+            ? `${alarm.namespace || '式'}${alarm.metric ? ` / ${alarm.metric}` : ''}${alarm.statistic ? ` / ${alarm.statistic}` : ''}`
+            : (alarm.type === 'composite' ? '複合アラーム' : 'メトリクス式');
+        const evaluation = [
+            alarm.datapointsToAlarm && alarm.evaluationPeriods ? `${alarm.datapointsToAlarm}/${alarm.evaluationPeriods}` : null,
+            alarm.periodSeconds ? `${alarm.periodSeconds}秒` : null,
+            alarm.threshold != null ? `しきい値 ${alarm.threshold}` : null,
+            alarm.treatMissingData ? `欠損=${alarm.treatMissingData}` : null,
+        ].filter(Boolean).join(' / ') || '—';
+        const notifications = alarm.actionsEnabled
+            ? `有効（警報 ${alarm.alarmActionCount ?? 0} / 復旧 ${alarm.okActionCount ?? 0}）`
+            : '停止中';
+        const state = element('td');
+        state.append(element('span', `component-status ${stateClass}`, alarm.state || 'UNKNOWN'));
+        row.append(state, element('td', '', regionName(alarm.region)), name, element('td', '', metric), element('td', '', evaluation), element('td', alarm.actionsEnabled ? '' : 'state-stopped', notifications), element('td', '', formatDate(alarm.stateUpdatedAt)));
+        body.append(row);
+    }
+}
+
+function appendEmptyRow(body, columns, message) {
+    const row = document.createElement('tr');
+    const cell = element('td', 'empty', message);
+    cell.colSpan = columns;
+    row.append(cell);
+    body.append(row);
+}
+
+function regionName(region) {
+    return region === 'ap-northeast-1' ? '東京' : region === 'ap-northeast-3' ? '大阪' : (region || '—');
+}
+
 function renderMode(mode) {
     const container = document.getElementById('mode-current');
     if (!container) return;
@@ -187,6 +305,7 @@ function renderMode(mode) {
     }
     systemModeRevision = Number.isInteger(mode.revision) ? mode.revision : null;
     systemModePlans = mode.availablePlans || {};
+    systemMaintenanceReady = mode.maintenanceReadiness?.ready === true;
     const modeName = modeLabels[mode.controlMode] || mode.controlMode;
     const card = element('div', `mode-badge mode-${mode.controlMode}`, `制御: ${modeName}`);
     const regions = element('div', 'region-modes');
@@ -201,6 +320,18 @@ function renderMode(mode) {
     container.append(element('p', '', `自動監視設定: ${mode.automaticMonitoringEnabled ? '有効' : '無効'} / 制御: ${mode.controlMode === 'automatic' ? '自動' : mode.integratedControl ? '手動固定（死活監視は継続）' : '旧方式の手動固定'}`));
     container.append(element('p', 'section-description', '変更の受付と反映完了は別です。緊急停止は新規送信を抑止します。既に送信中のHTTP通信は取り消せません。停止前・停止中の電文は解除後も再送しません。'));
     if (!mode.runtimeReadiness?.ready) container.append(element('p', 'status error', `新モードは配信側更新待ちです。未確認: ${(mode.runtimeReadiness?.missing || ['制御API']).map(x => nodeLabels[x] || x).join('、')}。設定値だけで停止済みとは判定しません。`));
+    if (mode.controlMode === 'maintenance') {
+        const routes = element('div', 'system-grid');
+        for (const [id, label] of Object.entries(routeLabels)) {
+            const policy = mode.routePlan?.[id] || {};
+            const item = element('article', 'mode-plan-card');
+            item.append(element('span', 'eyebrow', 'DELIVERY ROUTE'), element('h3', '', label), element('strong', policy.enabled ? 'state-immediate' : 'state-stopped', policy.enabled ? `稼働・優先度 ${policy.priority ?? '—'}` : '停止'));
+            routes.append(item);
+        }
+        container.append(element('h3', '', 'メンテナンス中の配信系統'), routes);
+        const suppressed = (mode.notificationPolicy?.suppressed || []).join('、') || 'なし';
+        container.append(element('p', 'configuration-notice maintenance-notice', `通知抑止中: ${suppressed}。重大障害・セキュリティ・試験通知は維持されます。`));
+    }
     const nodes = element('div', 'system-grid');
     for (const node of mode.nodes || []) {
         const item = element('article', 'system-card');
@@ -214,7 +345,7 @@ function renderMode(mode) {
     const select = document.getElementById('mode-select');
     for (const option of select.options) {
         if (!['automatic', 'normal', 'failover'].includes(option.value)) {
-            option.disabled = !mode.runtimeReadiness?.ready;
+            option.disabled = option.value === 'maintenance' ? !systemMaintenanceReady : !mode.runtimeReadiness?.ready;
             option.textContent = `${modeLabels[option.value]}${option.disabled ? '（配信側更新待ち）' : ''}`;
         }
     }
@@ -232,11 +363,34 @@ function renderMode(mode) {
             waitLabel.append(wait); field.append(input); const group = element('div'); group.append(field, waitLabel); manual.append(group);
         }
     }
+    const routeControls = document.getElementById('maintenance-route-controls');
+    if (routeControls && !routeControls.children.length) {
+        for (const [id, label] of Object.entries(routeLabels)) {
+            const group = element('div', 'route-control-card');
+            const enabledLabel = element('label', 'checkbox-label', label);
+            const enabled = element('input'); enabled.type = 'checkbox'; enabled.id = `route-enabled-${id}`;
+            enabled.addEventListener('change', renderSelectedRoutePlan);
+            enabledLabel.prepend(enabled);
+            const priorityLabel = element('label', '', '優先順位');
+            const priority = element('select'); priority.id = `route-priority-${id}`;
+            for (let number = 1; number <= 4; number += 1) { const option = element('option', '', String(number)); option.value = String(number); priority.append(option); }
+            priority.addEventListener('change', renderSelectedRoutePlan);
+            priorityLabel.append(priority);
+            group.append(enabledLabel, priorityLabel);
+            routeControls.append(group);
+        }
+    }
     for (const node of mode.nodes || []) {
         const input = document.getElementById(`node-mode-${node.nodeId}`);
         const wait = document.getElementById(`node-wait-${node.nodeId}`);
         if (input && ['immediate', 'standby', 'stopped'].includes(node.requested?.delivery)) input.value = node.requested.delivery;
         if (wait) wait.value = String(node.requested?.waitSeconds > 0 ? node.requested.waitSeconds : 3);
+    }
+    for (const [id] of Object.entries(routeLabels)) {
+        const enabled = document.getElementById(`route-enabled-${id}`);
+        const priority = document.getElementById(`route-priority-${id}`);
+        if (enabled) enabled.checked = mode.routePlan?.[id]?.enabled !== false;
+        if (priority) priority.value = String(mode.routePlan?.[id]?.priority || Object.keys(routeLabels).indexOf(id) + 1);
     }
     updateModeHint();
 }
@@ -309,10 +463,11 @@ async function changeSystemMode(event) {
     const reason = document.getElementById('mode-reason').value.trim();
     const confirmation = `MODE:${mode.toUpperCase()}`;
     if (systemModeRevision === null) return setStatus('最新情報を取得してから操作してください。', 'error');
-    const nodeOverrides = mode === 'manual' ? Object.fromEntries(Object.keys(nodeLabels).map(id => [id, { delivery: document.getElementById(`node-mode-${id}`).value, waitSeconds: Number(document.getElementById(`node-wait-${id}`).value) }])) : undefined;
+    const nodeOverrides = ['manual', 'maintenance'].includes(mode) ? Object.fromEntries(Object.keys(nodeLabels).map(id => [id, { delivery: document.getElementById(`node-mode-${id}`).value, waitSeconds: Number(document.getElementById(`node-wait-${id}`).value) }])) : undefined;
+    const routeOverrides = mode === 'maintenance' ? Object.fromEntries(Object.keys(routeLabels).map(id => [id, { enabled: document.getElementById(`route-enabled-${id}`).checked, priority: Number(document.getElementById(`route-priority-${id}`).value) }])) : undefined;
     if (!window.confirm(`${modeLabels[mode] || mode}へ変更します。\n画面に表示された自宅サーバー・各EC2の動作が適用され、対象EC2の起動状態が変化する場合があります。続行しますか？`)) return;
     try {
-        await runAction({ action: 'system-mode', mode, reason, confirmation, expectedRevision: systemModeRevision, nodeOverrides }, event.submitter, true);
+        await runAction({ action: 'system-mode', mode, reason, confirmation, expectedRevision: systemModeRevision, nodeOverrides, routeOverrides }, event.submitter, true);
     } catch { /* runAction already presents the error */ }
 }
 
@@ -472,11 +627,14 @@ function setDmdataStatus(message, type) {
 function updateModeHint() {
     const select = document.getElementById('mode-select');
     if (!select) return;
-    const descriptions = { automatic: '既存の死活監視で通常・スタンバイ・バックアップを自動判定します。', normal: '既存の通常時配置・待機時間を使用します。', standby: '既存のBACKUP_STANDBYに準拠します。', backup: '既存のBACKUPに準拠します。', manual: '自宅と4台のEC2を個別に設定します。', emergency: '自宅の生死に関係なくEC2などの配信待機をなくします。停止中EC2の起動には時間がかかります。', emergency_stop: '全配信元とAWS送信段で配信を停止します。既にDiscordが受信した通知は取り消せません。', failover: '従来のEC2全台起動・バックアップ固定設定です。' };
+    const descriptions = { automatic: '既存の死活監視で通常・スタンバイ・バックアップを自動判定します。', normal: '既存の通常時配置・待機時間を使用します。', standby: '既存のBACKUP_STANDBYに準拠します。', backup: '既存のBACKUPに準拠します。', manual: '自宅と4台のEC2を個別に設定します。', maintenance: '配信元と配信系統を個別指定し、不要な運用通知を抑止します。重大障害・セキュリティ・試験通知は維持します。', emergency: '自宅の生死に関係なくEC2などの配信待機をなくします。停止中EC2の起動には時間がかかります。', emergency_stop: '全配信元とAWS送信段で配信を停止します。既にDiscordが受信した通知は取り消せません。', failover: '従来のEC2全台起動・バックアップ固定設定です。' };
     const description = document.getElementById('mode-description');
     if (description) description.textContent = descriptions[select.value] || '';
     const manual = document.getElementById('manual-node-settings');
-    if (manual) manual.hidden = select.value !== 'manual';
+    if (manual) manual.hidden = !['manual', 'maintenance'].includes(select.value);
+    const routes = document.getElementById('maintenance-route-settings');
+    if (routes) routes.hidden = select.value !== 'maintenance';
+    renderSelectedRoutePlan();
     renderSelectedModePlan();
 }
 
@@ -485,7 +643,7 @@ function renderSelectedModePlan() {
     const select = document.getElementById('mode-select');
     if (!container || !select) return;
     const mode = select.value;
-    const plan = mode === 'manual'
+    const plan = ['manual', 'maintenance'].includes(mode)
         ? Object.fromEntries(Object.keys(nodeLabels).map((id) => {
             const delivery = document.getElementById(`node-mode-${id}`)?.value || 'stopped';
             const waitSeconds = delivery === 'standby' ? Number(document.getElementById(`node-wait-${id}`)?.value || 3) : 0;
@@ -507,6 +665,189 @@ function renderSelectedModePlan() {
         );
         return card;
     }));
+}
+
+function renderSelectedRoutePlan() {
+    for (const id of Object.keys(routeLabels)) {
+        const enabled = document.getElementById(`route-enabled-${id}`);
+        const priority = document.getElementById(`route-priority-${id}`);
+        if (priority) priority.disabled = !enabled?.checked;
+    }
+}
+
+async function loadTestDelivery(showStatus, runId = '') {
+    const container = document.getElementById('test-delivery-runs');
+    if (!container) return;
+    if (showStatus) setTestDeliveryStatus('試験配信情報を更新しています…', 'info');
+    const params = new URLSearchParams();
+    if (runId) params.set('runId', runId);
+    try {
+        const response = await fetch(`/site/system-admin/api/test-delivery${params.size ? `?${params}` : ''}`, { credentials: 'same-origin', headers: { Accept: 'application/json' } });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || data.success !== true) throw new Error(data.message || `取得に失敗しました（HTTP ${response.status}）。`);
+        renderTestDeliveryInventory(data);
+        renderTestDeliveryRuns(data.runs || []);
+        const active = (data.runs || []).some((run) => ['queued', 'running'].includes(run?.status));
+        const activeRun = (data.runs || []).find((run) => ['queued', 'running'].includes(run?.status));
+        scheduleTestDeliveryPoll(active, activeRun?.runId || runId);
+        if (showStatus) setTestDeliveryStatus(`配信枠「${data.testSlot || '配信テスト'}」: 有効な送信先 ${Number(data.testSlotTargetCount || 0)}件`, data.testSlotTargetCount > 0 ? 'success' : 'error');
+    } catch (error) {
+        setTestDeliveryStatus(error.message, 'error');
+        scheduleTestDeliveryPoll(false);
+    }
+}
+
+function renderTestDeliveryInventory(data) {
+    const sources = document.getElementById('test-source-controls');
+    if (sources && !sources.children.length) {
+        for (const [id, label] of Object.entries(testSourceLabels)) sources.append(testChoice('source', id, label, id === 'admin'));
+    }
+    const routes = document.getElementById('test-route-controls');
+    if (routes && !routes.children.length) {
+        for (const route of data.routes || []) routes.append(testChoice('route', route.id, route.label || routeLabels[route.id] || route.id, true));
+    }
+    const functions = document.getElementById('test-function-controls');
+    if (!functions || functions.children.length) return;
+    const groups = new Map();
+    for (const item of data.functions || []) {
+        const key = `${item.region}:${item.group}`;
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(item);
+    }
+    const groupLabels = { primary: '共通プライマリ', backup: '共通バックアップ', eew: '緊急地震速報', 'eew-warning': '緊急地震速報（警報）', earthquake: '地震情報', tsunami: '津波情報', weather: '気象情報', volcano: '火山情報', sub: '補助配信' };
+    for (const [key, items] of groups) {
+        const [region, group] = key.split(':');
+        const details = element('details', 'test-function-group');
+        const summary = element('summary', '', `${region === 'ap-northeast-1' ? '東京' : '大阪'} / ${groupLabels[group] || group}（${items.length}）`);
+        const options = element('div', 'option-grid');
+        for (const item of items) options.append(testFunctionChoice(item, false));
+        details.append(summary, options);
+        functions.append(details);
+    }
+    const submit = document.getElementById('test-delivery-submit');
+    if (submit) submit.disabled = Number(data.testSlotTargetCount || 0) === 0;
+    setTestDeliveryStatus(`配信枠「${data.testSlot || '配信テスト'}」: 有効な送信先 ${Number(data.testSlotTargetCount || 0)}件`, data.testSlotTargetCount > 0 ? 'success' : 'error');
+}
+
+function testChoice(kind, value, label, checked) {
+    const wrapper = element('label', 'checkbox-label', label);
+    const input = element('input'); input.type = 'checkbox'; input.name = `test-${kind}`; input.value = value; input.checked = checked;
+    wrapper.prepend(input);
+    return wrapper;
+}
+
+function testFunctionChoice(item, checked) {
+    const wrapper = testChoice('function', `${item.region}|${item.name}`, item.name, checked);
+    wrapper.querySelector('input').dataset.region = item.region;
+    wrapper.querySelector('input').dataset.name = item.name;
+    return wrapper;
+}
+
+function setTestFunctions(checked) {
+    for (const input of document.querySelectorAll('input[name="test-function"]')) input.checked = checked;
+}
+
+function testDeliveryPayload(action) {
+    const checkedValues = (name) => [...document.querySelectorAll(`input[name="${name}"]:checked`)].map((input) => input.value);
+    return {
+        action,
+        sources: checkedValues('test-source'),
+        routes: checkedValues('test-route'),
+        functions: [...document.querySelectorAll('input[name="test-function"]:checked')].map((input) => ({ region: input.dataset.region, name: input.dataset.name })),
+        title: document.getElementById('test-delivery-title-input')?.value || '',
+        note: document.getElementById('test-delivery-note')?.value || '',
+    };
+}
+
+async function previewTestDelivery() {
+    const button = document.getElementById('test-delivery-preview-btn');
+    try {
+        const data = await runAction(testDeliveryPayload('test-delivery-preview'), button, false);
+        const box = document.getElementById('test-delivery-preview');
+        box.replaceChildren(element('h3', '', `送信Embedプレビュー（予定処理 ${Number(data.plannedSteps || 0)}件）`));
+        for (const message of data.preview || []) appendDiscordPreview(box, message);
+        if (Number(data.plannedSteps || 0) > Number((data.preview || []).length)) box.append(element('p', 'muted', `画面では先頭${(data.preview || []).length}件を表示しています。`));
+        box.hidden = false;
+    } catch { /* runAction already presents the error */ }
+}
+
+function appendDiscordPreview(container, message) {
+    const messageBox = element('article', 'discord-message-preview');
+    messageBox.append(element('h4', '', message.username || 'DPI-Bot 配信試験'));
+    for (const embed of message.embeds || []) {
+        const card = element('div', 'discord-embed-preview');
+        if (Number.isInteger(embed.color)) card.style.borderLeftColor = `#${embed.color.toString(16).padStart(6, '0')}`;
+        card.append(element('strong', '', embed.title || ''), element('p', 'embed-description', embed.description || ''));
+        const fields = element('dl', 'embed-fields');
+        for (const field of embed.fields || []) fields.append(element('dt', '', field.name || ''), element('dd', '', field.value || ''));
+        card.append(fields, element('small', 'muted', embed.footer?.text || ''));
+        messageBox.append(card);
+    }
+    container.append(messageBox);
+}
+
+async function startTestDelivery(event) {
+    event.preventDefault();
+    const payload = testDeliveryPayload('test-delivery');
+    if (!payload.sources.length || (!payload.routes.length && !payload.functions.length)) return setTestDeliveryStatus('試験開始元と、配信系統またはLambdaを1つ以上選択してください。', 'error');
+    const planned = payload.functions.length + payload.sources.length * payload.routes.length;
+    if (!window.confirm(`配信枠「配信テスト」へ${planned}系統分の試験配信を開始します。実際にDiscordへ送信されます。続行しますか？`)) return;
+    try {
+        const data = await runAction(payload, event.submitter, false);
+        setTestDeliveryStatus(`試験実行 ${data.runId} を開始しました。`, 'success');
+        await loadTestDelivery(false, data.runId);
+    } catch { /* runAction already presents the error */ }
+}
+
+function renderTestDeliveryRuns(runs) {
+    const container = document.getElementById('test-delivery-runs');
+    if (!container) return;
+    container.replaceChildren();
+    if (!runs.length) return container.append(element('p', 'empty', '試験実行履歴はありません。'));
+    const statusLabels = { queued: '開始待ち', running: '実行中', completed: '正常終了', completed_with_errors: '異常あり', failed: '異常終了' };
+    for (const run of runs) {
+        const card = element('article', 'record-card test-run-card');
+        const heading = element('div', 'record-heading');
+        const title = element('div');
+        title.append(element('h3', '', run.runId || '試験実行'), element('small', 'muted', `${formatDate(run.requestedAt)} / ${run.requestedBy || '—'}`));
+        const status = element('span', `component-status status-${run.status === 'completed' ? 'completed' : ['queued', 'running'].includes(run.status) ? 'scheduled' : 'major_outage'}`, statusLabels[run.status] || run.status || '不明');
+        heading.append(title, status);
+        const summary = element('dl', 'test-run-summary');
+        for (const [label, value] of [['正常終了', run.successCount ?? 0], ['異常・時間切れ', run.failureCount ?? 0], ['処理中', run.pendingCount ?? 0], ['送信先', run.targetCount ?? 0], ['Lambda', run.functionCount ?? 0], ['開始元', (run.sources || []).map((id) => testSourceLabels[id] || id).join('、') || '—'], ['系統', (run.routes || []).map((id) => routeLabels[id] || id).join('、') || '—']]) summary.append(element('dt', '', label), element('dd', '', String(value)));
+        card.append(heading, summary);
+        if (run.error) card.append(element('p', 'status error', run.error));
+        const details = element('details', 'test-run-details');
+        details.append(element('summary', '', `系統別結果（${(run.steps || []).length}件）`));
+        const tableWrap = element('div', 'table-wrap');
+        const table = document.createElement('table');
+        const head = document.createElement('thead'); const headRow = document.createElement('tr');
+        for (const value of ['対象', 'リージョン', '結果', '件数', '所要時間', '詳細']) headRow.append(element('th', '', value));
+        head.append(headRow); table.append(head);
+        const body = document.createElement('tbody');
+        for (const step of run.steps || []) {
+            const row = document.createElement('tr');
+            const target = step.kind === 'lambda' ? step.name : `${routeLabels[step.route] || step.route} / ${testSourceLabels[step.source] || step.source}`;
+            const count = step.targetCount != null ? `${step.successCount || 0}/${step.targetCount}` : step.sentCount != null ? String(step.sentCount) : '—';
+            const label = step.status === 'success' ? '正常終了' : step.status === 'accepted' ? '受付済み' : step.status === 'timeout' ? '確認時間切れ' : '異常終了';
+            row.append(element('td', '', target || '—'), element('td', '', step.region || '—'), element('td', step.status === 'success' ? 'state-immediate' : 'state-stopped', label), element('td', '', count), element('td', '', step.elapsedMs != null ? `${step.elapsedMs} ms` : '—'), element('td', '', step.detail || step.error || '—'));
+            body.append(row);
+        }
+        if (!body.children.length) { const row = document.createElement('tr'); const cell = element('td', 'empty', '結果待ちです。'); cell.colSpan = 6; row.append(cell); body.append(row); }
+        table.append(body); tableWrap.append(table); details.append(tableWrap); card.append(details);
+        container.append(card);
+    }
+}
+
+function scheduleTestDeliveryPoll(active, runId = '') {
+    if (testDeliveryPollTimer) window.clearTimeout(testDeliveryPollTimer);
+    testDeliveryPollTimer = active ? window.setTimeout(() => loadTestDelivery(false, runId), 4000) : null;
+}
+
+function setTestDeliveryStatus(message, type) {
+    const node = document.getElementById('test-delivery-status');
+    if (!node) return;
+    node.textContent = message;
+    node.className = type ? `status ${type}` : 'status';
 }
 
 async function loadXmlFile(event) {

@@ -82,6 +82,8 @@ Resources:
                 - sqs:GetQueueAttributes
                 - dynamodb:ListTables
                 - dynamodb:DescribeTable
+                - dynamodb:DescribeContinuousBackups
+                - dynamodb:ListBackups
                 - cloudwatch:DescribeAlarms
                 - logs:DescribeLogGroups
                 - ec2:DescribeInstances
@@ -104,6 +106,7 @@ Resources:
             - Sid: ReadDeliveryMonitor
               Effect: Allow
               Action:
+                - dynamodb:GetItem
                 - dynamodb:Scan
                 - dynamodb:DescribeTable
               Resource: !Sub arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${DeliveryMonitorTableName}
@@ -138,6 +141,23 @@ Resources:
               Resource:
                 - !Sub arn:${AWS::Partition}:lambda:ap-northeast-1:${AWS::AccountId}:function:${AutoMonitorFunction}
                 - !Sub arn:${AWS::Partition}:lambda:ap-northeast-3:${AWS::AccountId}:function:${AutoMonitorFunction}
+            - Sid: RunIsolatedDeliveryTests
+              Effect: Allow
+              Action:
+                - lambda:InvokeFunction
+              Resource:
+                - !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:dpi-channel-directory-api
+                - !Sub arn:${AWS::Partition}:lambda:ap-northeast-1:${AWS::AccountId}:function:dpi-delivery-*
+                - !Sub arn:${AWS::Partition}:lambda:ap-northeast-3:${AWS::AccountId}:function:dpi-delivery-*
+                - !Sub arn:${AWS::Partition}:lambda:ap-northeast-1:${AWS::AccountId}:function:new_*
+                - !Sub arn:${AWS::Partition}:lambda:ap-northeast-3:${AWS::AccountId}:function:new_*
+            - Sid: RunCandidateQueueTests
+              Effect: Allow
+              Action:
+                - sqs:SendMessage
+              Resource:
+                - !Sub arn:${AWS::Partition}:sqs:ap-northeast-1:${AWS::AccountId}:dpi-ha-candidate-ap-northeast-1
+                - !Sub arn:${AWS::Partition}:sqs:ap-northeast-3:${AWS::AccountId}:dpi-ha-candidate-ap-northeast-3
             - Sid: ReadSecureParameters
               Effect: Allow
               Action:

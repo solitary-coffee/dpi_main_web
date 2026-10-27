@@ -14,6 +14,7 @@ from pathlib import Path
 from functools import lru_cache
 
 from delivery_gate import DeliveryGate, DeliveryBlocked, validate_record
+from operating_modes import PROTOCOL_VERSION
 from mode_observation import aggregate, local_rows, publish, write_atomic
 from mode_transition import acquire_monitor, release_monitor
 
@@ -100,13 +101,22 @@ def admitted_at(payload):
         return None
 
 
-def wait_source(received_at, automatic_policy=None, legacy_fast=False):
+def wait_source(
+    received_at,
+    automatic_policy=None,
+    legacy_fast=False,
+    upstream_timing=None,
+):
     if enabled():
         policy = automatic_policy or (lambda: {"delivery": "immediate", "waitSeconds": 0})
         return _get_gate().wait(_node(), admitted_at=received_at, automatic_policy=policy, legacy_fast=legacy_fast)
 
 
-def check_source(received_at, automatic_policy=None):
+def check_source(
+    received_at,
+    automatic_policy=None,
+    upstream_timing=None,
+):
     if enabled():
         policy = automatic_policy or (lambda: {"delivery": "immediate", "waitSeconds": 0})
         return _get_gate().check(_node(), admitted_at=received_at, automatic_policy=policy)
@@ -139,6 +149,58 @@ def worker_check(marker):
         return {"error_kind": error.reason, "retryable": error.retryable,
                 "reason": error.reason, "suppressed_by_mode": True}
     return None
+
+
+def route_policy(route_id):
+    if not enabled():
+        return {"route": route_id, "priority": 1, "revision": 0, "mode": "disabled"}
+    return _get_gate().route(route_id)
+
+
+def route_allowed(route_id):
+    try:
+        route_policy(route_id)
+        return True
+    except DeliveryBlocked as error:
+        if error.reason in {"maintenance_route_stopped", "emergency_stop"}:
+            return False
+        raise
+
+
+def wait_route(route_id):
+    """Apply maintenance route priority before an MRSC lease is attempted."""
+    policy = route_policy(route_id)
+    wait_seconds = int(policy.get("waitSeconds", 0))
+    if wait_seconds > 0:
+        time.sleep(wait_seconds)
+        policy = route_policy(route_id)
+    return policy
+
+
+def candidate_route(payload):
+    """Classify a durable regional copy without trusting user-facing fields."""
+    test = payload.get("_dpi_test") or {}
+    explicit = test.get("route") if isinstance(test, dict) else None
+    if explicit in {"fast", "sqs", "regional-backup", "cross-region-backup"}:
+        return explicit
+    ha = payload.get("_ha") or {}
+    current = setting("DPI_MODE_REGION")
+    accepted = str(ha.get("accepted_region") or "")
+    primary = str(ha.get("primary_region") or "")
+    if current and accepted and current != accepted:
+        return "cross-region-backup"
+    if current and primary and current != primary:
+        return "regional-backup"
+    return "sqs"
+
+
+def notification_allowed(kind="operational"):
+    if not enabled():
+        return True
+    try:
+        return _get_gate().notification_allowed(kind)
+    except DeliveryBlocked:
+        return str(kind) in {"critical", "security", "test", "test-failure"}
 
 
 def ingress_check(payload):
@@ -304,7 +366,7 @@ def accept_home_evidence(table, payload):
 def probe():
     """Read-only function probe for private InvokeFunction deployment checks."""
     ack = _get_gate().acknowledgement(_node(), automatic_policy=source_policy)
-    return {"mode_probe": True, "protocol_version": 1, "node": _node(),
+    return {"mode_probe": True, "protocol_version": PROTOCOL_VERSION, "node": _node(),
             "members": dict(_registered), "acknowledgement": ack,
             "enabled": enabled()}
 
