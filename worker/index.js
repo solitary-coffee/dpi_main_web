@@ -7,6 +7,7 @@ import { handleReuseRequest } from './reuse.js';
 import { handleChannelDirectoryRequest } from './channel-directory.js';
 import { handleAdminCenterRequest } from './admin-center.js';
 import { handleStatuspageAdminRequest } from './statuspage-admin.js';
+import { handleAccessLogRequest, withAccessLog } from './access-log.js';
 
 const TOPICS = Object.freeze({
     bot_issue: 'BOTの不具合',
@@ -39,8 +40,10 @@ class ContactError extends Error {
     }
 }
 
-export default {
+const application = {
     async fetch(request, env, ctx) {
+        const accessLogResponse = await handleAccessLogRequest(request, env);
+        if (accessLogResponse) return accessLogResponse;
         if (isPrivateAssetPath(new URL(request.url).pathname)) {
             return new Response('Not Found', { status: 404, headers: { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' } });
         }
@@ -92,6 +95,15 @@ export default {
 
     async queue(batch, env) {
         await handleNewsletterQueue(batch, env);
+    },
+};
+
+export default {
+    fetch(request, env, ctx) {
+        return withAccessLog(request, env, ctx, 'dpi-bot.com', () => application.fetch(request, env, ctx));
+    },
+    queue(batch, env) {
+        return application.queue(batch, env);
     },
 };
 
