@@ -34,7 +34,7 @@ async function loadAudit() {
         if (value) params.set(key, value);
     }
     try {
-        const response = await fetch(`/site/audit-admin/api/logs?${params}`, { credentials: 'same-origin', headers: { Accept: 'application/json' } });
+        const response = await fetch(`/site/system-admin/audit/api/logs?${params}`, { credentials: 'same-origin', headers: { Accept: 'application/json' } });
         const data = await response.json().catch(() => ({}));
         if (!response.ok || data.success !== true) throw new Error(data.message || `取得に失敗しました（HTTP ${response.status}）。`);
         auditTotal = Number(data.total || 0);

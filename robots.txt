@@ -4,7 +4,6 @@ User-agent: *
 Disallow: /api$
 Disallow: /api/
 Disallow: /site/admin-center
-Disallow: /site/audit-admin
 Disallow: /site/channel-admin
 Disallow: /site/delivery-admin
 Disallow: /site/delivery-flow-admin

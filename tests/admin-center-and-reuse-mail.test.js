@@ -29,7 +29,7 @@ test('分割した運用管理画面をAccess認証で保護し末尾スラッ�
     };
     try {
         const headers = { 'cf-access-jwt-assertion': token };
-        for (const root of ['/site/admin-center', '/site/system-admin', '/site/ec2-admin', '/site/xml-admin', '/site/status-admin', '/site/delivery-admin', '/site/delivery-flow-admin', '/site/audit-admin']) {
+        for (const root of ['/site/admin-center', '/site/system-admin', '/site/ec2-admin', '/site/xml-admin', '/site/status-admin', '/site/delivery-admin', '/site/delivery-flow-admin', '/site/system-admin/audit']) {
             const canonical = await handleAdminCenterRequest(new Request(`https://dpi-bot.com${root}/`, { headers }), adminEnv);
             assert.equal(canonical.status, 200, root);
             assert.equal(await canonical.text(), 'admin page', root);
@@ -98,14 +98,14 @@ test('システム運用画面はDynamoDBバックアップとCloudWatchアラ�
 test('監査ログは専用タブへ分離し絞り込みAPIを備える', async () => {
     const [system, audit, auditScript, worker] = await Promise.all([
         readFile(new URL('../site/system-admin/index.html', import.meta.url), 'utf8'),
-        readFile(new URL('../site/audit-admin/index.html', import.meta.url), 'utf8'),
-        readFile(new URL('../site/audit-admin/script.js', import.meta.url), 'utf8'),
+        readFile(new URL('../site/system-admin/audit/index.html', import.meta.url), 'utf8'),
+        readFile(new URL('../site/system-admin/audit/script.js', import.meta.url), 'utf8'),
         readFile(new URL('../worker/admin-center.js', import.meta.url), 'utf8'),
     ]);
     assert.doesNotMatch(system, /id="audit-rows"/u);
     assert.match(audit, /id="audit-filter-form"[\s\S]*id="audit-rows"/u);
     assert.match(auditScript, /audit-type[\s\S]*audit-actor[\s\S]*audit-action[\s\S]*audit-query/u);
-    assert.match(worker, /\/site\/audit-admin\/api\/logs/u);
+    assert.match(worker, /\/site\/system-admin\/audit\/api\/logs/u);
     assert.match(worker, /admin_audit_events[\s\S]*reuse_application_events[\s\S]*ip_block_audit/u);
 });
 
@@ -127,8 +127,8 @@ test('危険操作は確認文字列を入力させずポップアップ確認�
 });
 
 test('すべての管理画面から用途別タブへ移動できる', async () => {
-    const pages = ['admin-center', 'system-admin', 'ec2-admin', 'xml-admin', 'status-admin', 'delivery-admin', 'delivery-flow-admin', 'audit-admin', 'channel-admin', 'reuse-admin', 'mail-admin', 'discord-admin', 'ip-admin'];
-    const expected = ['/site/admin-center/', '/site/system-admin/', '/site/ec2-admin/', '/site/xml-admin/', '/site/status-admin/', '/site/delivery-admin/', '/site/delivery-flow-admin/', '/site/audit-admin/', '/site/channel-admin/', '/site/reuse-admin/', '/site/mail-admin/', '/site/discord-admin/', '/site/ip-admin/'];
+    const pages = ['admin-center', 'system-admin', 'ec2-admin', 'xml-admin', 'status-admin', 'delivery-admin', 'delivery-flow-admin', 'system-admin/audit', 'channel-admin', 'reuse-admin', 'mail-admin', 'discord-admin', 'ip-admin'];
+    const expected = ['/site/admin-center/', '/site/system-admin/', '/site/ec2-admin/', '/site/xml-admin/', '/site/status-admin/', '/site/delivery-admin/', '/site/delivery-flow-admin/', '/site/system-admin/audit/', '/site/channel-admin/', '/site/reuse-admin/', '/site/mail-admin/', '/site/discord-admin/', '/site/ip-admin/'];
     for (const page of pages) {
         const html = await readFile(new URL(`../site/${page}/index.html`, import.meta.url), 'utf8');
         const sidebar = html.match(/<nav class="sidebar"[\s\S]*?<ul>([\s\S]*?)<\/ul>/u)?.[1] || '';
