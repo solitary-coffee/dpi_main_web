@@ -11,13 +11,13 @@ const JSON_HEADERS = Object.freeze({
 
 const ADMIN_ASSET_ROOTS = Object.freeze([
     '/site/admin-center',
+    '/site/system-admin/audit',
     '/site/system-admin',
     '/site/ec2-admin',
     '/site/xml-admin',
     '/site/status-admin',
     '/site/delivery-admin',
     '/site/delivery-flow-admin',
-    '/site/audit-admin',
 ]);
 
 class AdminCenterError extends Error {
@@ -38,7 +38,7 @@ export async function handleAdminCenterRequest(request, env) {
     const isDmdataHistoryApi = pathname === '/site/xml-admin/api/dmdata-history';
     const isDeliveryFlowApi = pathname === '/site/delivery-flow-admin/api/summary';
     const isTestDeliveryApi = pathname === '/site/system-admin/api/test-delivery';
-    const isAuditApi = pathname === '/site/audit-admin/api/logs';
+    const isAuditApi = pathname === '/site/system-admin/audit/api/logs';
     const isApi = isSummaryApi || isActionApi || isDeliveryStatsApi || isDmdataHistoryApi || isDeliveryFlowApi || isTestDeliveryApi || isAuditApi;
     const assetRoot = !isApi ? ADMIN_ASSET_ROOTS.find((root) => pathname === root || pathname.startsWith(`${root}/`)) : null;
     const isAsset = Boolean(assetRoot);
@@ -165,7 +165,7 @@ async function systemSummary(env, admin) {
             { label: 'ステータス管理', href: '/site/status-admin/' },
             { label: '配信統計', href: '/site/delivery-admin/' },
             { label: '配信系統', href: '/site/delivery-flow-admin/' },
-            { label: '監査ログ', href: '/site/audit-admin/' },
+            { label: '監査ログ', href: '/site/system-admin/audit/' },
             { label: '二次利用申請管理', href: '/site/reuse-admin/' },
             { label: 'お知らせ一括配信', href: '/site/mail-admin/' },
             { label: 'Discordお知らせ', href: '/site/discord-admin/' },

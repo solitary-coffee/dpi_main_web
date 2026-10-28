@@ -113,7 +113,7 @@ function renderOperationOverview(local, cloudflare, aws, catalog) {
         { title: 'XML配信', value: `${activeSlots}配信枠`, detail: `AWS配信先 ${aws?.deliveryDirectory?.channels ?? '—'}チャンネル`, href: '/site/xml-admin/' },
         { title: '配信系統', value: '系統別監視', detail: '上流・自宅・高速・SQS・バックアップ', href: '/site/delivery-flow-admin/' },
         { title: '配信先', value: `${aws?.deliveryDirectory?.servers ?? '—'}サーバー`, detail: '登録チャンネル・配信名を検索', href: '/site/channel-admin/' },
-        { title: '監査ログ', value: `${auditCount}件`, detail: '管理操作・申請・遮断の履歴', href: '/site/audit-admin/' },
+        { title: '監査ログ', value: `${auditCount}件`, detail: '管理操作・申請・遮断の履歴', href: '/site/system-admin/audit/' },
     ];
     container.replaceChildren(...items.map((item) => {
         const card = element('a', 'feature-card');
