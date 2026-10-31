@@ -78,7 +78,14 @@ test('配信一覧と申請用カタログの状態が一致する', async () =>
 
     const endedDetail = await Promise.all(['kisyo_kei.html', 'kisyo_info.html', 'dosya.html', 'kent.html', 'tokub.html', 'tyoui.html', 'ooam.html', 'kikend.html'].map((name) =>
         readFile(path.join(root, 'site/info/deta', name), 'utf8')));
-    for (const detail of endedDetail) assert.match(detail, /この配信は終了しました/u);
+    for (const detail of endedDetail) {
+        assert.match(detail, /この配信は終了しました/u);
+        assert.match(detail, /移行先/u);
+    }
+    for (const destination of ['大雨に関する警戒レベル情報', '土砂災害に関する警戒レベル情報', '線状降水帯に関する情報', '気象解説情報（潮位）']) {
+        assert.match(html, new RegExp(destination, 'u'), destination);
+    }
+    assert.doesNotMatch(html, /2026年出水期より配信電文が大幅に変更される予定です/u);
 
     const detailFiles = await listHtmlFiles(path.join(root, 'site/info/deta'));
     for (const file of detailFiles) {
