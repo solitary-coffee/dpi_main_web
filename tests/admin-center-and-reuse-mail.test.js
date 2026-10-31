@@ -307,6 +307,8 @@ test('Discordお知らせ画面と配信統計画面を専用タブとして提�
     assert.match(discordHtml, /同じチャンネルには1件だけ送信する/u);
     assert.match(discordHtml, /id="send-official-support"/u);
     assert.match(discordHtml, /id="send-registered-webhooks"/u);
+    assert.match(discordHtml, /style\.css\?v=\d{8}-\d+/u);
+    assert.match(discordHtml, /script\.js\?v=\d{8}-\d+/u);
     assert.equal((discordHtml.match(/name="official-role-ids"/gu) || []).length, 3);
     assert.match(discordHtml, /1020702978426028104/u);
     assert.match(discordHtml, /1538768646430793768/u);
@@ -314,6 +316,8 @@ test('Discordお知らせ画面と配信統計画面を専用タブとして提�
     assert.match(discordHtml, /1538768846989820005/u);
     assert.match(discordHtml, /value="delivery_slots"/u);
     assert.match(discordScript, /validateTargetSelection/u);
+    assert.match(discordScript, /send-registered-webhooks'\)\?\.checked \?\? true/u);
+    assert.match(discordScript, /official-mention-role'\)\?\.value/u);
     assert.match(discordScript, /現在の送信件数|AWS登録Webhook/u);
     assert.match(directoryLambda, /discord-announcement-preview/u);
     assert.match(directoryLambda, /_valid_discord_webhook_url/u);
