@@ -51,7 +51,11 @@
                     <label class="category-chip"><input type="checkbox" name="campaign-categories" value="outage"><span>障害・重要情報</span></label>
                     <label class="category-chip"><input type="checkbox" name="campaign-categories" value="update"><span>アップデート情報</span></label>
                 </div></fieldset>
-                <fieldset class="category-selector"><legend>送信先の指定方法</legend><div class="target-mode-options">
+                <fieldset class="category-selector"><legend>送信先</legend><div class="target-mode-options">
+                    <label class="target-mode-option"><input id="send-registered-webhooks" type="checkbox" checked><span><strong>登録済み配信先</strong><small>配信枠・サーバー条件に一致するWebhookへ送信</small></span></label>
+                    <label class="target-mode-option"><input id="send-official-support" type="checkbox"><span><strong>公式サポートサーバー</strong><small>公式お知らせチャンネル（1020702978426028104）へ送信</small></span></label>
+                </div></fieldset>
+                <fieldset id="target-mode-fieldset" class="category-selector"><legend>登録済み配信先の指定方法</legend><div class="target-mode-options">
                     <label class="target-mode-option"><input type="radio" name="target-mode" value="delivery_slots" checked><span><strong>配信枠で指定</strong><small>選択した配信枠に一致する全サーバー</small></span></label>
                     <label class="target-mode-option"><input type="radio" name="target-mode" value="servers"><span><strong>サーバーで指定</strong><small>選択したサーバーの全登録配信枠</small></span></label>
                     <label class="target-mode-option"><input type="radio" name="target-mode" value="intersection"><span><strong>両方で絞り込み</strong><small>配信枠とサーバーの両方に一致</small></span></label>
@@ -59,17 +63,13 @@
                 <fieldset id="delivery-slots-fieldset" class="category-selector"><legend>対象配信枠</legend><div id="delivery-slots" class="delivery-slots"></div></fieldset>
                 <fieldset id="servers-fieldset" class="category-selector"><legend>送信先サーバー</legend><div class="selector-actions"><button id="select-all-servers" type="button" class="secondary-btn">すべて選択</button><button id="clear-all-servers" type="button" class="secondary-btn">すべて解除</button></div><div id="approved-servers" class="delivery-slots"></div></fieldset>
                 <label class="deduplicate-option"><input id="deduplicate-channels" type="checkbox" checked><span><strong>同じチャンネルには1件だけ送信する</strong><small>解除すると、同じチャンネルに複数の配信枠が設定されている場合、該当する配信枠ごとに1件ずつ送信します。</small></span></label>
-                <fieldset class="official-support-options"><legend>公式サポートサーバー</legend>
-                    <label class="deduplicate-option"><input id="send-official-support" type="checkbox"><span><strong>公式お知らせチャンネルにも送信する</strong><small>公式サポートサーバーの「お知らせ」チャンネル（1020702978426028104）へ同じ内容を1件送信します。</small></span></label>
-                    <label>メンションするロール
-                        <select id="official-mention-role" disabled>
-                            <option value="">メンションなし</option>
-                            <option value="1538768646430793768">@障害・バグ情報</option>
-                            <option value="1538768792648163368">@アップデート情報</option>
-                            <option value="1538768846989820005">@その他お知らせ情報</option>
-                        </select>
-                    </label>
-                    <p class="field-help">本文内の <code>@everyone</code>・<code>@here</code>・ユーザー・その他のロールはメンションされません。</p>
+                <fieldset id="official-support-fieldset" class="official-support-options target-disabled"><legend>公式チャンネルのロールメンション（複数選択可）</legend>
+                    <div class="category-chips">
+                        <label class="category-chip"><input type="checkbox" name="official-role-ids" value="1538768646430793768" disabled><span>@障害・バグ情報</span></label>
+                        <label class="category-chip"><input type="checkbox" name="official-role-ids" value="1538768792648163368" disabled><span>@アップデート情報</span></label>
+                        <label class="category-chip"><input type="checkbox" name="official-role-ids" value="1538768846989820005" disabled><span>@その他お知らせ情報</span></label>
+                    </div>
+                    <p class="field-help">選択したロールだけの通常メッセージを先に送信し、その後にお知らせ本文を送信します。本文内の <code>@everyone</code>・<code>@here</code>・ユーザー・その他のロールはメンションされません。</p>
                 </fieldset>
                 <div class="template-selector">
                     <span class="field-label">テンプレート</span>
@@ -98,8 +98,8 @@
                 </fieldset>
                 <p id="recipient-preview" class="recipient-preview">送信先条件を選ぶと対象Webhook数を表示します。</p>
                 <div class="preview-toolbar"><strong>Discordプレビュー</strong><button id="preview-btn" type="button" class="secondary-btn">プレビューを更新</button></div>
+                <div id="preview-official-mention" class="discord-preview preview-official-mention" hidden></div>
                 <article id="discord-preview" class="discord-preview message-preview">
-                    <div id="preview-official-mention" class="preview-official-mention" hidden></div>
                     <strong id="preview-subject">件名</strong>
                     <div id="preview-body" class="preview-markdown">本文を入力してください。</div>
                     <img id="preview-image" alt="" hidden>

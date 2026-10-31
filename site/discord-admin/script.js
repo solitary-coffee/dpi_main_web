@@ -69,7 +69,7 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('campaign-form').addEventListener('input', handleFormInput);
     for (const button of document.querySelectorAll('[data-template]')) button.addEventListener('click', () => applyTemplate(button.dataset.template));
     window.addEventListener('beforeunload', revokePreviewImage);
-    updateOfficialSupportUI(); loadSummary();
+    updateDestinationUI(); loadSummary();
 });
 
 async function loadSummary() {
@@ -133,9 +133,11 @@ function renderCampaigns() {
         const names = (campaign.targetServerIds || []).map(serverName).join('・') || '指定なし';
         const slots = (campaign.deliverySlots || []).map(slotName).join('・') || '指定なし';
         const duplicateText = campaign.deduplicateChannels === false ? '配信枠ごと' : '同一チャンネル1件';
-        card.append(el('p', 'campaign-meta', `指定方法: ${targetModeLabels[campaign.targetMode] || '配信枠'} / 配信枠: ${slots} / サーバー: ${names} / ${duplicateText}`));
+        if (campaign.sendRegisteredWebhooks !== false) card.append(el('p', 'campaign-meta', `登録配信先: ${targetModeLabels[campaign.targetMode] || '配信枠'} / 配信枠: ${slots} / サーバー: ${names} / ${duplicateText}`));
+        else card.append(el('p', 'campaign-meta', '登録配信先: 送信しない'));
         if (campaign.sendOfficialSupport) {
-            card.append(el('p', 'campaign-meta', `公式サポート: お知らせチャンネル / メンション: ${officialRoleLabels[campaign.officialMentionRoleId] || 'なし'}`));
+            const roleNames = (campaign.officialMentionRoleIds || []).map((roleId) => officialRoleLabels[roleId]).filter(Boolean).join('・') || 'なし';
+            card.append(el('p', 'campaign-meta', `公式サポート: お知らせチャンネル / メンション: ${roleNames}`));
         }
         const actions = el('div', 'campaign-actions');
         if (['draft', 'queuing'].includes(campaign.status)) {
@@ -152,7 +154,7 @@ function handleFormChange(event) {
     if (event.target.name === 'delivery-format') updateFormatOptions();
     if (event.target.name === 'target-mode') updateTargetModeUI();
     if (event.target.id === 'image-file' || event.target.id === 'image-url') validateImageSelection();
-    if (event.target.id === 'send-official-support') updateOfficialSupportUI();
+    if (event.target.id === 'send-official-support' || event.target.id === 'send-registered-webhooks') updateDestinationUI();
     scheduleAudiencePreview(); renderPreview();
 }
 function handleFormInput(event) { if (['subject', 'body', 'embed-color', 'image-url', 'image-alt'].includes(event.target.id)) renderPreview(); }
@@ -178,11 +180,11 @@ async function createCampaign(event) {
         validateTargetSelection(payload);
         validateImageSelection(true);
         const form = new FormData();
-        for (const key of ['categories', 'recipientGroups', 'deliverySlots', 'targetServerIds']) form.append(key, JSON.stringify(payload[key]));
-        for (const key of ['targetMode', 'deduplicateChannels', 'sendOfficialSupport', 'officialMentionRoleId', 'subject', 'body', 'deliveryFormat', 'embedColor', 'imageUrl', 'imageAlt']) form.append(key, String(payload[key]));
+        for (const key of ['categories', 'recipientGroups', 'deliverySlots', 'targetServerIds', 'officialMentionRoleIds']) form.append(key, JSON.stringify(payload[key]));
+        for (const key of ['targetMode', 'deduplicateChannels', 'sendRegisteredWebhooks', 'sendOfficialSupport', 'subject', 'body', 'deliveryFormat', 'embedColor', 'imageUrl', 'imageAlt']) form.append(key, String(payload[key]));
         const image = document.getElementById('image-file').files[0]; if (image) form.append('image', image, image.name);
         const result = await request('/site/discord-admin/api/campaigns', { method: 'POST', body: form });
-        document.getElementById('campaign-form').reset(); document.getElementById('embed-color').value = '#5865f2'; updateFormatOptions(); updateTargetModeUI(); updateOfficialSupportUI(); revokePreviewImage(); renderPreview(); scheduleAudiencePreview();
+        document.getElementById('campaign-form').reset(); document.getElementById('embed-color').value = '#5865f2'; updateFormatOptions(); updateDestinationUI(); revokePreviewImage(); renderPreview(); scheduleAudiencePreview();
         setStatus(`下書きを保存しました。配信ID: ${result.campaign.id}`, 'success'); await loadSummary();
     } catch (error) { setStatus(error.message, 'error'); } finally { button.disabled = false; }
 }
@@ -200,8 +202,9 @@ async function cancelCampaign(campaign, button) {
 }
 
 function selectionPayload() {
+    const sendRegisteredWebhooks = document.getElementById('send-registered-webhooks').checked;
     const sendOfficialSupport = document.getElementById('send-official-support').checked;
-    return { categories: checked('campaign-categories'), recipientGroups: ['discord_approved'], targetMode: selectedTargetMode(), deliverySlots: checked('delivery-slots'), targetServerIds: checked('server-ids'), deduplicateChannels: document.getElementById('deduplicate-channels').checked, sendOfficialSupport, officialMentionRoleId: sendOfficialSupport ? document.getElementById('official-mention-role').value : '', subject: document.getElementById('subject').value, body: document.getElementById('body').value, deliveryFormat: selectedFormat(), embedColor: document.getElementById('embed-color').value, imageUrl: document.getElementById('image-url').value.trim(), imageAlt: document.getElementById('image-alt').value.trim() };
+    return { categories: checked('campaign-categories'), recipientGroups: ['discord_approved'], sendRegisteredWebhooks, targetMode: selectedTargetMode(), deliverySlots: checked('delivery-slots'), targetServerIds: checked('server-ids'), deduplicateChannels: document.getElementById('deduplicate-channels').checked, sendOfficialSupport, officialMentionRoleIds: sendOfficialSupport ? checked('official-role-ids') : [], subject: document.getElementById('subject').value, body: document.getElementById('body').value, deliveryFormat: selectedFormat(), embedColor: document.getElementById('embed-color').value, imageUrl: document.getElementById('image-url').value.trim(), imageAlt: document.getElementById('image-alt').value.trim() };
 }
 function selectedFormat() { return document.querySelector('input[name="delivery-format"]:checked')?.value || 'message'; }
 function selectedTargetMode() { return document.querySelector('input[name="target-mode"]:checked')?.value || 'delivery_slots'; }
@@ -211,21 +214,31 @@ function scheduleAudiencePreview() { window.clearTimeout(audienceTimer); audienc
 
 function updateTargetModeUI() {
     const mode = selectedTargetMode();
-    const slotsEnabled = mode !== 'servers'; const serversEnabled = mode !== 'delivery_slots';
-    const slotsFieldset = document.getElementById('delivery-slots-fieldset'); const serversFieldset = document.getElementById('servers-fieldset');
+    const destinationsEnabled = document.getElementById('send-registered-webhooks').checked;
+    const slotsEnabled = destinationsEnabled && mode !== 'servers'; const serversEnabled = destinationsEnabled && mode !== 'delivery_slots';
+    const modeFieldset = document.getElementById('target-mode-fieldset'); const slotsFieldset = document.getElementById('delivery-slots-fieldset'); const serversFieldset = document.getElementById('servers-fieldset');
+    modeFieldset.classList.toggle('target-disabled', !destinationsEnabled);
+    for (const input of modeFieldset.querySelectorAll('input')) input.disabled = !destinationsEnabled;
     slotsFieldset.classList.toggle('target-disabled', !slotsEnabled); serversFieldset.classList.toggle('target-disabled', !serversEnabled);
     for (const input of slotsFieldset.querySelectorAll('input')) input.disabled = !slotsEnabled;
     for (const input of serversFieldset.querySelectorAll('input, button')) input.disabled = !serversEnabled;
+    document.getElementById('deduplicate-channels').disabled = !destinationsEnabled;
 }
 
-function updateOfficialSupportUI() {
-    const enabled = document.getElementById('send-official-support').checked;
-    const select = document.getElementById('official-mention-role');
-    select.disabled = !enabled;
-    if (!enabled) select.value = '';
+function updateDestinationUI() {
+    const officialEnabled = document.getElementById('send-official-support').checked;
+    const officialFieldset = document.getElementById('official-support-fieldset');
+    officialFieldset.classList.toggle('target-disabled', !officialEnabled);
+    for (const input of officialFieldset.querySelectorAll('input')) {
+        input.disabled = !officialEnabled;
+        if (!officialEnabled) input.checked = false;
+    }
+    updateTargetModeUI();
 }
 
 function validateTargetSelection(payload) {
+    if (!payload.sendRegisteredWebhooks && !payload.sendOfficialSupport) throw new Error('送信先を1つ以上選択してください。');
+    if (!payload.sendRegisteredWebhooks) return;
     if (payload.targetMode === 'delivery_slots' && !payload.deliverySlots.length) throw new Error('配信枠を1つ以上選択してください。');
     if (payload.targetMode === 'servers' && !payload.targetServerIds.length) throw new Error('配信先サーバーを1つ以上選択してください。');
     if (payload.targetMode === 'intersection' && (!payload.deliverySlots.length || !payload.targetServerIds.length)) throw new Error('配信枠と配信先サーバーをそれぞれ1つ以上選択してください。');
@@ -260,7 +273,7 @@ function validateImageSelection(throwOnError = false) {
 function renderPreview() {
     const payload = selectionPayload(); const preview = document.getElementById('discord-preview');
     preview.classList.toggle('embed-preview', payload.deliveryFormat === 'embed'); preview.classList.toggle('message-preview', payload.deliveryFormat === 'message'); preview.style.setProperty('--embed-color', payload.embedColor);
-    const mention = document.getElementById('preview-official-mention'); mention.textContent = officialRoleLabels[payload.officialMentionRoleId] || ''; mention.hidden = !payload.sendOfficialSupport || !payload.officialMentionRoleId;
+    const mention = document.getElementById('preview-official-mention'); const roleNames = payload.officialMentionRoleIds.map((roleId) => officialRoleLabels[roleId]).filter(Boolean).join(' '); mention.textContent = roleNames ? `先行するメンション専用メッセージ: ${roleNames}` : ''; mention.hidden = !payload.sendOfficialSupport || !payload.officialMentionRoleIds.length;
     document.getElementById('preview-subject').textContent = payload.subject.trim() || '件名'; renderDiscordMarkdown(document.getElementById('preview-body'), payload.body.trim() || '本文を入力してください。'); renderPreviewImage(payload.imageUrl);
 }
 

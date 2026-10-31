@@ -258,12 +258,19 @@ test('配信枠を検証しDiscordはサーバー未選択でも配信できる'
     assert.deepEqual(newsletter.validateDiscordTargeting({
         targetMode: 'delivery_slots', deliverySlots: ['地震情報'], targetServerIds: [], deduplicateChannels: true,
     }, ['discord_approved']), {
+        sendRegisteredWebhooks: true,
         targetMode: 'delivery_slots', deliverySlots: ['地震情報'], targetServerIds: [], deduplicateChannels: true,
     });
     assert.deepEqual(newsletter.validateDiscordTargeting({
         targetMode: 'servers', deliverySlots: [], targetServerIds: ['12345678901234567'], deduplicateChannels: false,
     }, ['discord_approved']), {
+        sendRegisteredWebhooks: true,
         targetMode: 'servers', deliverySlots: [], targetServerIds: ['12345678901234567'], deduplicateChannels: false,
+    });
+    assert.deepEqual(newsletter.validateDiscordTargeting({
+        sendRegisteredWebhooks: false, deliverySlots: [], targetServerIds: [],
+    }, ['discord_approved']), {
+        sendRegisteredWebhooks: false, targetMode: 'delivery_slots', deliverySlots: [], targetServerIds: [], deduplicateChannels: true,
     });
     assert.throws(() => newsletter.validateDiscordTargeting({
         targetMode: 'servers', deliverySlots: [], targetServerIds: [], deduplicateChannels: true,
@@ -299,6 +306,8 @@ test('Discordお知らせ画面と配信統計画面を専用タブとして提�
     assert.match(discordHtml, /送信先サーバー/u);
     assert.match(discordHtml, /同じチャンネルには1件だけ送信する/u);
     assert.match(discordHtml, /id="send-official-support"/u);
+    assert.match(discordHtml, /id="send-registered-webhooks"/u);
+    assert.equal((discordHtml.match(/name="official-role-ids"/gu) || []).length, 3);
     assert.match(discordHtml, /1020702978426028104/u);
     assert.match(discordHtml, /1538768646430793768/u);
     assert.match(discordHtml, /1538768792648163368/u);
@@ -381,33 +390,70 @@ test('Discordお知らせはメンションを無効化してBot APIへ投稿す
     }
 });
 
-test('公式お知らせは選択されたロールだけをメンションし再送nonceを付ける', () => {
-    const roleId = '1538768646430793768';
+test('公式お知らせは複数の選択ロールだけを通常メッセージでメンションする', () => {
+    const roleIds = ['1538768646430793768', '1538768792648163368'];
     assert.deepEqual(newsletter.validateOfficialSupportOptions({
         sendOfficialSupport: true,
-        officialMentionRoleId: roleId,
+        officialMentionRoleIds: roleIds,
     }), {
         sendOfficialSupport: true,
-        officialMentionRoleId: roleId,
+        officialMentionRoleIds: roleIds,
     });
-    const payload = newsletter.buildDiscordPayload(
+    const mentionPayload = newsletter.buildDiscordMentionPayload(roleIds, { nonce: 'campaign123-m' });
+    assert.equal(mentionPayload.content, roleIds.map((roleId) => `<@&${roleId}>`).join(' '));
+    assert.deepEqual(mentionPayload.allowed_mentions, { parse: [], roles: roleIds, users: [] });
+    assert.equal(mentionPayload.nonce, 'campaign123-m');
+    assert.equal(mentionPayload.enforce_nonce, true);
+    assert.equal(mentionPayload.embeds, undefined);
+
+    const announcementPayload = newsletter.buildDiscordPayload(
         '障害情報',
         '@everyone <@&999999999999999999> 本文',
-        { format: 'embed', mentionRoleId: roleId, nonce: 'campaign123' },
+        { format: 'embed', nonce: 'campaign123-c' },
     );
-    assert.equal(payload.content, `<@&${roleId}>`);
-    assert.deepEqual(payload.allowed_mentions, { parse: [], roles: [roleId], users: [] });
-    assert.equal(payload.nonce, 'campaign123');
-    assert.equal(payload.enforce_nonce, true);
-    assert.match(payload.embeds[0].description, /@everyone/u);
+    assert.equal(announcementPayload.content, undefined);
+    assert.deepEqual(announcementPayload.allowed_mentions, { parse: [] });
+    assert.match(announcementPayload.embeds[0].description, /@everyone/u);
     assert.throws(() => newsletter.validateOfficialSupportOptions({
         sendOfficialSupport: true,
-        officialMentionRoleId: '999999999999999999',
+        officialMentionRoleIds: ['999999999999999999'],
     }), /公式ロール/u);
     assert.throws(() => newsletter.validateOfficialSupportOptions({
         sendOfficialSupport: false,
-        officialMentionRoleId: roleId,
+        officialMentionRoleIds: roleIds,
     }), /公式チャンネル/u);
+});
+
+test('複数ロールのメンション投稿を本文とは別のDiscordメッセージで送る', async () => {
+    const originalFetch = globalThis.fetch;
+    let request;
+    globalThis.fetch = async (url, options) => {
+        request = { url: String(url), options };
+        return Response.json({ id: '123456789012345678' });
+    };
+    try {
+        const roleIds = ['1538768646430793768', '1538768846989820005'];
+        const result = await newsletter.sendDiscordMentionMessage(
+            '1020702978426028104',
+            roleIds,
+            { DISCORD_BOT_TOKEN: 'secret-token' },
+            { nonce: 'campaign-mention' },
+        );
+        const payload = JSON.parse(request.options.body);
+        assert.equal(result.id, '123456789012345678');
+        assert.equal(request.url, 'https://discord.com/api/v10/channels/1020702978426028104/messages');
+        assert.equal(payload.content, roleIds.map((roleId) => `<@&${roleId}>`).join(' '));
+        assert.deepEqual(payload.allowed_mentions.roles, roleIds);
+        assert.equal(payload.embeds, undefined);
+    } finally {
+        globalThis.fetch = originalFetch;
+    }
+});
+
+test('公式チャンネルだけを送信先にでき、送信先なしは拒否する', () => {
+    assert.doesNotThrow(() => newsletter.validateDiscordDestinations(false, true));
+    assert.doesNotThrow(() => newsletter.validateDiscordDestinations(true, false));
+    assert.throws(() => newsletter.validateDiscordDestinations(false, false), /送信先を1つ以上/u);
 });
 
 test('Discord EmbedはMarkdown・色・画像添付をmultipartで送信する', async () => {
