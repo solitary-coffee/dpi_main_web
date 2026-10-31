@@ -84,3 +84,10 @@ test('Discord送信先モード用D1マイグレーションを同梱する', as
     assert.match(migration, /deduplicate_channels/u);
     assert.match(migration, /target_server_ids/u);
 });
+
+test('公式Discord送信設定用D1マイグレーションを同梱する', async () => {
+    const migration = await readFile(new URL('../migrations/0010_official_discord_announcements.sql', import.meta.url), 'utf8');
+    assert.match(migration, /send_official_support/u);
+    assert.match(migration, /official_mention_role_id/u);
+    assert.match(migration, /official_message_id/u);
+});

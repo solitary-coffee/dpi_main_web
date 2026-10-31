@@ -298,6 +298,11 @@ test('Discordお知らせ画面と配信統計画面を専用タブとして提�
     assert.match(discordScript, /renderDiscordMarkdown/u);
     assert.match(discordHtml, /送信先サーバー/u);
     assert.match(discordHtml, /同じチャンネルには1件だけ送信する/u);
+    assert.match(discordHtml, /id="send-official-support"/u);
+    assert.match(discordHtml, /1020702978426028104/u);
+    assert.match(discordHtml, /1538768646430793768/u);
+    assert.match(discordHtml, /1538768792648163368/u);
+    assert.match(discordHtml, /1538768846989820005/u);
     assert.match(discordHtml, /value="delivery_slots"/u);
     assert.match(discordScript, /validateTargetSelection/u);
     assert.match(discordScript, /現在の送信件数|AWS登録Webhook/u);
@@ -374,6 +379,35 @@ test('Discordお知らせはメンションを無効化してBot APIへ投稿す
     } finally {
         globalThis.fetch = originalFetch;
     }
+});
+
+test('公式お知らせは選択されたロールだけをメンションし再送nonceを付ける', () => {
+    const roleId = '1538768646430793768';
+    assert.deepEqual(newsletter.validateOfficialSupportOptions({
+        sendOfficialSupport: true,
+        officialMentionRoleId: roleId,
+    }), {
+        sendOfficialSupport: true,
+        officialMentionRoleId: roleId,
+    });
+    const payload = newsletter.buildDiscordPayload(
+        '障害情報',
+        '@everyone <@&999999999999999999> 本文',
+        { format: 'embed', mentionRoleId: roleId, nonce: 'campaign123' },
+    );
+    assert.equal(payload.content, `<@&${roleId}>`);
+    assert.deepEqual(payload.allowed_mentions, { parse: [], roles: [roleId], users: [] });
+    assert.equal(payload.nonce, 'campaign123');
+    assert.equal(payload.enforce_nonce, true);
+    assert.match(payload.embeds[0].description, /@everyone/u);
+    assert.throws(() => newsletter.validateOfficialSupportOptions({
+        sendOfficialSupport: true,
+        officialMentionRoleId: '999999999999999999',
+    }), /公式ロール/u);
+    assert.throws(() => newsletter.validateOfficialSupportOptions({
+        sendOfficialSupport: false,
+        officialMentionRoleId: roleId,
+    }), /公式チャンネル/u);
 });
 
 test('Discord EmbedはMarkdown・色・画像添付をmultipartで送信する', async () => {
