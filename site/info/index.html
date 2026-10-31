@@ -59,7 +59,6 @@
                     <li><span class="legend-badge badge-ok">表記なし</span>：現在配信されています。</li>
                     <li><span class="legend-badge badge-adjusting">調整中</span>：配信を休止している。または配信が未定または不安定な可能性があります。</li>
                     <li><span class="legend-badge badge-disabled">配信準備中</span>：配信準備中です。今後配信が開始されます。</li>
-                    <li><span class="legend-badge badge-ending-soon">終了予定</span>：今後、配信終了が決定しています。</li>
                     <li><span class="legend-badge badge-abolished">終了</span>：配信は終了しました。</li>
                     
                 </ul>
@@ -68,8 +67,7 @@
             <div class="warning-box">
                 <div class="warning-label">お知らせ</div>
                     <p class="warning-text">
-                        2026年5月29日の配信枠変更については<a href="new_info/index.html">こちらのページ</a>もご覧ください。<br>
-                        新しい防災気象情報は現在配信中です。
+                        新しい防災気象情報は現在配信中です。終了済みの配信は一覧内で「終了」と表示しています。
                 </p>
             </div>
  
@@ -154,26 +152,28 @@
                 </div>
                 <div class="category-group">
                     <h2>気象系</h2>
-                    <h4>2026年出水期より配信電文が大幅に変更される予定です。※今後新規配信枠を新設する予定です。</h4>
-                    <a href="deta/kisyo_kei.html" class="content-card is-ending-soon">
+                    <a href="deta/kisyo_kei.html" class="content-card is-abolished">
                         <div class="content-card-text">
                             <h3>気象警報・注意報</h3>
                             <p class="application-name">（申請名:気象警報_注意報）</p>
-                            <p>気象特別警報・警報・注意報を配信します。</p>
+                            <p>気象特別警報・警報・注意報を配信していました。</p>
+                            <p><strong>移行先:</strong> 大雨・土砂災害・高潮に関する警戒レベル情報、暴風・暴風雪／波浪／大雪に関する警報・注意報、その他の気象注意報</p>
                         </div>
                     </a>
-                    <a href="deta/kisyo_info.html" class="content-card is-ending-soon">
+                    <a href="deta/kisyo_info.html" class="content-card is-abolished">
                         <div class="content-card-text">
                             <h3>気象情報・概況</h3>
                             <p class="application-name">（申請名:気象情報_概況）</p>
-                            <p>全般、地方、府県気象情報及び気象概況について配信します。</p>
+                            <p>全般、地方、府県気象情報及び気象概況について配信していました。</p>
+                            <p><strong>移行先:</strong> 気象防災速報（申請名:気象防災速報）、気象解説情報（申請名:気象解説）</p>
                         </div>
                     </a>
-                    <a href="deta/dosya.html" class="content-card is-ending-soon">
+                    <a href="deta/dosya.html" class="content-card is-abolished">
                         <div class="content-card-text">
                             <h3>土砂災害警戒情報</h3>
                             <p class="application-name">（申請名:土砂災害警戒情報）</p>
-                            <p>土砂災害警戒情報を配信します。</p>
+                            <p>土砂災害警戒情報を配信していました。</p>
+                            <p><strong>移行先:</strong> 土砂災害に関する警戒レベル情報（申請名:土砂警戒レベル）</p>
                         </div>
                     </a>
                     <a href="deta/tatum.html" class="content-card">
@@ -190,11 +190,12 @@
                             <p>記録的短時間大雨情報を配信します。</p>
                         </div>
                     </a>
-                    <a href="deta/kent.html" class="content-card  is-ending-soon">
+                    <a href="deta/kent.html" class="content-card is-abolished">
                         <div class="content-card-text">
                             <h3>顕著な大雨に関する情報</h3>
                             <p class="application-name">（申請名:顕著な大雨）</p>
-                            <p>線状降水帯または顕著な大雪に関する情報を配信します。</p>
+                            <p>線状降水帯または顕著な大雪に関する情報を配信していました。</p>
+                            <p><strong>移行先:</strong> 線状降水帯に関する情報（申請名:線状降水帯）、顕著な大雪情報（申請名:顕著な大雪）</p>
                         </div>
                     </a>
                     <a href="deta/siteik.html" class="content-card">
@@ -204,11 +205,12 @@
                             <p>指定河川洪水予報を配信します。</p>
                         </div>
                     </a>
-                    <a href="deta/tokub.html" class="content-card is-ending-soon">
+                    <a href="deta/tokub.html" class="content-card is-abolished">
                         <div class="content-card-text">
                             <h3>気象特別警報報知</h3>
                             <p class="application-name">（申請名:気象特別警報報知）</p>
-                            <p>気象特別警報報知を配信します。</p>
+                            <p>気象特別警報報知を配信していました。</p>
+                            <p><strong>移行先:</strong> 大雨・土砂災害・高潮に関する警戒レベル情報、各種警報・注意報</p>
                         </div>
                     </a>
                     <a href="#" class="content-card is-abolished">
@@ -383,6 +385,7 @@
                             <h3>大雨危険度通知</h3>
                             <p class="application-name">（申請名:大雨危険度通知）</p>
                             <p>大雨危険度について配信していました。</p>
+                            <p><strong>移行先:</strong> 大雨に関する警戒レベル情報（申請名:大雨警戒レベル）</p>
                         </div>
                     </a>
                     <a href="deta/kikend.html" class="content-card is-abolished">
@@ -390,6 +393,7 @@
                             <h3>土砂災害危険度</h3>
                             <p class="application-name">（申請名:土砂災害危険度）</p>
                             <p>キキクルの土砂災害危険度について配信していました。</p>
+                            <p><strong>移行先:</strong> 土砂災害に関する警戒レベル情報（申請名:土砂警戒レベル）</p>
                         </div>
                     </a>
                     <a href="deta/kikend.html" class="content-card is-abolished">
@@ -397,6 +401,7 @@
                             <h3>洪水害危険度</h3>
                             <p class="application-name">（申請名:洪水害危険度）</p>
                             <p>キキクルの洪水害危険度について配信していました。</p>
+                            <p><strong>移行先:</strong> 大雨に関する警戒レベル情報（申請名:大雨警戒レベル）</p>
                         </div>
                     </a>
                     <a href="deta/kikend.html" class="content-card is-abolished">
@@ -404,6 +409,7 @@
                             <h3>浸水害危険度</h3>
                             <p class="application-name">（申請名:浸水害危険度）</p>
                             <p>キキクルの浸水害危険度について配信していました。</p>
+                            <p><strong>移行先:</strong> 大雨に関する警戒レベル情報（申請名:大雨警戒レベル）</p>
                         </div>
                     </a>
                     <a href="deta/hinan.html" class="content-card">
@@ -413,11 +419,12 @@
                             <p>避難情報を配信します。</p>
                         </div>
                     </a>
-                    <a href="deta/tyoui.html" class="content-card is-ending-soon">
+                    <a href="deta/tyoui.html" class="content-card is-abolished">
                         <div class="content-card-text">
                             <h3>潮位情報</h3>
                             <p class="application-name">（申請名:潮位情報）</p>
-                            <p>潮位情報を配信します。</p>
+                            <p>潮位情報を配信していました。</p>
+                            <p><strong>移行先:</strong> 気象解説情報（潮位）（申請名:気象解説[潮位]）</p>
                         </div>
                     </a>
                     <a href="deta/amag.html" class="content-card">
