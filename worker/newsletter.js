@@ -102,8 +102,11 @@ const SCHEMA_STATEMENTS = Object.freeze([
         target_server_ids TEXT NOT NULL DEFAULT '',
         target_mode TEXT NOT NULL DEFAULT 'delivery_slots',
         deduplicate_channels INTEGER NOT NULL DEFAULT 1,
+        send_registered_webhooks INTEGER NOT NULL DEFAULT 1,
         send_official_support INTEGER NOT NULL DEFAULT 0,
         official_mention_role_id TEXT NOT NULL DEFAULT '',
+        official_mention_role_ids TEXT NOT NULL DEFAULT '',
+        official_mention_message_id TEXT,
         official_message_id TEXT,
         delivery_format TEXT NOT NULL DEFAULT 'message',
         embed_color INTEGER NOT NULL DEFAULT 5793266,
@@ -576,7 +579,8 @@ async function adminSummary(env, admin, surface = 'mail') {
             `SELECT
                 c.id, c.subject, c.body_text, c.category, c.status, c.created_by,
                 c.recipient_groups, c.delivery_slots, c.target_server_ids, c.target_mode, c.deduplicate_channels,
-                c.send_official_support, c.official_mention_role_id,
+                c.send_registered_webhooks, c.send_official_support, c.official_mention_role_id,
+                c.official_mention_role_ids, c.official_mention_message_id,
                 c.delivery_format, c.embed_color, c.image_url, c.image_name, c.image_type, c.image_alt,
                 c.external_sent_count, c.external_failed_count,
                 c.created_at, c.updated_at, c.started_at, c.completed_at, c.recipient_count,
@@ -674,28 +678,28 @@ async function createCampaign(request, env, admin, surface = 'mail') {
         : [validateSingleCategory(input.category)];
     const category = serializeCategories(categories);
     const recipientGroups = validateSurfaceRecipientGroups(input.recipientGroups, surface);
-    const awsDirectory = surface === 'discord' ? await loadAwsDiscordDirectory(env) : { items: [] };
+    const shouldLoadAwsDirectory = surface === 'discord' && validateSendRegisteredWebhooks(input);
+    const awsDirectory = shouldLoadAwsDirectory ? await loadAwsDiscordDirectory(env) : { items: [] };
     const targeting = surface === 'discord'
         ? validateDiscordTargeting(input, recipientGroups, allowedDeliverySlotIds(awsDirectory.items))
         : {
+            sendRegisteredWebhooks: true,
             targetMode: 'delivery_slots',
             deliverySlots: validateDeliverySlots(input.deliverySlots, allowedDeliverySlotIds(awsDirectory.items)),
             targetServerIds: validateTargetServerIds(input.targetServerIds, recipientGroups),
             deduplicateChannels: true,
         };
-    const { targetMode, deliverySlots, targetServerIds, deduplicateChannels } = targeting;
+    const { sendRegisteredWebhooks, targetMode, deliverySlots, targetServerIds, deduplicateChannels } = targeting;
     const officialSupport = surface === 'discord'
         ? validateOfficialSupportOptions(input)
-        : { sendOfficialSupport: false, officialMentionRoleId: '' };
+        : { sendOfficialSupport: false, officialMentionRoleIds: [] };
+    if (surface === 'discord') validateDiscordDestinations(sendRegisteredWebhooks, officialSupport.sendOfficialSupport);
     const discordOptions = validateDiscordOptions(input, recipientGroups);
-    validateDiscordAnnouncement(subject, bodyText, recipientGroups, {
-        ...discordOptions,
-        mentionRoleId: officialSupport.officialMentionRoleId,
-    });
+    validateDiscordAnnouncement(subject, bodyText, recipientGroups, discordOptions);
     const now = new Date().toISOString();
     const campaignId = crypto.randomUUID();
 
-    if (surface === 'discord') {
+    if (surface === 'discord' && sendRegisteredWebhooks) {
         const audience = await callAwsDirectoryAction(env, {
             action: 'discord-announcement-preview',
             actor: admin.email,
@@ -713,10 +717,11 @@ async function createCampaign(request, env, admin, surface = 'mail') {
     await env.NEWSLETTER_DB.prepare(
         `INSERT INTO newsletter_campaigns (
             id, subject, body_text, category, recipient_groups, delivery_slots, target_server_ids,
-            target_mode, deduplicate_channels, send_official_support, official_mention_role_id,
+            target_mode, deduplicate_channels, send_registered_webhooks, send_official_support,
+            official_mention_role_id, official_mention_role_ids,
             delivery_format, embed_color, image_url, image_name, image_type, image_data, image_alt,
             status, created_by, created_at, updated_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?)`,
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?)`,
     ).bind(
         campaignId,
         subject,
@@ -727,8 +732,10 @@ async function createCampaign(request, env, admin, surface = 'mail') {
         serializeCsv(targetServerIds),
         targetMode,
         deduplicateChannels ? 1 : 0,
+        sendRegisteredWebhooks ? 1 : 0,
         officialSupport.sendOfficialSupport ? 1 : 0,
-        officialSupport.officialMentionRoleId,
+        officialSupport.officialMentionRoleIds[0] || '',
+        serializeCsv(officialSupport.officialMentionRoleIds),
         discordOptions.format,
         discordOptions.embedColor,
         discordOptions.imageUrl,
@@ -753,6 +760,7 @@ async function createCampaign(request, env, admin, surface = 'mail') {
             targetServerIds,
             targetMode,
             deduplicateChannels,
+            sendRegisteredWebhooks,
             ...officialSupport,
             deliveryFormat: discordOptions.format,
             hasImage: Boolean(discordOptions.image || discordOptions.imageUrl),
@@ -772,6 +780,7 @@ async function createCampaign(request, env, admin, surface = 'mail') {
             targetServerIds,
             targetMode,
             deduplicateChannels,
+            sendRegisteredWebhooks,
             ...officialSupport,
             deliveryFormat: discordOptions.format,
             embedColor: discordOptions.embedColor,
@@ -790,7 +799,8 @@ async function previewCampaign(request, env, surface = 'mail') {
     const bodyText = validateCampaignBody(input.body);
     const categories = validateCategories(input.categories);
     const recipientGroups = validateSurfaceRecipientGroups(input.recipientGroups, surface);
-    const awsDirectory = surface === 'discord' ? await loadAwsDiscordDirectory(env) : { items: [] };
+    const shouldLoadAwsDirectory = surface === 'discord' && validateSendRegisteredWebhooks(input);
+    const awsDirectory = shouldLoadAwsDirectory ? await loadAwsDiscordDirectory(env) : { items: [] };
     const targeting = surface === 'discord'
         ? validateDiscordTargeting(input, recipientGroups, allowedDeliverySlotIds(awsDirectory.items))
         : {
@@ -801,11 +811,9 @@ async function previewCampaign(request, env, surface = 'mail') {
     const discordOptions = validateDiscordOptions(input, recipientGroups, { allowImageMetadataOnly: true });
     const officialSupport = surface === 'discord'
         ? validateOfficialSupportOptions(input)
-        : { sendOfficialSupport: false, officialMentionRoleId: '' };
-    validateDiscordAnnouncement(subject, bodyText, recipientGroups, {
-        ...discordOptions,
-        mentionRoleId: officialSupport.officialMentionRoleId,
-    });
+        : { sendOfficialSupport: false, officialMentionRoleIds: [] };
+    if (surface === 'discord') validateDiscordDestinations(targeting.sendRegisteredWebhooks, officialSupport.sendOfficialSupport);
+    validateDiscordAnnouncement(subject, bodyText, recipientGroups, discordOptions);
     const previewMail = buildCampaignEmail({
         campaign_id: 'preview',
         category: serializeCategories(categories),
@@ -820,10 +828,10 @@ async function previewCampaign(request, env, surface = 'mail') {
         success: true,
         html: previewMail.html,
         text: previewMail.text,
-        discord: surface === 'discord' ? buildDiscordPayload(subject, bodyText, {
-            ...discordOptions,
-            mentionRoleId: officialSupport.officialMentionRoleId,
-        }) : null,
+        discord: surface === 'discord' ? buildDiscordPayload(subject, bodyText, discordOptions) : null,
+        officialMention: surface === 'discord' && officialSupport.officialMentionRoleIds.length
+            ? buildDiscordMentionPayload(officialSupport.officialMentionRoleIds)
+            : null,
     });
 }
 
@@ -831,23 +839,27 @@ async function previewAudience(request, env, admin, surface = 'mail') {
     const input = await readJson(request, MAX_FORM_BYTES);
     const categories = surface === 'discord' ? [] : validateCategories(input.categories);
     const recipientGroups = validateSurfaceRecipientGroups(input.recipientGroups, surface);
-    const awsDirectory = surface === 'discord' ? await loadAwsDiscordDirectory(env) : { items: [] };
+    const shouldLoadAwsDirectory = surface === 'discord' && validateSendRegisteredWebhooks(input);
+    const awsDirectory = shouldLoadAwsDirectory ? await loadAwsDiscordDirectory(env) : { items: [] };
     if (surface === 'discord') {
         const officialSupport = validateOfficialSupportOptions(input);
-        const { targetMode, deliverySlots, targetServerIds, deduplicateChannels } = validateDiscordTargeting(
+        const { sendRegisteredWebhooks, targetMode, deliverySlots, targetServerIds, deduplicateChannels } = validateDiscordTargeting(
             input,
             recipientGroups,
             allowedDeliverySlotIds(awsDirectory.items),
         );
-        const preview = await callAwsDirectoryAction(env, {
-            action: 'discord-announcement-preview',
-            actor: admin.email,
-            requestId: crypto.randomUUID(),
-            targetMode,
-            deliverySlots,
-            targetServerIds,
-            deduplicateChannels,
-        });
+        validateDiscordDestinations(sendRegisteredWebhooks, officialSupport.sendOfficialSupport);
+        const preview = sendRegisteredWebhooks
+            ? await callAwsDirectoryAction(env, {
+                action: 'discord-announcement-preview',
+                actor: admin.email,
+                requestId: crypto.randomUUID(),
+                targetMode,
+                deliverySlots,
+                targetServerIds,
+                deduplicateChannels,
+            })
+            : { targetCount: 0, byDelivery: {} };
         return jsonResponse({
             success: true,
             count: Number(preview.targetCount || 0) + (officialSupport.sendOfficialSupport ? 1 : 0),
@@ -856,6 +868,7 @@ async function previewAudience(request, env, admin, surface = 'mail') {
                 official_support: officialSupport.sendOfficialSupport ? 1 : 0,
             },
             byDelivery: preview.byDelivery || {},
+            sendRegisteredWebhooks,
             targetMode,
             deduplicateChannels,
             ...officialSupport,
@@ -887,7 +900,8 @@ async function queueCampaign(request, env, campaignId, admin, surface = 'mail') 
 
     const campaign = await env.NEWSLETTER_DB.prepare(
         `SELECT id, subject, body_text, category, recipient_groups, delivery_slots, target_server_ids,
-                target_mode, deduplicate_channels, send_official_support, official_mention_role_id, official_message_id,
+                target_mode, deduplicate_channels, send_registered_webhooks, send_official_support,
+                official_mention_role_id, official_mention_role_ids, official_mention_message_id, official_message_id,
                 delivery_format, embed_color, image_url, image_name, image_type, image_data, image_alt,
                 status, updated_at
          FROM newsletter_campaigns WHERE id = ?`,
@@ -905,14 +919,15 @@ async function queueCampaign(request, env, campaignId, admin, surface = 'mail') 
     const campaignGroups = validateRecipientGroups(parseCsv(campaign.recipient_groups));
     const campaignOfficialSupport = validateOfficialSupportOptions({
         sendOfficialSupport: Number(campaign.send_official_support || 0) !== 0,
-        officialMentionRoleId: campaign.official_mention_role_id,
+        officialMentionRoleIds: parseCsv(campaign.official_mention_role_ids || campaign.official_mention_role_id),
     });
+    const campaignSendRegisteredWebhooks = Number(campaign.send_registered_webhooks ?? 1) !== 0;
+    validateDiscordDestinations(campaignSendRegisteredWebhooks, campaignOfficialSupport.sendOfficialSupport);
     validateDiscordAnnouncement(campaign.subject, campaign.body_text, campaignGroups, {
         format: campaign.delivery_format,
         embedColor: campaign.embed_color,
         imageUrl: campaign.image_url,
         imageAlt: campaign.image_alt,
-        mentionRoleId: campaignOfficialSupport.officialMentionRoleId,
     });
     if (surface === 'discord') {
         return dispatchAwsDiscordCampaign(env, campaign, campaignId, admin);
@@ -1002,20 +1017,24 @@ async function queueCampaign(request, env, campaignId, admin, surface = 'mail') 
 }
 
 async function dispatchAwsDiscordCampaign(env, campaign, campaignId, admin) {
-    const directory = await loadAwsDiscordDirectory(env);
-    if (!directory.available) {
+    const sendRegisteredWebhooks = Number(campaign.send_registered_webhooks ?? 1) !== 0;
+    const directory = sendRegisteredWebhooks ? await loadAwsDiscordDirectory(env) : { available: false, items: [] };
+    if (sendRegisteredWebhooks && !directory.available) {
         throw new NewsletterError(503, directory.message || 'AWS配信先ディレクトリを取得できません。', 'aws_directory_unavailable');
     }
-    const { targetMode, deliverySlots, targetServerIds, deduplicateChannels } = validateDiscordTargeting({
+    const targeting = validateDiscordTargeting({
+        sendRegisteredWebhooks,
         targetMode: campaign.target_mode,
         deliverySlots: parseCsv(campaign.delivery_slots),
         targetServerIds: parseCsv(campaign.target_server_ids),
         deduplicateChannels: Number(campaign.deduplicate_channels ?? 1) !== 0,
     }, ['discord_approved'], allowedDeliverySlotIds(directory.items));
+    const { targetMode, deliverySlots, targetServerIds, deduplicateChannels } = targeting;
     const officialSupport = validateOfficialSupportOptions({
         sendOfficialSupport: Number(campaign.send_official_support || 0) !== 0,
-        officialMentionRoleId: campaign.official_mention_role_id,
+        officialMentionRoleIds: parseCsv(campaign.official_mention_role_ids || campaign.official_mention_role_id),
     });
+    validateDiscordDestinations(sendRegisteredWebhooks, officialSupport.sendOfficialSupport);
     const now = new Date().toISOString();
     const lock = await env.NEWSLETTER_DB.prepare(
         `UPDATE newsletter_campaigns SET status = 'sending', updated_at = ?, started_at = COALESCE(started_at, ?)
@@ -1027,33 +1046,45 @@ async function dispatchAwsDiscordCampaign(env, campaign, campaignId, admin) {
 
     const imageData = normalizeBinaryData(campaign.image_data);
     try {
+        let officialMentionMessageId = stringValue(campaign.official_mention_message_id).trim();
         let officialMessageId = stringValue(campaign.official_message_id).trim();
-        if (officialSupport.sendOfficialSupport && !officialMessageId) {
+        if (officialSupport.sendOfficialSupport) {
             try {
-                const officialMessage = await sendDiscordAnnouncement(
-                    OFFICIAL_SUPPORT_CHANNEL_ID,
-                    campaign.subject,
-                    campaign.body_text,
-                    env,
-                    {
-                        format: campaign.delivery_format,
-                        embedColor: Number(campaign.embed_color ?? DEFAULT_DISCORD_EMBED_COLOR),
-                        imageUrl: stringValue(campaign.image_url),
-                        imageName: stringValue(campaign.image_name),
-                        imageType: stringValue(campaign.image_type),
-                        imageData,
-                        imageAlt: stringValue(campaign.image_alt),
-                        mentionRoleId: officialSupport.officialMentionRoleId,
-                        nonce: campaignId.replaceAll('-', '').slice(0, 25),
-                    },
-                );
-                officialMessageId = stringValue(officialMessage?.id).trim();
-                if (!/^\d{17,20}$/u.test(officialMessageId)) {
-                    throw new Error('official_discord_message_id_missing');
+                const nonceBase = campaignId.replaceAll('-', '').slice(0, 22);
+                if (officialSupport.officialMentionRoleIds.length && !officialMentionMessageId) {
+                    const mentionMessage = await sendDiscordMentionMessage(
+                        OFFICIAL_SUPPORT_CHANNEL_ID,
+                        officialSupport.officialMentionRoleIds,
+                        env,
+                        { nonce: `${nonceBase}-m` },
+                    );
+                    officialMentionMessageId = validateDiscordMessageId(mentionMessage?.id, 'official_discord_mention_message_id_missing');
+                    await env.NEWSLETTER_DB.prepare(
+                        `UPDATE newsletter_campaigns SET official_mention_message_id = ?, updated_at = ? WHERE id = ?`,
+                    ).bind(officialMentionMessageId, new Date().toISOString(), campaignId).run();
                 }
-                await env.NEWSLETTER_DB.prepare(
-                    `UPDATE newsletter_campaigns SET official_message_id = ?, updated_at = ? WHERE id = ?`,
-                ).bind(officialMessageId, new Date().toISOString(), campaignId).run();
+                if (!officialMessageId) {
+                    const officialMessage = await sendDiscordAnnouncement(
+                        OFFICIAL_SUPPORT_CHANNEL_ID,
+                        campaign.subject,
+                        campaign.body_text,
+                        env,
+                        {
+                            format: campaign.delivery_format,
+                            embedColor: Number(campaign.embed_color ?? DEFAULT_DISCORD_EMBED_COLOR),
+                            imageUrl: stringValue(campaign.image_url),
+                            imageName: stringValue(campaign.image_name),
+                            imageType: stringValue(campaign.image_type),
+                            imageData,
+                            imageAlt: stringValue(campaign.image_alt),
+                            nonce: `${nonceBase}-c`,
+                        },
+                    );
+                    officialMessageId = validateDiscordMessageId(officialMessage?.id, 'official_discord_message_id_missing');
+                    await env.NEWSLETTER_DB.prepare(
+                        `UPDATE newsletter_campaigns SET official_message_id = ?, updated_at = ? WHERE id = ?`,
+                    ).bind(officialMessageId, new Date().toISOString(), campaignId).run();
+                }
             } catch (error) {
                 if (error?.code === 'DISCORD_NOT_CONFIGURED') {
                     throw new NewsletterError(503, '公式サポートサーバーへの送信設定がありません。', 'official_discord_not_configured');
@@ -1061,25 +1092,27 @@ async function dispatchAwsDiscordCampaign(env, campaign, campaignId, admin) {
                 throw new NewsletterError(502, '公式サポートサーバーへの送信に失敗しました。Botの権限とチャンネル設定を確認してください。', 'official_discord_delivery_failed');
             }
         }
-        const result = await callAwsDirectoryAction(env, {
-            action: 'discord-announcement',
-            actor: admin.email,
-            requestId: campaignId,
-            confirmation: campaignId,
-            targetMode,
-            deliverySlots,
-            targetServerIds,
-            deduplicateChannels,
-            subject: campaign.subject,
-            body: campaign.body_text,
-            deliveryFormat: campaign.delivery_format,
-            embedColor: Number(campaign.embed_color ?? DEFAULT_DISCORD_EMBED_COLOR),
-            imageUrl: stringValue(campaign.image_url),
-            imageName: stringValue(campaign.image_name),
-            imageType: stringValue(campaign.image_type),
-            imageAlt: stringValue(campaign.image_alt),
-            imageBase64: imageData ? bytesToBase64(imageData) : '',
-        }, 125_000);
+        const result = sendRegisteredWebhooks
+            ? await callAwsDirectoryAction(env, {
+                action: 'discord-announcement',
+                actor: admin.email,
+                requestId: campaignId,
+                confirmation: campaignId,
+                targetMode,
+                deliverySlots,
+                targetServerIds,
+                deduplicateChannels,
+                subject: campaign.subject,
+                body: campaign.body_text,
+                deliveryFormat: campaign.delivery_format,
+                embedColor: Number(campaign.embed_color ?? DEFAULT_DISCORD_EMBED_COLOR),
+                imageUrl: stringValue(campaign.image_url),
+                imageName: stringValue(campaign.image_name),
+                imageType: stringValue(campaign.image_type),
+                imageAlt: stringValue(campaign.image_alt),
+                imageBase64: imageData ? bytesToBase64(imageData) : '',
+            }, 125_000)
+            : { targetCount: 0, sentCount: 0, failedCount: 0, failureSummary: {}, allFailed: false };
         const officialCount = officialSupport.sendOfficialSupport && officialMessageId ? 1 : 0;
         const targetCount = Number(result.targetCount || 0) + officialCount;
         const sentCount = Number(result.sentCount || 0) + officialCount;
@@ -1106,7 +1139,7 @@ async function dispatchAwsDiscordCampaign(env, campaign, campaignId, admin) {
             action: 'campaign_started',
             entityType: 'newsletter_campaign',
             entityId: campaignId,
-            details: { targetCount, sentCount, failedCount, targetMode, deliverySlots, targetServerIds, deduplicateChannels, ...officialSupport },
+            details: { targetCount, sentCount, failedCount, sendRegisteredWebhooks, targetMode, deliverySlots, targetServerIds, deduplicateChannels, ...officialSupport },
         });
         return jsonResponse({ success: true, campaignId, queued: targetCount, targetCount, sentCount, failedCount, status: 'completed' });
     } catch (error) {
@@ -1561,8 +1594,11 @@ async function ensureDiscordCampaignColumns(database) {
         ['external_failed_count', 'INTEGER NOT NULL DEFAULT 0'],
         ['target_mode', "TEXT NOT NULL DEFAULT 'delivery_slots'"],
         ['deduplicate_channels', 'INTEGER NOT NULL DEFAULT 1'],
+        ['send_registered_webhooks', 'INTEGER NOT NULL DEFAULT 1'],
         ['send_official_support', 'INTEGER NOT NULL DEFAULT 0'],
         ['official_mention_role_id', "TEXT NOT NULL DEFAULT ''"],
+        ['official_mention_role_ids', "TEXT NOT NULL DEFAULT ''"],
+        ['official_mention_message_id', 'TEXT'],
         ['official_message_id', 'TEXT'],
     ];
     for (const [name, definition] of additions) {
@@ -1577,6 +1613,10 @@ async function ensureDiscordCampaignColumns(database) {
     await database.prepare(
         `UPDATE newsletter_campaigns SET target_mode = 'intersection'
          WHERE target_mode = 'delivery_slots' AND trim(target_server_ids) <> ''`,
+    ).run();
+    await database.prepare(
+        `UPDATE newsletter_campaigns SET official_mention_role_ids = official_mention_role_id
+         WHERE trim(official_mention_role_ids) = '' AND trim(official_mention_role_id) <> ''`,
     ).run();
 }
 
@@ -1740,8 +1780,9 @@ async function readCampaignInput(request, surface) {
         targetServerIds: parseJsonFormArray(form, 'targetServerIds'),
         targetMode: stringValue(form.get('targetMode')),
         deduplicateChannels: stringValue(form.get('deduplicateChannels')),
+        sendRegisteredWebhooks: stringValue(form.get('sendRegisteredWebhooks')),
         sendOfficialSupport: stringValue(form.get('sendOfficialSupport')),
-        officialMentionRoleId: stringValue(form.get('officialMentionRoleId')),
+        officialMentionRoleIds: parseJsonFormArray(form, 'officialMentionRoleIds'),
         subject: stringValue(form.get('subject')),
         body: stringValue(form.get('body')),
         deliveryFormat: stringValue(form.get('deliveryFormat')),
@@ -1939,6 +1980,16 @@ function validateOptionalDeliverySlots(input, allowedIds = DELIVERY_SLOT_IDS) {
 }
 
 function validateDiscordTargeting(input, recipientGroups, allowedIds = DELIVERY_SLOT_IDS) {
+    const sendRegisteredWebhooks = validateSendRegisteredWebhooks(input);
+    if (!sendRegisteredWebhooks) {
+        return {
+            sendRegisteredWebhooks: false,
+            targetMode: 'delivery_slots',
+            deliverySlots: [],
+            targetServerIds: [],
+            deduplicateChannels: true,
+        };
+    }
     let deliverySlots = validateOptionalDeliverySlots(input.deliverySlots, allowedIds);
     let targetServerIds = validateTargetServerIds(input.targetServerIds, recipientGroups);
     const inferredMode = targetServerIds.length ? 'intersection' : 'delivery_slots';
@@ -1960,7 +2011,13 @@ function validateDiscordTargeting(input, recipientGroups, allowedIds = DELIVERY_
     const deduplicateChannels = input.deduplicateChannels === undefined
         ? true
         : parseBooleanValue(input.deduplicateChannels, '同一チャンネルへの送信方法を確認してください。');
-    return { targetMode, deliverySlots, targetServerIds, deduplicateChannels };
+    return { sendRegisteredWebhooks: true, targetMode, deliverySlots, targetServerIds, deduplicateChannels };
+}
+
+function validateSendRegisteredWebhooks(input) {
+    return input.sendRegisteredWebhooks === undefined
+        ? true
+        : parseBooleanValue(input.sendRegisteredWebhooks, '登録済み配信先への送信設定を確認してください。');
 }
 
 function parseBooleanValue(value, message) {
@@ -1973,26 +2030,37 @@ function validateOfficialSupportOptions(input) {
     const sendOfficialSupport = input.sendOfficialSupport === undefined
         ? false
         : parseBooleanValue(input.sendOfficialSupport, '公式サポートサーバーへの送信設定を確認してください。');
-    const officialMentionRoleId = stringValue(input.officialMentionRoleId).trim();
-    if (officialMentionRoleId && !OFFICIAL_SUPPORT_ROLE_IDS.has(officialMentionRoleId)) {
+    const legacyRoleId = stringValue(input.officialMentionRoleId).trim();
+    const rawRoleIds = Array.isArray(input.officialMentionRoleIds)
+        ? input.officialMentionRoleIds
+        : (legacyRoleId ? [legacyRoleId] : []);
+    const officialMentionRoleIds = [...new Set(rawRoleIds
+        .filter((roleId) => typeof roleId === 'string')
+        .map((roleId) => roleId.trim())
+        .filter(Boolean))];
+    if (officialMentionRoleIds.length > OFFICIAL_SUPPORT_ROLE_IDS.size
+        || officialMentionRoleIds.some((roleId) => !OFFICIAL_SUPPORT_ROLE_IDS.has(roleId))) {
         throw new NewsletterError(400, 'メンションする公式ロールを確認してください。', 'invalid_official_mention_role');
     }
-    if (!sendOfficialSupport && officialMentionRoleId) {
+    if (!sendOfficialSupport && officialMentionRoleIds.length) {
         throw new NewsletterError(400, '公式チャンネルへ送信する場合だけロールを指定できます。', 'official_mention_without_destination');
     }
     return {
         sendOfficialSupport,
-        officialMentionRoleId: sendOfficialSupport ? officialMentionRoleId : '',
+        officialMentionRoleIds: sendOfficialSupport ? officialMentionRoleIds : [],
     };
+}
+
+function validateDiscordDestinations(sendRegisteredWebhooks, sendOfficialSupport) {
+    if (!sendRegisteredWebhooks && !sendOfficialSupport) {
+        throw new NewsletterError(400, '送信先を1つ以上選択してください。', 'discord_destination_required');
+    }
 }
 
 function validateDiscordAnnouncement(subject, body, recipientGroups, options = {}) {
     if (!recipientGroups.includes('discord_approved')) return;
     const format = validateDiscordFormat(options.format);
-    const mentionPrefix = OFFICIAL_SUPPORT_ROLE_IDS.has(stringValue(options.mentionRoleId))
-        ? `<@&${options.mentionRoleId}>\n`
-        : '';
-    if (format === 'message' && `${mentionPrefix}${buildDiscordMessageContent(subject, body, options.imageUrl)}`.length > 2_000) {
+    if (format === 'message' && buildDiscordMessageContent(subject, body, options.imageUrl).length > 2_000) {
         throw new NewsletterError(400, '通常メッセージは件名・本文・画像URLを合わせて2,000文字以内にしてください。', 'discord_content_too_large');
     }
     if (format === 'embed' && (subject.length > 256 || body.length > 4_096 || subject.length + body.length > 6_000)) {
@@ -2700,10 +2768,10 @@ function normalizeCampaignRow(row) {
         targetServerIds: validateTargetServerIds(parseCsv(row.target_server_ids), recipientGroups),
         targetMode: DISCORD_TARGET_MODES.has(stringValue(row.target_mode)) ? row.target_mode : 'delivery_slots',
         deduplicateChannels: Number(row.deduplicate_channels ?? 1) !== 0,
+        sendRegisteredWebhooks: Number(row.send_registered_webhooks ?? 1) !== 0,
         sendOfficialSupport: Number(row.send_official_support || 0) !== 0,
-        officialMentionRoleId: OFFICIAL_SUPPORT_ROLE_IDS.has(stringValue(row.official_mention_role_id))
-            ? row.official_mention_role_id
-            : '',
+        officialMentionRoleIds: parseCsv(row.official_mention_role_ids || row.official_mention_role_id)
+            .filter((roleId) => OFFICIAL_SUPPORT_ROLE_IDS.has(roleId)),
         deliveryFormat: validateDiscordFormat(row.delivery_format),
         embedColor: validateEmbedColor(Number(row.embed_color ?? DEFAULT_DISCORD_EMBED_COLOR)),
         imageUrl: stringValue(row.image_url),
@@ -2760,14 +2828,7 @@ function buildDiscordPayload(subject, body, options = {}) {
     const imageUrl = validateDiscordImageUrl(options.imageUrl);
     const imageName = stringValue(options.imageName || options.image?.name);
     const attachmentUrl = imageName ? `attachment://${imageName}` : '';
-    const mentionRoleId = stringValue(options.mentionRoleId).trim();
-    if (mentionRoleId && !OFFICIAL_SUPPORT_ROLE_IDS.has(mentionRoleId)) {
-        throw new NewsletterError(400, 'メンションする公式ロールを確認してください。', 'invalid_official_mention_role');
-    }
-    const mention = mentionRoleId ? `<@&${mentionRoleId}>` : '';
-    const payload = mentionRoleId
-        ? { allowed_mentions: { parse: [], roles: [mentionRoleId], users: [] } }
-        : { allowed_mentions: { parse: [] } };
+    const payload = { allowed_mentions: { parse: [] } };
     if (format === 'embed') {
         const embed = {
             title: subject,
@@ -2775,12 +2836,11 @@ function buildDiscordPayload(subject, body, options = {}) {
             color: validateEmbedColor(options.embedColor),
             footer: { text: 'DPI-Bot 運営' },
         };
-        if (mention) payload.content = mention;
         const effectiveImageUrl = attachmentUrl || imageUrl;
         if (effectiveImageUrl) embed.image = { url: effectiveImageUrl };
         payload.embeds = [embed];
     } else {
-        payload.content = [mention, buildDiscordMessageContent(subject, body, imageUrl)].filter(Boolean).join('\n');
+        payload.content = buildDiscordMessageContent(subject, body, imageUrl);
     }
     if (imageName) {
         payload.attachments = [{
@@ -2797,7 +2857,24 @@ function buildDiscordPayload(subject, body, options = {}) {
     return payload;
 }
 
-async function sendDiscordAnnouncement(channelId, subject, body, env, options = {}) {
+function buildDiscordMentionPayload(roleIds, options = {}) {
+    const validated = validateOfficialSupportOptions({ sendOfficialSupport: true, officialMentionRoleIds: roleIds });
+    if (!validated.officialMentionRoleIds.length) {
+        throw new NewsletterError(400, 'メンションする公式ロールを1つ以上選択してください。', 'official_mention_required');
+    }
+    const payload = {
+        content: validated.officialMentionRoleIds.map((roleId) => `<@&${roleId}>`).join(' '),
+        allowed_mentions: { parse: [], roles: validated.officialMentionRoleIds, users: [] },
+    };
+    const nonce = stringValue(options.nonce).trim();
+    if (nonce && /^[A-Za-z0-9_-]{1,25}$/u.test(nonce)) {
+        payload.nonce = nonce;
+        payload.enforce_nonce = true;
+    }
+    return payload;
+}
+
+async function sendDiscordApiMessage(channelId, payload, env, options = {}) {
     const token = cleanConfigValue(env.DISCORD_BOT_TOKEN);
     if (!token) {
         const error = new Error('discord_delivery_not_configured');
@@ -2814,10 +2891,6 @@ async function sendDiscordAnnouncement(channelId, subject, body, env, options = 
     const imageName = stringValue(options.imageName);
     const imageType = stringValue(options.imageType);
     const imageData = normalizeBinaryData(options.imageData);
-    const payload = buildDiscordPayload(subject, body, {
-        ...options,
-        imageName: imageData ? imageName : '',
-    });
     let requestBody;
     const headers = {
         Authorization: `Bot ${token}`,
@@ -2845,6 +2918,26 @@ async function sendDiscordAnnouncement(channelId, subject, body, env, options = 
         throw error;
     }
     return result;
+}
+
+async function sendDiscordAnnouncement(channelId, subject, body, env, options = {}) {
+    const imageName = stringValue(options.imageName);
+    const imageData = normalizeBinaryData(options.imageData);
+    const payload = buildDiscordPayload(subject, body, {
+        ...options,
+        imageName: imageData ? imageName : '',
+    });
+    return sendDiscordApiMessage(channelId, payload, env, options);
+}
+
+async function sendDiscordMentionMessage(channelId, roleIds, env, options = {}) {
+    return sendDiscordApiMessage(channelId, buildDiscordMentionPayload(roleIds, options), env);
+}
+
+function validateDiscordMessageId(value, errorMessage) {
+    const messageId = stringValue(value).trim();
+    if (!/^\d{17,20}$/u.test(messageId)) throw new Error(errorMessage);
+    return messageId;
 }
 
 function normalizeBinaryData(value) {
@@ -2958,7 +3051,9 @@ export const __test = Object.freeze({
     parseSerializedCategories,
     renderMarkdownEmail,
     buildDiscordPayload,
+    buildDiscordMentionPayload,
     sendDiscordAnnouncement,
+    sendDiscordMentionMessage,
     serializeCategories,
     serializedCategoriesOverlap,
     validateCampaignBody,
@@ -2969,6 +3064,7 @@ export const __test = Object.freeze({
     validateDiscordAnnouncement,
     validateDiscordOptions,
     validateOfficialSupportOptions,
+    validateDiscordDestinations,
     validateRecipientGroups,
     validateSurfaceRecipientGroups,
     validateTargetServerIds,

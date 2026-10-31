@@ -91,3 +91,11 @@ test('公式Discord送信設定用D1マイグレーションを同梱する', as
     assert.match(migration, /official_mention_role_id/u);
     assert.match(migration, /official_message_id/u);
 });
+
+test('公式Discord複数メンション用D1マイグレーションを同梱する', async () => {
+    const migration = await readFile(new URL('../migrations/0011_official_discord_multi_mentions.sql', import.meta.url), 'utf8');
+    assert.match(migration, /send_registered_webhooks/u);
+    assert.match(migration, /official_mention_role_ids/u);
+    assert.match(migration, /official_mention_message_id/u);
+    assert.match(migration, /SET official_mention_role_ids = official_mention_role_id/u);
+});

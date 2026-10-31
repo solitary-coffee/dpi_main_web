@@ -17,9 +17,7 @@
 .image-options { margin: 0; }
 .official-support-options { display: grid; gap: 12px; margin: 0; padding: 15px; border: 1px solid #626a73; border-radius: 8px; background: #343a40; }
 .official-support-options legend { padding: 0 5px; font-weight: 700; }
-.official-support-options select { width: 100%; padding: 10px 12px; border: 1px solid #adb8c5; border-radius: 6px; color: #172033; background: #fff; font: inherit; }
-.official-support-options select:disabled { color: #697386; background: #e5e7eb; cursor: not-allowed; }
-.preview-official-mention { margin-bottom: .55rem; color: #c9cdfb; font-weight: 700; }
+.preview-official-mention { margin-bottom: .55rem; border-left: 4px solid #c9cdfb; color: #c9cdfb; font-weight: 700; }
 .image-options legend { padding: 0 5px; font-weight: 700; }
 .image-options input[type="url"], .image-options input[type="file"], .image-options input[type="text"] { width: 100%; padding: 10px 12px; border: 1px solid #adb8c5; border-radius: 6px; color: #172033; background: #fff; font: inherit; }
 .embed-options input[type="color"] { width: 90px; height: 44px; padding: 3px; border: 1px solid #adb8c5; border-radius: 6px; background: #fff; }
