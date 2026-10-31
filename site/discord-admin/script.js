@@ -2,6 +2,11 @@ const categoryLabels = Object.freeze({ maintenance: 'メンテナンス情報', 
 const statusLabels = Object.freeze({ draft: '下書き', queuing: 'Queue登録中', sending: '配信中', completed: '完了', cancelled: '取消済み' });
 const formatLabels = Object.freeze({ message: '通常メッセージ', embed: 'Embed' });
 const targetModeLabels = Object.freeze({ delivery_slots: '配信枠', servers: 'サーバー', intersection: '配信枠＋サーバー' });
+const officialRoleLabels = Object.freeze({
+    '1538768646430793768': '@障害・バグ情報',
+    '1538768792648163368': '@アップデート情報',
+    '1538768846989820005': '@その他お知らせ情報',
+});
 const MAX_IMAGE_BYTES = 1_250_000;
 const IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
 const campaignTemplates = Object.freeze({
@@ -64,7 +69,7 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('campaign-form').addEventListener('input', handleFormInput);
     for (const button of document.querySelectorAll('[data-template]')) button.addEventListener('click', () => applyTemplate(button.dataset.template));
     window.addEventListener('beforeunload', revokePreviewImage);
-    loadSummary();
+    updateOfficialSupportUI(); loadSummary();
 });
 
 async function loadSummary() {
@@ -129,6 +134,9 @@ function renderCampaigns() {
         const slots = (campaign.deliverySlots || []).map(slotName).join('・') || '指定なし';
         const duplicateText = campaign.deduplicateChannels === false ? '配信枠ごと' : '同一チャンネル1件';
         card.append(el('p', 'campaign-meta', `指定方法: ${targetModeLabels[campaign.targetMode] || '配信枠'} / 配信枠: ${slots} / サーバー: ${names} / ${duplicateText}`));
+        if (campaign.sendOfficialSupport) {
+            card.append(el('p', 'campaign-meta', `公式サポート: お知らせチャンネル / メンション: ${officialRoleLabels[campaign.officialMentionRoleId] || 'なし'}`));
+        }
         const actions = el('div', 'campaign-actions');
         if (['draft', 'queuing'].includes(campaign.status)) {
             const button = el('button', 'primary-btn', '配信を開始'); button.type = 'button'; button.addEventListener('click', () => sendCampaign(campaign, button)); actions.append(button);
@@ -144,6 +152,7 @@ function handleFormChange(event) {
     if (event.target.name === 'delivery-format') updateFormatOptions();
     if (event.target.name === 'target-mode') updateTargetModeUI();
     if (event.target.id === 'image-file' || event.target.id === 'image-url') validateImageSelection();
+    if (event.target.id === 'send-official-support') updateOfficialSupportUI();
     scheduleAudiencePreview(); renderPreview();
 }
 function handleFormInput(event) { if (['subject', 'body', 'embed-color', 'image-url', 'image-alt'].includes(event.target.id)) renderPreview(); }
@@ -170,10 +179,10 @@ async function createCampaign(event) {
         validateImageSelection(true);
         const form = new FormData();
         for (const key of ['categories', 'recipientGroups', 'deliverySlots', 'targetServerIds']) form.append(key, JSON.stringify(payload[key]));
-        for (const key of ['targetMode', 'deduplicateChannels', 'subject', 'body', 'deliveryFormat', 'embedColor', 'imageUrl', 'imageAlt']) form.append(key, String(payload[key]));
+        for (const key of ['targetMode', 'deduplicateChannels', 'sendOfficialSupport', 'officialMentionRoleId', 'subject', 'body', 'deliveryFormat', 'embedColor', 'imageUrl', 'imageAlt']) form.append(key, String(payload[key]));
         const image = document.getElementById('image-file').files[0]; if (image) form.append('image', image, image.name);
         const result = await request('/site/discord-admin/api/campaigns', { method: 'POST', body: form });
-        document.getElementById('campaign-form').reset(); document.getElementById('embed-color').value = '#5865f2'; updateFormatOptions(); updateTargetModeUI(); revokePreviewImage(); renderPreview(); scheduleAudiencePreview();
+        document.getElementById('campaign-form').reset(); document.getElementById('embed-color').value = '#5865f2'; updateFormatOptions(); updateTargetModeUI(); updateOfficialSupportUI(); revokePreviewImage(); renderPreview(); scheduleAudiencePreview();
         setStatus(`下書きを保存しました。配信ID: ${result.campaign.id}`, 'success'); await loadSummary();
     } catch (error) { setStatus(error.message, 'error'); } finally { button.disabled = false; }
 }
@@ -191,7 +200,8 @@ async function cancelCampaign(campaign, button) {
 }
 
 function selectionPayload() {
-    return { categories: checked('campaign-categories'), recipientGroups: ['discord_approved'], targetMode: selectedTargetMode(), deliverySlots: checked('delivery-slots'), targetServerIds: checked('server-ids'), deduplicateChannels: document.getElementById('deduplicate-channels').checked, subject: document.getElementById('subject').value, body: document.getElementById('body').value, deliveryFormat: selectedFormat(), embedColor: document.getElementById('embed-color').value, imageUrl: document.getElementById('image-url').value.trim(), imageAlt: document.getElementById('image-alt').value.trim() };
+    const sendOfficialSupport = document.getElementById('send-official-support').checked;
+    return { categories: checked('campaign-categories'), recipientGroups: ['discord_approved'], targetMode: selectedTargetMode(), deliverySlots: checked('delivery-slots'), targetServerIds: checked('server-ids'), deduplicateChannels: document.getElementById('deduplicate-channels').checked, sendOfficialSupport, officialMentionRoleId: sendOfficialSupport ? document.getElementById('official-mention-role').value : '', subject: document.getElementById('subject').value, body: document.getElementById('body').value, deliveryFormat: selectedFormat(), embedColor: document.getElementById('embed-color').value, imageUrl: document.getElementById('image-url').value.trim(), imageAlt: document.getElementById('image-alt').value.trim() };
 }
 function selectedFormat() { return document.querySelector('input[name="delivery-format"]:checked')?.value || 'message'; }
 function selectedTargetMode() { return document.querySelector('input[name="target-mode"]:checked')?.value || 'delivery_slots'; }
@@ -208,6 +218,13 @@ function updateTargetModeUI() {
     for (const input of serversFieldset.querySelectorAll('input, button')) input.disabled = !serversEnabled;
 }
 
+function updateOfficialSupportUI() {
+    const enabled = document.getElementById('send-official-support').checked;
+    const select = document.getElementById('official-mention-role');
+    select.disabled = !enabled;
+    if (!enabled) select.value = '';
+}
+
 function validateTargetSelection(payload) {
     if (payload.targetMode === 'delivery_slots' && !payload.deliverySlots.length) throw new Error('配信枠を1つ以上選択してください。');
     if (payload.targetMode === 'servers' && !payload.targetServerIds.length) throw new Error('配信先サーバーを1つ以上選択してください。');
@@ -221,7 +238,8 @@ async function updateAudiencePreview() {
     catch (error) { target.textContent = `${error.message} 選択後に対象Webhook数を表示します。`; return; }
     try {
         const result = await request('/site/discord-admin/api/audience-preview', { method: 'POST', body: JSON.stringify(payload) });
-        const count = Number(result.count || 0); target.textContent = `現在の送信件数: ${count}件。配信開始時に再計算します。`;
+        const count = Number(result.count || 0); const official = Number(result.byKind?.official_support || 0);
+        target.textContent = `現在の送信件数: ${count}件${official ? '（公式サポート 1件を含む）' : ''}。配信開始時に再計算します。`;
         target.classList.toggle('validation-error', count === 0);
         if (count === 0) target.textContent += ' 送信先がないため、下書き保存・配信はできません。';
     }
@@ -242,6 +260,7 @@ function validateImageSelection(throwOnError = false) {
 function renderPreview() {
     const payload = selectionPayload(); const preview = document.getElementById('discord-preview');
     preview.classList.toggle('embed-preview', payload.deliveryFormat === 'embed'); preview.classList.toggle('message-preview', payload.deliveryFormat === 'message'); preview.style.setProperty('--embed-color', payload.embedColor);
+    const mention = document.getElementById('preview-official-mention'); mention.textContent = officialRoleLabels[payload.officialMentionRoleId] || ''; mention.hidden = !payload.sendOfficialSupport || !payload.officialMentionRoleId;
     document.getElementById('preview-subject').textContent = payload.subject.trim() || '件名'; renderDiscordMarkdown(document.getElementById('preview-body'), payload.body.trim() || '本文を入力してください。'); renderPreviewImage(payload.imageUrl);
 }
 

@@ -59,6 +59,18 @@
                 <fieldset id="delivery-slots-fieldset" class="category-selector"><legend>対象配信枠</legend><div id="delivery-slots" class="delivery-slots"></div></fieldset>
                 <fieldset id="servers-fieldset" class="category-selector"><legend>送信先サーバー</legend><div class="selector-actions"><button id="select-all-servers" type="button" class="secondary-btn">すべて選択</button><button id="clear-all-servers" type="button" class="secondary-btn">すべて解除</button></div><div id="approved-servers" class="delivery-slots"></div></fieldset>
                 <label class="deduplicate-option"><input id="deduplicate-channels" type="checkbox" checked><span><strong>同じチャンネルには1件だけ送信する</strong><small>解除すると、同じチャンネルに複数の配信枠が設定されている場合、該当する配信枠ごとに1件ずつ送信します。</small></span></label>
+                <fieldset class="official-support-options"><legend>公式サポートサーバー</legend>
+                    <label class="deduplicate-option"><input id="send-official-support" type="checkbox"><span><strong>公式お知らせチャンネルにも送信する</strong><small>公式サポートサーバーの「お知らせ」チャンネル（1020702978426028104）へ同じ内容を1件送信します。</small></span></label>
+                    <label>メンションするロール
+                        <select id="official-mention-role" disabled>
+                            <option value="">メンションなし</option>
+                            <option value="1538768646430793768">@障害・バグ情報</option>
+                            <option value="1538768792648163368">@アップデート情報</option>
+                            <option value="1538768846989820005">@その他お知らせ情報</option>
+                        </select>
+                    </label>
+                    <p class="field-help">本文内の <code>@everyone</code>・<code>@here</code>・ユーザー・その他のロールはメンションされません。</p>
+                </fieldset>
                 <div class="template-selector">
                     <span class="field-label">テンプレート</span>
                     <div class="template-buttons">
@@ -87,6 +99,7 @@
                 <p id="recipient-preview" class="recipient-preview">送信先条件を選ぶと対象Webhook数を表示します。</p>
                 <div class="preview-toolbar"><strong>Discordプレビュー</strong><button id="preview-btn" type="button" class="secondary-btn">プレビューを更新</button></div>
                 <article id="discord-preview" class="discord-preview message-preview">
+                    <div id="preview-official-mention" class="preview-official-mention" hidden></div>
                     <strong id="preview-subject">件名</strong>
                     <div id="preview-body" class="preview-markdown">本文を入力してください。</div>
                     <img id="preview-image" alt="" hidden>
