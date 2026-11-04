@@ -3,11 +3,59 @@ import { authenticateNewsletterAdmin } from './access.js';
 import { billingAction, billingReady } from './supporter-billing.js';
 
 const response = (data, status = 200) => Response.json(data, {status, headers: {'Cache-Control':'no-store'}});
+const notFound = () => new Response('Not Found', {
+ status: 404,
+ headers: {
+  'Cache-Control': 'no-store',
+  'X-Content-Type-Options': 'nosniff',
+  'X-Robots-Tag': 'noindex, nofollow, noarchive',
+ },
+});
+
+function clean(value) { return typeof value === 'string' ? value.trim() : ''; }
+export function supporterPublicEnabled(env) {
+ return clean(env.SUPPORTER_PUBLIC_ENABLED).toLowerCase() === 'true';
+}
+export function supporterTestUserAllowed(env, discordUserId) {
+ if (supporterPublicEnabled(env)) return true;
+ const allowed = new Set(clean(env.SUPPORTER_TEST_USER_IDS)
+  .split(',')
+  .map(value => value.trim())
+  .filter(value => /^\d{17,20}$/.test(value)));
+ return allowed.has(String(discordUserId || ''));
+}
+
+async function supporterSite(request, env, db) {
+ const method = request.method.toUpperCase();
+ if (!['GET', 'HEAD'].includes(method)) return notFound();
+ if (!supporterPublicEnabled(env)) {
+  let allowed = false;
+  try {
+   const session = await requireSession(request, {...env, REUSE_DB: db});
+   allowed = supporterTestUserAllowed(env, session.discord_user_id);
+  } catch { /* Hide both missing sessions and configuration details. */ }
+  if (!allowed) {
+   try {
+    await authenticateNewsletterAdmin(request, env);
+    allowed = true;
+   } catch { /* Return the same 404 for every unauthorized visitor. */ }
+  }
+  if (!allowed) return notFound();
+ }
+ const asset = await env.ASSETS.fetch(request);
+ const headers = new Headers(asset.headers);
+ headers.set('Cache-Control', 'private, no-store');
+ if (!supporterPublicEnabled(env)) headers.set('X-Robots-Tag', 'noindex, nofollow, noarchive');
+ return new Response(asset.body, {status: asset.status, statusText: asset.statusText, headers});
+}
+
 export async function handleSupporterRequest(request, env) {
  const path = new URL(request.url).pathname;
- if (!path.startsWith('/api/supporter/') && !path.startsWith('/site/supporter-admin/')) return null;
+ const isSupporterSite = path === '/site/supporter' || path.startsWith('/site/supporter/');
+ if (!path.startsWith('/api/supporter/') && !path.startsWith('/site/supporter-admin/') && !isSupporterSite) return null;
  try {
   const db = env.REUSE_DB || env.NEWSLETTER_DB;
+  if (isSupporterSite) return await supporterSite(request, env, db);
   if (path.startsWith('/site/supporter-admin/')) {
    await authenticateNewsletterAdmin(request, env);
    if (request.method !== 'GET') return response({message:'Method not allowed'},405);
@@ -17,9 +65,15 @@ export async function handleSupporterRequest(request, env) {
    }
    return env.ASSETS.fetch(request);
   }
-  if (path === '/api/supporter/plans' && request.method === 'GET') return response({billingEnabled:false, deliveryEnabled:false, plans:[{id:'supporter',yen:300,channels:2},{id:'plus',yen:800,channels:10}], addon:{yen:200,channels:3}});
+  if (path === '/api/supporter/plans' && request.method === 'GET' && supporterPublicEnabled(env)) {
+   return response({billingEnabled:false, deliveryEnabled:false, plans:[{id:'supporter',yen:300,channels:2},{id:'plus',yen:800,channels:10}], addon:{yen:200,channels:3}});
+  }
   const session = await requireSession(request, {...env,REUSE_DB:db});
   const uid = session.discord_user_id;
+  if (!supporterTestUserAllowed(env, uid)) return notFound();
+  if (path === '/api/supporter/plans' && request.method === 'GET') {
+   return response({billingEnabled:false, deliveryEnabled:false, plans:[{id:'supporter',yen:300,channels:2},{id:'plus',yen:800,channels:10}], addon:{yen:200,channels:3}});
+  }
   if (request.method !== 'GET') { assertSameOrigin(request); assertCsrf(request,session); }
   if (/^\/api\/supporter\/billing\/(checkout|portal|status)$/.test(path)) {
    const expected=path.endsWith('/status')?'GET':'POST';
