@@ -162,13 +162,22 @@ test('downgrades are scheduled for the next renewal without refund or immediate 
  } finally{globalThis.fetch=originalFetch;}
 });
 test('supporter UI avoids WebKit URL constructor errors for Stripe redirects',async()=>{
- const source=await readFile(new URL('../site/supporter/app.js',import.meta.url),'utf8');
+ const [source,html,worker]=await Promise.all([
+  readFile(new URL('../site/supporter/app.js',import.meta.url),'utf8'),
+  readFile(new URL('../site/supporter/index.html',import.meta.url),'utf8'),
+  readFile(new URL('../worker/supporter.js',import.meta.url),'utf8'),
+ ]);
  assert.match(source,/function stripeDestination\(value\)/);
  assert.doesNotMatch(source,/new URL\(result\.url\)/);
  assert.match(source,/checkout\.stripe\.com/);
  assert.match(source,/billing\.stripe\.com/);
  assert.match(source,/invoice\.stripe\.com/);
  assert.match(source,/pay\.stripe\.com/);
+ assert.match(source,/このメールアドレスで申し込みへ/);
+ assert.match(source,/email:billingEmail\.value/);
+ assert.match(source,/billingActionStatus\.textContent=error\.message/);
+ assert.doesNotMatch(html,/id="register"/);
+ assert.match(worker,/path\.endsWith\('\/checkout'\)[\s\S]*normalizeBillingEmail\(input\.email\)[\s\S]*INSERT INTO supporter_accounts/);
 });
 test('supporter rule creation is resilient to WebKit input and channel errors',async()=>{
  const source=await readFile(new URL('../site/supporter/app.js',import.meta.url),'utf8');

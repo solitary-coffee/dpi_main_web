@@ -238,12 +238,10 @@ async function load() {
   return;
  }
  $('user').textContent = session.user.username;
- $('register').disabled = false;
  options = await api('/api/supporter/options');
  const {account,billingEnabled} = await api('/api/supporter/account');
  $('billing-email').value = account?.billing_email || '';
  $('add').disabled = $('save').disabled = true;
- $('register').textContent = account ? 'メールアドレスを更新' : '有料プラン利用情報を登録（決済前）';
  if (account) {
   revision = account.revision;
   rules = JSON.parse(account.settings_json).rules.map(normalizeRule);
@@ -265,13 +263,6 @@ function run(fn) {
 }
 
 $('reload').onclick = run(load);
-$('register').onclick = run(async () => {
- const email=$('billing-email');
- if(!email.reportValidity())return;
- await api('/api/supporter/account','POST',{email:email.value});
- await load();
- status('登録情報を保存しました。この操作だけでは料金は発生しません。');
-});
 $('add').onclick = run(async () => {
  if(!hasConfigurableContract)return status('通知設定は有料プランの契約後に利用できます。');
  if (rules.length >= entitlements.rules) return status(`現在のプランでは通知ルールは${entitlements.rules}件までです。`);
@@ -294,7 +285,6 @@ $('save').onclick = run(async () => {
  revision = data.revision;
  status('通知設定を保存しました。先行提供期間中のため、通知配信にはまだ反映されません。');
 });
-run(load)();
 
 const billing = $('billing');
 billing.replaceChildren();
@@ -302,10 +292,30 @@ const title = document.createElement('h2');
 title.textContent = 'お支払い・契約情報';
 const note = document.createElement('p');
 note.textContent = '請求日は毎月26日です。1〜25日の申込は当月分を申込時、翌月分を26日に請求します。26〜31日の申込は当月分と翌月分の2か月分を申込時にまとめて請求し、以後は毎月26日に翌月分を請求します。現在の接続先はStripeテスト環境のため、実際の請求は発生しません。';
+const application = document.createElement('div');
+application.className = 'billing-application';
+const applicationTitle = document.createElement('h3');
+applicationTitle.textContent = 'お申し込み内容';
+const emailLabel = document.createElement('label');
+emailLabel.className = 'billing-email-label';
+const emailCaption = document.createElement('span');
+emailCaption.textContent = 'お申し込みメールアドレス';
+const billingEmail = document.createElement('input');
+billingEmail.id = 'billing-email';
+billingEmail.type = 'email';
+billingEmail.maxLength = 254;
+billingEmail.autocomplete = 'email';
+billingEmail.required = true;
+billingEmail.placeholder = 'name@example.com';
+const emailHelp = document.createElement('p');
+emailHelp.className = 'help billing-email-help';
+emailHelp.textContent = 'Stripeの顧客情報、請求、契約に関する連絡に使用します。申し込み時に同時に登録・更新されます。';
+emailLabel.append(emailCaption,billingEmail);
+application.append(applicationTitle,emailLabel,emailHelp);
 const contract = document.createElement('div');
 contract.className = 'contract';
 contract.textContent = '契約情報は「契約情報を更新」から確認できます。';
-billing.append(title,note,contract);
+billing.append(title,note,application);
 const credit = document.createElement('p');
 credit.className = 'credit-balance';
 credit.textContent = '利用可能クレジット: 0クレジット（0円）';
@@ -327,7 +337,7 @@ for(const [labelText,input] of [['プラン',plan],['チャンネル追加',chan
 const pricePreview=document.createElement('p');pricePreview.className='price-preview';
 const updatePricePreview=()=>{const base={supporter:300,plus:800,pro:1280}[plan.value]||300;const monthly=base+200*(Number(channelPacks.value)+Number(serverPacks.value));const jstDay=Number(new Intl.DateTimeFormat('en-US',{day:'numeric',timeZone:'Asia/Tokyo'}).format(new Date()));const initial=monthly*(jstDay>=26?2:1);pricePreview.textContent=`月額 ${monthly.toLocaleString('ja-JP')}円／新規申込時 ${initial.toLocaleString('ja-JP')}円（${jstDay>=26?'当月分＋翌月分':'当月分'}）`;};
 for(const input of [plan,channelPacks,serverPacks])input.addEventListener('change',updatePricePreview);
-updatePricePreview();billing.append(optionGrid,pricePreview);
+updatePricePreview();application.append(optionGrid,pricePreview);
 
 const dateText = seconds => seconds ? new Intl.DateTimeFormat('ja-JP',{dateStyle:'medium',timeStyle:'short',timeZone:'Asia/Tokyo'}).format(new Date(seconds * 1000)) : '—';
 const moneyText = (amount,currency) => new Intl.NumberFormat('ja-JP',{style:'currency',currency:(currency || 'jpy').toUpperCase(),maximumFractionDigits:0}).format(amount || 0);
@@ -458,18 +468,32 @@ $('billing-preview-confirm').onclick=run(async()=>{
  } finally {button.disabled=false;}
 });
 
-for (const [label,action] of [['申し込みへ','checkout'],['プラン・オプションを変更','update'],['支払方法・解約の管理','portal'],['最新の契約・明細を読み込む','status']]) {
+const billingActionStatus=document.createElement('p');
+billingActionStatus.className='billing-action-status';
+billingActionStatus.setAttribute('role','status');
+billingActionStatus.setAttribute('aria-live','polite');
+const billingActions=document.createElement('div');
+billingActions.className='billing-actions';
+application.append(billingActions,billingActionStatus);
+
+for (const [label,action] of [['このメールアドレスで申し込みへ','checkout'],['プラン・オプションを変更','update'],['支払方法・解約の管理','portal'],['最新の契約・明細を読み込む','status']]) {
  const button = document.createElement('button');
  button.textContent = label;
- button.onclick = run(async () => {
+ button.className=action==='checkout'?'primary-btn':'secondary-btn';
+ button.type='button';
+ button.onclick = async () => {
+  billingActionStatus.textContent='';
+  if(action==='checkout'&&!billingEmail.reportValidity())return;
   button.disabled = true;
+  const originalLabel=button.textContent;
+  button.textContent=action==='checkout'?'決済画面を準備中…':'処理中…';
   try {
    const selection={plan:plan.value,channelPacks:Number(channelPacks.value),serverPacks:Number(serverPacks.value)};
    if(action==='update'){
     const result=await api('/api/supporter/billing/preview-update','POST',selection);
     showBillingPreview(result,selection);return;
    }
-   const body=action==='checkout'?selection:{};
+   const body=action==='checkout'?{...selection,email:billingEmail.value}:{};
    const result = await api(`/api/supporter/billing/${action}`,action === 'status' ? 'GET' : 'POST',action === 'status' ? undefined : body);
    if (result.url) {
     location.href = stripeDestination(result.url);
@@ -479,7 +503,12 @@ for (const [label,action] of [['申し込みへ','checkout'],['プラン・オ�
     credit.textContent=`利用可能クレジット: ${credits.toLocaleString('ja-JP')}クレジット（${credits.toLocaleString('ja-JP')}円）`;
     status(result.message||'契約情報を更新しました。');
    }
-  } finally { button.disabled = false; }
- });
- billing.append(button);
+  } catch(error) {
+   billingActionStatus.textContent=error.message;
+   status(error.message);
+  } finally {button.disabled=false;button.textContent=originalLabel;}
+ };
+ billingActions.append(button);
 }
+billing.append(contract,credit,invoiceTitle,invoiceHistory);
+run(load)();
