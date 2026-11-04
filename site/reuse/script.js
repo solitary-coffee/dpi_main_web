@@ -80,7 +80,6 @@ async function showApplicationDashboard() {
     document.getElementById('login-panel').classList.add('hidden');
     document.getElementById('application-panel').classList.remove('hidden');
     document.getElementById('account-name').textContent = session.user.username;
-    await loadBasicDashboardAccess();
     const guildSelect = document.getElementById('guild');
     for (const guild of session.guilds) guildSelect.append(option(guild.id, guild.name));
     if (session.guilds.length === 0) {
@@ -91,18 +90,6 @@ async function showApplicationDashboard() {
     }
     await loadUserApplications();
     if (userApplications.length === 0 && session.guilds.length) showNewApplicationForm();
-}
-
-async function loadBasicDashboardAccess() {
-    try {
-        const result = await api('/api/supporter/account');
-        const card = document.getElementById('basic-dashboard-card');
-        const state = document.getElementById('basic-registration-state');
-        card.classList.remove('hidden');
-        state.textContent = result.account ? 'BASIC登録済み' : '未登録（料金は発生しません）';
-    } catch {
-        // The private BASIC preview must stay undiscoverable for users outside the allowlist.
-    }
 }
 
 async function loadUserApplications() {

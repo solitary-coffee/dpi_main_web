@@ -50,6 +50,7 @@ function renderSummary() {
   ['有効・対応中の契約',active.length],
   ['月額合計',money(active.reduce((sum,item)=>sum+Number(item.amount||0),0),'jpy')],
   ['期間末解約予定',active.filter(item=>item.cancelAtPeriodEnd).length],
+  ['利用可能クレジット',`${accounts.reduce((sum,item)=>sum+Number(item.credits||0),0).toLocaleString('ja-JP')}円分`],
  ];
  $('summary-cards').replaceChildren(...items.map(([label,value]) => {
   const card=element('article','metric-card');card.append(element('span','',label),element('strong','',String(value)));return card;
@@ -58,7 +59,7 @@ function renderSummary() {
 
 function renderAccounts() {
  const query=$('account-search').value.trim().toLowerCase();
- const filtered=accounts.filter(account=>`${account.discordUserId} ${(account.subscriptions||[]).map(item=>item.plan).join(' ')}`.toLowerCase().includes(query));
+ const filtered=accounts.filter(account=>`${account.discordUserId} ${account.billingEmail||''} ${(account.subscriptions||[]).map(item=>item.plan).join(' ')}`.toLowerCase().includes(query));
  const container=$('accounts');container.replaceChildren();
  if(!filtered.length){container.append(element('p','empty-list',query?'条件に一致する登録者はいません。':'BASIC登録者はいません。'));return;}
  for(const account of filtered)container.append(accountCard(account));
@@ -71,7 +72,7 @@ function accountCard(account) {
  const manage=element('button','manage-btn','契約を管理');manage.type='button';manage.addEventListener('click',()=>openAction(account));
  heading.append(title,manage);
  const meta=element('div','account-meta');
- meta.append(element('span','',`登録 ${dateText(account.registeredAt)}`),element('span','',`更新 ${dateText(account.updatedAt)}`),element('span','',`通知ルール ${account.ruleCount}件`),element('span','',`設定revision ${account.revision}`));
+ meta.append(element('span','',`メール ${account.billingEmail||'未登録'}`),element('span','',`クレジット ${Number(account.credits||0).toLocaleString('ja-JP')}（${Number(account.credits||0).toLocaleString('ja-JP')}円分）`),element('span','',`登録 ${dateText(account.registeredAt)}`),element('span','',`更新 ${dateText(account.updatedAt)}`),element('span','',`通知ルール ${account.ruleCount}件`),element('span','',`設定revision ${account.revision}`));
  card.append(heading,meta);
  if(account.billingError)card.append(element('p','billing-error',account.billingError));
  const subscriptions=account.subscriptions||[];
@@ -102,10 +103,12 @@ function openAction(account) {
 function updateActionFields() {
  const action=$('action-kind').value;
  $('change-fields').classList.toggle('hidden',action!=='change_subscription');
- $('amount-fields').classList.toggle('hidden',!['refund_latest','create_payment_link'].includes(action));
+ const amountActions=['refund_latest','create_payment_link','grant_credit','remove_credit'];
+ $('amount-fields').classList.toggle('hidden',!amountActions.includes(action));
  $('description-wrap').classList.toggle('hidden',action!=='create_payment_link');
+ $('amount-label').querySelector('span').textContent=['grant_credit','remove_credit'].includes(action)?'クレジット数（1クレジット＝1円）':'金額（円）';
  $('action-amount').min=action==='create_payment_link'?'100':'1';
- $('action-amount').required=['refund_latest','create_payment_link'].includes(action);
+ $('action-amount').required=amountActions.includes(action);
  $('payment-description').required=action==='create_payment_link';
  updatePlanFields();
 }
@@ -118,11 +121,11 @@ async function submitAction(event) {
  event.preventDefault();
  if(!selectedAccount)return;
  const action=$('action-kind').value;
- const destructive=['refund_latest','cancel_immediately'].includes(action);
- if(destructive&&!window.confirm(action==='refund_latest'?'返金は取り消せません。指定額を返金しますか？':'契約は直ちに終了します。本当に実行しますか？'))return;
+ const destructive=['refund_latest','cancel_immediately','remove_credit'].includes(action);
+ if(destructive&&!window.confirm(action==='refund_latest'?'返金は取り消せません。指定額を返金しますか？':action==='remove_credit'?'指定したクレジットを削除しますか？':'契約は直ちに終了します。本当に実行しますか？'))return;
  const payload={discordUserId:selectedAccount.discordUserId,confirmDiscordUserId:$('confirm-discord-id').value.trim(),action,reason:$('action-reason').value.trim(),requestId:crypto.randomUUID()};
  if(action==='change_subscription'){payload.plan=$('change-plan').value;payload.packs=Number($('change-packs').value);}
- if(['refund_latest','create_payment_link'].includes(action))payload.amount=Number($('action-amount').value);
+ if(['refund_latest','create_payment_link','grant_credit','remove_credit'].includes(action))payload.amount=Number($('action-amount').value);
  if(action==='create_payment_link')payload.description=$('payment-description').value.trim();
  const button=$('action-submit');button.disabled=true;$('action-result').textContent='Stripeへ操作を送信しています…';
  try {
@@ -131,6 +134,7 @@ async function submitAction(event) {
   if(!response.ok||data.success!==true)throw new Error(data.message||`操作に失敗しました（HTTP ${response.status}）。`);
   const result=$('action-result');result.replaceChildren(element('strong','',data.message));
   if(data.auditRecorded===false)result.append(document.createElement('br'),element('span','billing-error','注意: Stripe操作は完了しましたが、監査ログの保存に失敗しました。'));
+  if(data.creditRecorded===false)result.append(document.createElement('br'),element('span','billing-error','注意: Stripe操作は完了しましたが、クレジット履歴の保存に失敗しました。'));
   if(data.url){const link=paymentLink(data.url);result.append(document.createElement('br'),link);}
   setStatus(data.message,'success');
   await loadAccounts();

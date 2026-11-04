@@ -32,7 +32,7 @@
    <section class="admin-section" aria-labelledby="summary-title"><div class="section-heading"><div><p class="eyebrow">OVERVIEW</p><h2 id="summary-title">契約状況</h2></div><span id="billing-mode"></span></div><div id="summary-cards" class="metric-grid"></div></section>
    <section class="admin-section" aria-labelledby="accounts-title">
     <div class="section-heading"><div><p class="eyebrow">ACCOUNTS</p><h2 id="accounts-title">登録者・契約一覧</h2></div></div>
-    <label class="search-label">Discord ID・プランで絞り込み<input id="account-search" type="search" autocomplete="off" placeholder="Discord ID / BASIC / Plus"></label>
+    <label class="search-label">Discord ID・メール・プランで絞り込み<input id="account-search" type="search" autocomplete="off" placeholder="Discord ID / メール / BASIC / Plus"></label>
     <div id="accounts" class="account-list" aria-live="polite"></div>
    </section>
   </main>
@@ -41,11 +41,11 @@
   <form id="action-form" class="action-form">
    <div class="dialog-heading"><div><p class="eyebrow">STRIPE OPERATION</p><h2 id="action-title">契約操作</h2></div><button id="dialog-close" type="button" class="close-btn">閉じる</button></div>
    <p>対象Discord ID: <strong id="action-target"></strong></p>
-   <label>操作<select id="action-kind" required><option value="change_subscription">プラン・追加チャンネル数を変更</option><option value="create_payment_link">臨時の支払いURLを作成</option><option value="refund_latest">直近の支払いを返金</option><option value="cancel_at_period_end">期間末で契約終了</option><option value="cancel_immediately">契約を即時終了</option></select></label>
+   <label>操作<select id="action-kind" required><option value="change_subscription">プラン・追加チャンネル数を変更</option><option value="grant_credit">クレジットを付与</option><option value="remove_credit">クレジットを削除</option><option value="create_payment_link">臨時の支払いURLを作成</option><option value="refund_latest">直近の支払いを返金</option><option value="cancel_at_period_end">期間末で契約終了</option><option value="cancel_immediately">契約を即時終了</option></select></label>
    <div id="change-fields" class="field-grid"><label>変更後のプラン<select id="change-plan"><option value="supporter">BASIC 月額300円</option><option value="plus">Plus 月額800円</option></select></label><label>追加チャンネル<select id="change-packs"><option value="0">追加なし</option><option value="1">＋3チャンネル / 月額＋200円</option><option value="2">＋6チャンネル / 月額＋400円</option></select></label></div>
-   <div id="amount-fields" class="field-grid hidden"><label>金額（円）<input id="action-amount" type="number" min="1" max="1000000" step="1" inputmode="numeric"></label><label id="description-wrap">支払い内容<input id="payment-description" type="text" maxlength="80" placeholder="追加3チャンネル利用料"></label></div>
+   <div id="amount-fields" class="field-grid hidden"><label id="amount-label"><span>金額（円）</span><input id="action-amount" type="number" min="1" max="1000000" step="1" inputmode="numeric"></label><label id="description-wrap">支払い内容<input id="payment-description" type="text" maxlength="80" placeholder="追加3チャンネル利用料"></label></div>
    <label>操作理由<textarea id="action-reason" rows="3" minlength="5" maxlength="500" required placeholder="ユーザーからの依頼内容や対応理由"></textarea></label>
-   <div class="warning-box">実行前に対象を再確認してください。契約変更・返金・終了はStripeへ即時送信され、監査ログに記録されます。</div>
+   <div class="warning-box">1クレジットは1円です。付与したクレジットはStripeの次回請求へ自動的に充当されます。すべての操作はStripeへ即時送信され、監査ログに記録されます。</div>
    <label>確認のため対象Discord IDを再入力<input id="confirm-discord-id" type="text" inputmode="numeric" pattern="[0-9]{17,20}" required autocomplete="off"></label>
    <button id="action-submit" class="danger-btn" type="submit">確認して実行</button>
    <div id="action-result" class="action-result" role="status" aria-live="polite"></div>

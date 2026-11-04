@@ -58,7 +58,7 @@ function field(article, rule, key, label, values, attributes = {}) {
  input.onchange = async () => {
   rule[key] = input.value;
   if (key === 'guildId') {
-   rule.channelId = '';
+   for (const item of rules) { item.guildId = input.value; item.channelId = ''; }
    status('チャンネルを取得しています…');
    try { await loadChannels(rule.guildId, true); status(''); } catch (error) { status(error.message); }
    render();
@@ -161,13 +161,14 @@ async function load() {
  $('register').disabled = false;
  options = await api('/api/supporter/options');
  const {account} = await api('/api/supporter/account');
+ $('billing-email').value = account?.billing_email || '';
  $('add').disabled = $('save').disabled = !account;
+ $('register').textContent = account ? 'メールアドレスを更新' : 'BASICに登録する（決済前）';
  if (account) {
   revision = account.revision;
   rules = JSON.parse(account.settings_json).rules.map(normalizeRule);
   await Promise.all([...new Set(rules.map(rule => rule.guildId).filter(Boolean))].map(guildId => loadChannels(guildId)));
   render();
-  $('register').disabled = true;
  }
 }
 
@@ -177,13 +178,15 @@ function run(fn) {
 
 $('reload').onclick = run(load);
 $('register').onclick = run(async () => {
- await api('/api/supporter/account','POST',{});
+ const email=$('billing-email');
+ if(!email.reportValidity())return;
+ await api('/api/supporter/account','POST',{email:email.value});
  await load();
- status('先行登録しました。料金は発生していません。');
+ status('登録情報を保存しました。この操作だけでは料金は発生しません。');
 });
 $('add').onclick = run(async () => {
  if (rules.length >= 5) return status('下書きは5件までです。');
- const guildId = session.guilds[0]?.id || '';
+ const guildId = rules[0]?.guildId || session.guilds[0]?.id || '';
  rules.push(normalizeRule({name:'新しいルール',guildId,channelId:'',type:'earthquake'}));
  render();
  status('ルールを追加しました。チャンネルを取得しています…');
@@ -213,6 +216,10 @@ const contract = document.createElement('div');
 contract.className = 'contract';
 contract.textContent = '契約情報は「契約情報を更新」から確認できます。';
 billing.append(title,note,contract);
+const credit = document.createElement('p');
+credit.className = 'credit-balance';
+credit.textContent = '利用可能クレジット: 0クレジット（0円）';
+billing.append(credit);
 const plan = document.createElement('select');
 plan.setAttribute('aria-label','テスト契約プラン');
 selectOptions(plan,[['supporter','BASIC 月額300円'],['plus','Plus 月額800円']],'supporter');
@@ -284,6 +291,8 @@ for (const [label,action] of [['テスト決済へ','checkout'],['支払方法�
     location.href = stripeDestination(result.url);
    } else {
     renderContracts(result.subscriptions);
+    const credits=Number(result.credits||0);
+    credit.textContent=`利用可能クレジット: ${credits.toLocaleString('ja-JP')}クレジット（${credits.toLocaleString('ja-JP')}円）`;
     status('契約情報を更新しました。');
    }
   } finally { button.disabled = false; }

@@ -5,7 +5,7 @@
  <meta name="viewport" content="width=device-width, initial-scale=1.0">
  <meta name="robots" content="noindex,nofollow">
  <meta name="description" content="DPI-Bot BASICの通知ルールと契約情報を管理します。">
- <title>BASIC - ユーザーダッシュボード | DPI-Bot</title>
+ <title>有料プラン | DPI-Bot</title>
  <link rel="icon" href="../../img/dpi.png" type="image/png">
  <link rel="stylesheet" href="/site/reuse/style.css">
  <link rel="stylesheet" href="style.css">
@@ -24,7 +24,7 @@
     <li><a href="/site/dever/index.html">開発者紹介</a></li>
     <li class="menu-spacer" aria-hidden="true"></li>
     <li><a href="/site/mail/index.html">メール配信</a></li>
-    <li><a href="/site/reuse/" class="active">二次利用申請</a></li>
+    <li><a href="/site/reuse/">二次利用申請</a></li>
     <li class="menu-spacer" aria-hidden="true"></li>
     <li><a href="/site/invi/index.html">BOTを招待</a></li>
     <li><a href="/site/buy/index.html">ご支援のお願い</a></li>
@@ -33,25 +33,20 @@
    </ul>
   </nav>
   <main class="main-content">
-   <header><h1>ユーザーダッシュボード</h1></header>
+   <header><h1>有料プラン</h1></header>
    <p id="status" class="form-status" role="status" aria-live="polite"></p>
    <section class="section basic-hero">
     <p class="eyebrow">BASIC PREVIEW</p>
     <h2>通知を、自分たちに合わせる。</h2>
-    <p>登録、通知ルール、テスト契約を管理できます。保存した設定からの通知配信はまだ開始されません。</p>
-   </section>
-   <section class="section service-dashboard" aria-labelledby="dashboard-menu-title">
-    <div class="dashboard-heading"><div><h2 id="dashboard-menu-title">利用メニュー</h2><p>ユーザーダッシュボード内の機能を切り替えます。</p></div></div>
-    <div class="service-grid">
-     <article class="service-card"><span class="service-badge">利用可能</span><h3>二次利用申請</h3><p>申請状況、新規申請、修正・停止の手続き。</p><a class="secondary-btn" href="/site/reuse/">二次利用申請を開く</a></article>
-     <article class="service-card current-service"><span class="service-badge preview">先行公開</span><h3>BASIC</h3><p>通知条件、チャンネル、契約情報の設定。</p><span class="current-label">現在の画面</span></article>
-    </div>
+    <p>BASICの登録、通知ルール、テスト契約を管理できます。二次利用申請とは別のサービスです。保存した設定からの通知配信はまだ開始されません。</p>
    </section>
    <section class="section">
     <h2>アカウント</h2>
     <div class="account-row"><div><span class="account-label">Discordアカウント</span><h3 id="user">確認中…</h3></div><a class="discord-btn" href="/api/reuse/oauth/start">Discordでログイン</a></div>
     <p class="help account-help">認証後にこのページへ戻ると、管理可能なDiscordサーバーを選択できます。</p>
-    <div class="button-row"><button id="register" class="primary-btn" disabled>先行登録する（無料）</button><button id="reload" class="secondary-btn">再読み込み</button></div>
+    <label class="billing-email-label">お申し込みメールアドレス<input id="billing-email" type="email" maxlength="254" autocomplete="email" required></label>
+    <p class="help">Stripeの顧客情報、請求、契約に関する連絡に使用します。</p>
+    <div class="button-row"><button id="register" class="primary-btn" disabled>BASICに登録する（決済前）</button><button id="reload" class="secondary-btn">再読み込み</button></div>
    </section>
    <section class="section plan-section">
     <h2>プラン</h2>
@@ -63,7 +58,7 @@
    </section>
    <section class="section">
     <h2>通知ルールの下書き</h2>
-    <p>通知先チャンネル、地震・緊急地震速報の詳細条件、気象庁の地方区分と防災気象情報を選択できます。現在は下書き保存のみで、配信には反映されません。</p>
+    <p>BASICで利用できるDiscordサーバーは1つです。すべての通知ルールで同じサーバーを使用します。通知先チャンネル、地震・緊急地震速報の詳細条件、気象庁の地方区分と防災気象情報を選択できます。現在は下書き保存のみで、配信には反映されません。</p>
     <div id="rules"></div>
     <div class="button-row"><button id="add" class="secondary-btn" disabled>＋ ルールを追加</button><button id="save" class="primary-btn" disabled>変更を保存</button></div>
    </section>
