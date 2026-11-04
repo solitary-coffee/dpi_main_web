@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeSupporterRules, SUPPORTER_REGIONS, WEATHER_LEVELS, WEATHER_DETAILS, EARTHQUAKE_DETAILS, EEW_DETAILS } from '../worker/supporter.js';
+import { normalizeSupporterRules, SUPPORTER_REGIONS, WEATHER_LEVELS, WEATHER_DETAILS, EARTHQUAKE_DETAILS, EEW_DETAILS, EEW_WARNING_AREA_MODES } from '../worker/supporter.js';
 
 const guilds = [{id:'12345678901234567',name:'DPI Test'}];
 const base = {name:'北海道の大雨',guildId:guilds[0].id,channelId:'98765432109876543',type:'weather',region:'hokkaido'};
@@ -15,6 +15,20 @@ test('地方区分、警戒レベル、詳細情報種別を提供する', () =>
  assert.ok(EARTHQUAKE_DETAILS.some(([id])=>id==='intensity-flash'));
  assert.ok(EEW_DETAILS.some(([id])=>id==='forecast'));
  assert.ok(EEW_DETAILS.some(([id])=>id==='warning'));
+ assert.ok(!EEW_DETAILS.some(([id])=>id==='intensity-change'));
+ assert.deepEqual(EEW_WARNING_AREA_MODES.map(([id])=>id),['all','target-only']);
+});
+
+test('緊急地震速報の警報だけ対象警報地方条件を保存する', () => {
+ const warning=normalizeSupporterRules([{...base,type:'eew',detail:'warning',intensity:'4',eewWarningAreaMode:'target-only'}],guilds)[0];
+ assert.equal(warning.eewWarningAreaMode,'target-only');
+ const forecast=normalizeSupporterRules([{...base,type:'eew',detail:'forecast',intensity:'4',eewWarningAreaMode:'target-only'}],guilds)[0];
+ assert.equal(forecast.eewWarningAreaMode,'');
+});
+
+test('旧震度変化設定は地震動予報へ移行する', () => {
+ const normalized=normalizeSupporterRules([{...base,type:'eew',detail:'intensity-change',intensity:'4'}],guilds)[0];
+ assert.equal(normalized.detail,'forecast');
 });
 
 test('大雨ルールは地方と警戒レベルを正規化して保存する', () => {
@@ -54,5 +68,6 @@ test('不正な詳細条件、範囲、地方、サーバーを拒否する', ()
  assert.throws(()=>normalizeSupporterRules([{...base,detail:'not-defined'}],guilds));
  assert.throws(()=>normalizeSupporterRules([{...base,type:'earthquake',intensity:'4',magnitudeMin:8,magnitudeMax:7}],guilds));
  assert.throws(()=>normalizeSupporterRules([{...base,type:'earthquake',intensity:'4',magnitudeMin:11}],guilds));
+ assert.throws(()=>normalizeSupporterRules([{...base,type:'eew',detail:'warning',intensity:'4',eewWarningAreaMode:'unknown'}],guilds));
  assert.throws(()=>normalizeSupporterRules([{...base,guildId:'11111111111111111'}],guilds));
 });

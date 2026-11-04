@@ -54,7 +54,10 @@ export const EEW_DETAILS = Object.freeze([
  ['all', 'すべての緊急地震速報'],
  ['forecast', '緊急地震速報（地震動予報）'],
  ['warning', '緊急地震速報（警報）'],
- ['intensity-change', '緊急地震速報（地震動予報・震度変化）'],
+]);
+export const EEW_WARNING_AREA_MODES = Object.freeze([
+ ['all', '警報地方を問わない'],
+ ['target-only', '対象警報地方のみ'],
 ]);
 export const WEATHER_DETAILS = Object.freeze([
  ['all', 'すべての気象情報'],
@@ -89,6 +92,7 @@ const REGION_IDS = new Set(SUPPORTER_REGIONS.map(([id]) => id));
 const WEATHER_LEVEL_IDS = new Set(WEATHER_LEVELS.map(([id]) => id));
 const WARNING_LEVEL_IDS = new Set(WARNING_LEVELS.map(([id]) => id));
 const CHANGE_DIRECTION_IDS = new Set(CHANGE_DIRECTIONS.map(([id]) => id));
+const EEW_WARNING_AREA_MODE_IDS = new Set(EEW_WARNING_AREA_MODES.map(([id]) => id));
 const DETAILS = {
  earthquake: new Set(EARTHQUAKE_DETAILS.map(([id]) => id)),
  eew: new Set(EEW_DETAILS.map(([id]) => id)),
@@ -116,14 +120,15 @@ export function normalizeSupporterRules(input, guilds) {
       || !['earthquake','eew','weather'].includes(type) || !REGION_IDS.has(region)) {
    throw Object.assign(new Error('入力内容とサーバー管理権限を確認してください。'),{status:400});
   }
-  const detail = clean(rule?.detail) || 'all';
+  const requestedDetail = clean(rule?.detail) || 'all';
+  const detail = type === 'eew' && requestedDetail === 'intensity-change' ? 'forecast' : requestedDetail;
   if (!DETAILS[type].has(detail)) throw Object.assign(new Error('情報の詳細種別を確認してください。'),{status:400});
   if (type === 'weather') {
    const weatherLevel = WEATHER_ALERT_DETAILS.has(detail) ? (clean(rule?.weatherLevel) || 'all') : '';
    const warningLevel = WEATHER_WARNING_DETAILS.has(detail) ? (clean(rule?.warningLevel) || 'all') : '';
    if (weatherLevel && !WEATHER_LEVEL_IDS.has(weatherLevel)) throw Object.assign(new Error('気象情報の警戒レベルを確認してください。'),{status:400});
    if (warningLevel && !WARNING_LEVEL_IDS.has(warningLevel)) throw Object.assign(new Error('警報・注意報の条件を確認してください。'),{status:400});
-   return {name,guildId,channelId,type,detail,region,intensity:'',intensityChange:'',magnitudeMin:null,magnitudeMax:null,magnitudeChange:'',weatherLevel,warningLevel};
+   return {name,guildId,channelId,type,detail,region,intensity:'',intensityChange:'',magnitudeMin:null,magnitudeMax:null,magnitudeChange:'',weatherLevel,warningLevel,eewWarningAreaMode:''};
   }
   const intensity = clean(rule?.intensity);
   const intensityChange = clean(rule?.intensityChange) || 'all';
@@ -133,7 +138,9 @@ export function normalizeSupporterRules(input, guilds) {
   const magnitudeMin = optionalMagnitude(rule?.magnitudeMin);
   const magnitudeMax = optionalMagnitude(rule?.magnitudeMax);
   if (magnitudeMin !== null && magnitudeMax !== null && magnitudeMin > magnitudeMax) throw Object.assign(new Error('マグニチュードの下限は上限以下にしてください。'),{status:400});
-  return {name,guildId,channelId,type,detail,region,intensity,intensityChange,magnitudeMin,magnitudeMax,magnitudeChange,weatherLevel:'',warningLevel:''};
+  const eewWarningAreaMode = type === 'eew' && detail === 'warning' ? (clean(rule?.eewWarningAreaMode) || 'all') : '';
+  if (eewWarningAreaMode && !EEW_WARNING_AREA_MODE_IDS.has(eewWarningAreaMode)) throw Object.assign(new Error('緊急地震速報（警報）の対象地方条件を確認してください。'),{status:400});
+  return {name,guildId,channelId,type,detail,region,intensity,intensityChange,magnitudeMin,magnitudeMax,magnitudeChange,weatherLevel:'',warningLevel:'',eewWarningAreaMode};
  });
 }
 
@@ -211,7 +218,7 @@ export async function handleSupporterRequest(request, env) {
    return response({billingEnabled:false, deliveryEnabled:false, plans:[{id:'supporter',yen:300,channels:2},{id:'plus',yen:800,channels:10}], addon:{yen:200,channels:3}});
   }
   if (path === '/api/supporter/options' && request.method === 'GET') {
-   return response({regions:SUPPORTER_REGIONS,weatherLevels:WEATHER_LEVELS,warningLevels:WARNING_LEVELS,earthquakeDetails:EARTHQUAKE_DETAILS,eewDetails:EEW_DETAILS,weatherDetails:WEATHER_DETAILS,changeDirections:CHANGE_DIRECTIONS});
+   return response({regions:SUPPORTER_REGIONS,weatherLevels:WEATHER_LEVELS,warningLevels:WARNING_LEVELS,earthquakeDetails:EARTHQUAKE_DETAILS,eewDetails:EEW_DETAILS,eewWarningAreaModes:EEW_WARNING_AREA_MODES,weatherDetails:WEATHER_DETAILS,changeDirections:CHANGE_DIRECTIONS});
   }
   if (request.method !== 'GET') { assertSameOrigin(request); assertCsrf(request,session); }
   if (/^\/api\/supporter\/billing\/(checkout|portal|status)$/.test(path)) {

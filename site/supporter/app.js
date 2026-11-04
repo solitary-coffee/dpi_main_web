@@ -99,10 +99,11 @@ function detailOptions(type) {
 
 function normalizeRule(rule) {
  const type = TYPES.some(([value]) => value === rule.type) ? rule.type : 'earthquake';
+ const detail = type === 'eew' && rule.detail === 'intensity-change' ? 'forecast' : (rule.detail || 'all');
  return {
   ...rule,
   type,
-  detail: rule.detail || 'all',
+  detail,
   region: rule.region || 'all',
   intensity: rule.intensity || '4',
   intensityChange: rule.intensityChange || 'all',
@@ -111,6 +112,7 @@ function normalizeRule(rule) {
   magnitudeChange: rule.magnitudeChange || 'all',
   weatherLevel: rule.weatherLevel || 'all',
   warningLevel: rule.warningLevel || 'all',
+  eewWarningAreaMode: rule.eewWarningAreaMode || 'all',
  };
 }
 
@@ -127,6 +129,7 @@ function render() {
   channelField(article, rule);
   field(article, rule, 'type', '情報種別', TYPES);
   field(article, rule, 'detail', '詳細', detailOptions(rule.type));
+  if (rule.type === 'eew' && rule.detail === 'warning') field(article, rule, 'eewWarningAreaMode', '警報地方の条件', options.eewWarningAreaModes);
   field(article, rule, 'region', '対象地方', options.regions);
   if (rule.type === 'weather') {
    if (WEATHER_ALERT_DETAILS.has(rule.detail)) field(article, rule, 'weatherLevel', '警戒レベル', options.weatherLevels);
