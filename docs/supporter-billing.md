@@ -2,11 +2,13 @@
 
 配信は未接続。本実装はテスト用の `sk_test_` または権限を限定できる `rk_test_` キーだけを受け付け、本番課金はできません。運用には `rk_test_` を推奨します。
 
-適用順序: D1 migrations 0012,0013 → Worker Secrets/vars → Workerデプロイ → StripeテストWebhook登録 → E2E確認。
+適用順序: D1 migrations 0012〜0015 → Worker Secrets/vars → Workerデプロイ → StripeテストWebhook登録 → E2E確認。
 
 Secrets: STRIPE_SECRET_KEY（テスト用）、STRIPE_WEBHOOK_SECRET。秘密値をGitやチャットへ貼らないこと。
 
-vars: SUPPORTER_BILLING_MODE=test、SUPPORTER_PUBLIC_ORIGIN=https://dpi-bot.com、STRIPE_PRICE_SUPPORTER、STRIPE_PRICE_PLUS、STRIPE_PRICE_PRO、STRIPE_PRICE_ADDON、STRIPE_PORTAL_CONFIG、SUPPORTER_PUBLIC_ENABLED=false、SUPPORTER_TEST_USER_IDS=<許可するDiscordユーザーIDをカンマ区切り>。
+vars: SUPPORTER_BILLING_MODE=test、SUPPORTER_PUBLIC_ORIGIN=https://dpi-bot.com、SUPPORTER_CONSENT_VERSION=<同意文書の改定日>、STRIPE_PRICE_SUPPORTER、STRIPE_PRICE_PLUS、STRIPE_PRICE_PRO、STRIPE_PRICE_ADDON、STRIPE_PORTAL_CONFIG、SUPPORTER_PUBLIC_ENABLED=false、SUPPORTER_TEST_USER_IDS=<許可するDiscordユーザーIDをカンマ区切り>。
+
+`STRIPE_SECRET_KEY`、`STRIPE_WEBHOOK_SECRET`、全Price ID、Portal設定ID、テストモード指定がそろったときだけ決済を有効にする。不足時は申込ボタンを無効にして不足理由を表示し、APIも503を返す。秘密値はCloudflare Worker `main-dpi` のSecretsへ登録し、通常のvarsやGitには保存しない。
 
 限定公開中は `/site/supporter/` とサポーターAPIをDiscordユーザーIDの許可リストで保護する。未認証・未許可ユーザーには一律404を返し、画面レスポンスには `X-Robots-Tag: noindex, nofollow, noarchive` を付与する。Cloudflare Access認証済み管理者は画面資産のみ確認できるが、ユーザー操作にはDiscordログインも必要。`SUPPORTER_PUBLIC_ENABLED=true` は一般公開時だけ設定する。空値や未設定は閉鎖扱い。
 
@@ -20,7 +22,7 @@ Webhook: /api/supporter/stripe/webhook。対象はcheckout.session.completed/exp
 
 契約状態はStripeから都度取得し、順不同Webhookの内容で状態を上書きしない。イベントIDを保存。通知設定は有効な契約を確認したユーザーのみ保存可能で、Proは1ルール最大8件の追加条件を持てる。現時点では保存内容と配信プログラムの接続なし。
 
-POST /api/supporter/billing/checkout: {plan:"supporter"|"plus"|"pro",channelPacks:0..5,serverPacks:0..5}。
+POST /api/supporter/billing/checkout: {plan:"supporter"|"plus"|"pro",channelPacks:0..5,serverPacks:0..5,legalConsent:true}。申込画面で料金・支払時期・提供時期・解約条件を確認し、利用規約、プライバシーポリシー、特定商取引法に基づく表記への同意を必須とする。同意日時と `SUPPORTER_CONSENT_VERSION` をD1およびStripe metadataへ記録する。
 POST /api/supporter/billing/preview-update: 契約変更の料金・利用枠プレビュー。
 POST /api/supporter/billing/update: プレビューの `prorationDate` と同じ選択内容を確定。
 POST /api/supporter/billing/portal: {}。

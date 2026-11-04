@@ -186,9 +186,12 @@ export async function billingAction(request,env,db,uid,input={}){
  if(action!=='checkout')return json({message:'Not found'},404);
  if(existing.length)return json({message:'契約が存在します。「プラン・オプションを更新」をご利用ください。'},409);
  const schedule=billingSchedule();
+ const legalConsentVersion=String(input.legalConsentVersion||'');
+ if(!legalConsentVersion)return json({message:'申込み同意を確認できません。画面を再読み込みしてください。'},400);
  // Persist exact parameters and key before network IO. Concurrent clicks share one session.
  const params={mode:'subscription',customer:row.customer_id,client_reference_id:uid,
   'subscription_data[metadata][dpi_user]':uid,'subscription_data[metadata][dpi_plan]':choice.plan,
+  'subscription_data[metadata][dpi_legal_consent_version]':legalConsentVersion,'metadata[dpi_legal_consent_version]':legalConsentVersion,
   'subscription_data[metadata][dpi_channel_packs]':String(choice.channelPacks),'subscription_data[metadata][dpi_server_packs]':String(choice.serverPacks),
   'subscription_data[billing_mode][type]':'flexible','subscription_data[billing_cycle_anchor]':String(schedule.anchor),'subscription_data[proration_behavior]':'none',
   'line_items[0][price]':planPrice(env,choice.plan),'line_items[0][quantity]':'1',
