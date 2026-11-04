@@ -31,6 +31,19 @@ export async function customerCredits(env,customer){
  if(!customer||!billingReady(env))return 0;
  return creditsFromBalance((await stripe(env,`customers/${encodeURIComponent(customer)}`)).balance);
 }
+function stripeInvoiceUrl(value){
+ try{const url=new URL(String(value||''));return url.protocol==='https:'&&['invoice.stripe.com','pay.stripe.com'].includes(url.hostname)?url.href:null;}catch{return null;}
+}
+export async function customerInvoices(env,customer){
+ if(!customer||!billingReady(env))return [];
+ const result=await stripe(env,`invoices?customer=${encodeURIComponent(customer)}&limit=12`);
+ return (result.data||[]).map(invoice=>({
+  number:String(invoice.number||''),status:String(invoice.status||'unknown'),created:unix(invoice.created),
+  periodStart:unix(invoice.period_start),periodEnd:unix(invoice.period_end),currency:String(invoice.currency||'jpy').toLowerCase(),
+  amountDue:Number(invoice.amount_due||0),amountPaid:Number(invoice.amount_paid||0),total:Number(invoice.total||0),
+  hostedInvoiceUrl:stripeInvoiceUrl(invoice.hosted_invoice_url),invoicePdf:stripeInvoiceUrl(invoice.invoice_pdf),
+ })).filter(invoice=>invoice.number||invoice.hostedInvoiceUrl||invoice.invoicePdf);
+}
 export async function creditsByCustomer(env,customers){
  const wanted=new Set((customers||[]).filter(Boolean));
  const resultMap=new Map([...wanted].map(customer=>[customer,0]));
@@ -86,11 +99,35 @@ export function subscriptionSummary(subscription,env={}){
  const serverPacks=Number.isInteger(storedServerPacks)&&storedServerPacks>=0?storedServerPacks:0;
  const planId=basePrice===env.STRIPE_PRICE_PRO?'pro':basePrice===env.STRIPE_PRICE_PLUS?'plus':'supporter';
  const choice=selection({plan:planId,channelPacks,serverPacks});
- return {status:subscription.status||'unknown',cancelAtPeriodEnd:subscription.cancel_at_period_end===true,startedAt:unix(subscription.start_date)||unix(subscription.created),currentPeriodStart,nextRenewalAt,amount:items.reduce((sum,item)=>sum+item.subtotal,0),currency,plan:PLAN_CATALOG[planId].name,planId,channelPacks,serverPacks,channels:choice.channels,servers:choice.servers,rules:choice.rules,complexConditions:choice.complexConditions,multiDestination:choice.multiDestination,items};
+ return {status:subscription.status||'unknown',cancelAtPeriodEnd:subscription.cancel_at_period_end===true,startedAt:unix(subscription.start_date)||unix(subscription.created),currentPeriodStart,nextRenewalAt,amount:items.reduce((sum,item)=>sum+item.subtotal,0),currency,plan:PLAN_CATALOG[planId].name,planId,channelPacks,serverPacks,channels:choice.channels,servers:choice.servers,rules:choice.rules,complexConditions:choice.complexConditions,multiDestination:choice.multiDestination,items,scheduledChange:null};
+}
+function scheduleId(subscription){return typeof subscription.schedule==='string'?subscription.schedule:subscription.schedule?.id;}
+export function scheduledChangeSummary(schedule,env,currentSummary){
+ const phase=(schedule?.phases||[]).filter(item=>Number(item.start_date)>=Number(currentSummary.nextRenewalAt||0)).sort((a,b)=>Number(a.start_date)-Number(b.start_date))[0];
+ if(!phase)return null;
+ const items=phase.items||[];
+ const base=items.find(item=>(item.price?.id||item.price)!==env.STRIPE_PRICE_ADDON);
+ const basePrice=base?.price?.id||base?.price;
+ const planId=basePrice===env.STRIPE_PRICE_PRO?'pro':basePrice===env.STRIPE_PRICE_PLUS?'plus':basePrice===env.STRIPE_PRICE_SUPPORTER?'supporter':'';
+ if(!planId)return null;
+ const addon=items.find(item=>(item.price?.id||item.price)===env.STRIPE_PRICE_ADDON);
+ const metadata=phase.metadata||{};
+ const combined=Number(addon?.quantity||0);
+ const channelPacks=Number.isInteger(Number(metadata.dpi_channel_packs))?Number(metadata.dpi_channel_packs):combined;
+ const serverPacks=Number.isInteger(Number(metadata.dpi_server_packs))?Number(metadata.dpi_server_packs):0;
+ const choice=selection({plan:planId,channelPacks,serverPacks});
+ if(choice.plan===currentSummary.planId&&choice.channelPacks===currentSummary.channelPacks&&choice.serverPacks===currentSummary.serverPacks)return null;
+ return {effectiveAt:unix(phase.start_date),plan:PLAN_CATALOG[planId].name,planId,monthly:choice.monthly,channels:choice.channels,servers:choice.servers,rules:choice.rules,channelPacks,serverPacks};
+}
+async function summaryWithSchedule(env,subscription){
+ const summary=subscriptionSummary(subscription,env);
+ const id=scheduleId(subscription);
+ if(id){const schedule=await stripe(env,`subscription_schedules/${encodeURIComponent(id)}`);summary.scheduledChange=scheduledChangeSummary(schedule,env,summary);}
+ return summary;
 }
 export async function customerSubscriptionSummaries(env,customer){
  if(!customer||!billingReady(env))return [];
- return (await subscriptions(env,customer)).map(subscription=>subscriptionSummary(subscription,env));
+ return await Promise.all((await subscriptions(env,customer)).map(subscription=>summaryWithSchedule(env,subscription)));
 }
 export async function subscriptionSummariesByCustomer(env,customers){
  const wanted=new Set((customers||[]).filter(Boolean));
@@ -118,7 +155,8 @@ export async function billingAction(request,env,db,uid,input={}){
  await db.prepare('INSERT INTO supporter_billing(discord_user_id) VALUES(?) ON CONFLICT DO NOTHING').bind(uid).run();
  let row=await db.prepare('SELECT * FROM supporter_billing WHERE discord_user_id=?').bind(uid).first();
  if(action==='status'){
-  return json({mode:'test',billingDay:26,subscriptions:await customerSubscriptionSummaries(env,row.customer_id),credits:await customerCredits(env,row.customer_id),deliveryEnabled:false});
+  const [summaries,invoices,credits]=await Promise.all([customerSubscriptionSummaries(env,row.customer_id),customerInvoices(env,row.customer_id),customerCredits(env,row.customer_id)]);
+  return json({mode:'test',billingDay:26,subscriptions:summaries,invoices,credits,deliveryEnabled:false});
  }
  if(!row.customer_id){const customer=await createBillingCustomer(env,uid,account.billing_email,`dpi-customer-${uid}`);await db.prepare('UPDATE supporter_billing SET customer_id=? WHERE discord_user_id=? AND customer_id IS NULL').bind(customer.id,uid).run();row=await db.prepare('SELECT * FROM supporter_billing WHERE discord_user_id=?').bind(uid).first();}
  else if(account.billing_email)await stripe(env,`customers/${encodeURIComponent(row.customer_id)}`,{email:account.billing_email},`dpi-customer-email-${uid}-${account.billing_email}`);
@@ -140,9 +178,10 @@ export async function billingAction(request,env,db,uid,input={}){
   if(!Number.isInteger(prorationDate)||prorationDate>now+30||prorationDate<now-600)return json({message:'料金プレビューの有効期限が切れました。もう一度確認してください。'},409);
   const current=activeSubscription(existing);
   if(!current)return json({message:'更新できる契約がありません。先にプランを申し込んでください。'},409);
-  await previewSubscriptionUpdate(env,row.customer_id,current,choice,prorationDate);
-  await updateSubscription(env,current,choice,`dpi-user-update-${uid}-${requestId}`,{'metadata[dpi_updated_by]':'user'},prorationDate);
-  return json({message:'プランと追加オプションを更新しました。基本プランの差額だけを日割りし、追加オプションは次回26日から反映します。',billingDay:26,subscriptions:await customerSubscriptionSummaries(env,row.customer_id),credits:await customerCredits(env,row.customer_id),deliveryEnabled:false});
+  const preview=await previewSubscriptionUpdate(env,row.customer_id,current,choice,prorationDate);
+  if(preview.changeTiming==='next_period')await scheduleSubscriptionChange(env,current,choice,`dpi-user-update-${uid}-${requestId}`,{'dpi_updated_by':'user'});
+  else await updateSubscription(env,current,choice,`dpi-user-update-${uid}-${requestId}`,{'metadata[dpi_updated_by]':'user'},prorationDate);
+  return json({message:preview.changeTiming==='next_period'?'ダウングレードを予約しました。返金は行わず、次回26日から新しい内容を適用します。':'プランと追加オプションを更新しました。基本プランの差額だけを日割りし、追加オプションは次回26日から反映します。',billingDay:26,subscriptions:await customerSubscriptionSummaries(env,row.customer_id),credits:await customerCredits(env,row.customer_id),deliveryEnabled:false});
  }
  if(action!=='checkout')return json({message:'Not found'},404);
  if(existing.length)return json({message:'契約が存在します。「プラン・オプションを更新」をご利用ください。'},409);
@@ -193,8 +232,9 @@ async function previewSubscriptionUpdate(env,customer,current,choice,requestedPr
  if(!base?.id)fail('契約項目を確認できませんでした。',409);
  const prorationDate=Number.isInteger(requestedProrationDate)?requestedProrationDate:Math.floor(Date.now()/1000);
  const planChanged=currentSummary.planId!==choice.plan;
+ const changeTiming=choice.monthly<currentSummary.amount||choice.channels<currentSummary.channels||choice.servers<currentSummary.servers||choice.rules<currentSummary.rules?'next_period':'immediate';
  let planProrationBreakdown={unusedPlanCredit:0,newPlanCharge:0,net:0};
- if(planChanged){
+ if(planChanged&&changeTiming==='immediate'){
   const invoice=await stripe(env,'invoices/create_preview',{
    customer,subscription:current.id,
    'subscription_details[items][0][id]':base.id,
@@ -206,18 +246,48 @@ async function previewSubscriptionUpdate(env,customer,current,choice,requestedPr
   planProrationBreakdown=prorationBreakdown(invoice.lines?.data);
  }
  const planProration=planProrationBreakdown.net;
- const credits=await customerCredits(env,customer);
+ const credits=changeTiming==='immediate'?await customerCredits(env,customer):0;
  const creditApplied=Math.min(credits,Math.max(0,planProration));
  return {
   prorationDate,expiresAt:prorationDate+600,billingDay:26,
   current:{plan:currentSummary.plan,planId:currentSummary.planId,monthly:currentSummary.amount,channels:currentSummary.channels,servers:currentSummary.servers,rules:currentSummary.rules},
   next:{plan:PLAN_CATALOG[choice.plan].name,planId:choice.plan,monthly:choice.monthly,channels:choice.channels,servers:choice.servers,rules:choice.rules,complexConditions:choice.complexConditions,multiDestination:choice.multiDestination},
   monthlyDifference:choice.monthly-currentSummary.amount,
-  planChanged,planProration,planProrationBreakdown,creditApplied,immediateDue:Math.max(0,planProration-creditApplied),creditGenerated:Math.max(0,-planProration),
+  planChanged,changeTiming,effectiveAt:changeTiming==='next_period'?currentSummary.nextRenewalAt:null,planProration,planProrationBreakdown,creditApplied,immediateDue:changeTiming==='next_period'?0:Math.max(0,planProration-creditApplied),creditGenerated:changeTiming==='next_period'?0:Math.max(0,-planProration),
   optionChange:{currentChannelPacks:currentSummary.channelPacks,nextChannelPacks:choice.channelPacks,currentServerPacks:currentSummary.serverPacks,nextServerPacks:choice.serverPacks,prorated:false,effectiveAt:currentSummary.nextRenewalAt},
   nextRenewalAt:currentSummary.nextRenewalAt,
-  notice:`${planChanged?'基本プラン変更は、旧プランの未使用分を返金相当額として新プランの残期間分に充当し、差額を精算します。カードへ先に返金してから再決済する方式ではありません。差額がマイナスの場合はStripeクレジットとして今後の請求に充当します。':''}追加オプションは日割り請求・日割り返金を行わず、次回26日の請求から月額へ反映します。`,
+  notice:changeTiming==='next_period'?'ダウングレードでは返金・日割り精算を行いません。現在の契約内容は今期末まで利用でき、新しいプランと利用枠は次回26日から適用します。':'アップグレード時は基本プランの未使用分を返金相当額として新プランの残期間分へ充当し、差額を精算します。追加オプションは日割り請求を行わず、次回26日の請求から月額へ反映します。',
  };
+}
+function phaseItems(params,index,items){
+ let at=0;
+ for(const item of items){
+  const price=item.price?.id||item.price;
+  if(!price)continue;
+  params[`phases[${index}][items][${at}][price]`]=price;
+  params[`phases[${index}][items][${at}][quantity]`]=String(Math.max(1,Number(item.quantity)||1));
+  at+=1;
+ }
+}
+async function scheduleSubscriptionChange(env,current,choice,key,extraMetadata={}){
+ const currentSummary=subscriptionSummary(current,env);
+ if(!currentSummary.nextRenewalAt)fail('次回更新日を確認できないため、ダウングレードを予約できませんでした。',409);
+ const existingScheduleId=scheduleId(current);
+ const schedule=existingScheduleId?await stripe(env,`subscription_schedules/${encodeURIComponent(existingScheduleId)}`):await stripe(env,'subscription_schedules',{from_subscription:current.id},`${key}-schedule-create`);
+ const now=Math.floor(Date.now()/1000);
+ const currentPhase=(schedule.phases||[]).find(phase=>Number(phase.start_date)<=now&&Number(phase.end_date)>now)||(schedule.phases||[])[0];
+ const currentItems=currentPhase?.items?.length?currentPhase.items:(current.items?.data||[]);
+ const params={end_behavior:'release',proration_behavior:'none'};
+ params['phases[0][start_date]']=String(currentPhase?.start_date||currentSummary.currentPeriodStart||now);
+ params['phases[0][end_date]']=String(currentSummary.nextRenewalAt);
+ params['phases[0][proration_behavior]']='none';
+ phaseItems(params,0,currentItems);
+ params['phases[1][start_date]']=String(currentSummary.nextRenewalAt);
+ params['phases[1][proration_behavior]']='none';
+ phaseItems(params,1,[{price:planPrice(env,choice.plan),quantity:1},...(choice.channelPacks+choice.serverPacks?[{price:env.STRIPE_PRICE_ADDON,quantity:choice.channelPacks+choice.serverPacks}]:[])]);
+ const metadata={dpi_plan:choice.plan,dpi_channel_packs:String(choice.channelPacks),dpi_server_packs:String(choice.serverPacks),...extraMetadata};
+ for(const [name,value] of Object.entries(metadata))params[`phases[1][metadata][${name}]`]=String(value);
+ return await stripe(env,`subscription_schedules/${encodeURIComponent(schedule.id)}`,params,`${key}-schedule-update`);
 }
 async function updateSubscription(env,current,choice,key,extra={},prorationDate){
  const base=current.items?.data?.find(item=>item.price?.id!==env.STRIPE_PRICE_ADDON);
@@ -286,8 +356,10 @@ export async function adminBillingAction(env,customer,uid,input){
  if(action==='change_subscription'){
   if(!current)fail('変更できる契約がありません。',409);
   const choice=adminChoice(input);
-  await updateSubscription(env,current,choice,key,{'metadata[dpi_admin_reason]':reason,'metadata[dpi_updated_by]':'admin'});
-  return {message:'契約内容を変更しました。基本プランだけ日割りし、追加オプションは日割りせず次回26日から反映します。',subscriptions:await customerSubscriptionSummaries(env,customer)};
+  const preview=await previewSubscriptionUpdate(env,customer,current,choice);
+  if(preview.changeTiming==='next_period')await scheduleSubscriptionChange(env,current,choice,key,{dpi_admin_reason:reason,dpi_updated_by:'admin'});
+  else await updateSubscription(env,current,choice,key,{'metadata[dpi_admin_reason]':reason,'metadata[dpi_updated_by]':'admin'},preview.prorationDate);
+  return {message:preview.changeTiming==='next_period'?'ダウングレードを次回26日から適用するよう予約しました。返金は行いません。':'契約内容を変更しました。基本プランだけ日割りし、追加オプションは日割りせず次回26日から反映します。',subscriptions:await customerSubscriptionSummaries(env,customer)};
  }
  if(action==='refund_latest'){
   const amount=Number(input.amount);

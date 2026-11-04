@@ -12,11 +12,13 @@ vars: SUPPORTER_BILLING_MODE=test、SUPPORTER_PUBLIC_ORIGIN=https://dpi-bot.com�
 
 価格はJPYで、BASIC月額300円、Plus月額800円、Pro月額1,280円。追加チャンネル3件または追加サーバー1件につき月額200円。税込総額として価格を登録し、追加税を自動加算する設定は使用しない。Portalは支払方法変更、請求履歴、期間末解約を有効にし、プラン・数量変更はDPI-Bot側の確認画面から行う。
 
-プラン変更前は `POST /v1/invoices/create_preview` で基本プランの差額だけを見積もり、同じ `proration_date` を確定時のSubscription更新に使用する。確認画面では旧プランの未使用分（返金相当額）、新プランの残期間分、その差額を分けて表示する。先にカード返金を実行して別決済するのではなく、Stripeの日割り差額として一括精算し、負の差額は今後の請求に使えるクレジットとする。追加オプションは別のSubscription更新として `proration_behavior=none` を指定し、日割り請求・日割り返金を行わず次回26日から月額へ反映する。
+アップグレード前は `POST /v1/invoices/create_preview` で基本プランの差額だけを見積もり、同じ `proration_date` を確定時のSubscription更新に使用する。確認画面では旧プランの未使用分（返金相当額）、新プランの残期間分、その差額を分けて表示する。ダウングレードまたは利用枠の削減はSubscription Scheduleへ予約し、返金・日割り精算を行わず、現在の契約期間終了後の26日から適用する。追加オプションの即時変更は `proration_behavior=none` とする。
+
+`GET /api/supporter/billing/status` は最大12件の請求明細を返す。ユーザー画面からStripeの `hosted_invoice_url` と `invoice_pdf` を開けるが、`invoice.stripe.com` または `pay.stripe.com` のHTTPS URLのみを許可する。
 
 Webhook: /api/supporter/stripe/webhook。対象はcheckout.session.completed/expired、customer.subscription.created/updated/deleted、invoice.paid/payment_failed。raw body署名検証、5分の許容差、テストイベント限定。メンテナンス・ブラウザCSRFから独立して受信。
 
-契約状態はStripeから都度取得し、順不同Webhookの内容で状態を上書きしない。イベントIDを保存。現時点では配信権限への接続なし。
+契約状態はStripeから都度取得し、順不同Webhookの内容で状態を上書きしない。イベントIDを保存。通知設定は有効な契約を確認したユーザーのみ保存可能で、Proは1ルール最大8件の追加条件を持てる。現時点では保存内容と配信プログラムの接続なし。
 
 POST /api/supporter/billing/checkout: {plan:"supporter"|"plus"|"pro",channelPacks:0..5,serverPacks:0..5}。
 POST /api/supporter/billing/preview-update: 契約変更の料金・利用枠プレビュー。

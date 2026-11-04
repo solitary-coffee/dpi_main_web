@@ -36,9 +36,10 @@
    <header><h1>有料プラン</h1></header>
    <p id="status" class="form-status" role="status" aria-live="polite"></p>
    <section class="section basic-hero">
-    <p class="eyebrow">PAID PLAN PREVIEW</p>
+    <p class="eyebrow">PAID PLAN DASHBOARD</p>
     <h2>通知を、自分たちに合わせる。</h2>
-    <p>有料通知プランの登録、通知ルール、契約を管理できます。二次利用申請とは別のサービスです。保存した設定からの通知配信はまだ開始されません。</p>
+    <p>有料通知プランの登録、通知ルール、契約、請求明細を管理できます。二次利用申請とは別のサービスです。</p>
+    <p class="preview-banner">先行提供画面：設定内容は保存されますが、現在は通知配信プログラムへ接続されません。</p>
    </section>
    <section class="section">
     <h2>アカウント</h2>
@@ -52,19 +53,20 @@
     <div class="plans">
      <article><h3>BASIC</h3><strong>300円<small> / 月・予定</small></strong><p>1サーバー / 2チャンネル</p><p>通知ルール5件</p></article>
      <article><h3>Plus</h3><strong>800円<small> / 月・予定</small></strong><p>3サーバー / 10チャンネル</p><p>通知ルール15件</p></article>
-     <article><span class="service-badge">複雑条件対応</span><h3>Pro</h3><strong>1,280円<small> / 月・予定</small></strong><p>5サーバー / 20チャンネル</p><p>通知ルール30件</p><p>AND・OR条件 / 1ルールから複数チャンネルへ配信</p></article>
+     <article><span class="service-badge">複雑条件対応</span><h3>Pro</h3><strong>1,280円<small> / 月・予定</small></strong><p>5サーバー / 20チャンネル</p><p>通知ルール30件</p><p>AND・OR条件 / 1ルール最大8件の追加条件 / 複数チャンネル配信</p></article>
      <article><h3>カスタム</h3><strong>個別相談</strong><p>団体・多数拠点・独自条件向け</p><p>条件や配信先を個別設計</p><a href="/site/supp/index.html">お問い合わせ</a></article>
     </div>
     <div class="plan-options"><h3>追加オプション</h3><div class="option-cards"><article><strong>＋200円 / 月</strong><p>チャンネル上限を3件追加</p></article><article><strong>＋200円 / 月</strong><p>サーバー上限を1件追加</p></article></div><p class="option-policy">追加オプションの変更には日割り計算を適用しません。追加・削除は次回26日の請求から月額へ反映し、当月分の追加請求・返金は行いません。</p></div>
    </section>
-   <section class="section">
-    <h2>通知ルールの下書き</h2>
-    <p>契約プランのサーバー・チャンネル・ルール上限を超える設定は保存できません。別サーバーを選択した場合は警告を表示します。ProではAND・OR条件と、1つのルールから複数チャンネルへの配信先指定を利用できます。現在は下書き保存のみで、配信には反映されません。</p>
+   <section id="rule-section" class="section">
+    <h2>通知設定</h2>
+    <p>有効な契約を確認後、契約プランの範囲内で設定できます。ProではAND・OR、追加条件、複数チャンネルへの配信先指定を利用できます。</p>
+    <p id="rules-lock" class="rules-lock" role="status">通知設定は有料プランの契約後に利用できます。</p>
     <div id="rules"></div>
-    <div class="button-row"><button id="add" class="secondary-btn" disabled>＋ ルールを追加</button><button id="save" class="primary-btn" disabled>変更を保存</button></div>
+    <div class="button-row"><button id="add" class="secondary-btn" disabled>＋ ルールを追加</button><button id="save" class="primary-btn" disabled>通知設定を保存</button></div>
    </section>
    <section id="billing" class="section"><h2>お支払い・契約情報</h2><p>読み込み中…</p></section>
-   <section class="section billing-policy"><h2>請求日のご案内</h2><p>請求日は毎月26日です。1〜25日の申込は当月分を申込時、翌月分を26日に請求します。26〜31日の申込は当月分と翌月分の2か月分を申込時にまとめて請求し、以後は毎月26日に翌月分を請求します。</p></section>
+   <section class="section billing-policy"><h2>請求日のご案内</h2><p>請求日は毎月26日です。1〜25日の申込は当月分を申込時、翌月分を26日に請求します。26〜31日の申込は当月分と翌月分の2か月分を申込時にまとめて請求し、以後は毎月26日に翌月分を請求します。</p><p>アップグレードは即時適用し、基本プランの差額を精算します。ダウングレードは返金を行わず、現在の内容を今期末まで利用したうえで次回26日から適用します。</p></section>
   </main>
  </div>
  <dialog id="billing-preview-dialog" aria-labelledby="billing-preview-title"><div class="billing-preview-panel"><h2 id="billing-preview-title">契約変更の確認</h2><div id="billing-preview-content"></div><div class="confirmation-actions"><button id="billing-preview-cancel" class="secondary-btn" type="button">戻って修正</button><button id="billing-preview-confirm" class="primary-btn" type="button">この内容で確定</button></div></div></dialog>

@@ -162,6 +162,25 @@ function thresholdMode(rule, key, legacyKey, thresholdValue) {
  return thresholdValue !== '' && thresholdValue !== undefined && thresholdValue !== null ? 'threshold' : 'all';
 }
 
+function normalizeAdditionalConditions(input,type,complexConditions){
+ const requested=Array.isArray(input)?input:[];
+ if(requested.length>8)throw Object.assign(new Error('追加条件は1ルールにつき8件までです。'),{status:400});
+ if(requested.length&&!complexConditions)throw Object.assign(new Error('複数条件はProプランで利用できます。'),{status:400});
+ const normalized=requested.map(condition=>{
+  const kind=clean(condition?.kind);const raw=condition?.value;const value=clean(raw);
+  if(kind==='region'&&REGION_IDS.has(value))return{kind,operator:'equals',value};
+  if(kind==='detail'&&DETAILS[type].has(value))return{kind,operator:'equals',value};
+  if(kind==='intensity'&&type!=='weather'&&INTENSITIES.has(value))return{kind,operator:'at_least',value};
+  if(kind==='magnitude'&&type!=='weather'){const magnitude=optionalMagnitude(raw);if(magnitude!==null)return{kind,operator:'at_least',value:magnitude};}
+  if(kind==='weatherLevel'&&type==='weather'&&WEATHER_LEVEL_IDS.has(value))return{kind,operator:'equals',value};
+  if(kind==='warningLevel'&&type==='weather'&&WARNING_LEVEL_IDS.has(value))return{kind,operator:'equals',value};
+  throw Object.assign(new Error('追加条件の種類または値を確認してください。'),{status:400});
+ });
+ const unique=[];const seen=new Set();
+ for(const condition of normalized){const key=`${condition.kind}:${condition.value}`;if(!seen.has(key)){seen.add(key);unique.push(condition);}}
+ return unique;
+}
+
 export function normalizeSupporterRules(input, guilds, limits = {servers:1,channels:2,rules:5,complexConditions:false,multiDestination:false}) {
  const ruleLimit=Math.max(1,Number(limits.rules)||5);
  if (!Array.isArray(input) || input.length > ruleLimit) throw Object.assign(new Error(`通知ルールは${ruleLimit}件までです。`),{status:400});
@@ -184,12 +203,13 @@ export function normalizeSupporterRules(input, guilds, limits = {servers:1,chann
   const requestedDetail = clean(rule?.detail) || 'all';
   const detail = type === 'eew' && requestedDetail === 'intensity-change' ? 'forecast' : requestedDetail;
   if (!DETAILS[type].has(detail)) throw Object.assign(new Error('情報の詳細種別を確認してください。'),{status:400});
+  const conditions=normalizeAdditionalConditions(rule?.conditions,type,limits.complexConditions===true);
   if (type === 'weather') {
    const weatherLevel = WEATHER_ALERT_DETAILS.has(detail) ? (clean(rule?.weatherLevel) || 'all') : '';
    const warningLevel = WEATHER_WARNING_DETAILS.has(detail) ? (clean(rule?.warningLevel) || 'all') : '';
    if (weatherLevel && !WEATHER_LEVEL_IDS.has(weatherLevel)) throw Object.assign(new Error('気象情報の警戒レベルを確認してください。'),{status:400});
    if (warningLevel && !WARNING_LEVEL_IDS.has(warningLevel)) throw Object.assign(new Error('警報・注意報の条件を確認してください。'),{status:400});
-   return {name,guildId,channelId,channelIds,type,detail,region,conditionLogic,intensityMode:'',intensity:'',magnitudeMode:'',magnitudeMin:null,weatherLevel,warningLevel,eewWarningAreaMode:''};
+   return {name,guildId,channelId,channelIds,type,detail,region,conditionLogic,conditions,intensityMode:'',intensity:'',magnitudeMode:'',magnitudeMin:null,weatherLevel,warningLevel,eewWarningAreaMode:''};
   }
   const intensityMode = thresholdMode(rule,'intensityMode','intensityChange',rule?.intensity);
   const magnitudeMode = thresholdMode(rule,'magnitudeMode','magnitudeChange',rule?.magnitudeMin);
@@ -199,7 +219,7 @@ export function normalizeSupporterRules(input, guilds, limits = {servers:1,chann
   if (magnitudeMode === 'threshold' && magnitudeMin === null) throw Object.assign(new Error('閾値以上で通知するマグニチュードを入力してください。'),{status:400});
   const eewWarningAreaMode = type === 'eew' && detail === 'warning' ? (clean(rule?.eewWarningAreaMode) || 'all') : '';
   if (eewWarningAreaMode && !EEW_WARNING_AREA_MODE_IDS.has(eewWarningAreaMode)) throw Object.assign(new Error('緊急地震速報（警報）の対象地方条件を確認してください。'),{status:400});
-  return {name,guildId,channelId,channelIds,type,detail,region,conditionLogic,intensityMode,intensity,magnitudeMode,magnitudeMin,weatherLevel:'',warningLevel:'',eewWarningAreaMode};
+  return {name,guildId,channelId,channelIds,type,detail,region,conditionLogic,conditions,intensityMode,intensity,magnitudeMode,magnitudeMin,weatherLevel:'',warningLevel:'',eewWarningAreaMode};
  });
  const serverCount = new Set(rules.map(rule => rule.guildId)).size;
  const channelCount = new Set(rules.flatMap(rule => rule.channelIds.map(channelId=>`${rule.guildId}:${channelId}`))).size;
@@ -212,14 +232,14 @@ export function normalizeSupporterRules(input, guilds, limits = {servers:1,chann
 
 async function supporterLimits(env, db, uid) {
  const fallback = {servers:1,channels:2,rules:5,complexConditions:false,multiDestination:false};
- if (!billingReady(env)) return fallback;
+ if (!billingReady(env)) throw Object.assign(new Error('決済設定を確認できないため、通知設定を保存できません。'),{status:503});
  const row = await db.prepare('SELECT customer_id FROM supporter_billing WHERE discord_user_id=?').bind(uid).first();
- if (!row?.customer_id) return fallback;
+ if (!row?.customer_id) throw Object.assign(new Error('通知設定は有料プランの契約後に利用できます。'),{status:409});
  try {
   const active = (await customerSubscriptionSummaries(env,row.customer_id)).filter(item=>['active','trialing','past_due','unpaid','paused'].includes(item.status));
-  if (!active.length) return fallback;
+  if (!active.length) throw Object.assign(new Error('通知設定は有効な契約を確認してから利用できます。'),{status:409});
   return active.reduce((limits,item)=>({servers:Math.max(limits.servers,Number(item.servers)||1),channels:Math.max(limits.channels,Number(item.channels)||2),rules:Math.max(limits.rules,Number(item.rules)||5),complexConditions:limits.complexConditions||item.complexConditions===true,multiDestination:limits.multiDestination||item.multiDestination===true}),fallback);
- } catch { throw Object.assign(new Error('契約上限を確認できませんでした。時間をおいて再試行してください。'),{status:503}); }
+ } catch(error) { if(error?.status===409)throw error;throw Object.assign(new Error('契約上限を確認できませんでした。時間をおいて再試行してください。'),{status:503}); }
 }
 
 async function assertRuleChannels(rules, env) {

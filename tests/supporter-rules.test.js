@@ -90,10 +90,12 @@ test('BASICの通知ルールは1つのDiscordサーバーだけに限定する'
 });
 
 test('PROだけOR条件と複数配信先を保存できる',()=>{
- const proRule={...base,channelIds:['98765432109876543','87654321098765432'],conditionLogic:'or'};
+ const proRule={...base,channelIds:['98765432109876543','87654321098765432'],conditionLogic:'or',conditions:[{kind:'region',value:'tohoku'},{kind:'weatherLevel',value:'4'}]};
  assert.throws(()=>normalizeSupporterRules([proRule],guilds,{servers:1,channels:10,rules:15,complexConditions:false,multiDestination:false}),/PROプラン/);
  const normalized=normalizeSupporterRules([proRule],guilds,{servers:5,channels:20,rules:30,complexConditions:true,multiDestination:true})[0];
  assert.deepEqual(normalized.channelIds,proRule.channelIds);
  assert.equal(normalized.channelId,proRule.channelIds[0]);
  assert.equal(normalized.conditionLogic,'or');
+ assert.deepEqual(normalized.conditions,[{kind:'region',operator:'equals',value:'tohoku'},{kind:'weatherLevel',operator:'equals',value:'4'}]);
+ assert.throws(()=>normalizeSupporterRules([{...proRule,conditions:Array.from({length:9},()=>({kind:'region',value:'tohoku'}))}],guilds,{servers:5,channels:20,rules:30,complexConditions:true,multiDestination:true}),/8件まで/);
 });
