@@ -73,6 +73,20 @@ export function billingSchedule(now=Date.now()){
  const anchor=Math.floor((Date.UTC(year,month,26,0,0,0)-9*60*60*1000)/1000);
  return {billingDay:26,anchor,initialMonths:day>=26?2:1,lateMonth:day>=26};
 }
+export function staleCheckoutAttempt(row,now=Math.floor(Date.now()/1000)){
+ if(!row?.checkout_key||row.checkout_id)return false;
+ try{
+  const saved=JSON.parse(row.checkout_params||'');
+  const expiresAt=Number(saved?.expires_at);
+  return !Number.isFinite(expiresAt)||expiresAt<=now;
+ }catch{return true;}
+}
+async function recoverStaleCheckoutAttempt(db,uid,row){
+ if(!staleCheckoutAttempt(row))return row;
+ await db.prepare(`UPDATE supporter_billing SET checkout_key=NULL,checkout_id=NULL,checkout_params=NULL
+  WHERE discord_user_id=? AND checkout_key=? AND checkout_id IS NULL`).bind(uid,row.checkout_key).run();
+ return await db.prepare('SELECT * FROM supporter_billing WHERE discord_user_id=?').bind(uid).first();
+}
 async function subscriptions(env,customer){return (await stripe(env,`subscriptions?customer=${encodeURIComponent(customer)}&status=all&limit=100`)).data.filter(s=>!['canceled','incomplete_expired'].includes(s.status));}
 const unix = value => Number.isFinite(Number(value)) && Number(value) > 0 ? Number(value) : null;
 export function subscriptionSummary(subscription,env={}){
@@ -188,6 +202,7 @@ export async function billingAction(request,env,db,uid,input={}){
  const schedule=billingSchedule();
  const legalConsentVersion=String(input.legalConsentVersion||'');
  if(!legalConsentVersion)return json({message:'申込み同意を確認できません。画面を再読み込みしてください。'},400);
+ row=await recoverStaleCheckoutAttempt(db,uid,row);
  // Persist exact parameters and key before network IO. Concurrent clicks share one session.
  const params={mode:'subscription',customer:row.customer_id,client_reference_id:uid,
   'subscription_data[metadata][dpi_user]':uid,'subscription_data[metadata][dpi_plan]':choice.plan,

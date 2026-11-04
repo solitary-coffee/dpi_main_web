@@ -111,14 +111,17 @@ function updateActionFields() {
  $('action-amount').min=action==='create_payment_link'?'100':'1';
  $('action-amount').required=amountActions.includes(action);
  $('payment-description').required=action==='create_payment_link';
+ $('action-warning').textContent=action==='reset_checkout_state'
+  ?'テスト環境専用です。D1のcheckout_key・checkout_id・checkout_paramsだけを削除します。Stripe Customer、メール、クレジット、契約、請求は削除しません。'
+  :'1クレジットは1円です。付与したクレジットはStripeの次回請求へ自動的に充当されます。すべての操作は監査ログに記録されます。';
 }
 
 async function submitAction(event) {
  event.preventDefault();
  if(!selectedAccount)return;
  const action=$('action-kind').value;
- const destructive=['refund_latest','cancel_immediately','remove_credit'].includes(action);
- if(destructive&&!window.confirm(action==='refund_latest'?'返金は取り消せません。指定額を返金しますか？':action==='remove_credit'?'指定したクレジットを削除しますか？':'契約は直ちに終了します。本当に実行しますか？'))return;
+ const destructive=['refund_latest','cancel_immediately','remove_credit','reset_checkout_state'].includes(action);
+ if(destructive&&!window.confirm(action==='refund_latest'?'返金は取り消せません。指定額を返金しますか？':action==='remove_credit'?'指定したクレジットを削除しますか？':action==='reset_checkout_state'?'決済途中データをD1から削除します。Stripe Customerと契約情報は保持されます。実行しますか？':'契約は直ちに終了します。本当に実行しますか？'))return;
  const payload={discordUserId:selectedAccount.discordUserId,confirmDiscordUserId:$('confirm-discord-id').value.trim(),action,reason:$('action-reason').value.trim(),requestId:crypto.randomUUID()};
  if(action==='change_subscription'){payload.plan=$('change-plan').value;payload.channelPacks=Number($('change-packs').value);payload.serverPacks=Number($('change-server-packs').value);}
  if(['refund_latest','create_payment_link','grant_credit','remove_credit'].includes(action))payload.amount=Number($('action-amount').value);

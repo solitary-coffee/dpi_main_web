@@ -318,6 +318,17 @@ export async function handleSupporterRequest(request, env) {
      FROM supporter_accounts a LEFT JOIN supporter_billing b ON b.discord_user_id=a.discord_user_id
      WHERE a.discord_user_id=?`).bind(uid).first();
     if (!account) return response({message:'対象の有料プラン登録者が見つかりません。'},404);
+    if (input.action === 'reset_checkout_state') {
+     if (env.SUPPORTER_BILLING_MODE !== 'test') return response({message:'この操作はStripeテスト環境でのみ利用できます。'},403);
+     const reason = clean(input.reason);
+     if (reason.length < 5 || reason.length > 500) return response({message:'操作理由を5〜500文字で入力してください。'},400);
+     const result = await db.prepare(`UPDATE supporter_billing
+      SET checkout_key=NULL, checkout_id=NULL, checkout_params=NULL
+      WHERE discord_user_id=?
+       AND (checkout_key IS NOT NULL OR checkout_id IS NOT NULL OR checkout_params IS NOT NULL)`).bind(uid).run();
+     const auditRecorded = await writeSupporterAudit(db,admin.email,input.action,uid,{reason,requestId:clean(input.requestId),changed:Number(result.meta?.changes||0)});
+     return response({success:true,message:result.meta?.changes?'決済途中データをDBから削除しました。Stripe Customerと契約情報は保持されています。':'削除対象の決済途中データはありませんでした。',auditRecorded,creditRecorded:true});
+    }
     if (!account.customer_id && ['grant_credit','create_payment_link'].includes(input.action)) {
      if (!account.billing_email) return response({message:'先にユーザーの申込メールアドレスを登録してください。'},409);
      const customer = await createBillingCustomer(env,uid,account.billing_email,`dpi-admin-customer-${uid}`);
