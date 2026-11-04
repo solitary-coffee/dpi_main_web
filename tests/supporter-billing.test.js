@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHmac} from 'node:crypto';
 import {selection,billingReady,subscriptionSummary,verifySignature} from '../worker/supporter-billing.js';
+import {readFile} from 'node:fs/promises';
 test('price and channel pack limits are server controlled',()=>{
  assert.deepEqual(selection({plan:'supporter',packs:2}),{plan:'supporter',packs:2,monthly:700,channels:8});
  assert.equal(selection({plan:'plus',packs:0}).monthly,800);
@@ -25,6 +26,13 @@ test('subscription summary includes plan, dates, amount and item details',()=>{
  assert.equal(result.nextRenewalAt,1702592000);
  assert.equal(result.amount,700);
  assert.deepEqual(result.items.map(item=>[item.label,item.quantity,item.subtotal]),[['Supporter',1,300],['追加3チャンネル',2,400]]);
+});
+test('supporter UI avoids WebKit URL constructor errors for Stripe redirects',async()=>{
+ const source=await readFile(new URL('../site/supporter/app.js',import.meta.url),'utf8');
+ assert.match(source,/function stripeDestination\(value\)/);
+ assert.doesNotMatch(source,/new URL\(result\.url\)/);
+ assert.match(source,/checkout\.stripe\.com/);
+ assert.match(source,/billing\.stripe\.com/);
 });
 test('webhook rejects tampering stale timestamps and wrong secrets; rotation works',async()=>{
  const raw='{"livemode":false}',ts=1700000000,secret='whsec_example';

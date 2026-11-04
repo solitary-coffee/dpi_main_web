@@ -207,6 +207,15 @@ const dateText = seconds => seconds ? new Intl.DateTimeFormat('ja-JP',{dateStyle
 const moneyText = (amount,currency) => new Intl.NumberFormat('ja-JP',{style:'currency',currency:(currency || 'jpy').toUpperCase(),maximumFractionDigits:0}).format(amount || 0);
 const STATUS_LABELS = {active:'有効',trialing:'試用中',past_due:'支払い遅延',unpaid:'未払い',paused:'一時停止',incomplete:'手続き未完了'};
 
+function stripeDestination(value) {
+ const link = document.createElement('a');
+ link.href = typeof value === 'string' ? value : '';
+ if (link.protocol !== 'https:' || !['checkout.stripe.com','billing.stripe.com'].includes(link.hostname)) {
+  throw Error('Stripeの決済URLを確認できませんでした。時間をおいて再度お試しください。');
+ }
+ return link.href;
+}
+
 function renderContracts(subscriptions) {
  contract.replaceChildren();
  if (!subscriptions.length) {
@@ -250,9 +259,7 @@ for (const [label,action] of [['テスト決済へ','checkout'],['支払方法�
   try {
    const result = await api(`/api/supporter/billing/${action}`,action === 'status' ? 'GET' : 'POST',action === 'status' ? undefined : action === 'checkout' ? {plan:plan.value,packs:Number(packs.value)} : {});
    if (result.url) {
-    const url = new URL(result.url);
-    if (url.protocol !== 'https:' || !['checkout.stripe.com','billing.stripe.com'].includes(url.hostname)) throw Error('不正な決済URLです。');
-    location.assign(url.href);
+    location.href = stripeDestination(result.url);
    } else {
     renderContracts(result.subscriptions);
     status('契約情報を更新しました。');
