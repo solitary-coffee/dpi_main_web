@@ -10,7 +10,6 @@ document.addEventListener('DOMContentLoaded', () => {
  $('account-search').addEventListener('input', renderAccounts);
  $('dialog-close').addEventListener('click', () => $('action-dialog').close());
  $('action-kind').addEventListener('change', updateActionFields);
- $('change-plan').addEventListener('change', updatePlanFields);
  $('action-form').addEventListener('submit', submitAction);
  loadAccounts();
 });
@@ -87,7 +86,7 @@ function subscriptionCard(subscription) {
  card.append(element('h4','',subscription.plan||'契約中プラン'));
  const list=element('dl');
  const status=`${STATUS_LABELS[subscription.status]||subscription.status}${subscription.cancelAtPeriodEnd?'（期間末で終了）':''}`;
- const entries=[['状態',status],['支払い開始',unixDate(subscription.startedAt)],['現在期間の開始',unixDate(subscription.currentPeriodStart)],[subscription.cancelAtPeriodEnd?'終了予定':'次回更新',unixDate(subscription.nextRenewalAt)],['月額',money(subscription.amount,subscription.currency)]];
+ const entries=[['状態',status],['支払い開始',unixDate(subscription.startedAt)],['現在期間の開始',unixDate(subscription.currentPeriodStart)],[subscription.cancelAtPeriodEnd?'終了予定':'次回更新',unixDate(subscription.nextRenewalAt)],['月額',money(subscription.amount,subscription.currency)],['チャンネル上限',`${subscription.channels||'—'}チャンネル`],['サーバー上限',`${subscription.servers||'—'}サーバー`],['固定請求日','毎月26日']];
  for(const [term,value] of entries){list.append(element('dt','',term),element('dd','',value));}
  card.append(list);return card;
 }
@@ -96,7 +95,7 @@ function openAction(account) {
  selectedAccount=account;
  $('action-target').textContent=account.discordUserId;
  $('action-kind').value='change_subscription';
- $('action-reason').value='';$('confirm-discord-id').value='';$('action-amount').value='';$('payment-description').value='';
+ $('action-reason').value='';$('confirm-discord-id').value='';$('action-amount').value='';$('payment-description').value='';$('change-server-packs').value='0';
  $('action-result').replaceChildren();updateActionFields();$('action-dialog').showModal();
 }
 
@@ -110,11 +109,6 @@ function updateActionFields() {
  $('action-amount').min=action==='create_payment_link'?'100':'1';
  $('action-amount').required=amountActions.includes(action);
  $('payment-description').required=action==='create_payment_link';
- updatePlanFields();
-}
-
-function updatePlanFields() {
- const plus=$('change-plan').value==='plus';$('change-packs').disabled=plus;if(plus)$('change-packs').value='0';
 }
 
 async function submitAction(event) {
@@ -124,7 +118,7 @@ async function submitAction(event) {
  const destructive=['refund_latest','cancel_immediately','remove_credit'].includes(action);
  if(destructive&&!window.confirm(action==='refund_latest'?'返金は取り消せません。指定額を返金しますか？':action==='remove_credit'?'指定したクレジットを削除しますか？':'契約は直ちに終了します。本当に実行しますか？'))return;
  const payload={discordUserId:selectedAccount.discordUserId,confirmDiscordUserId:$('confirm-discord-id').value.trim(),action,reason:$('action-reason').value.trim(),requestId:crypto.randomUUID()};
- if(action==='change_subscription'){payload.plan=$('change-plan').value;payload.packs=Number($('change-packs').value);}
+ if(action==='change_subscription'){payload.plan=$('change-plan').value;payload.channelPacks=Number($('change-packs').value);payload.serverPacks=Number($('change-server-packs').value);}
  if(['refund_latest','create_payment_link','grant_credit','remove_credit'].includes(action))payload.amount=Number($('action-amount').value);
  if(action==='create_payment_link')payload.description=$('payment-description').value.trim();
  const button=$('action-submit');button.disabled=true;$('action-result').textContent='Stripeへ操作を送信しています…';

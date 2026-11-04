@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeSupporterRules, SUPPORTER_REGIONS, WEATHER_LEVELS, WEATHER_DETAILS, EARTHQUAKE_DETAILS, EEW_DETAILS, EEW_WARNING_AREA_MODES } from '../worker/supporter.js';
+import { normalizeSupporterRules, SUPPORTER_REGIONS, WEATHER_LEVELS, WEATHER_DETAILS, EARTHQUAKE_DETAILS, EEW_DETAILS, EEW_WARNING_AREA_MODES, THRESHOLD_MODES } from '../worker/supporter.js';
 
 const guilds = [{id:'12345678901234567',name:'DPI Test'}];
 const base = {name:'北海道の大雨',guildId:guilds[0].id,channelId:'98765432109876543',type:'weather',region:'hokkaido'};
@@ -17,6 +17,7 @@ test('地方区分、警戒レベル、詳細情報種別を提供する', () =>
  assert.ok(EEW_DETAILS.some(([id])=>id==='warning'));
  assert.ok(!EEW_DETAILS.some(([id])=>id==='intensity-change'));
  assert.deepEqual(EEW_WARNING_AREA_MODES.map(([id])=>id),['all','target-only']);
+ assert.deepEqual(THRESHOLD_MODES.map(([id])=>id),['all','increase','threshold']);
 });
 
 test('緊急地震速報の警報だけ対象警報地方条件を保存する', () => {
@@ -51,23 +52,29 @@ test('既存ルールは詳細未設定ならすべてとして扱う', () => {
  assert.equal(normalized.weatherLevel,'');
 });
 
-test('地震ルールは震度、上下変化、マグニチュード範囲を保持する', () => {
- const rule={...base,type:'earthquake',name:'関東の地震',detail:'intensity-flash',region:'kanto-koshin',intensity:'5-',intensityChange:'increase',magnitudeMin:'5.2',magnitudeMax:7,magnitudeChange:'decrease'};
+test('地震ルールは閾値選択時だけ震度とマグニチュード下限を保持する', () => {
+ const rule={...base,type:'earthquake',name:'関東の地震',detail:'intensity-flash',region:'kanto-koshin',intensityMode:'threshold',intensity:'5-',magnitudeMode:'threshold',magnitudeMin:'5.2'};
  const normalized=normalizeSupporterRules([rule],guilds)[0];
+ assert.equal(normalized.intensityMode,'threshold');
  assert.equal(normalized.intensity,'5-');
- assert.equal(normalized.intensityChange,'increase');
+ assert.equal(normalized.magnitudeMode,'threshold');
  assert.equal(normalized.magnitudeMin,5.2);
- assert.equal(normalized.magnitudeMax,7);
- assert.equal(normalized.magnitudeChange,'decrease');
+ assert.equal('magnitudeMax' in normalized,false);
  assert.equal(normalized.weatherLevel,'');
+});
+
+test('すべて・上昇時のみでは閾値を保存しない', () => {
+ const normalized=normalizeSupporterRules([{...base,type:'earthquake',intensityMode:'all',intensity:'7',magnitudeMode:'increase',magnitudeMin:'9'}],guilds)[0];
+ assert.equal(normalized.intensity,'');
+ assert.equal(normalized.magnitudeMin,null);
 });
 
 test('不正な詳細条件、範囲、地方、サーバーを拒否する', () => {
  assert.throws(()=>normalizeSupporterRules([{...base,region:'unknown'}],guilds));
  assert.throws(()=>normalizeSupporterRules([{...base,detail:'heavy-rain-level',weatherLevel:'6'}],guilds));
  assert.throws(()=>normalizeSupporterRules([{...base,detail:'not-defined'}],guilds));
- assert.throws(()=>normalizeSupporterRules([{...base,type:'earthquake',intensity:'4',magnitudeMin:8,magnitudeMax:7}],guilds));
- assert.throws(()=>normalizeSupporterRules([{...base,type:'earthquake',intensity:'4',magnitudeMin:11}],guilds));
+ assert.throws(()=>normalizeSupporterRules([{...base,type:'earthquake',intensityMode:'threshold',intensity:'',magnitudeMode:'all'}],guilds));
+ assert.throws(()=>normalizeSupporterRules([{...base,type:'earthquake',intensityMode:'all',magnitudeMode:'threshold',magnitudeMin:11}],guilds));
  assert.throws(()=>normalizeSupporterRules([{...base,type:'eew',detail:'warning',intensity:'4',eewWarningAreaMode:'unknown'}],guilds));
  assert.throws(()=>normalizeSupporterRules([{...base,guildId:'11111111111111111'}],guilds));
 });
@@ -78,5 +85,6 @@ test('BASICの通知ルールは1つのDiscordサーバーだけに限定する'
   {...base,detail:'heavy-rain-level'},
   {...base,name:'東北の大雨',guildId:second.id,channelId:'87654321098765432',detail:'heavy-rain-level',region:'tohoku'},
  ];
- assert.throws(()=>normalizeSupporterRules(rules,[...guilds,second]),/1つ/);
+ assert.throws(()=>normalizeSupporterRules(rules,[...guilds,second]),/1サーバー/);
+ assert.equal(normalizeSupporterRules(rules,[...guilds,second],{servers:2,channels:2}).length,2);
 });

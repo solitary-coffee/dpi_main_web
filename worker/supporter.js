@@ -1,6 +1,6 @@
 import { requireSession, assertCsrf, assertSameOrigin, readJson, fetchGuildChannels } from './reuse.js';
 import { authenticateNewsletterAdmin } from './access.js';
-import { adminBillingAction, billingAction, billingReady, createBillingCustomer, creditsByCustomer, subscriptionSummariesByCustomer } from './supporter-billing.js';
+import { adminBillingAction, billingAction, billingReady, createBillingCustomer, creditsByCustomer, customerSubscriptionSummaries, subscriptionSummariesByCustomer } from './supporter-billing.js';
 
 const response = (data, status = 200) => Response.json(data, {status, headers: {'Cache-Control':'no-store'}});
 const notFound = () => new Response('Not Found', {
@@ -129,11 +129,16 @@ export const CHANGE_DIRECTIONS = Object.freeze([
  ['decrease', '下降時'],
  ['both', '上昇・下降時'],
 ]);
+export const THRESHOLD_MODES = Object.freeze([
+ ['all', 'すべて'],
+ ['increase', '上昇時のみ'],
+ ['threshold', '閾値以上'],
+]);
 const INTENSITIES = new Set(['1','2','3','4','5-','5+','6-','6+','7']);
 const REGION_IDS = new Set(SUPPORTER_REGIONS.map(([id]) => id));
 const WEATHER_LEVEL_IDS = new Set(WEATHER_LEVELS.map(([id]) => id));
 const WARNING_LEVEL_IDS = new Set(WARNING_LEVELS.map(([id]) => id));
-const CHANGE_DIRECTION_IDS = new Set(CHANGE_DIRECTIONS.map(([id]) => id));
+const THRESHOLD_MODE_IDS = new Set(THRESHOLD_MODES.map(([id]) => id));
 const EEW_WARNING_AREA_MODE_IDS = new Set(EEW_WARNING_AREA_MODES.map(([id]) => id));
 const DETAILS = {
  earthquake: new Set(EARTHQUAKE_DETAILS.map(([id]) => id)),
@@ -150,7 +155,14 @@ function optionalMagnitude(value) {
  return Math.round(number * 10) / 10;
 }
 
-export function normalizeSupporterRules(input, guilds) {
+function thresholdMode(rule, key, legacyKey, thresholdValue) {
+ const requested = clean(rule?.[key]);
+ if (THRESHOLD_MODE_IDS.has(requested)) return requested;
+ if (clean(rule?.[legacyKey]) === 'increase') return 'increase';
+ return thresholdValue !== '' && thresholdValue !== undefined && thresholdValue !== null ? 'threshold' : 'all';
+}
+
+export function normalizeSupporterRules(input, guilds, limits = {servers:1,channels:2}) {
  if (!Array.isArray(input) || input.length > 5) throw Object.assign(new Error('通知ルールは5件までです。'),{status:400});
  const rules = input.map(rule => {
   const name = clean(rule?.name);
@@ -170,22 +182,37 @@ export function normalizeSupporterRules(input, guilds) {
    const warningLevel = WEATHER_WARNING_DETAILS.has(detail) ? (clean(rule?.warningLevel) || 'all') : '';
    if (weatherLevel && !WEATHER_LEVEL_IDS.has(weatherLevel)) throw Object.assign(new Error('気象情報の警戒レベルを確認してください。'),{status:400});
    if (warningLevel && !WARNING_LEVEL_IDS.has(warningLevel)) throw Object.assign(new Error('警報・注意報の条件を確認してください。'),{status:400});
-   return {name,guildId,channelId,type,detail,region,intensity:'',intensityChange:'',magnitudeMin:null,magnitudeMax:null,magnitudeChange:'',weatherLevel,warningLevel,eewWarningAreaMode:''};
+   return {name,guildId,channelId,type,detail,region,intensityMode:'',intensity:'',magnitudeMode:'',magnitudeMin:null,weatherLevel,warningLevel,eewWarningAreaMode:''};
   }
-  const intensity = clean(rule?.intensity);
-  const intensityChange = clean(rule?.intensityChange) || 'all';
-  const magnitudeChange = clean(rule?.magnitudeChange) || 'all';
-  if (!INTENSITIES.has(intensity)) throw Object.assign(new Error('通知する最低震度を確認してください。'),{status:400});
-  if (!CHANGE_DIRECTION_IDS.has(intensityChange) || !CHANGE_DIRECTION_IDS.has(magnitudeChange)) throw Object.assign(new Error('震度・マグニチュードの変化条件を確認してください。'),{status:400});
-  const magnitudeMin = optionalMagnitude(rule?.magnitudeMin);
-  const magnitudeMax = optionalMagnitude(rule?.magnitudeMax);
-  if (magnitudeMin !== null && magnitudeMax !== null && magnitudeMin > magnitudeMax) throw Object.assign(new Error('マグニチュードの下限は上限以下にしてください。'),{status:400});
+  const intensityMode = thresholdMode(rule,'intensityMode','intensityChange',rule?.intensity);
+  const magnitudeMode = thresholdMode(rule,'magnitudeMode','magnitudeChange',rule?.magnitudeMin);
+  const intensity = intensityMode === 'threshold' ? clean(rule?.intensity) : '';
+  const magnitudeMin = magnitudeMode === 'threshold' ? optionalMagnitude(rule?.magnitudeMin) : null;
+  if (intensityMode === 'threshold' && !INTENSITIES.has(intensity)) throw Object.assign(new Error('閾値以上で通知する震度を確認してください。'),{status:400});
+  if (magnitudeMode === 'threshold' && magnitudeMin === null) throw Object.assign(new Error('閾値以上で通知するマグニチュードを入力してください。'),{status:400});
   const eewWarningAreaMode = type === 'eew' && detail === 'warning' ? (clean(rule?.eewWarningAreaMode) || 'all') : '';
   if (eewWarningAreaMode && !EEW_WARNING_AREA_MODE_IDS.has(eewWarningAreaMode)) throw Object.assign(new Error('緊急地震速報（警報）の対象地方条件を確認してください。'),{status:400});
-  return {name,guildId,channelId,type,detail,region,intensity,intensityChange,magnitudeMin,magnitudeMax,magnitudeChange,weatherLevel:'',warningLevel:'',eewWarningAreaMode};
+  return {name,guildId,channelId,type,detail,region,intensityMode,intensity,magnitudeMode,magnitudeMin,weatherLevel:'',warningLevel:'',eewWarningAreaMode};
  });
- if (new Set(rules.map(rule => rule.guildId)).size > 1) throw Object.assign(new Error('BASICで利用できるDiscordサーバーは1つです。すべてのルールで同じサーバーを選択してください。'),{status:400});
+ const serverCount = new Set(rules.map(rule => rule.guildId)).size;
+ const channelCount = new Set(rules.map(rule => `${rule.guildId}:${rule.channelId}`)).size;
+ const serverLimit = Math.max(1,Number(limits.servers)||1);
+ const channelLimit = Math.max(1,Number(limits.channels)||2);
+ if (serverCount > serverLimit) throw Object.assign(new Error(`契約上限は${serverLimit}サーバーです。サーバー追加オプションを契約するか、同じサーバーを選択してください。`),{status:400});
+ if (channelCount > channelLimit) throw Object.assign(new Error(`契約上限は${channelLimit}チャンネルです。チャンネル追加オプションを契約するか、通知先を減らしてください。`),{status:400});
  return rules;
+}
+
+async function supporterLimits(env, db, uid) {
+ const fallback = {servers:1,channels:2};
+ if (!billingReady(env)) return fallback;
+ const row = await db.prepare('SELECT customer_id FROM supporter_billing WHERE discord_user_id=?').bind(uid).first();
+ if (!row?.customer_id) return fallback;
+ try {
+  const active = (await customerSubscriptionSummaries(env,row.customer_id)).filter(item=>['active','trialing','past_due','unpaid','paused'].includes(item.status));
+  if (!active.length) return fallback;
+  return active.reduce((limits,item)=>({servers:Math.max(limits.servers,Number(item.servers)||1),channels:Math.max(limits.channels,Number(item.channels)||2)}),fallback);
+ } catch { throw Object.assign(new Error('契約上限を確認できませんでした。時間をおいて再試行してください。'),{status:503}); }
 }
 
 async function assertRuleChannels(rules, env) {
@@ -274,7 +301,7 @@ export async function handleSupporterRequest(request, env) {
        VALUES(?,?,?,?,?,?,?,?)`).bind(clean(input.requestId),uid,result.creditEvent.delta,result.creditEvent.balanceAfter,result.creditEvent.stripeTransactionId,clean(input.reason),admin.email,new Date().toISOString()).run();
      } catch (error) { console.error('BASIC credit event write failed',{errorName:error?.name||'Error'}); creditRecorded = false; }
     }
-    const auditRecorded = await writeSupporterAudit(db,admin.email,input.action,uid,{reason:clean(input.reason),amount:Number(input.amount)||null,plan:clean(input.plan)||null,packs:Number.isInteger(Number(input.packs))?Number(input.packs):null,requestId:clean(input.requestId),resultMessage:result.message});
+    const auditRecorded = await writeSupporterAudit(db,admin.email,input.action,uid,{reason:clean(input.reason),amount:Number(input.amount)||null,plan:clean(input.plan)||null,channelPacks:Number.isInteger(Number(input.channelPacks??input.packs))?Number(input.channelPacks??input.packs):null,serverPacks:Number.isInteger(Number(input.serverPacks))?Number(input.serverPacks):null,requestId:clean(input.requestId),resultMessage:result.message});
     return response({success:true,...result,auditRecorded,creditRecorded});
    }
    if (request.method !== 'GET') return response({message:'Method not allowed'},405);
@@ -306,7 +333,7 @@ export async function handleSupporterRequest(request, env) {
    return new Response(asset.body,{status:asset.status,statusText:asset.statusText,headers});
   }
   if (path === '/api/supporter/plans' && request.method === 'GET' && supporterPublicEnabled(env)) {
-   return response({billingEnabled:false, deliveryEnabled:false, plans:[{id:'supporter',yen:300,channels:2},{id:'plus',yen:800,channels:10}], addon:{yen:200,channels:3}});
+   return response({billingEnabled:false, deliveryEnabled:false, plans:[{id:'supporter',yen:300,channels:2,servers:1},{id:'plus',yen:800,channels:10,servers:1}], addons:{channel:{yen:200,channels:3},server:{yen:200,servers:1}},billingDay:26});
   }
   let session;
   try { session = await requireSession(request, {...env,REUSE_DB:db}); }
@@ -314,13 +341,13 @@ export async function handleSupporterRequest(request, env) {
   const uid = session.discord_user_id;
   if (!supporterTestUserAllowed(env, uid)) return notFound();
   if (path === '/api/supporter/plans' && request.method === 'GET') {
-   return response({billingEnabled:false, deliveryEnabled:false, plans:[{id:'supporter',yen:300,channels:2},{id:'plus',yen:800,channels:10}], addon:{yen:200,channels:3}});
+   return response({billingEnabled:false, deliveryEnabled:false, plans:[{id:'supporter',yen:300,channels:2,servers:1},{id:'plus',yen:800,channels:10,servers:1}], addons:{channel:{yen:200,channels:3},server:{yen:200,servers:1}},billingDay:26});
   }
   if (path === '/api/supporter/options' && request.method === 'GET') {
-   return response({regions:SUPPORTER_REGIONS,weatherLevels:WEATHER_LEVELS,warningLevels:WARNING_LEVELS,earthquakeDetails:EARTHQUAKE_DETAILS,eewDetails:EEW_DETAILS,eewWarningAreaModes:EEW_WARNING_AREA_MODES,weatherDetails:WEATHER_DETAILS,changeDirections:CHANGE_DIRECTIONS});
+   return response({regions:SUPPORTER_REGIONS,weatherLevels:WEATHER_LEVELS,warningLevels:WARNING_LEVELS,earthquakeDetails:EARTHQUAKE_DETAILS,eewDetails:EEW_DETAILS,eewWarningAreaModes:EEW_WARNING_AREA_MODES,weatherDetails:WEATHER_DETAILS,thresholdModes:THRESHOLD_MODES});
   }
   if (request.method !== 'GET') { assertSameOrigin(request); assertCsrf(request,session); }
-  if (/^\/api\/supporter\/billing\/(checkout|portal|status)$/.test(path)) {
+  if (/^\/api\/supporter\/billing\/(checkout|update|portal|status)$/.test(path)) {
    const expected=path.endsWith('/status')?'GET':'POST';
    if(request.method!==expected)return response({message:'Method not allowed'},405);
    return await billingAction(request,env,db,uid,request.method==='POST'?await readJson(request):{});
@@ -341,7 +368,8 @@ export async function handleSupporterRequest(request, env) {
    const input = await readJson(request);
    if (!Number.isInteger(input.revision)) return response({message:'更新情報が正しくありません。再読み込みしてください。'},400);
    const guilds = JSON.parse(session.guilds_json);
-   const rules = normalizeSupporterRules(input.rules, guilds);
+   const limits = await supporterLimits(env,db,uid);
+   const rules = normalizeSupporterRules(input.rules, guilds, limits);
    await assertRuleChannels(rules, env);
    const result = await db.prepare('UPDATE supporter_accounts SET settings_json=?, revision=revision+1, updated_at=? WHERE discord_user_id=? AND revision=?').bind(JSON.stringify({rules}),new Date().toISOString(),uid,input.revision).run();
    if (!result.meta.changes) return response({message:'未登録、または別画面で更新されています。再読み込みしてください。'},409);
