@@ -71,3 +71,12 @@ test('不正な詳細条件、範囲、地方、サーバーを拒否する', ()
  assert.throws(()=>normalizeSupporterRules([{...base,type:'eew',detail:'warning',intensity:'4',eewWarningAreaMode:'unknown'}],guilds));
  assert.throws(()=>normalizeSupporterRules([{...base,guildId:'11111111111111111'}],guilds));
 });
+
+test('BASICの通知ルールは1つのDiscordサーバーだけに限定する', () => {
+ const second={id:'22222222222222222',name:'Second Server'};
+ const rules=[
+  {...base,detail:'heavy-rain-level'},
+  {...base,name:'東北の大雨',guildId:second.id,channelId:'87654321098765432',detail:'heavy-rain-level',region:'tohoku'},
+ ];
+ assert.throws(()=>normalizeSupporterRules(rules,[...guilds,second]),/1つ/);
+});

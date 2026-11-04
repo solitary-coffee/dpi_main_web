@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHmac} from 'node:crypto';
-import {selection,billingReady,subscriptionSummary,verifySignature} from '../worker/supporter-billing.js';
+import {selection,billingReady,creditsFromBalance,subscriptionSummary,verifySignature} from '../worker/supporter-billing.js';
 import {supporterAdminAccount} from '../worker/supporter.js';
 import {readFile} from 'node:fs/promises';
 test('price and channel pack limits are server controlled',()=>{
@@ -29,22 +29,25 @@ test('subscription summary includes plan, dates, amount and item details',()=>{
  assert.deepEqual(result.items.map(item=>[item.label,item.quantity,item.subtotal]),[['BASIC',1,300],['追加3チャンネル',2,400]]);
 });
 test('admin contract data excludes Stripe identifiers and counts rules',()=>{
- const account=supporterAdminAccount({discord_user_id:'123',registered_at:'2026-01-01',updated_at:'2026-01-02',revision:2,settings_json:'{"rules":[{},{}]}',customer_id:'cus_private'},[{status:'active',amount:300}]);
+ const account=supporterAdminAccount({discord_user_id:'123',billing_email:'user@example.jp',registered_at:'2026-01-01',updated_at:'2026-01-02',revision:2,settings_json:'{"rules":[{},{}]}',customer_id:'cus_private'},[{status:'active',amount:300}],'',500);
  assert.equal(account.discordUserId,'123');
+ assert.equal(account.billingEmail,'user@example.jp');
+ assert.equal(account.credits,500);
  assert.equal(account.ruleCount,2);
  assert.equal(account.subscriptions[0].amount,300);
  assert.equal('customer_id' in account,false);
 });
-test('BASIC is private in public navigation and revealed from authenticated dashboard',async()=>{
+test('paid plans stay separate from secondary-use applications and private in navigation',async()=>{
  const [reuseHtml,reuseScript,basicHtml,billingSource]=await Promise.all([
   readFile(new URL('../site/reuse/index.html',import.meta.url),'utf8'),
   readFile(new URL('../site/reuse/script.js',import.meta.url),'utf8'),
   readFile(new URL('../site/supporter/index.html',import.meta.url),'utf8'),
   readFile(new URL('../worker/supporter-billing.js',import.meta.url),'utf8'),
  ]);
- assert.match(reuseHtml,/id="basic-dashboard-card" class="service-card hidden"/);
- assert.match(reuseScript,/api\('\/api\/supporter\/account'\)/);
+ assert.doesNotMatch(reuseHtml,/basic-dashboard-card|BASIC/);
+ assert.doesNotMatch(reuseScript,/api\/supporter/);
  assert.match(basicHtml,/BASIC/);
+ assert.doesNotMatch(basicHtml,/service-dashboard/);
  assert.doesNotMatch(basicHtml,/<nav[\s\S]*?<a href="\/site\/supporter\//);
  assert.doesNotMatch(billingSource,/payment_method_types/);
 });
@@ -57,9 +60,14 @@ test('admin billing operations require confirmation, reason, same-origin and aud
  assert.match(worker,/assertAdminOrigin\(request\)/);
  assert.match(worker,/input\.confirmDiscordUserId !== uid/);
  assert.match(worker,/writeSupporterAudit/);
- for(const action of ['change_subscription','create_payment_link','refund_latest','cancel_at_period_end','cancel_immediately'])assert.match(html,new RegExp(`value="${action}"`));
+ for(const action of ['change_subscription','grant_credit','remove_credit','create_payment_link','refund_latest','cancel_at_period_end','cancel_immediately'])assert.match(html,new RegExp(`value="${action}"`));
  assert.match(script,/crypto\.randomUUID\(\)/);
  assert.doesNotMatch(script,/\.innerHTML\s*=/);
+});
+test('Stripe customer balance converts to non-negative yen credits',()=>{
+ assert.equal(creditsFromBalance(-500),500);
+ assert.equal(creditsFromBalance(0),0);
+ assert.equal(creditsFromBalance(200),0);
 });
 test('supporter UI avoids WebKit URL constructor errors for Stripe redirects',async()=>{
  const source=await readFile(new URL('../site/supporter/app.js',import.meta.url),'utf8');

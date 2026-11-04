@@ -13,6 +13,30 @@ async function stripe(env,path,params,key,method=params?'POST':'GET'){
  if(result.livemode===true)fail('本番決済は無効です。',503);
  return result;
 }
+export function creditsFromBalance(balance){return Math.max(0,-Number(balance||0));}
+export async function createBillingCustomer(env,uid,email,key){
+ const params={'metadata[dpi_user]':uid};
+ if(email)params.email=email;
+ return await stripe(env,'customers',params,key);
+}
+export async function customerCredits(env,customer){
+ if(!customer||!billingReady(env))return 0;
+ return creditsFromBalance((await stripe(env,`customers/${encodeURIComponent(customer)}`)).balance);
+}
+export async function creditsByCustomer(env,customers){
+ const wanted=new Set((customers||[]).filter(Boolean));
+ const resultMap=new Map([...wanted].map(customer=>[customer,0]));
+ if(!wanted.size||!billingReady(env))return resultMap;
+ let startingAfter='';
+ for(let page=0;page<5;page++){
+  const suffix=startingAfter?`&starting_after=${encodeURIComponent(startingAfter)}`:'';
+  const result=await stripe(env,`customers?limit=100${suffix}`);
+  for(const customer of result.data||[])if(wanted.has(customer.id))resultMap.set(customer.id,creditsFromBalance(customer.balance));
+  if(!result.has_more||!result.data?.length)break;
+  startingAfter=result.data.at(-1).id;
+ }
+ return resultMap;
+}
 export function selection(input){
  if(!['supporter','plus'].includes(input.plan)||!Number.isInteger(input.packs)||input.packs<0||input.packs>2||(input.plan==='plus'&&input.packs!==0))fail('プランまたは追加パック数が不正です。');
  return {plan:input.plan,packs:input.packs,monthly:input.plan==='plus'?800:300+200*input.packs,channels:input.plan==='plus'?10:2+3*input.packs};
@@ -60,13 +84,15 @@ export async function subscriptionSummariesByCustomer(env,customers){
 export async function billingAction(request,env,db,uid,input={}){
  const action=new URL(request.url).pathname.split('/').pop();
  if(!billingReady(env))return json({message:'テスト決済の設定が完了していません。'},503);
- if(!await db.prepare('SELECT discord_user_id FROM supporter_accounts WHERE discord_user_id=?').bind(uid).first())return json({message:'先に登録してください。'},409);
+ const account=await db.prepare('SELECT discord_user_id,billing_email FROM supporter_accounts WHERE discord_user_id=?').bind(uid).first();
+ if(!account)return json({message:'先に登録してください。'},409);
  await db.prepare('INSERT INTO supporter_billing(discord_user_id) VALUES(?) ON CONFLICT DO NOTHING').bind(uid).run();
  let row=await db.prepare('SELECT * FROM supporter_billing WHERE discord_user_id=?').bind(uid).first();
  if(action==='status'){
-  return json({mode:'test',subscriptions:await customerSubscriptionSummaries(env,row.customer_id),deliveryEnabled:false});
+  return json({mode:'test',subscriptions:await customerSubscriptionSummaries(env,row.customer_id),credits:await customerCredits(env,row.customer_id),deliveryEnabled:false});
  }
- if(!row.customer_id){const customer=await stripe(env,'customers',{'metadata[dpi_user]':uid},`dpi-customer-${uid}`);await db.prepare('UPDATE supporter_billing SET customer_id=? WHERE discord_user_id=? AND customer_id IS NULL').bind(customer.id,uid).run();row=await db.prepare('SELECT * FROM supporter_billing WHERE discord_user_id=?').bind(uid).first();}
+ if(!row.customer_id){const customer=await createBillingCustomer(env,uid,account.billing_email,`dpi-customer-${uid}`);await db.prepare('UPDATE supporter_billing SET customer_id=? WHERE discord_user_id=? AND customer_id IS NULL').bind(customer.id,uid).run();row=await db.prepare('SELECT * FROM supporter_billing WHERE discord_user_id=?').bind(uid).first();}
+ else if(account.billing_email)await stripe(env,`customers/${encodeURIComponent(row.customer_id)}`,{email:account.billing_email},`dpi-customer-email-${uid}-${account.billing_email}`);
  const origin=env.SUPPORTER_PUBLIC_ORIGIN;
  if(!origin || !/^https:\/\/[^/]+$/.test(origin))fail('公開URLが未設定です。',503);
  if(action==='portal'){const portal=await stripe(env,'billing_portal/sessions',{customer:row.customer_id,configuration:env.STRIPE_PORTAL_CONFIG,return_url:`${origin}/site/supporter/`});return json({url:portal.url});}
@@ -108,6 +134,19 @@ export async function adminBillingAction(env,customer,uid,input){
  const reason=String(input?.reason||'').trim();
  if(!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestId)||reason.length<5||reason.length>500)fail('操作理由を5〜500文字で入力してください。',400);
  const key=`dpi-admin-${action}-${requestId}`;
+ if(action==='grant_credit'||action==='remove_credit'){
+  const amount=Number(input.amount);
+  if(!Number.isInteger(amount)||amount<1||amount>1_000_000)fail('クレジット数を1〜1,000,000で指定してください。',400);
+  const current=await customerCredits(env,customer);
+  if(action==='remove_credit'&&amount>current)fail('利用可能クレジットを超えて削除できません。',409);
+  const delta=action==='grant_credit'?amount:-amount;
+  const transaction=await stripe(env,`customers/${encodeURIComponent(customer)}/balance_transactions`,{
+   amount:String(-delta),currency:'jpy',description:`DPI-Bot ${action==='grant_credit'?'credit grant':'credit removal'}: ${reason}`,
+   'metadata[dpi_user]':uid,'metadata[dpi_credit_action]':action,'metadata[dpi_admin_reason]':reason,
+  },key);
+  const balanceAfter=creditsFromBalance(transaction.ending_balance);
+  return {message:`${amount.toLocaleString('ja-JP')}クレジットを${action==='grant_credit'?'付与':'削除'}しました。`,credits:balanceAfter,creditEvent:{delta,balanceAfter,stripeTransactionId:transaction.id}};
+ }
  const list=await subscriptions(env,customer);
  const current=activeSubscription(list);
  if(action==='cancel_at_period_end'){

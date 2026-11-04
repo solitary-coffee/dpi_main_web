@@ -1,6 +1,6 @@
 import { requireSession, assertCsrf, assertSameOrigin, readJson, fetchGuildChannels } from './reuse.js';
 import { authenticateNewsletterAdmin } from './access.js';
-import { adminBillingAction, billingAction, billingReady, subscriptionSummariesByCustomer } from './supporter-billing.js';
+import { adminBillingAction, billingAction, billingReady, createBillingCustomer, creditsByCustomer, subscriptionSummariesByCustomer } from './supporter-billing.js';
 
 const response = (data, status = 200) => Response.json(data, {status, headers: {'Cache-Control':'no-store'}});
 const notFound = () => new Response('Not Found', {
@@ -19,16 +19,23 @@ function ruleCount(settingsJson) {
   return Array.isArray(settings.rules) ? settings.rules.length : 0;
  } catch { return 0; }
 }
-export function supporterAdminAccount(row, subscriptions = [], billingError = '') {
+export function supporterAdminAccount(row, subscriptions = [], billingError = '', credits = 0) {
  return {
   discordUserId: row.discord_user_id,
+  billingEmail: row.billing_email || '',
   registeredAt: row.registered_at,
   updatedAt: row.updated_at,
   revision: Number(row.revision || 0),
   ruleCount: ruleCount(row.settings_json),
   subscriptions,
+  credits: Number(credits || 0),
   billingError,
  };
+}
+function normalizeBillingEmail(value) {
+ const email = clean(value).toLowerCase();
+ if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw Object.assign(new Error('有効なメールアドレスを入力してください。'),{status:400});
+ return email;
 }
 function assertAdminOrigin(request) {
  const url = new URL(request.url);
@@ -145,7 +152,7 @@ function optionalMagnitude(value) {
 
 export function normalizeSupporterRules(input, guilds) {
  if (!Array.isArray(input) || input.length > 5) throw Object.assign(new Error('通知ルールは5件までです。'),{status:400});
- return input.map(rule => {
+ const rules = input.map(rule => {
   const name = clean(rule?.name);
   const guildId = clean(rule?.guildId);
   const channelId = clean(rule?.channelId);
@@ -177,6 +184,8 @@ export function normalizeSupporterRules(input, guilds) {
   if (eewWarningAreaMode && !EEW_WARNING_AREA_MODE_IDS.has(eewWarningAreaMode)) throw Object.assign(new Error('緊急地震速報（警報）の対象地方条件を確認してください。'),{status:400});
   return {name,guildId,channelId,type,detail,region,intensity,intensityChange,magnitudeMin,magnitudeMax,magnitudeChange,weatherLevel:'',warningLevel:'',eewWarningAreaMode};
  });
+ if (new Set(rules.map(rule => rule.guildId)).size > 1) throw Object.assign(new Error('BASICで利用できるDiscordサーバーは1つです。すべてのルールで同じサーバーを選択してください。'),{status:400});
+ return rules;
 }
 
 async function assertRuleChannels(rules, env) {
@@ -245,29 +254,49 @@ export async function handleSupporterRequest(request, env) {
     const input = await readJson(request);
     const uid = clean(input.discordUserId);
     if (!/^\d{17,20}$/.test(uid) || input.confirmDiscordUserId !== uid) return response({message:'対象Discord IDの確認入力が一致しません。'},400);
-    const account = await db.prepare(`SELECT a.discord_user_id, b.customer_id
+    const account = await db.prepare(`SELECT a.discord_user_id, a.billing_email, b.customer_id
      FROM supporter_accounts a LEFT JOIN supporter_billing b ON b.discord_user_id=a.discord_user_id
      WHERE a.discord_user_id=?`).bind(uid).first();
     if (!account) return response({message:'対象のBASIC登録者が見つかりません。'},404);
+    if (!account.customer_id && ['grant_credit','create_payment_link'].includes(input.action)) {
+     if (!account.billing_email) return response({message:'先にユーザーの申込メールアドレスを登録してください。'},409);
+     const customer = await createBillingCustomer(env,uid,account.billing_email,`dpi-admin-customer-${uid}`);
+     await db.prepare(`INSERT INTO supporter_billing(discord_user_id,customer_id) VALUES(?,?)
+      ON CONFLICT(discord_user_id) DO UPDATE SET customer_id=COALESCE(supporter_billing.customer_id,excluded.customer_id)`).bind(uid,customer.id).run();
+     account.customer_id = (await db.prepare('SELECT customer_id FROM supporter_billing WHERE discord_user_id=?').bind(uid).first()).customer_id;
+    }
     const result = await adminBillingAction(env,account.customer_id,uid,input);
+    let creditRecorded = true;
+    if (result.creditEvent) {
+     try {
+      await db.prepare(`INSERT INTO supporter_credit_events
+       (id,discord_user_id,credit_delta,balance_after,stripe_transaction_id,reason,actor,created_at)
+       VALUES(?,?,?,?,?,?,?,?)`).bind(clean(input.requestId),uid,result.creditEvent.delta,result.creditEvent.balanceAfter,result.creditEvent.stripeTransactionId,clean(input.reason),admin.email,new Date().toISOString()).run();
+     } catch (error) { console.error('BASIC credit event write failed',{errorName:error?.name||'Error'}); creditRecorded = false; }
+    }
     const auditRecorded = await writeSupporterAudit(db,admin.email,input.action,uid,{reason:clean(input.reason),amount:Number(input.amount)||null,plan:clean(input.plan)||null,packs:Number.isInteger(Number(input.packs))?Number(input.packs):null,requestId:clean(input.requestId),resultMessage:result.message});
-    return response({success:true,...result,auditRecorded});
+    return response({success:true,...result,auditRecorded,creditRecorded});
    }
    if (request.method !== 'GET') return response({message:'Method not allowed'},405);
    if (path === '/site/supporter-admin/api/accounts') {
-    const rows = await db.prepare(`SELECT a.discord_user_id, a.registered_at, a.updated_at,
+    const rows = await db.prepare(`SELECT a.discord_user_id, a.billing_email, a.registered_at, a.updated_at,
      a.revision, a.settings_json, b.customer_id
      FROM supporter_accounts a
      LEFT JOIN supporter_billing b ON b.discord_user_id = a.discord_user_id
      ORDER BY a.updated_at DESC LIMIT 100`).all();
     const stripeEnabled = billingReady(env);
     let grouped = new Map();
+    let creditBalances = new Map();
     let billingError = '';
     if (stripeEnabled) {
-     try { grouped = await subscriptionSummariesByCustomer(env,(rows.results||[]).map(row=>row.customer_id)); }
-     catch { billingError = 'Stripeから契約情報を取得できませんでした。'; }
+     const customers=(rows.results||[]).map(row=>row.customer_id);
+     const [subscriptionResult,creditResult] = await Promise.allSettled([subscriptionSummariesByCustomer(env,customers),creditsByCustomer(env,customers)]);
+     if (subscriptionResult.status === 'fulfilled') grouped = subscriptionResult.value;
+     else billingError = 'Stripeから契約情報を取得できませんでした。';
+     if (creditResult.status === 'fulfilled') creditBalances = creditResult.value;
+     else billingError = `${billingError}${billingError ? ' ' : ''}クレジット残高を取得できませんでした。`;
     }
-    const accounts = (rows.results||[]).map(row=>supporterAdminAccount(row,grouped.get(row.customer_id)||[],row.customer_id?billingError:''));
+    const accounts = (rows.results||[]).map(row=>supporterAdminAccount(row,grouped.get(row.customer_id)||[],row.customer_id?billingError:'',creditBalances.get(row.customer_id)||0));
     return response({billingEnabled:stripeEnabled,accounts});
    }
    const asset = await env.ASSETS.fetch(request);
@@ -301,8 +330,11 @@ export async function handleSupporterRequest(request, env) {
    return response({account,deliveryEnabled:false,billingEnabled:billingReady(env)});
   }
   if (path === '/api/supporter/account' && request.method === 'POST') {
+   const input = await readJson(request);
+   const email = normalizeBillingEmail(input.email);
    const now = new Date().toISOString();
-   await db.prepare('INSERT INTO supporter_accounts(discord_user_id,registered_at,updated_at) VALUES(?,?,?) ON CONFLICT(discord_user_id) DO NOTHING').bind(uid,now,now).run();
+   await db.prepare(`INSERT INTO supporter_accounts(discord_user_id,billing_email,registered_at,updated_at) VALUES(?,?,?,?)
+    ON CONFLICT(discord_user_id) DO UPDATE SET billing_email=excluded.billing_email,updated_at=excluded.updated_at`).bind(uid,email,now,now).run();
    return response({success:true});
   }
   if (path === '/api/supporter/settings' && request.method === 'PUT') {
