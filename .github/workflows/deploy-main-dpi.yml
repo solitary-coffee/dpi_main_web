@@ -32,13 +32,6 @@ jobs:
       - name: Syntax check
         run: npm run check
 
-      - name: Reconcile existing D1 migration history
-        run: |
-          npx --yes wrangler@4.157.0 d1 execute REUSE_DB --remote --command "UPDATE newsletter_campaigns SET official_mention_role_ids = official_mention_role_id WHERE trim(official_mention_role_ids) = '' AND trim(official_mention_role_id) <> ''; INSERT INTO d1_migrations(name) SELECT '0010_official_discord_announcements.sql' WHERE NOT EXISTS (SELECT 1 FROM d1_migrations WHERE name = '0010_official_discord_announcements.sql'); INSERT INTO d1_migrations(name) SELECT '0011_official_discord_multi_mentions.sql' WHERE NOT EXISTS (SELECT 1 FROM d1_migrations WHERE name = '0011_official_discord_multi_mentions.sql');"
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-
       - name: Apply D1 migrations
         run: npx --yes wrangler@4.157.0 d1 migrations apply REUSE_DB --remote
         env:
