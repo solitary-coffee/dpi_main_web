@@ -78,6 +78,17 @@ function channelField(article, rule) {
  const input = field(article, rule, 'channelId', '通知チャンネル', choices);
  if (!choices.length) selectOptions(input, [], '', '利用可能なチャンネルがありません');
  else if (!choices.some(([id]) => id === rule.channelId)) selectOptions(input, choices, '', 'チャンネルを選択');
+ const refresh = document.createElement('button');
+ refresh.type = 'button';
+ refresh.className = 'secondary';
+ refresh.textContent = 'チャンネルを再取得';
+ refresh.onclick = run(async () => {
+  if (!rule.guildId) return status('先にサーバーを選択してください。');
+  await loadChannels(rule.guildId, true);
+  render();
+  status('チャンネル一覧を更新しました。');
+ });
+ article.append(refresh);
 }
 
 function detailOptions(type) {
@@ -123,8 +134,8 @@ function render() {
   } else {
    field(article, rule, 'intensity', '最低震度', INTENSITIES);
    field(article, rule, 'intensityChange', '震度変化', options.changeDirections);
-   field(article, rule, 'magnitudeMin', 'マグニチュード下限', null, {type:'number',min:'0',max:'10',step:'0.1',placeholder:'指定なし'});
-   field(article, rule, 'magnitudeMax', 'マグニチュード上限', null, {type:'number',min:'0',max:'10',step:'0.1',placeholder:'指定なし'});
+   field(article, rule, 'magnitudeMin', 'マグニチュード下限', null, {inputmode:'decimal',placeholder:'指定なし（0〜10）'});
+   field(article, rule, 'magnitudeMax', 'マグニチュード上限', null, {inputmode:'decimal',placeholder:'指定なし（0〜10）'});
    field(article, rule, 'magnitudeChange', 'マグニチュード変化', options.changeDirections);
   }
   const remove = document.createElement('button');
@@ -170,9 +181,17 @@ $('register').onclick = run(async () => {
 $('add').onclick = run(async () => {
  if (rules.length >= 5) return status('下書きは5件までです。');
  const guildId = session.guilds[0]?.id || '';
- if (guildId) await loadChannels(guildId);
  rules.push(normalizeRule({name:'新しいルール',guildId,channelId:'',type:'earthquake'}));
  render();
+ status('ルールを追加しました。チャンネルを取得しています…');
+ if (!guildId) return status('ルールを追加しました。管理可能なサーバーがありません。');
+ try {
+  await loadChannels(guildId, true);
+  render();
+  status('ルールを追加しました。');
+ } catch {
+  status('ルールは追加しましたが、チャンネルを取得できませんでした。「チャンネルを再取得」を押してください。');
+ }
 });
 $('save').onclick = run(async () => {
  const data = await api('/api/supporter/settings','PUT',{revision,rules});

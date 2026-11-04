@@ -34,6 +34,13 @@ test('supporter UI avoids WebKit URL constructor errors for Stripe redirects',as
  assert.match(source,/checkout\.stripe\.com/);
  assert.match(source,/billing\.stripe\.com/);
 });
+test('supporter rule creation is resilient to WebKit input and channel errors',async()=>{
+ const source=await readFile(new URL('../site/supporter/app.js',import.meta.url),'utf8');
+ assert.doesNotMatch(source,/type:'number'/);
+ assert.match(source,/inputmode:'decimal'/);
+ assert.match(source,/rules\.push\(normalizeRule[\s\S]+render\(\);[\s\S]+await loadChannels/);
+ assert.match(source,/チャンネルを再取得/);
+});
 test('webhook rejects tampering stale timestamps and wrong secrets; rotation works',async()=>{
  const raw='{"livemode":false}',ts=1700000000,secret='whsec_example';
  const sig=createHmac('sha256',secret).update(`${ts}.${raw}`).digest('hex');
