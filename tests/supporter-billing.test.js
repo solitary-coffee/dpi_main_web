@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHmac} from 'node:crypto';
-import {billingAction,selection,billingReady,billingSchedule,creditsFromBalance,subscriptionSummary,verifySignature} from '../worker/supporter-billing.js';
+import {billingAction,selection,billingReady,billingSchedule,creditsFromBalance,prorationBreakdown,subscriptionSummary,verifySignature} from '../worker/supporter-billing.js';
 import {supporterAdminAccount} from '../worker/supporter.js';
 import {readFile} from 'node:fs/promises';
 test('plan, channel and server add-ons are server controlled',()=>{
@@ -89,6 +89,13 @@ test('Stripe customer balance converts to non-negative yen credits',()=>{
  assert.equal(creditsFromBalance(0),0);
  assert.equal(creditsFromBalance(200),0);
 });
+test('plan proration separates the old-plan refund equivalent from the new-plan charge',()=>{
+ assert.deepEqual(prorationBreakdown([
+  {amount:-100,parent:{subscription_item_details:{proration:true}}},
+  {amount:700,parent:{subscription_item_details:{proration:true}}},
+  {amount:1280,parent:{subscription_item_details:{proration:false}}},
+ ]),{unusedPlanCredit:100,newPlanCharge:700,net:600});
+});
 test('update preview prorates only the base plan and confirms options without proration',async()=>{
  const env={SUPPORTER_BILLING_MODE:'test',STRIPE_SECRET_KEY:'rk_test_example',STRIPE_WEBHOOK_SECRET:'whsec_x',STRIPE_PRICE_SUPPORTER:'price_basic',STRIPE_PRICE_PLUS:'price_plus',STRIPE_PRICE_PRO:'price_pro',STRIPE_PRICE_ADDON:'price_addon',STRIPE_PORTAL_CONFIG:'bpc_x',SUPPORTER_PUBLIC_ORIGIN:'https://dpi-bot.com'};
  const current={id:'sub_x',status:'active',customer:'cus_x',start_date:1700000000,metadata:{dpi_channel_packs:'0',dpi_server_packs:'0'},items:{data:[{id:'si_base',quantity:1,current_period_start:1700000000,current_period_end:Date.now()/1000+86400,price:{id:'price_basic',unit_amount:300,currency:'jpy'}}]}};
@@ -105,7 +112,7 @@ test('update preview prorates only the base plan and confirms options without pr
  };
  try{
   const previewResponse=await billingAction(new Request('https://dpi-bot.com/api/supporter/billing/preview-update'),env,db,'123',{plan:'pro',channelPacks:1,serverPacks:0});
-  const preview=await previewResponse.json();assert.equal(preview.planProration,600);assert.equal(preview.creditApplied,100);assert.equal(preview.immediateDue,500);assert.equal(preview.next.servers,5);assert.equal(preview.next.channels,23);
+  const preview=await previewResponse.json();assert.equal(preview.planChanged,true);assert.deepEqual(preview.planProrationBreakdown,{unusedPlanCredit:100,newPlanCharge:700,net:600});assert.equal(preview.planProration,600);assert.equal(preview.creditApplied,100);assert.equal(preview.immediateDue,500);assert.equal(preview.next.servers,5);assert.equal(preview.next.channels,23);
   const previewCall=calls.find(call=>call.path==='/v1/invoices/create_preview');assert.equal(previewCall.params.get('subscription_details[items][0][price]'),'price_pro');assert.equal(previewCall.params.get('subscription_details[items][1][price]'),null);
   calls.length=0;
   const requestId='123e4567-e89b-42d3-a456-426614174000';
@@ -138,6 +145,9 @@ test('supporter rule creation is resilient to WebKit input and channel errors',a
  assert.doesNotMatch(source,/window\.confirm\('契約内容を更新/);
  assert.match(source,/rules\.push\(normalizeRule[\s\S]+render\(\);[\s\S]+await loadChannels/);
  assert.match(source,/チャンネルを再取得/);
+ assert.match(source,/checkbox\.type='checkbox'/);
+ assert.match(source,/rule\.channelIds=\[\.\.\.selected\]/);
+ assert.doesNotMatch(source,/input\.multiple=true/);
 });
 test('webhook rejects tampering stale timestamps and wrong secrets; rotation works',async()=>{
  const raw='{"livemode":false}',ts=1700000000,secret='whsec_example';
