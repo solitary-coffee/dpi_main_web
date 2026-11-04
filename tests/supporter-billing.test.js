@@ -10,6 +10,8 @@ test('price and channel pack limits are server controlled',()=>{
 test('live secrets can never enable billing',()=>{
  const env={SUPPORTER_BILLING_MODE:'test',STRIPE_SECRET_KEY:'sk_live_example',STRIPE_WEBHOOK_SECRET:'x',STRIPE_PRICE_SUPPORTER:'x',STRIPE_PRICE_PLUS:'x',STRIPE_PRICE_ADDON:'x',STRIPE_PORTAL_CONFIG:'x'};
  assert.equal(billingReady(env),false);env.STRIPE_SECRET_KEY='sk_test_example';assert.equal(billingReady(env),true);
+ env.STRIPE_SECRET_KEY='rk_test_example';assert.equal(billingReady(env),true);
+ env.STRIPE_SECRET_KEY='rk_live_example';assert.equal(billingReady(env),false);
 });
 test('webhook rejects tampering stale timestamps and wrong secrets; rotation works',async()=>{
  const raw='{"livemode":false}',ts=1700000000,secret='whsec_example';

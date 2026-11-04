@@ -1,6 +1,6 @@
 # Stripeテスト決済
 
-配信は未接続。本実装はsk_test_キー限定で、本番課金はできません。
+配信は未接続。本実装はテスト用の `sk_test_` または権限を限定できる `rk_test_` キーだけを受け付け、本番課金はできません。運用には `rk_test_` を推奨します。
 
 適用順序: D1 migrations 0012,0013 → Worker Secrets/vars → Workerデプロイ → StripeテストWebhook登録 → E2E確認。
 
