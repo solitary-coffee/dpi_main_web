@@ -6,21 +6,25 @@
 
 Secrets: STRIPE_SECRET_KEY（テスト用）、STRIPE_WEBHOOK_SECRET。秘密値をGitやチャットへ貼らないこと。
 
-vars: SUPPORTER_BILLING_MODE=test、SUPPORTER_PUBLIC_ORIGIN=https://dpi-bot.com、STRIPE_PRICE_SUPPORTER、STRIPE_PRICE_PLUS、STRIPE_PRICE_ADDON、STRIPE_PORTAL_CONFIG、SUPPORTER_PUBLIC_ENABLED=false、SUPPORTER_TEST_USER_IDS=<許可するDiscordユーザーIDをカンマ区切り>。
+vars: SUPPORTER_BILLING_MODE=test、SUPPORTER_PUBLIC_ORIGIN=https://dpi-bot.com、STRIPE_PRICE_SUPPORTER、STRIPE_PRICE_PLUS、STRIPE_PRICE_PRO、STRIPE_PRICE_ADDON、STRIPE_PORTAL_CONFIG、SUPPORTER_PUBLIC_ENABLED=false、SUPPORTER_TEST_USER_IDS=<許可するDiscordユーザーIDをカンマ区切り>。
 
 限定公開中は `/site/supporter/` とサポーターAPIをDiscordユーザーIDの許可リストで保護する。未認証・未許可ユーザーには一律404を返し、画面レスポンスには `X-Robots-Tag: noindex, nofollow, noarchive` を付与する。Cloudflare Access認証済み管理者は画面資産のみ確認できるが、ユーザー操作にはDiscordログインも必要。`SUPPORTER_PUBLIC_ENABLED=true` は一般公開時だけ設定する。空値や未設定は閉鎖扱い。
 
-価格はJPY/月額300円、800円、追加パック200円。追加パック数量0〜2、Plusは追加不可。税込総額として価格を登録し、追加税を自動加算する設定は使用しない。Portalは支払方法変更、請求履歴、期間末解約を有効にし、プラン・数量変更は現段階では無効にする。
+価格はJPYで、BASIC月額300円、Plus月額800円、Pro月額1,280円。追加チャンネル3件または追加サーバー1件につき月額200円。税込総額として価格を登録し、追加税を自動加算する設定は使用しない。Portalは支払方法変更、請求履歴、期間末解約を有効にし、プラン・数量変更はDPI-Bot側の確認画面から行う。
+
+プラン変更前は `POST /v1/invoices/create_preview` で基本プランの差額だけを見積もり、同じ `proration_date` を確定時のSubscription更新に使用する。追加オプションは別のSubscription更新として `proration_behavior=none` を指定し、日割り請求・日割り返金を行わず次回26日から月額へ反映する。
 
 Webhook: /api/supporter/stripe/webhook。対象はcheckout.session.completed/expired、customer.subscription.created/updated/deleted、invoice.paid/payment_failed。raw body署名検証、5分の許容差、テストイベント限定。メンテナンス・ブラウザCSRFから独立して受信。
 
 契約状態はStripeから都度取得し、順不同Webhookの内容で状態を上書きしない。イベントIDを保存。現時点では配信権限への接続なし。
 
-POST /api/supporter/billing/checkout: {plan:"supporter"|"plus",packs:0|1|2}。
+POST /api/supporter/billing/checkout: {plan:"supporter"|"plus"|"pro",channelPacks:0..5,serverPacks:0..5}。
+POST /api/supporter/billing/preview-update: 契約変更の料金・利用枠プレビュー。
+POST /api/supporter/billing/update: プレビューの `prorationDate` と同じ選択内容を確定。
 POST /api/supporter/billing/portal: {}。
 GET /api/supporter/billing/status: 現在の契約状態。
 POSTはDiscordセッション、同一Origin、x-reuse-csrfが必要。
 
 決済作成前にD1へ固定パラメータと冪等キーを保存し、同時クリックは同じCheckoutを再利用。契約存在時は新規決済を拒否。別条件での再作成は既存Sessionの期限切れ後。通信断で作成結果不明のまま期限が過ぎた場合は自動再課金をせず管理者確認を要求。
 
-未完: 既存契約のプラン/追加パック変更と日割り見積、解約後の再契約、Webhookイベント保持期限、ブラウザE2E、実環境Secrets/価格/Portal/Webhook設定。現段階で本番公開・課金開始しない。
+未完: 解約後の再契約、Webhookイベント保持期限、ブラウザE2E、配信プログラムへの権限接続。現段階で本番公開・課金開始しない。
