@@ -1,12 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHmac} from 'node:crypto';
-import {selection,billingReady,billingSchedule,creditsFromBalance,subscriptionSummary,verifySignature} from '../worker/supporter-billing.js';
+import {billingAction,selection,billingReady,billingSchedule,creditsFromBalance,subscriptionSummary,verifySignature} from '../worker/supporter-billing.js';
 import {supporterAdminAccount} from '../worker/supporter.js';
 import {readFile} from 'node:fs/promises';
 test('plan, channel and server add-ons are server controlled',()=>{
- assert.deepEqual(selection({plan:'supporter',channelPacks:2,serverPacks:1}),{plan:'supporter',packs:2,channelPacks:2,serverPacks:1,monthly:900,channels:8,servers:2});
- assert.deepEqual(selection({plan:'plus',channelPacks:1,serverPacks:0}),{plan:'plus',packs:1,channelPacks:1,serverPacks:0,monthly:1000,channels:13,servers:1});
+ assert.deepEqual(selection({plan:'supporter',channelPacks:2,serverPacks:1}),{plan:'supporter',packs:2,channelPacks:2,serverPacks:1,baseMonthly:300,monthly:900,channels:8,servers:2,rules:5,complexConditions:false,multiDestination:false});
+ assert.deepEqual(selection({plan:'plus',channelPacks:1,serverPacks:0}),{plan:'plus',packs:1,channelPacks:1,serverPacks:0,baseMonthly:800,monthly:1000,channels:13,servers:3,rules:15,complexConditions:false,multiDestination:false});
+ assert.deepEqual(selection({plan:'pro',channelPacks:0,serverPacks:0}),{plan:'pro',packs:0,channelPacks:0,serverPacks:0,baseMonthly:1280,monthly:1280,channels:20,servers:5,rules:30,complexConditions:true,multiDestination:true});
  for(const v of [{plan:'supporter',channelPacks:6,serverPacks:0},{plan:'supporter',channelPacks:0,serverPacks:-1},{plan:'supporter',channelPacks:'1',serverPacks:0},{plan:'unknown',channelPacks:0,serverPacks:0}])assert.throws(()=>selection(v));
 });
 test('billing is anchored to the 26th JST and late-month signup charges two months',()=>{
@@ -18,7 +19,7 @@ test('billing is anchored to the 26th JST and late-month signup charges two mont
  assert.equal(yearEnd.anchor,Math.floor(Date.parse('2027-01-25T15:00:00Z')/1000));
 });
 test('live secrets can never enable billing',()=>{
- const env={SUPPORTER_BILLING_MODE:'test',STRIPE_SECRET_KEY:'sk_live_example',STRIPE_WEBHOOK_SECRET:'x',STRIPE_PRICE_SUPPORTER:'x',STRIPE_PRICE_PLUS:'x',STRIPE_PRICE_ADDON:'x',STRIPE_PORTAL_CONFIG:'x'};
+ const env={SUPPORTER_BILLING_MODE:'test',STRIPE_SECRET_KEY:'sk_live_example',STRIPE_WEBHOOK_SECRET:'x',STRIPE_PRICE_SUPPORTER:'x',STRIPE_PRICE_PLUS:'x',STRIPE_PRICE_PRO:'x',STRIPE_PRICE_ADDON:'x',STRIPE_PORTAL_CONFIG:'x'};
  assert.equal(billingReady(env),false);env.STRIPE_SECRET_KEY='sk_test_example';assert.equal(billingReady(env),true);
  env.STRIPE_SECRET_KEY='rk_test_example';assert.equal(billingReady(env),true);
  env.STRIPE_SECRET_KEY='rk_live_example';assert.equal(billingReady(env),false);
@@ -63,7 +64,12 @@ test('paid plans stay separate from secondary-use applications and private in na
  assert.match(billingSource,/subscription_data\[billing_cycle_anchor\]/);
  assert.match(billingSource,/subscription_data\[proration_behavior\].*none/);
  assert.match(billingSource,/初回利用料（当月分・翌月分の2か月分）/);
+ assert.match(billingSource,/invoices\/create_preview/);
+ assert.match(billingSource,/proration_behavior:'none'/);
+ assert.match(billingSource,/previewSubscriptionUpdate/);
  assert.match(basicHtml,/26〜31日の申込/);
+ assert.match(basicHtml,/Pro/);
+ assert.match(basicHtml,/追加オプションの変更には日割り計算を適用しません/);
 });
 test('admin billing operations require confirmation, reason, same-origin and audit logging',async()=>{
  const [worker,html,script]=await Promise.all([
@@ -83,6 +89,35 @@ test('Stripe customer balance converts to non-negative yen credits',()=>{
  assert.equal(creditsFromBalance(0),0);
  assert.equal(creditsFromBalance(200),0);
 });
+test('update preview prorates only the base plan and confirms options without proration',async()=>{
+ const env={SUPPORTER_BILLING_MODE:'test',STRIPE_SECRET_KEY:'rk_test_example',STRIPE_WEBHOOK_SECRET:'whsec_x',STRIPE_PRICE_SUPPORTER:'price_basic',STRIPE_PRICE_PLUS:'price_plus',STRIPE_PRICE_PRO:'price_pro',STRIPE_PRICE_ADDON:'price_addon',STRIPE_PORTAL_CONFIG:'bpc_x',SUPPORTER_PUBLIC_ORIGIN:'https://dpi-bot.com'};
+ const current={id:'sub_x',status:'active',customer:'cus_x',start_date:1700000000,metadata:{dpi_channel_packs:'0',dpi_server_packs:'0'},items:{data:[{id:'si_base',quantity:1,current_period_start:1700000000,current_period_end:Date.now()/1000+86400,price:{id:'price_basic',unit_amount:300,currency:'jpy'}}]}};
+ const db={prepare(sql){return{bind(){return this;},async first(){if(sql.includes('supporter_accounts'))return{discord_user_id:'123',billing_email:'user@example.jp'};if(sql.includes('supporter_billing'))return{discord_user_id:'123',customer_id:'cus_x'};return null;},async run(){return{meta:{changes:1}};}};}};
+ const calls=[];const originalFetch=globalThis.fetch;
+ globalThis.fetch=async(url,init={})=>{
+  const path=new URL(url).pathname;const params=new URLSearchParams(init.body||'');calls.push({path,method:init.method||'GET',params});
+  let data={livemode:false};
+  if(path==='/v1/subscriptions')data={livemode:false,data:[current]};
+  else if(path==='/v1/invoices/create_preview')data={livemode:false,lines:{data:[{amount:-100,parent:{subscription_item_details:{proration:true}}},{amount:700,parent:{subscription_item_details:{proration:true}}},{amount:1280,parent:{subscription_item_details:{proration:false}}}]}};
+  else if(path==='/v1/customers/cus_x'&&(init.method||'GET')==='GET')data={livemode:false,balance:-100};
+  else if(path==='/v1/subscriptions/sub_x')data={...current,livemode:false};
+  return new Response(JSON.stringify(data),{status:200,headers:{'content-type':'application/json'}});
+ };
+ try{
+  const previewResponse=await billingAction(new Request('https://dpi-bot.com/api/supporter/billing/preview-update'),env,db,'123',{plan:'pro',channelPacks:1,serverPacks:0});
+  const preview=await previewResponse.json();assert.equal(preview.planProration,600);assert.equal(preview.creditApplied,100);assert.equal(preview.immediateDue,500);assert.equal(preview.next.servers,5);assert.equal(preview.next.channels,23);
+  const previewCall=calls.find(call=>call.path==='/v1/invoices/create_preview');assert.equal(previewCall.params.get('subscription_details[items][0][price]'),'price_pro');assert.equal(previewCall.params.get('subscription_details[items][1][price]'),null);
+  calls.length=0;
+  const requestId='123e4567-e89b-42d3-a456-426614174000';
+  const updateResponse=await billingAction(new Request('https://dpi-bot.com/api/supporter/billing/update'),env,db,'123',{plan:'pro',channelPacks:1,serverPacks:0,prorationDate:preview.prorationDate,requestId});
+  assert.equal(updateResponse.status,200);
+  const updates=calls.filter(call=>call.path==='/v1/subscriptions/sub_x');
+  const base=updates.find(call=>call.params.get('proration_behavior')==='always_invoice');
+  const options=updates.find(call=>call.params.get('proration_behavior')==='none');
+  assert.equal(base.params.get('proration_date'),String(preview.prorationDate));assert.equal(base.params.get('items[0][price]'),'price_pro');
+  assert.equal(options.params.get('items[0][price]'),'price_addon');assert.equal(options.params.get('items[0][quantity]'),'1');assert.equal(options.params.get('proration_date'),null);
+ } finally {globalThis.fetch=originalFetch;}
+});
 test('supporter UI avoids WebKit URL constructor errors for Stripe redirects',async()=>{
  const source=await readFile(new URL('../site/supporter/app.js',import.meta.url),'utf8');
  assert.match(source,/function stripeDestination\(value\)/);
@@ -98,6 +133,9 @@ test('supporter rule creation is resilient to WebKit input and channel errors',a
  assert.match(source,/rule\.magnitudeMode==='threshold'/);
  assert.match(source,/rule\.intensityMode==='threshold'/);
  assert.match(source,/server-warning/);
+ assert.match(source,/billing\/preview-update/);
+ assert.match(source,/billing-preview-dialog/);
+ assert.doesNotMatch(source,/window\.confirm\('契約内容を更新/);
  assert.match(source,/rules\.push\(normalizeRule[\s\S]+render\(\);[\s\S]+await loadChannels/);
  assert.match(source,/チャンネルを再取得/);
 });

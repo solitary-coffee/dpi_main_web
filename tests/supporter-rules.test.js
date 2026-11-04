@@ -88,3 +88,12 @@ test('BASICの通知ルールは1つのDiscordサーバーだけに限定する'
  assert.throws(()=>normalizeSupporterRules(rules,[...guilds,second]),/1サーバー/);
  assert.equal(normalizeSupporterRules(rules,[...guilds,second],{servers:2,channels:2}).length,2);
 });
+
+test('PROだけOR条件と複数配信先を保存できる',()=>{
+ const proRule={...base,channelIds:['98765432109876543','87654321098765432'],conditionLogic:'or'};
+ assert.throws(()=>normalizeSupporterRules([proRule],guilds,{servers:1,channels:10,rules:15,complexConditions:false,multiDestination:false}),/PROプラン/);
+ const normalized=normalizeSupporterRules([proRule],guilds,{servers:5,channels:20,rules:30,complexConditions:true,multiDestination:true})[0];
+ assert.deepEqual(normalized.channelIds,proRule.channelIds);
+ assert.equal(normalized.channelId,proRule.channelIds[0]);
+ assert.equal(normalized.conditionLogic,'or');
+});

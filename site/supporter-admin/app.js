@@ -28,7 +28,7 @@ function setStatus(message, type = '') {
 }
 
 async function loadAccounts() {
- setStatus('BASICの登録・契約情報を読み込み中…','info');
+ setStatus('有料プランの登録・契約情報を読み込み中…','info');
  try {
   const response = await fetch('/site/supporter-admin/api/accounts',{credentials:'same-origin',headers:{Accept:'application/json'}});
   const data = await response.json().catch(() => ({}));
@@ -45,7 +45,7 @@ function renderSummary() {
  const subscriptions = accounts.flatMap(account => account.subscriptions || []);
  const active = subscriptions.filter(subscription => ACTIVE_STATUSES.has(subscription.status));
  const items = [
-  ['BASIC登録者',accounts.length],
+  ['有料プラン登録者',accounts.length],
   ['有効・対応中の契約',active.length],
   ['月額合計',money(active.reduce((sum,item)=>sum+Number(item.amount||0),0),'jpy')],
   ['期間末解約予定',active.filter(item=>item.cancelAtPeriodEnd).length],
@@ -60,7 +60,7 @@ function renderAccounts() {
  const query=$('account-search').value.trim().toLowerCase();
  const filtered=accounts.filter(account=>`${account.discordUserId} ${account.billingEmail||''} ${(account.subscriptions||[]).map(item=>item.plan).join(' ')}`.toLowerCase().includes(query));
  const container=$('accounts');container.replaceChildren();
- if(!filtered.length){container.append(element('p','empty-list',query?'条件に一致する登録者はいません。':'BASIC登録者はいません。'));return;}
+ if(!filtered.length){container.append(element('p','empty-list',query?'条件に一致する登録者はいません。':'有料プラン登録者はいません。'));return;}
  for(const account of filtered)container.append(accountCard(account));
 }
 
@@ -93,9 +93,11 @@ function subscriptionCard(subscription) {
 
 function openAction(account) {
  selectedAccount=account;
+ const current=(account.subscriptions||[]).find(subscription=>ACTIVE_STATUSES.has(subscription.status))||(account.subscriptions||[])[0];
  $('action-target').textContent=account.discordUserId;
  $('action-kind').value='change_subscription';
- $('action-reason').value='';$('confirm-discord-id').value='';$('action-amount').value='';$('payment-description').value='';$('change-server-packs').value='0';
+ $('action-reason').value='';$('confirm-discord-id').value='';$('action-amount').value='';$('payment-description').value='';
+ $('change-plan').value=current?.planId||'supporter';$('change-packs').value=String(current?.channelPacks||0);$('change-server-packs').value=String(current?.serverPacks||0);
  $('action-result').replaceChildren();updateActionFields();$('action-dialog').showModal();
 }
 
