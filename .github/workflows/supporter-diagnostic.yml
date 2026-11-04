@@ -20,7 +20,7 @@ jobs:
           node-version: "22"
       - name: Inspect recent supporter responses and schema
         run: |
-          npx --yes wrangler@4.157.0 d1 execute REUSE_DB --remote --command "SELECT occurred_at, method, path, status, duration_ms FROM access_log_events WHERE path LIKE '/api/supporter/%' ORDER BY occurred_at DESC LIMIT 30; PRAGMA table_info(supporter_accounts); SELECT COUNT(*) AS supporter_accounts FROM supporter_accounts;"
+          npx --yes wrangler@4.157.0 d1 execute REUSE_DB --remote --command "SELECT occurred_at, method, path, status, duration_ms FROM access_log_events WHERE path LIKE '/api/supporter/%' ORDER BY occurred_at DESC LIMIT 30; PRAGMA table_info(supporter_accounts); SELECT COUNT(*) AS supporter_accounts FROM supporter_accounts; SELECT COUNT(*) AS billing_rows, SUM(CASE WHEN customer_id IS NOT NULL THEN 1 ELSE 0 END) AS rows_with_customer, SUM(CASE WHEN checkout_id IS NOT NULL THEN 1 ELSE 0 END) AS rows_with_checkout FROM supporter_billing;"
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
