@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHmac} from 'node:crypto';
-import {billingAction,selection,billingReady,billingSchedule,creditsFromBalance,customerInvoices,prorationBreakdown,scheduledChangeSummary,subscriptionSummary,verifySignature} from '../worker/supporter-billing.js';
+import {billingAction,selection,billingReady,billingSchedule,creditsFromBalance,customerInvoices,prorationBreakdown,scheduledChangeSummary,staleCheckoutAttempt,subscriptionSummary,verifySignature} from '../worker/supporter-billing.js';
 import {supporterAdminAccount} from '../worker/supporter.js';
 import {readFile} from 'node:fs/promises';
 test('plan, channel and server add-ons are server controlled',()=>{
@@ -17,6 +17,13 @@ test('billing is anchored to the 26th JST and late-month signup charges two mont
  assert.deepEqual(after,{billingDay:26,anchor:Math.floor(Date.parse('2026-12-25T15:00:00Z')/1000),initialMonths:2,lateMonth:true});
  const yearEnd=billingSchedule(Date.parse('2026-12-31T03:00:00Z'));
  assert.equal(yearEnd.anchor,Math.floor(Date.parse('2027-01-25T15:00:00Z')/1000));
+});
+test('abandoned pre-Checkout state is detected without touching created sessions',()=>{
+ assert.equal(staleCheckoutAttempt({checkout_key:'key',checkout_id:null,checkout_params:'{"expires_at":"100"}'},101),true);
+ assert.equal(staleCheckoutAttempt({checkout_key:'key',checkout_id:null,checkout_params:'{"expires_at":"200"}'},101),false);
+ assert.equal(staleCheckoutAttempt({checkout_key:'key',checkout_id:null,checkout_params:'invalid'},101),true);
+ assert.equal(staleCheckoutAttempt({checkout_key:'key',checkout_id:'cs_test_x',checkout_params:'{"expires_at":"100"}'},101),false);
+ assert.equal(staleCheckoutAttempt({checkout_key:null,checkout_id:null,checkout_params:null},101),false);
 });
 test('live secrets can never enable billing',()=>{
  const env={SUPPORTER_BILLING_MODE:'test',STRIPE_SECRET_KEY:'sk_live_example',STRIPE_WEBHOOK_SECRET:'x',STRIPE_PRICE_SUPPORTER:'x',STRIPE_PRICE_PLUS:'x',STRIPE_PRICE_PRO:'x',STRIPE_PRICE_ADDON:'x',STRIPE_PORTAL_CONFIG:'x'};
@@ -82,7 +89,10 @@ test('admin billing operations require confirmation, reason, same-origin and aud
  assert.match(worker,/assertAdminOrigin\(request\)/);
  assert.match(worker,/input\.confirmDiscordUserId !== uid/);
  assert.match(worker,/writeSupporterAudit/);
- for(const action of ['change_subscription','grant_credit','remove_credit','create_payment_link','refund_latest','cancel_at_period_end','cancel_immediately'])assert.match(html,new RegExp(`value="${action}"`));
+ for(const action of ['change_subscription','grant_credit','remove_credit','create_payment_link','refund_latest','cancel_at_period_end','cancel_immediately','reset_checkout_state'])assert.match(html,new RegExp(`value="${action}"`));
+ assert.match(worker,/input\.action === 'reset_checkout_state'[\s\S]*SUPPORTER_BILLING_MODE !== 'test'/);
+ assert.match(worker,/SET checkout_key=NULL, checkout_id=NULL, checkout_params=NULL/);
+ assert.match(script,/Stripe Customerと契約情報は保持されます/);
  assert.match(script,/crypto\.randomUUID\(\)/);
  assert.doesNotMatch(script,/\.innerHTML\s*=/);
 });
