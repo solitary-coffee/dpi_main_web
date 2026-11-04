@@ -81,12 +81,23 @@ function channelField(article, rule) {
  const choices = channels.map(channel => [channel.id, `${channel.announcement ? '📣' : '#'} ${channel.name}`]);
  let input;
  if(entitlements.multiDestination){
-  const wrapper=document.createElement('label');const caption=document.createElement('span');caption.textContent='通知チャンネル（複数選択可）';
-  input=document.createElement('select');input.multiple=true;input.size=Math.min(6,Math.max(3,choices.length));
-  for(const [value,text] of choices){const option=document.createElement('option');option.value=value;option.textContent=text;option.selected=(rule.channelIds||[rule.channelId]).includes(value);input.append(option);}
-  if(!choices.length){const option=document.createElement('option');option.textContent='利用可能なチャンネルがありません';option.disabled=true;input.append(option);}
-  input.onchange=()=>{rule.channelIds=[...input.selectedOptions].map(option=>option.value);rule.channelId=rule.channelIds[0]||'';};
-  wrapper.append(caption,input);article.append(wrapper);
+  const wrapper=document.createElement('fieldset');wrapper.className='multi-channel-field';
+  const caption=document.createElement('legend');caption.textContent='通知チャンネル（複数選択可）';wrapper.append(caption);
+  const available=new Set(choices.map(([value])=>value));
+  const selected=new Set((rule.channelIds||[rule.channelId].filter(Boolean)).filter(value=>available.has(value)));
+  rule.channelIds=[...selected];rule.channelId=rule.channelIds[0]||'';
+  const list=document.createElement('div');list.className='channel-check-list';
+  for(const [value,text] of choices){
+   const label=document.createElement('label');label.className='channel-check-option';
+   const checkbox=document.createElement('input');checkbox.type='checkbox';checkbox.value=value;checkbox.checked=selected.has(value);
+   checkbox.onchange=()=>{
+    if(checkbox.checked)selected.add(value);else selected.delete(value);
+    rule.channelIds=[...selected];rule.channelId=rule.channelIds[0]||'';
+   };
+   const name=document.createElement('span');name.textContent=text;label.append(checkbox,name);list.append(label);
+  }
+  if(!choices.length){const empty=document.createElement('p');empty.className='channel-empty';empty.textContent='利用可能なチャンネルがありません';list.append(empty);}
+  wrapper.append(list);article.append(wrapper);
  } else {
   input = field(article, rule, 'channelId', '通知チャンネル', choices);
   input.onchange=()=>{rule.channelId=input.value;rule.channelIds=input.value?[input.value]:[];};
@@ -337,7 +348,6 @@ function showBillingPreview(result,requested){
   ['プラン',`${result.current.plan} → ${result.next.plan}`],
   ['月額',`${moneyText(result.current.monthly,'jpy')} → ${moneyText(result.next.monthly,'jpy')}`],
   ['月額差額',signedMoney(result.monthlyDifference)],
-  ['今回の基本プラン日割り差額',signedMoney(result.planProration)],
   ['利用クレジット',result.creditApplied?`−${moneyText(result.creditApplied,'jpy')}`:'なし'],
   ['今回のお支払い見込み',moneyText(result.immediateDue,'jpy')],
   ['次回更新日',dateText(result.nextRenewalAt)],
@@ -345,7 +355,15 @@ function showBillingPreview(result,requested){
   ['サーバー上限',`${result.current.servers} → ${result.next.servers}`],
   ['通知ルール上限',`${result.current.rules} → ${result.next.rules}`],
  ];
- if(result.creditGenerated)rows.splice(6,0,['差額から発生するクレジット',moneyText(result.creditGenerated,'jpy')]);
+ if(result.planChanged){
+  const breakdown=result.planProrationBreakdown||{unusedPlanCredit:0,newPlanCharge:Math.max(0,result.planProration),net:result.planProration};
+  rows.splice(3,0,
+   ['旧プラン未使用分（返金相当）',breakdown.unusedPlanCredit?`−${moneyText(breakdown.unusedPlanCredit,'jpy')}`:moneyText(0,'jpy')],
+   ['新プラン残期間分',moneyText(breakdown.newPlanCharge,'jpy')],
+   ['基本プランの今回差額',signedMoney(breakdown.net)],
+  );
+ }
+ if(result.creditGenerated)rows.splice(result.planChanged?9:6,0,['差額から発生するクレジット',moneyText(result.creditGenerated,'jpy')]);
  for(const [term,value] of rows){const dt=document.createElement('dt');dt.textContent=term;const dd=document.createElement('dd');dd.textContent=value;data.append(dt,dd);}
  const optionNote=document.createElement('p');optionNote.className='preview-notice';optionNote.textContent=result.notice;
  previewContent.append(heading,data,optionNote);

@@ -181,13 +181,20 @@ function adminChoice(input){
 function activeSubscription(list){
  return list.find(item=>['active','trialing','past_due','unpaid','paused'].includes(item.status))||list[0];
 }
+export function prorationBreakdown(lines){
+ const prorations=(lines||[]).filter(line=>line.parent?.subscription_item_details?.proration===true||line.proration===true);
+ const newPlanCharge=prorations.reduce((sum,line)=>sum+Math.max(0,Number(line.amount)||0),0);
+ const unusedPlanCredit=prorations.reduce((sum,line)=>sum+Math.max(0,-Number(line.amount||0)),0);
+ return {unusedPlanCredit,newPlanCharge,net:newPlanCharge-unusedPlanCredit};
+}
 async function previewSubscriptionUpdate(env,customer,current,choice,requestedProrationDate){
  const currentSummary=subscriptionSummary(current,env);
  const base=current.items?.data?.find(item=>item.price?.id!==env.STRIPE_PRICE_ADDON);
  if(!base?.id)fail('契約項目を確認できませんでした。',409);
  const prorationDate=Number.isInteger(requestedProrationDate)?requestedProrationDate:Math.floor(Date.now()/1000);
- let planProration=0;
- if(currentSummary.planId!==choice.plan){
+ const planChanged=currentSummary.planId!==choice.plan;
+ let planProrationBreakdown={unusedPlanCredit:0,newPlanCharge:0,net:0};
+ if(planChanged){
   const invoice=await stripe(env,'invoices/create_preview',{
    customer,subscription:current.id,
    'subscription_details[items][0][id]':base.id,
@@ -196,8 +203,9 @@ async function previewSubscriptionUpdate(env,customer,current,choice,requestedPr
    'subscription_details[proration_behavior]':'always_invoice',
    'subscription_details[proration_date]':String(prorationDate),
   });
-  planProration=(invoice.lines?.data||[]).filter(line=>line.parent?.subscription_item_details?.proration===true||line.proration===true).reduce((sum,line)=>sum+Number(line.amount||0),0);
+  planProrationBreakdown=prorationBreakdown(invoice.lines?.data);
  }
+ const planProration=planProrationBreakdown.net;
  const credits=await customerCredits(env,customer);
  const creditApplied=Math.min(credits,Math.max(0,planProration));
  return {
@@ -205,10 +213,10 @@ async function previewSubscriptionUpdate(env,customer,current,choice,requestedPr
   current:{plan:currentSummary.plan,planId:currentSummary.planId,monthly:currentSummary.amount,channels:currentSummary.channels,servers:currentSummary.servers,rules:currentSummary.rules},
   next:{plan:PLAN_CATALOG[choice.plan].name,planId:choice.plan,monthly:choice.monthly,channels:choice.channels,servers:choice.servers,rules:choice.rules,complexConditions:choice.complexConditions,multiDestination:choice.multiDestination},
   monthlyDifference:choice.monthly-currentSummary.amount,
-  planProration,creditApplied,immediateDue:Math.max(0,planProration-creditApplied),creditGenerated:Math.max(0,-planProration),
+  planChanged,planProration,planProrationBreakdown,creditApplied,immediateDue:Math.max(0,planProration-creditApplied),creditGenerated:Math.max(0,-planProration),
   optionChange:{currentChannelPacks:currentSummary.channelPacks,nextChannelPacks:choice.channelPacks,currentServerPacks:currentSummary.serverPacks,nextServerPacks:choice.serverPacks,prorated:false,effectiveAt:currentSummary.nextRenewalAt},
   nextRenewalAt:currentSummary.nextRenewalAt,
-  notice:'追加オプションは日割り請求・日割り返金を行わず、次回26日の請求から月額へ反映します。',
+  notice:`${planChanged?'基本プラン変更は、旧プランの未使用分を返金相当額として新プランの残期間分に充当し、差額を精算します。カードへ先に返金してから再決済する方式ではありません。差額がマイナスの場合はStripeクレジットとして今後の請求に充当します。':''}追加オプションは日割り請求・日割り返金を行わず、次回26日の請求から月額へ反映します。`,
  };
 }
 async function updateSubscription(env,current,choice,key,extra={},prorationDate){
