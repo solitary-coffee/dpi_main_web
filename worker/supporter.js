@@ -13,6 +13,55 @@ const notFound = () => new Response('Not Found', {
 });
 
 function clean(value) { return typeof value === 'string' ? value.trim() : ''; }
+export const SUPPORTER_REGIONS = Object.freeze([
+ ['all', '全国'],
+ ['hokkaido', '北海道地方'],
+ ['tohoku', '東北地方'],
+ ['kanto-koshin', '関東甲信地方'],
+ ['hokuriku', '北陸地方'],
+ ['tokai', '東海地方'],
+ ['kinki', '近畿地方'],
+ ['chugoku', '中国地方'],
+ ['shikoku', '四国地方'],
+ ['kyushu-north', '九州北部地方（山口県を含む）'],
+ ['kyushu-south-amami', '九州南部・奄美地方'],
+ ['okinawa', '沖縄地方'],
+]);
+export const WEATHER_LEVELS = Object.freeze([
+ ['all', 'すべての気象情報'],
+ ['1', 'レベル1 早期注意情報以上'],
+ ['2', 'レベル2 注意報以上'],
+ ['3', 'レベル3 警報以上'],
+ ['4', 'レベル4 危険警報以上'],
+ ['5', 'レベル5 特別警報'],
+]);
+const INTENSITIES = new Set(['1','2','3','4','5-','5+','6-','6+','7']);
+const REGION_IDS = new Set(SUPPORTER_REGIONS.map(([id]) => id));
+const WEATHER_LEVEL_IDS = new Set(WEATHER_LEVELS.map(([id]) => id));
+
+export function normalizeSupporterRules(input, guilds) {
+ if (!Array.isArray(input) || input.length > 5) throw Object.assign(new Error('通知ルールは5件までです。'),{status:400});
+ return input.map(rule => {
+  const name = clean(rule?.name);
+  const guildId = clean(rule?.guildId);
+  const channelId = clean(rule?.channelId);
+  const type = clean(rule?.type);
+  const region = clean(rule?.region) || 'all';
+  if (!name || name.length > 80 || !guilds.some(g=>g.id===guildId) || !/^\d{17,20}$/.test(channelId)
+      || !['earthquake','eew','weather'].includes(type) || !REGION_IDS.has(region)) {
+   throw Object.assign(new Error('入力内容とサーバー管理権限を確認してください。'),{status:400});
+  }
+  if (type === 'weather') {
+   const weatherLevel = clean(rule?.weatherLevel) || 'all';
+   if (!WEATHER_LEVEL_IDS.has(weatherLevel)) throw Object.assign(new Error('気象情報の警戒レベルを確認してください。'),{status:400});
+   return {name,guildId,channelId,type,region,intensity:'',weatherLevel};
+  }
+  const intensity = clean(rule?.intensity);
+  if (!INTENSITIES.has(intensity)) throw Object.assign(new Error('通知する最低震度を確認してください。'),{status:400});
+  return {name,guildId,channelId,type,region,intensity,weatherLevel:''};
+ });
+}
+
 export function supporterPublicEnabled(env) {
  return clean(env.SUPPORTER_PUBLIC_ENABLED).toLowerCase() === 'true';
 }
@@ -93,12 +142,9 @@ export async function handleSupporterRequest(request, env) {
   }
   if (path === '/api/supporter/settings' && request.method === 'PUT') {
    const input = await readJson(request);
-   if (!Number.isInteger(input.revision) || !Array.isArray(input.rules) || input.rules.length > 5) return response({message:'通知ルールは5件までです。'},400);
+   if (!Number.isInteger(input.revision)) return response({message:'更新情報が正しくありません。再読み込みしてください。'},400);
    const guilds = JSON.parse(session.guilds_json);
-   const rules = input.rules.map(rule => {
-    if (!guilds.some(g=>g.id===rule.guildId) || !/^\d{17,20}$/.test(rule.channelId) || !['earthquake','eew','weather'].includes(rule.type) || typeof rule.name !== 'string' || rule.name.length > 80 || typeof rule.region !== 'string' || rule.region.length > 100 || !['1','2','3','4','5-','5+','6-','6+','7'].includes(rule.intensity)) throw Object.assign(new Error('入力内容とサーバー管理権限を確認してください。'),{status:400});
-    return {name:rule.name,guildId:rule.guildId,channelId:rule.channelId,type:rule.type,region:rule.region,intensity:rule.intensity};
-   });
+   const rules = normalizeSupporterRules(input.rules, guilds);
    const result = await db.prepare('UPDATE supporter_accounts SET settings_json=?, revision=revision+1, updated_at=? WHERE discord_user_id=? AND revision=?').bind(JSON.stringify({rules}),new Date().toISOString(),uid,input.revision).run();
    if (!result.meta.changes) return response({message:'未登録、または別画面で更新されています。再読み込みしてください。'},409);
    return response({success:true,revision:input.revision+1});
