@@ -1,5 +1,6 @@
 import { requireSession, assertCsrf, assertSameOrigin, readJson } from './reuse.js';
 import { authenticateNewsletterAdmin } from './access.js';
+import { billingAction, billingReady } from './supporter-billing.js';
 
 const response = (data, status = 200) => Response.json(data, {status, headers: {'Cache-Control':'no-store'}});
 export async function handleSupporterRequest(request, env) {
@@ -20,9 +21,14 @@ export async function handleSupporterRequest(request, env) {
   const session = await requireSession(request, {...env,REUSE_DB:db});
   const uid = session.discord_user_id;
   if (request.method !== 'GET') { assertSameOrigin(request); assertCsrf(request,session); }
+  if (/^\/api\/supporter\/billing\/(checkout|portal|status)$/.test(path)) {
+   const expected=path.endsWith('/status')?'GET':'POST';
+   if(request.method!==expected)return response({message:'Method not allowed'},405);
+   return await billingAction(request,env,db,uid,request.method==='POST'?await readJson(request):{});
+  }
   if (path === '/api/supporter/account' && request.method === 'GET') {
    const account = await db.prepare('SELECT * FROM supporter_accounts WHERE discord_user_id=?').bind(uid).first();
-   return response({account,deliveryEnabled:false,billingEnabled:false});
+   return response({account,deliveryEnabled:false,billingEnabled:billingReady(env)});
   }
   if (path === '/api/supporter/account' && request.method === 'POST') {
    const now = new Date().toISOString();

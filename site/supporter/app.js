@@ -10,3 +10,14 @@ $('register').onclick=run(async()=>{await api('/api/supporter/account','POST',{}
 $('add').onclick=()=>{if(rules.length>=5)return status('下書きは5件までです。');rules.push({name:'新しいルール',guildId:session.guilds[0]?.id||'',channelId:'',type:'earthquake',region:'',intensity:'4'});render();};
 $('save').onclick=run(async()=>{const d=await api('/api/supporter/settings','PUT',{revision,rules});revision=d.revision;status('下書きを保存しました。配信には反映されません。');});
 run(load)();
+
+const billing=document.createElement('section');
+const title=document.createElement('h2');title.textContent='Stripe テスト決済';billing.append(title);
+const note=document.createElement('p');note.textContent='テスト専用です。実際のお支払い・配信は発生しません。決済完了後は契約状態を確認してください。';billing.append(note);
+const plan=document.createElement('select');plan.setAttribute('aria-label','テスト契約プラン');
+for(const [value,text] of [['supporter','Supporter 月額300円'],['plus','Plus 月額800円']]){const option=document.createElement('option');option.value=value;option.textContent=text;plan.append(option);}
+const packs=document.createElement('select');packs.setAttribute('aria-label','追加パック');
+for(let i=0;i<=2;i++){const option=document.createElement('option');option.value=i;option.textContent=`追加${i*3}チャンネル / 月額＋${i*200}円`;packs.append(option);}
+plan.onchange=()=>{packs.disabled=plan.value==='plus';if(packs.disabled)packs.value='0';};billing.append(plan,packs);
+for(const [label,action] of [['テスト決済へ','checkout'],['支払方法・解約の管理','portal'],['契約状態を確認','status']]){const button=document.createElement('button');button.textContent=label;button.onclick=run(async()=>{button.disabled=true;try{const result=await api(`/api/supporter/billing/${action}`,action==='status'?'GET':'POST',action==='status'?undefined:action==='checkout'?{plan:plan.value,packs:Number(packs.value)}:{});if(result.url){const url=new URL(result.url);if(url.protocol!=='https:'||!['checkout.stripe.com','billing.stripe.com'].includes(url.hostname))throw Error('不正な決済URLです。');location.assign(url.href);}else status(result.subscriptions.length?result.subscriptions.map(s=>`${s.status}${s.cancelAtPeriodEnd?'（期間末解約予定）':''}`).join(' / '):'契約はありません。');}finally{button.disabled=false;}});billing.append(button);}
+document.querySelector('main').append(billing);
