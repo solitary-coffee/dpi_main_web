@@ -20,6 +20,7 @@ const excluded = new Set([
     'site/ip-admin/index.html',
     'site/mail-admin/index.html',
     'site/reuse-admin/index.html',
+    'site/supporter-admin/index.html',
 ]);
 const expectedMenu = [
     ['/index.html', 'トップページ'],
@@ -59,7 +60,7 @@ test('公開ページの左メニューは同じ項目と順序を使用する',
         assert.deepEqual(links, expectedMenu, relativePath);
         checked += 1;
     }
-    assert.equal(checked, 60);
+    assert.equal(checked, 61);
 });
 
 test('配信一覧と申請用カタログの状態が一致する', async () => {

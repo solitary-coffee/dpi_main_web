@@ -167,6 +167,7 @@ async function systemSummary(env, admin) {
             { label: '配信系統', href: '/site/delivery-flow-admin/' },
             { label: '監査ログ', href: '/site/system-admin/audit/' },
             { label: '二次利用申請管理', href: '/site/reuse-admin/' },
+            { label: 'BASIC契約管理', href: '/site/supporter-admin/' },
             { label: 'お知らせ一括配信', href: '/site/mail-admin/' },
             { label: 'Discordお知らせ', href: '/site/discord-admin/' },
             { label: '配信先検索', href: '/site/channel-admin/' },

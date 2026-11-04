@@ -1,1 +1,57 @@
-<!doctype html><html lang="ja"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Supporter 管理 | DPI-Bot</title><link rel="stylesheet" href="/site/supporter/style.css"><main><h1>Supporter 開発者管理</h1><p>先行登録者の最新100件を表示します。決済・通知配信は未接続です。</p><p id="status" role="status"></p><section id="accounts"></section></main><script type="module" src="app.js"></script></html>
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+ <meta charset="UTF-8">
+ <meta name="viewport" content="width=device-width, initial-scale=1.0">
+ <meta name="robots" content="noindex,nofollow">
+ <title>BASIC契約管理 | DPI-Bot</title>
+ <link rel="icon" href="../../img/dpi.png" type="image/png">
+ <link rel="stylesheet" href="../admin-shell.css">
+ <link rel="stylesheet" href="style.css">
+</head>
+<body class="admin-shell">
+ <button id="menu-toggle-btn" type="button" aria-label="メニューを開く"><span></span><span></span><span></span></button>
+ <div class="overlay"></div>
+ <div class="page-container">
+  <nav class="sidebar" aria-label="管理メニュー">
+   <div class="sidebar-header"><h2>管理メニュー</h2></div>
+   <ul>
+    <li><a href="/">公式サイト</a></li><li><a href="/site/admin-center/">統合管理センター</a></li>
+    <li><a href="/site/system-admin/">システム運用</a></li><li><a href="/site/ec2-admin/">EC2管理</a></li>
+    <li><a href="/site/xml-admin/">XML配信</a></li><li><a href="/site/status-admin/">ステータス管理</a></li>
+    <li><a href="/site/delivery-admin/">配信統計</a></li><li><a href="/site/delivery-flow-admin/">配信系統</a></li>
+    <li><a href="/site/system-admin/audit/">監査ログ</a></li><li><a href="/site/channel-admin/">配信先検索</a></li>
+    <li><a href="/site/reuse-admin/">二次利用申請管理</a></li><li><a href="/site/supporter-admin/" class="active" aria-current="page">BASIC契約管理</a></li>
+    <li><a href="/site/mail-admin/">メール配信管理</a></li><li><a href="/site/discord-admin/">Discordお知らせ管理</a></li>
+    <li><a href="/site/ip-admin/">IP遮断管理</a></li><li><a href="/cdn-cgi/access/logout">ログアウト</a></li>
+   </ul>
+  </nav>
+  <main class="main-content">
+   <header class="topbar"><div><p class="eyebrow">BILLING OPERATIONS</p><h1>BASIC契約管理</h1></div><div class="admin-bar"><button id="refresh-btn" type="button">最新情報に更新</button></div></header>
+   <div id="global-status" class="status" role="alert" aria-live="assertive"></div>
+   <section class="admin-section" aria-labelledby="summary-title"><div class="section-heading"><div><p class="eyebrow">OVERVIEW</p><h2 id="summary-title">契約状況</h2></div><span id="billing-mode"></span></div><div id="summary-cards" class="metric-grid"></div></section>
+   <section class="admin-section" aria-labelledby="accounts-title">
+    <div class="section-heading"><div><p class="eyebrow">ACCOUNTS</p><h2 id="accounts-title">登録者・契約一覧</h2></div></div>
+    <label class="search-label">Discord ID・プランで絞り込み<input id="account-search" type="search" autocomplete="off" placeholder="Discord ID / BASIC / Plus"></label>
+    <div id="accounts" class="account-list" aria-live="polite"></div>
+   </section>
+  </main>
+ </div>
+ <dialog id="action-dialog" aria-labelledby="action-title">
+  <form id="action-form" class="action-form">
+   <div class="dialog-heading"><div><p class="eyebrow">STRIPE OPERATION</p><h2 id="action-title">契約操作</h2></div><button id="dialog-close" type="button" class="close-btn">閉じる</button></div>
+   <p>対象Discord ID: <strong id="action-target"></strong></p>
+   <label>操作<select id="action-kind" required><option value="change_subscription">プラン・追加チャンネル数を変更</option><option value="create_payment_link">臨時の支払いURLを作成</option><option value="refund_latest">直近の支払いを返金</option><option value="cancel_at_period_end">期間末で契約終了</option><option value="cancel_immediately">契約を即時終了</option></select></label>
+   <div id="change-fields" class="field-grid"><label>変更後のプラン<select id="change-plan"><option value="supporter">BASIC 月額300円</option><option value="plus">Plus 月額800円</option></select></label><label>追加チャンネル<select id="change-packs"><option value="0">追加なし</option><option value="1">＋3チャンネル / 月額＋200円</option><option value="2">＋6チャンネル / 月額＋400円</option></select></label></div>
+   <div id="amount-fields" class="field-grid hidden"><label>金額（円）<input id="action-amount" type="number" min="1" max="1000000" step="1" inputmode="numeric"></label><label id="description-wrap">支払い内容<input id="payment-description" type="text" maxlength="80" placeholder="追加3チャンネル利用料"></label></div>
+   <label>操作理由<textarea id="action-reason" rows="3" minlength="5" maxlength="500" required placeholder="ユーザーからの依頼内容や対応理由"></textarea></label>
+   <div class="warning-box">実行前に対象を再確認してください。契約変更・返金・終了はStripeへ即時送信され、監査ログに記録されます。</div>
+   <label>確認のため対象Discord IDを再入力<input id="confirm-discord-id" type="text" inputmode="numeric" pattern="[0-9]{17,20}" required autocomplete="off"></label>
+   <button id="action-submit" class="danger-btn" type="submit">確認して実行</button>
+   <div id="action-result" class="action-result" role="status" aria-live="polite"></div>
+  </form>
+ </dialog>
+ <script src="../../script.js"></script>
+ <script type="module" src="app.js"></script>
+</body>
+</html>

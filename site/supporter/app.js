@@ -215,7 +215,7 @@ contract.textContent = '契約情報は「契約情報を更新」から確認�
 billing.append(title,note,contract);
 const plan = document.createElement('select');
 plan.setAttribute('aria-label','テスト契約プラン');
-selectOptions(plan,[['supporter','Supporter 月額300円'],['plus','Plus 月額800円']],'supporter');
+selectOptions(plan,[['supporter','BASIC 月額300円'],['plus','Plus 月額800円']],'supporter');
 const packs = document.createElement('select');
 packs.setAttribute('aria-label','追加パック');
 selectOptions(packs,[[0,'追加なし'],[1,'追加3チャンネル / 月額＋200円'],[2,'追加6チャンネル / 月額＋400円']],0);
