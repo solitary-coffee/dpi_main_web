@@ -2,6 +2,7 @@ let session;
 let revision = 0;
 let rules = [];
 let options;
+let entitlements = {servers:1,channels:2};
 const channelsByGuild = new Map();
 
 const $ = id => document.getElementById(id);
@@ -58,11 +59,13 @@ function field(article, rule, key, label, values, attributes = {}) {
  input.onchange = async () => {
   rule[key] = input.value;
   if (key === 'guildId') {
-   for (const item of rules) { item.guildId = input.value; item.channelId = ''; }
-   status('チャンネルを取得しています…');
-   try { await loadChannels(rule.guildId, true); status(''); } catch (error) { status(error.message); }
+   rule.channelId = '';
+   const index=rules.indexOf(rule);
+   const different=index>0&&rules[0]?.guildId&&rule.guildId!==rules[0].guildId;
+   status(different?'別のサーバーが選択されています。契約中のサーバー数上限を確認してください。':'チャンネルを取得しています…');
+   try { await loadChannels(rule.guildId, true); if(!different)status(''); } catch (error) { status(error.message); }
    render();
-  } else if (key === 'type' || key === 'detail') {
+  } else if (key === 'type' || key === 'detail' || key === 'intensityMode' || key === 'magnitudeMode') {
    if (key === 'type') rule.detail = 'all';
    render();
   }
@@ -105,11 +108,10 @@ function normalizeRule(rule) {
   type,
   detail,
   region: rule.region || 'all',
+  intensityMode: rule.intensityMode || (rule.intensityChange === 'increase' ? 'increase' : rule.intensity ? 'threshold' : 'all'),
   intensity: rule.intensity || '4',
-  intensityChange: rule.intensityChange || 'all',
+  magnitudeMode: rule.magnitudeMode || (rule.magnitudeChange === 'increase' ? 'increase' : rule.magnitudeMin !== null && rule.magnitudeMin !== undefined && rule.magnitudeMin !== '' ? 'threshold' : 'all'),
   magnitudeMin: rule.magnitudeMin ?? '',
-  magnitudeMax: rule.magnitudeMax ?? '',
-  magnitudeChange: rule.magnitudeChange || 'all',
   weatherLevel: rule.weatherLevel || 'all',
   warningLevel: rule.warningLevel || 'all',
   eewWarningAreaMode: rule.eewWarningAreaMode || 'all',
@@ -126,6 +128,12 @@ function render() {
   article.append(heading);
   field(article, rule, 'name', 'ルール名', null, {maxlength:'80'});
   field(article, rule, 'guildId', 'サーバー', session.guilds.map(guild => [guild.id, guild.name]));
+  if(index>0&&rules[0]?.guildId&&rule.guildId!==rules[0].guildId){
+   const warning=document.createElement('p');warning.className='server-warning';warning.setAttribute('role','alert');
+   const used=new Set(rules.slice(0,index+1).map(item=>item.guildId).filter(Boolean)).size;
+   warning.textContent=`別サーバーを使用しています（${used}/${entitlements.servers}サーバー）。上限を超える場合はサーバー追加オプションが必要です。`;
+   article.append(warning);
+  }
   channelField(article, rule);
   field(article, rule, 'type', '情報種別', TYPES);
   field(article, rule, 'detail', '詳細', detailOptions(rule.type));
@@ -135,11 +143,10 @@ function render() {
    if (WEATHER_ALERT_DETAILS.has(rule.detail)) field(article, rule, 'weatherLevel', '警戒レベル', options.weatherLevels);
    if (WEATHER_WARNING_DETAILS.has(rule.detail)) field(article, rule, 'warningLevel', '警報・注意報', options.warningLevels);
   } else {
-   field(article, rule, 'intensity', '最低震度', INTENSITIES);
-   field(article, rule, 'intensityChange', '震度変化', options.changeDirections);
-   field(article, rule, 'magnitudeMin', 'マグニチュード下限', null, {inputmode:'decimal',placeholder:'指定なし（0〜10）'});
-   field(article, rule, 'magnitudeMax', 'マグニチュード上限', null, {inputmode:'decimal',placeholder:'指定なし（0〜10）'});
-   field(article, rule, 'magnitudeChange', 'マグニチュード変化', options.changeDirections);
+   field(article, rule, 'intensityMode', '震度の通知条件', options.thresholdModes);
+   if(rule.intensityMode==='threshold')field(article, rule, 'intensity', '震度の閾値', INTENSITIES);
+   field(article, rule, 'magnitudeMode', 'マグニチュードの通知条件', options.thresholdModes);
+   if(rule.magnitudeMode==='threshold')field(article, rule, 'magnitudeMin', 'マグニチュードの閾値', null, {inputmode:'decimal',placeholder:'0〜10'});
   }
   const remove = document.createElement('button');
   remove.type = 'button';
@@ -160,7 +167,7 @@ async function load() {
  $('user').textContent = session.user.username;
  $('register').disabled = false;
  options = await api('/api/supporter/options');
- const {account} = await api('/api/supporter/account');
+ const {account,billingEnabled} = await api('/api/supporter/account');
  $('billing-email').value = account?.billing_email || '';
  $('add').disabled = $('save').disabled = !account;
  $('register').textContent = account ? 'メールアドレスを更新' : 'BASICに登録する（決済前）';
@@ -169,6 +176,14 @@ async function load() {
   rules = JSON.parse(account.settings_json).rules.map(normalizeRule);
   await Promise.all([...new Set(rules.map(rule => rule.guildId).filter(Boolean))].map(guildId => loadChannels(guildId)));
   render();
+  if(billingEnabled){
+   try{
+    const billingState=await api('/api/supporter/billing/status');
+    renderContracts(billingState.subscriptions||[]);
+    const credits=Number(billingState.credits||0);
+    credit.textContent=`利用可能クレジット: ${credits.toLocaleString('ja-JP')}クレジット（${credits.toLocaleString('ja-JP')}円）`;
+   }catch{contract.textContent='契約情報を自動取得できませんでした。「契約情報を更新」を押してください。';}
+  }
  }
 }
 
@@ -209,9 +224,9 @@ run(load)();
 const billing = $('billing');
 billing.replaceChildren();
 const title = document.createElement('h2');
-title.textContent = 'Stripe テスト決済';
+title.textContent = 'お支払い・契約情報';
 const note = document.createElement('p');
-note.textContent = 'テスト専用です。実際のお支払い・配信は発生しません。決済完了後は契約情報を更新してください。';
+note.textContent = '請求日は毎月26日です。1〜25日の申込は当月分を申込時、翌月分を26日に請求します。26〜31日の申込は当月分と翌月分の2か月分を申込時にまとめて請求し、以後は毎月26日に翌月分を請求します。現在の接続先はStripeテスト環境のため、実際の請求は発生しません。';
 const contract = document.createElement('div');
 contract.className = 'contract';
 contract.textContent = '契約情報は「契約情報を更新」から確認できます。';
@@ -221,16 +236,20 @@ credit.className = 'credit-balance';
 credit.textContent = '利用可能クレジット: 0クレジット（0円）';
 billing.append(credit);
 const plan = document.createElement('select');
-plan.setAttribute('aria-label','テスト契約プラン');
+plan.setAttribute('aria-label','契約プラン');
 selectOptions(plan,[['supporter','BASIC 月額300円'],['plus','Plus 月額800円']],'supporter');
-const packs = document.createElement('select');
-packs.setAttribute('aria-label','追加パック');
-selectOptions(packs,[[0,'追加なし'],[1,'追加3チャンネル / 月額＋200円'],[2,'追加6チャンネル / 月額＋400円']],0);
-plan.onchange = () => {
- packs.disabled = plan.value === 'plus';
- if (packs.disabled) packs.value = '0';
-};
-billing.append(plan,packs);
+const channelPacks = document.createElement('select');
+channelPacks.setAttribute('aria-label','追加チャンネル');
+selectOptions(channelPacks,[[0,'チャンネル追加なし'],[1,'＋3チャンネル / 月額＋200円'],[2,'＋6チャンネル / 月額＋400円'],[3,'＋9チャンネル / 月額＋600円'],[4,'＋12チャンネル / 月額＋800円'],[5,'＋15チャンネル / 月額＋1,000円']],0);
+const serverPacks = document.createElement('select');
+serverPacks.setAttribute('aria-label','追加サーバー');
+selectOptions(serverPacks,[[0,'サーバー追加なし'],[1,'＋1サーバー / 月額＋200円'],[2,'＋2サーバー / 月額＋400円'],[3,'＋3サーバー / 月額＋600円'],[4,'＋4サーバー / 月額＋800円'],[5,'＋5サーバー / 月額＋1,000円']],0);
+const optionGrid=document.createElement('div');optionGrid.className='billing-options';
+for(const [labelText,input] of [['プラン',plan],['チャンネル追加',channelPacks],['サーバー追加',serverPacks]]){const label=document.createElement('label');const span=document.createElement('span');span.textContent=labelText;label.append(span,input);optionGrid.append(label);}
+const pricePreview=document.createElement('p');pricePreview.className='price-preview';
+const updatePricePreview=()=>{const monthly=(plan.value==='plus'?800:300)+200*(Number(channelPacks.value)+Number(serverPacks.value));const jstDay=Number(new Intl.DateTimeFormat('en-US',{day:'numeric',timeZone:'Asia/Tokyo'}).format(new Date()));const initial=monthly*(jstDay>=26?2:1);pricePreview.textContent=`月額 ${monthly.toLocaleString('ja-JP')}円／初回 ${initial.toLocaleString('ja-JP')}円（${jstDay>=26?'当月分＋翌月分':'当月分'}）`;};
+for(const input of [plan,channelPacks,serverPacks])input.addEventListener('change',updatePricePreview);
+updatePricePreview();billing.append(optionGrid,pricePreview);
 
 const dateText = seconds => seconds ? new Intl.DateTimeFormat('ja-JP',{dateStyle:'medium',timeStyle:'short',timeZone:'Asia/Tokyo'}).format(new Date(seconds * 1000)) : '—';
 const moneyText = (amount,currency) => new Intl.NumberFormat('ja-JP',{style:'currency',currency:(currency || 'jpy').toUpperCase(),maximumFractionDigits:0}).format(amount || 0);
@@ -249,8 +268,13 @@ function renderContracts(subscriptions) {
  contract.replaceChildren();
  if (!subscriptions.length) {
   contract.textContent = '現在の契約はありません。';
+  entitlements={servers:1,channels:2};
+  if(options)render();
   return;
  }
+ entitlements=subscriptions.reduce((limits,item)=>({servers:Math.max(limits.servers,Number(item.servers)||1),channels:Math.max(limits.channels,Number(item.channels)||2)}),{servers:1,channels:2});
+ const current=subscriptions.find(item=>['active','trialing','past_due','unpaid','paused'].includes(item.status))||subscriptions[0];
+ if(current){plan.value=current.planId||'supporter';channelPacks.value=String(current.channelPacks||0);serverPacks.value=String(current.serverPacks||0);updatePricePreview();}
  for (const subscription of subscriptions) {
   const card = document.createElement('article');
   card.className = 'contract-card';
@@ -263,6 +287,9 @@ function renderContracts(subscriptions) {
    ['現在の期間開始',dateText(subscription.currentPeriodStart)],
    [subscription.cancelAtPeriodEnd ? '契約終了予定' : '次回更新日',dateText(subscription.nextRenewalAt)],
    ['月額合計',moneyText(subscription.amount,subscription.currency)],
+   ['チャンネル上限',`${subscription.channels}チャンネル`],
+   ['サーバー上限',`${subscription.servers}サーバー`],
+   ['固定請求日','毎月26日'],
   ];
   for (const [term,value] of entries) {
    const dt=document.createElement('dt'); dt.textContent=term;
@@ -278,22 +305,26 @@ function renderContracts(subscriptions) {
   card.append(heading,data,list);
   contract.append(card);
  }
+ if(options)render();
 }
 
-for (const [label,action] of [['テスト決済へ','checkout'],['支払方法・解約の管理','portal'],['契約情報を更新','status']]) {
+for (const [label,action] of [['申し込みへ','checkout'],['プラン・オプションを更新','update'],['支払方法・解約の管理','portal'],['契約情報を更新','status']]) {
  const button = document.createElement('button');
  button.textContent = label;
  button.onclick = run(async () => {
+  if(action==='update'&&!window.confirm('契約内容を更新します。増額時は日割り差額がStripeで直ちに請求される場合があります。続行しますか？'))return;
   button.disabled = true;
   try {
-   const result = await api(`/api/supporter/billing/${action}`,action === 'status' ? 'GET' : 'POST',action === 'status' ? undefined : action === 'checkout' ? {plan:plan.value,packs:Number(packs.value)} : {});
+   const selection={plan:plan.value,channelPacks:Number(channelPacks.value),serverPacks:Number(serverPacks.value)};
+   const body=action==='checkout'?selection:action==='update'?{...selection,requestId:crypto.randomUUID()}:{};
+   const result = await api(`/api/supporter/billing/${action}`,action === 'status' ? 'GET' : 'POST',action === 'status' ? undefined : body);
    if (result.url) {
     location.href = stripeDestination(result.url);
    } else {
     renderContracts(result.subscriptions);
     const credits=Number(result.credits||0);
     credit.textContent=`利用可能クレジット: ${credits.toLocaleString('ja-JP')}クレジット（${credits.toLocaleString('ja-JP')}円）`;
-    status('契約情報を更新しました。');
+    status(result.message||'契約情報を更新しました。');
    }
   } finally { button.disabled = false; }
  });

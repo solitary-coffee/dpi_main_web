@@ -4,7 +4,7 @@ const fail=(message,status=400)=>{throw Object.assign(new Error(message),{status
 function integrationIdentifier(prefix){const bytes=crypto.getRandomValues(new Uint8Array(8));return `${prefix}${[...bytes].map(value=>String.fromCharCode(97+value%26)).join('')}`;}
 export function billingReady(env){return env.SUPPORTER_BILLING_MODE==='test' && /^(?:sk|rk)_test_/.test(env.STRIPE_SECRET_KEY||'') && !!env.STRIPE_WEBHOOK_SECRET && !!env.STRIPE_PRICE_SUPPORTER && !!env.STRIPE_PRICE_PLUS && !!env.STRIPE_PRICE_ADDON && !!env.STRIPE_PORTAL_CONFIG;}
 async function stripe(env,path,params,key,method=params?'POST':'GET'){
- if(!billingReady(env)) fail('テスト決済の設定が完了していません。',503);
+ if(!billingReady(env)) fail('決済設定が完了していません。',503);
  const headers={Authorization:`Bearer ${env.STRIPE_SECRET_KEY}`,'Stripe-Version':'2026-09-30.endive'};
  if(key)headers['Idempotency-Key']=key;
  if(params)headers['Content-Type']='application/x-www-form-urlencoded';
@@ -38,8 +38,19 @@ export async function creditsByCustomer(env,customers){
  return resultMap;
 }
 export function selection(input){
- if(!['supporter','plus'].includes(input.plan)||!Number.isInteger(input.packs)||input.packs<0||input.packs>2||(input.plan==='plus'&&input.packs!==0))fail('プランまたは追加パック数が不正です。');
- return {plan:input.plan,packs:input.packs,monthly:input.plan==='plus'?800:300+200*input.packs,channels:input.plan==='plus'?10:2+3*input.packs};
+ const channelPacks=input.channelPacks??input.packs??0;
+ const serverPacks=input.serverPacks??0;
+ if(!['supporter','plus'].includes(input.plan)||!Number.isInteger(channelPacks)||channelPacks<0||channelPacks>5||!Number.isInteger(serverPacks)||serverPacks<0||serverPacks>5)fail('プランまたは追加オプション数が不正です。');
+ const base=input.plan==='plus'?800:300;
+ return {plan:input.plan,packs:channelPacks,channelPacks,serverPacks,monthly:base+200*(channelPacks+serverPacks),channels:(input.plan==='plus'?10:2)+3*channelPacks,servers:1+serverPacks};
+}
+export function billingSchedule(now=Date.now()){
+ const jst=new Date(Number(now)+9*60*60*1000);
+ const day=jst.getUTCDate();
+ let year=jst.getUTCFullYear(),month=jst.getUTCMonth();
+ if(day>=26){month+=1;if(month>11){month=0;year+=1;}}
+ const anchor=Math.floor((Date.UTC(year,month,26,0,0,0)-9*60*60*1000)/1000);
+ return {billingDay:26,anchor,initialMonths:day>=26?2:1,lateMonth:day>=26};
 }
 async function subscriptions(env,customer){return (await stripe(env,`subscriptions?customer=${encodeURIComponent(customer)}&status=all&limit=100`)).data.filter(s=>!['canceled','incomplete_expired'].includes(s.status));}
 const unix = value => Number.isFinite(Number(value)) && Number(value) > 0 ? Number(value) : null;
@@ -47,7 +58,7 @@ export function subscriptionSummary(subscription,env={}){
  const labels=new Map([
   [env.STRIPE_PRICE_SUPPORTER,'BASIC'],
   [env.STRIPE_PRICE_PLUS,'Plus'],
-  [env.STRIPE_PRICE_ADDON,'追加3チャンネル'],
+  [env.STRIPE_PRICE_ADDON,'追加オプション'],
  ].filter(([id])=>id));
  const items=(subscription.items?.data||[]).map(item=>{
   const quantity=Number.isFinite(Number(item.quantity))&&Number(item.quantity)>0?Number(item.quantity):1;
@@ -57,7 +68,15 @@ export function subscriptionSummary(subscription,env={}){
  const currentPeriodStart=items.map(item=>item.periodStart).filter(Boolean).sort((a,b)=>a-b)[0]||unix(subscription.current_period_start);
  const nextRenewalAt=items.map(item=>item.periodEnd).filter(Boolean).sort((a,b)=>b-a)[0]||unix(subscription.current_period_end);
  const currency=items.find(item=>item.currency)?.currency||'jpy';
- return {status:subscription.status||'unknown',cancelAtPeriodEnd:subscription.cancel_at_period_end===true,startedAt:unix(subscription.start_date)||unix(subscription.created),currentPeriodStart,nextRenewalAt,amount:items.reduce((sum,item)=>sum+item.subtotal,0),currency,plan:items.filter(item=>item.price!==env.STRIPE_PRICE_ADDON).map(item=>item.label).join(' + ')||'契約中プラン',items};
+ const basePrice=items.find(item=>item.price!==env.STRIPE_PRICE_ADDON)?.price;
+ const addonQuantity=items.find(item=>item.price===env.STRIPE_PRICE_ADDON)?.quantity||0;
+ const metadata=subscription.metadata||{};
+ const storedChannelPacks=Number(metadata.dpi_channel_packs);
+ const storedServerPacks=Number(metadata.dpi_server_packs);
+ const channelPacks=Number.isInteger(storedChannelPacks)&&storedChannelPacks>=0?storedChannelPacks:addonQuantity;
+ const serverPacks=Number.isInteger(storedServerPacks)&&storedServerPacks>=0?storedServerPacks:0;
+ const planId=basePrice===env.STRIPE_PRICE_PLUS?'plus':'supporter';
+ return {status:subscription.status||'unknown',cancelAtPeriodEnd:subscription.cancel_at_period_end===true,startedAt:unix(subscription.start_date)||unix(subscription.created),currentPeriodStart,nextRenewalAt,amount:items.reduce((sum,item)=>sum+item.subtotal,0),currency,plan:planId==='plus'?'Plus':'BASIC',planId,channelPacks,serverPacks,channels:(planId==='plus'?10:2)+3*channelPacks,servers:1+serverPacks,items};
 }
 export async function customerSubscriptionSummaries(env,customer){
  if(!customer||!billingReady(env))return [];
@@ -83,25 +102,46 @@ export async function subscriptionSummariesByCustomer(env,customers){
 }
 export async function billingAction(request,env,db,uid,input={}){
  const action=new URL(request.url).pathname.split('/').pop();
- if(!billingReady(env))return json({message:'テスト決済の設定が完了していません。'},503);
+ if(!billingReady(env))return json({message:'決済設定が完了していません。'},503);
  const account=await db.prepare('SELECT discord_user_id,billing_email FROM supporter_accounts WHERE discord_user_id=?').bind(uid).first();
  if(!account)return json({message:'先に登録してください。'},409);
  await db.prepare('INSERT INTO supporter_billing(discord_user_id) VALUES(?) ON CONFLICT DO NOTHING').bind(uid).run();
  let row=await db.prepare('SELECT * FROM supporter_billing WHERE discord_user_id=?').bind(uid).first();
  if(action==='status'){
-  return json({mode:'test',subscriptions:await customerSubscriptionSummaries(env,row.customer_id),credits:await customerCredits(env,row.customer_id),deliveryEnabled:false});
+  return json({mode:'test',billingDay:26,subscriptions:await customerSubscriptionSummaries(env,row.customer_id),credits:await customerCredits(env,row.customer_id),deliveryEnabled:false});
  }
  if(!row.customer_id){const customer=await createBillingCustomer(env,uid,account.billing_email,`dpi-customer-${uid}`);await db.prepare('UPDATE supporter_billing SET customer_id=? WHERE discord_user_id=? AND customer_id IS NULL').bind(customer.id,uid).run();row=await db.prepare('SELECT * FROM supporter_billing WHERE discord_user_id=?').bind(uid).first();}
  else if(account.billing_email)await stripe(env,`customers/${encodeURIComponent(row.customer_id)}`,{email:account.billing_email},`dpi-customer-email-${uid}-${account.billing_email}`);
  const origin=env.SUPPORTER_PUBLIC_ORIGIN;
  if(!origin || !/^https:\/\/[^/]+$/.test(origin))fail('公開URLが未設定です。',503);
  if(action==='portal'){const portal=await stripe(env,'billing_portal/sessions',{customer:row.customer_id,configuration:env.STRIPE_PORTAL_CONFIG,return_url:`${origin}/site/supporter/`});return json({url:portal.url});}
- if(action!=='checkout')return json({message:'Not found'},404);
  const choice=selection(input);
- if((await subscriptions(env,row.customer_id)).length)return json({message:'契約が存在します。契約管理画面をご利用ください。'},409);
+ const existing=await subscriptions(env,row.customer_id);
+ if(action==='update'){
+  const requestId=String(input.requestId||'');
+  if(!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestId))return json({message:'更新情報が正しくありません。再読み込みしてください。'},400);
+  const current=activeSubscription(existing);
+  if(!current)return json({message:'更新できる契約がありません。先にプランを申し込んでください。'},409);
+  await updateSubscription(env,current,choice,`dpi-user-update-${uid}-${requestId}`,{'metadata[dpi_updated_by]':'user'});
+  return json({message:'プランと追加オプションを更新しました。差額はStripeの請求へ反映されます。',billingDay:26,subscriptions:await customerSubscriptionSummaries(env,row.customer_id),credits:await customerCredits(env,row.customer_id),deliveryEnabled:false});
+ }
+ if(action!=='checkout')return json({message:'Not found'},404);
+ if(existing.length)return json({message:'契約が存在します。「プラン・オプションを更新」をご利用ください。'},409);
+ const schedule=billingSchedule();
  // Persist exact parameters and key before network IO. Concurrent clicks share one session.
- const params={mode:'subscription',customer:row.customer_id,client_reference_id:uid,'subscription_data[metadata][dpi_user]':uid,'subscription_data[billing_mode][type]':'flexible','line_items[0][price]':choice.plan==='plus'?env.STRIPE_PRICE_PLUS:env.STRIPE_PRICE_SUPPORTER,'line_items[0][quantity]':'1',success_url:`${origin}/site/supporter/?checkout=returned`,cancel_url:`${origin}/site/supporter/?checkout=canceled`,expires_at:String(Math.floor(Date.now()/1000)+3600),integration_identifier:integrationIdentifier('dpi_basic_')};
- if(choice.packs){params['line_items[1][price]']=env.STRIPE_PRICE_ADDON;params['line_items[1][quantity]']=String(choice.packs);}
+ const params={mode:'subscription',customer:row.customer_id,client_reference_id:uid,
+  'subscription_data[metadata][dpi_user]':uid,'subscription_data[metadata][dpi_plan]':choice.plan,
+  'subscription_data[metadata][dpi_channel_packs]':String(choice.channelPacks),'subscription_data[metadata][dpi_server_packs]':String(choice.serverPacks),
+  'subscription_data[billing_mode][type]':'flexible','subscription_data[billing_cycle_anchor]':String(schedule.anchor),'subscription_data[proration_behavior]':'none',
+  'line_items[0][price]':choice.plan==='plus'?env.STRIPE_PRICE_PLUS:env.STRIPE_PRICE_SUPPORTER,'line_items[0][quantity]':'1',
+  success_url:`${origin}/site/supporter/?checkout=returned`,cancel_url:`${origin}/site/supporter/?checkout=canceled`,expires_at:String(Math.floor(Date.now()/1000)+3600),integration_identifier:integrationIdentifier('dpi_basic_')};
+ let line=1;
+ const optionPacks=choice.channelPacks+choice.serverPacks;
+ if(optionPacks){params[`line_items[${line}][price]`]=env.STRIPE_PRICE_ADDON;params[`line_items[${line}][quantity]`]=String(optionPacks);line+=1;}
+ params[`line_items[${line}][price_data][currency]`]='jpy';
+ params[`line_items[${line}][price_data][unit_amount]`]=String(choice.monthly*schedule.initialMonths);
+ params[`line_items[${line}][price_data][product_data][name]`]=schedule.lateMonth?'初回利用料（当月分・翌月分の2か月分）':'初回利用料（当月分）';
+ params[`line_items[${line}][quantity]`]='1';
  await db.prepare('UPDATE supporter_billing SET checkout_key=?,checkout_params=? WHERE discord_user_id=? AND checkout_key IS NULL').bind(crypto.randomUUID(),JSON.stringify(params),uid).run();
  row=await db.prepare('SELECT * FROM supporter_billing WHERE discord_user_id=?').bind(uid).first();
  const saved=JSON.parse(row.checkout_params);
@@ -110,16 +150,28 @@ export async function billingAction(request,env,db,uid,input={}){
  await db.prepare('UPDATE supporter_billing SET checkout_id=? WHERE discord_user_id=? AND checkout_key=?').bind(checkout.id,uid,row.checkout_key).run();
  if(checkout.status==='expired'){await db.prepare('UPDATE supporter_billing SET checkout_key=NULL,checkout_id=NULL,checkout_params=NULL WHERE discord_user_id=? AND checkout_key=?').bind(uid,row.checkout_key).run();return json({message:'前の決済画面が期限切れです。再度お試しください。'},409);}
  if(checkout.status!=='open')return json({message:'決済結果を確認中です。契約状態を更新してください。'},409);
- if(saved['line_items[0][price]']!==params['line_items[0][price]']||(saved['line_items[1][quantity]']||'0')!==(params['line_items[1][quantity]']||'0'))return json({message:'別の条件で決済画面を作成済みです。期限切れ後に変更できます（最大1時間）。'},409);
+ if(saved['line_items[0][price]']!==params['line_items[0][price]']||saved['subscription_data[metadata][dpi_channel_packs]']!==params['subscription_data[metadata][dpi_channel_packs]']||saved['subscription_data[metadata][dpi_server_packs]']!==params['subscription_data[metadata][dpi_server_packs]'])return json({message:'別の条件で決済画面を作成済みです。期限切れ後に変更できます（最大1時間）。'},409);
  return json({url:checkout.url,mode:'test'});
 }
 function adminChoice(input){
  const plan=String(input.plan||'');
- const packs=Number(input.packs);
- return selection({plan,packs});
+ const channelPacks=Number(input.channelPacks??input.packs);
+ const serverPacks=Number(input.serverPacks??0);
+ return selection({plan,channelPacks,serverPacks});
 }
 function activeSubscription(list){
  return list.find(item=>['active','trialing','past_due','unpaid','paused'].includes(item.status))||list[0];
+}
+async function updateSubscription(env,current,choice,key,extra={}){
+ const base=current.items?.data?.find(item=>item.price?.id!==env.STRIPE_PRICE_ADDON);
+ const addon=current.items?.data?.find(item=>item.price?.id===env.STRIPE_PRICE_ADDON);
+ if(!base?.id)fail('契約項目を確認できませんでした。',409);
+ const optionPacks=choice.channelPacks+choice.serverPacks;
+ const params={'items[0][id]':base.id,'items[0][price]':choice.plan==='plus'?env.STRIPE_PRICE_PLUS:env.STRIPE_PRICE_SUPPORTER,'items[0][quantity]':'1',proration_behavior:'always_invoice',payment_behavior:'pending_if_incomplete',
+  'metadata[dpi_plan]':choice.plan,'metadata[dpi_channel_packs]':String(choice.channelPacks),'metadata[dpi_server_packs]':String(choice.serverPacks),...extra};
+ if(addon){params['items[1][id]']=addon.id;if(optionPacks)params['items[1][quantity]']=String(optionPacks);else params['items[1][deleted]']='true';}
+ else if(optionPacks){params['items[1][price]']=env.STRIPE_PRICE_ADDON;params['items[1][quantity]']=String(optionPacks);}
+ return await stripe(env,`subscriptions/${encodeURIComponent(current.id)}`,params,key);
 }
 function actionOrigin(env){
  const origin=env.SUPPORTER_PUBLIC_ORIGIN;
@@ -127,7 +179,7 @@ function actionOrigin(env){
  return origin;
 }
 export async function adminBillingAction(env,customer,uid,input){
- if(!billingReady(env))fail('テスト決済の設定が完了していません。',503);
+ if(!billingReady(env))fail('決済設定が完了していません。',503);
  if(!customer)fail('このユーザーにはStripe顧客情報がありません。',409);
  const action=String(input?.action||'');
  const requestId=String(input?.requestId||'');
@@ -162,13 +214,7 @@ export async function adminBillingAction(env,customer,uid,input){
  if(action==='change_subscription'){
   if(!current)fail('変更できる契約がありません。',409);
   const choice=adminChoice(input);
-  const base=current.items?.data?.find(item=>item.price?.id!==env.STRIPE_PRICE_ADDON);
-  const addon=current.items?.data?.find(item=>item.price?.id===env.STRIPE_PRICE_ADDON);
-  if(!base?.id)fail('契約項目を確認できませんでした。',409);
-  const params={'items[0][id]':base.id,'items[0][price]':choice.plan==='plus'?env.STRIPE_PRICE_PLUS:env.STRIPE_PRICE_SUPPORTER,'items[0][quantity]':'1',proration_behavior:'create_prorations','metadata[dpi_admin_reason]':reason};
-  if(addon){params['items[1][id]']=addon.id;if(choice.packs){params['items[1][quantity]']=String(choice.packs);}else{params['items[1][deleted]']='true';}}
-  else if(choice.packs){params['items[1][price]']=env.STRIPE_PRICE_ADDON;params['items[1][quantity]']=String(choice.packs);}
-  await stripe(env,`subscriptions/${encodeURIComponent(current.id)}`,params,key);
+  await updateSubscription(env,current,choice,key,{'metadata[dpi_admin_reason]':reason,'metadata[dpi_updated_by]':'admin'});
   return {message:'契約内容を変更しました。日割り差額はStripeの請求へ反映されます。',subscriptions:await customerSubscriptionSummaries(env,customer)};
  }
  if(action==='refund_latest'){
