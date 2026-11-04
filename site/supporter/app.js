@@ -4,6 +4,8 @@ let rules = [];
 let options;
 let entitlements = {servers:1,channels:2,rules:5,complexConditions:false,multiDestination:false};
 let hasConfigurableContract = false;
+let billingAvailable = false;
+let checkoutButton;
 const channelsByGuild = new Map();
 
 const $ = id => document.getElementById(id);
@@ -240,7 +242,10 @@ async function load() {
  $('user').textContent = session.user.username;
  options = await api('/api/supporter/options');
  const {account,billingEnabled} = await api('/api/supporter/account');
+ billingAvailable=billingEnabled===true;
  $('billing-email').value = account?.billing_email || '';
+ updateCheckoutAvailability();
+ if(!billingAvailable)billingActionStatus.textContent='Stripeテスト決済の秘密設定が未登録です。現在は申し込みできません。';
  $('add').disabled = $('save').disabled = true;
  if (account) {
   revision = account.revision;
@@ -335,9 +340,17 @@ selectOptions(serverPacks,[[0,'サーバー追加なし'],[1,'＋1サーバー /
 const optionGrid=document.createElement('div');optionGrid.className='billing-options';
 for(const [labelText,input] of [['プラン',plan],['チャンネル追加',channelPacks],['サーバー追加',serverPacks]]){const label=document.createElement('label');const span=document.createElement('span');span.textContent=labelText;label.append(span,input);optionGrid.append(label);}
 const pricePreview=document.createElement('p');pricePreview.className='price-preview';
-const updatePricePreview=()=>{const base={supporter:300,plus:800,pro:1280}[plan.value]||300;const monthly=base+200*(Number(channelPacks.value)+Number(serverPacks.value));const jstDay=Number(new Intl.DateTimeFormat('en-US',{day:'numeric',timeZone:'Asia/Tokyo'}).format(new Date()));const initial=monthly*(jstDay>=26?2:1);pricePreview.textContent=`月額 ${monthly.toLocaleString('ja-JP')}円／新規申込時 ${initial.toLocaleString('ja-JP')}円（${jstDay>=26?'当月分＋翌月分':'当月分'}）`;};
+const checkoutSummary=document.createElement('dl');checkoutSummary.className='checkout-summary';
+const updatePricePreview=()=>{const base={supporter:300,plus:800,pro:1280}[plan.value]||300;const monthly=base+200*(Number(channelPacks.value)+Number(serverPacks.value));const jstDay=Number(new Intl.DateTimeFormat('en-US',{day:'numeric',timeZone:'Asia/Tokyo'}).format(new Date()));const initial=monthly*(jstDay>=26?2:1);pricePreview.textContent=`月額 ${monthly.toLocaleString('ja-JP')}円／新規申込時 ${initial.toLocaleString('ja-JP')}円（${jstDay>=26?'当月分＋翌月分':'当月分'}）`;checkoutSummary.replaceChildren();const rows=[['申込みプラン',{supporter:'BASIC',plus:'Plus',pro:'Pro'}[plan.value]],['初回支払額',`${initial.toLocaleString('ja-JP')}円（Stripeテスト環境）`],['次回以降','毎月26日に翌月分を請求'],['提供開始','決済確認後。ただし先行提供中は通知配信へ未接続'],['解約','契約管理画面から手続きし、期間末で終了。支払済み料金の返金なし']];for(const [term,value] of rows){const dt=document.createElement('dt');dt.textContent=term;const dd=document.createElement('dd');dd.textContent=value;checkoutSummary.append(dt,dd);}};
 for(const input of [plan,channelPacks,serverPacks])input.addEventListener('change',updatePricePreview);
-updatePricePreview();application.append(optionGrid,pricePreview);
+updatePricePreview();application.append(optionGrid,pricePreview,checkoutSummary);
+
+const legalConsentLabel=document.createElement('label');legalConsentLabel.className='legal-consent';
+const legalConsent=document.createElement('input');legalConsent.type='checkbox';legalConsent.id='legal-consent';legalConsent.required=true;
+const legalConsentText=document.createElement('span');legalConsentText.append('申込み内容を確認し、');
+for(const [label,href] of [['利用規約','/terms/terms.html'],['プライバシーポリシー','/terms/policy.html'],['特定商取引法に基づく表記','/terms/Specified.html']]){const link=document.createElement('a');link.textContent=label;link.href=href;link.target='_blank';link.rel='noopener noreferrer';legalConsentText.append(link,label==='特定商取引法に基づく表記'?'に同意します。':'、');}
+legalConsentLabel.append(legalConsent,legalConsentText);application.append(legalConsentLabel);
+legalConsent.addEventListener('change',updateCheckoutAvailability);
 
 const dateText = seconds => seconds ? new Intl.DateTimeFormat('ja-JP',{dateStyle:'medium',timeStyle:'short',timeZone:'Asia/Tokyo'}).format(new Date(seconds * 1000)) : '—';
 const moneyText = (amount,currency) => new Intl.NumberFormat('ja-JP',{style:'currency',currency:(currency || 'jpy').toUpperCase(),maximumFractionDigits:0}).format(amount || 0);
@@ -476,14 +489,18 @@ const billingActions=document.createElement('div');
 billingActions.className='billing-actions';
 application.append(billingActions,billingActionStatus);
 
-for (const [label,action] of [['このメールアドレスで申し込みへ','checkout'],['プラン・オプションを変更','update'],['支払方法・解約の管理','portal'],['最新の契約・明細を読み込む','status']]) {
+function updateCheckoutAvailability(){if(checkoutButton)checkoutButton.disabled=!billingAvailable||!legalConsent.checked;}
+
+for (const [label,action] of [['このプランで申し込む','checkout'],['プラン・オプションを変更','update'],['支払方法・解約の管理','portal'],['最新の契約・明細を読み込む','status']]) {
  const button = document.createElement('button');
  button.textContent = label;
  button.className=action==='checkout'?'primary-btn':'secondary-btn';
  button.type='button';
+ if(action==='checkout'){checkoutButton=button;updateCheckoutAvailability();}
  button.onclick = async () => {
   billingActionStatus.textContent='';
   if(action==='checkout'&&!billingEmail.reportValidity())return;
+  if(action==='checkout'&&!legalConsent.reportValidity())return;
   button.disabled = true;
   const originalLabel=button.textContent;
   button.textContent=action==='checkout'?'決済画面を準備中…':'処理中…';
@@ -493,7 +510,7 @@ for (const [label,action] of [['このメールアドレスで申し込みへ','
     const result=await api('/api/supporter/billing/preview-update','POST',selection);
     showBillingPreview(result,selection);return;
    }
-   const body=action==='checkout'?{...selection,email:billingEmail.value}:{};
+   const body=action==='checkout'?{...selection,email:billingEmail.value,legalConsent:true}:{};
    const result = await api(`/api/supporter/billing/${action}`,action === 'status' ? 'GET' : 'POST',action === 'status' ? undefined : body);
    if (result.url) {
     location.href = stripeDestination(result.url);

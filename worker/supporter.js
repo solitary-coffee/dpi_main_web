@@ -37,6 +37,12 @@ function normalizeBillingEmail(value) {
  if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw Object.assign(new Error('有効なメールアドレスを入力してください。'),{status:400});
  return email;
 }
+export function supporterConsentVersion(input, env) {
+ const version = clean(env.SUPPORTER_CONSENT_VERSION);
+ if (!version) throw Object.assign(new Error('申込み同意の設定が完了していません。'),{status:503,publicMessage:'申込み同意の設定が完了していません。運営へお問い合わせください。'});
+ if (input.legalConsent !== true) throw Object.assign(new Error('利用規約、プライバシーポリシーおよび特定商取引法に基づく表記への同意が必要です。'),{status:400});
+ return version;
+}
 function assertAdminOrigin(request) {
  const url = new URL(request.url);
  const origin = clean(request.headers.get('origin'));
@@ -380,10 +386,12 @@ export async function handleSupporterRequest(request, env) {
    const input=request.method==='POST'?await readJson(request):{};
    if(path.endsWith('/checkout')){
     const email=normalizeBillingEmail(input.email);
+    const consentVersion=supporterConsentVersion(input,env);
     const now=new Date().toISOString();
-    await db.prepare(`INSERT INTO supporter_accounts(discord_user_id,billing_email,registered_at,updated_at) VALUES(?,?,?,?)
-     ON CONFLICT(discord_user_id) DO UPDATE SET billing_email=excluded.billing_email,updated_at=excluded.updated_at`).bind(uid,email,now,now).run();
+    await db.prepare(`INSERT INTO supporter_accounts(discord_user_id,billing_email,legal_consent_version,legal_consent_at,registered_at,updated_at) VALUES(?,?,?,?,?,?)
+     ON CONFLICT(discord_user_id) DO UPDATE SET billing_email=excluded.billing_email,legal_consent_version=excluded.legal_consent_version,legal_consent_at=excluded.legal_consent_at,updated_at=excluded.updated_at`).bind(uid,email,consentVersion,now,now,now).run();
     input.email=email;
+    input.legalConsentVersion=consentVersion;
    }
    return await billingAction(request,env,db,uid,input);
   }
@@ -411,5 +419,5 @@ export async function handleSupporterRequest(request, env) {
    return response({success:true,revision:input.revision+1});
   }
   return response({message:'この操作は利用できません。'},404);
- } catch(error) { return response({message:error.status && error.status<500 ? (error.publicMessage || error.message) : '現在利用できません。'},error.status || 503); }
+ } catch(error) { return response({message:error.publicMessage || (error.status && error.status<500 ? error.message : '現在利用できません。')},error.status || 503); }
 }

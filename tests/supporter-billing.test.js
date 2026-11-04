@@ -173,11 +173,34 @@ test('supporter UI avoids WebKit URL constructor errors for Stripe redirects',as
  assert.match(source,/billing\.stripe\.com/);
  assert.match(source,/invoice\.stripe\.com/);
  assert.match(source,/pay\.stripe\.com/);
- assert.match(source,/このメールアドレスで申し込みへ/);
+ assert.match(source,/このプランで申し込む/);
  assert.match(source,/email:billingEmail\.value/);
+ assert.match(source,/legalConsent:true/);
+ assert.match(source,/\/terms\/terms\.html/);
+ assert.match(source,/\/terms\/policy\.html/);
+ assert.match(source,/\/terms\/Specified\.html/);
  assert.match(source,/billingActionStatus\.textContent=error\.message/);
  assert.doesNotMatch(html,/id="register"/);
- assert.match(worker,/path\.endsWith\('\/checkout'\)[\s\S]*normalizeBillingEmail\(input\.email\)[\s\S]*INSERT INTO supporter_accounts/);
+ assert.match(worker,/path\.endsWith\('\/checkout'\)[\s\S]*supporterConsentVersion\(input,env\)[\s\S]*legal_consent_version/);
+});
+
+test('paid plan configuration contains test catalog IDs and consent storage',async()=>{
+ const [configText,migration,terms,policy,specified,billingSource]=await Promise.all([
+  readFile(new URL('../wrangler.jsonc',import.meta.url),'utf8'),
+  readFile(new URL('../migrations/0015_supporter_legal_consent.sql',import.meta.url),'utf8'),
+  readFile(new URL('../terms/terms.md',import.meta.url),'utf8'),
+  readFile(new URL('../terms/policy.md',import.meta.url),'utf8'),
+  readFile(new URL('../terms/spec.md',import.meta.url),'utf8'),
+  readFile(new URL('../worker/supporter-billing.js',import.meta.url),'utf8'),
+ ]);
+ const config=JSON.parse(configText);
+ assert.equal(config.vars.SUPPORTER_BILLING_MODE,'test');
+ for(const key of ['STRIPE_PRICE_SUPPORTER','STRIPE_PRICE_PLUS','STRIPE_PRICE_PRO','STRIPE_PRICE_ADDON','STRIPE_PORTAL_CONFIG','SUPPORTER_CONSENT_VERSION'])assert.ok(config.vars[key]);
+ assert.match(migration,/legal_consent_version/);assert.match(migration,/legal_consent_at/);
+ assert.match(billingSource,/dpi_legal_consent_version/);
+ assert.match(terms,/第 10 条（有料通知プラン）/);assert.match(terms,/故意または重大な過失/);
+ assert.match(policy,/Stripe/);assert.match(policy,/安全管理措置/);
+ for(const text of ['販売価格','支払時期・請求日','契約期間・自動更新','解約方法・条件','キャンセル・返金'])assert.match(specified,new RegExp(text));
 });
 test('supporter rule creation is resilient to WebKit input and channel errors',async()=>{
  const source=await readFile(new URL('../site/supporter/app.js',import.meta.url),'utf8');

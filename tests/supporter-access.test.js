@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { handleSupporterRequest, supporterPublicEnabled, supporterTestUserAllowed } from '../worker/supporter.js';
+import { handleSupporterRequest, supporterConsentVersion, supporterPublicEnabled, supporterTestUserAllowed } from '../worker/supporter.js';
 
 test('supporter preview stays closed unless explicitly enabled', () => {
  assert.equal(supporterPublicEnabled({}), false);
@@ -21,6 +21,13 @@ test('private supporter preview accepts only exact Discord IDs', () => {
 
 test('public supporter mode bypasses the preview allowlist', () => {
  assert.equal(supporterTestUserAllowed({SUPPORTER_PUBLIC_ENABLED:'true'}, 'any-user'), true);
+});
+
+test('paid plan checkout requires explicit current legal consent',()=>{
+ const env={SUPPORTER_CONSENT_VERSION:'2026-11-04'};
+ assert.equal(supporterConsentVersion({legalConsent:true},env),'2026-11-04');
+ assert.throws(()=>supporterConsentVersion({legalConsent:false},env),/同意が必要/);
+ assert.throws(()=>supporterConsentVersion({legalConsent:true},{}),/設定が完了/);
 });
 
 test('BASIC admin path with and without trailing slash fails closed', async () => {
