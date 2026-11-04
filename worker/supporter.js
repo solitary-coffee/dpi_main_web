@@ -377,7 +377,15 @@ export async function handleSupporterRequest(request, env) {
   if (/^\/api\/supporter\/billing\/(checkout|preview-update|update|portal|status)$/.test(path)) {
    const expected=path.endsWith('/status')?'GET':'POST';
    if(request.method!==expected)return response({message:'Method not allowed'},405);
-   return await billingAction(request,env,db,uid,request.method==='POST'?await readJson(request):{});
+   const input=request.method==='POST'?await readJson(request):{};
+   if(path.endsWith('/checkout')){
+    const email=normalizeBillingEmail(input.email);
+    const now=new Date().toISOString();
+    await db.prepare(`INSERT INTO supporter_accounts(discord_user_id,billing_email,registered_at,updated_at) VALUES(?,?,?,?)
+     ON CONFLICT(discord_user_id) DO UPDATE SET billing_email=excluded.billing_email,updated_at=excluded.updated_at`).bind(uid,email,now,now).run();
+    input.email=email;
+   }
+   return await billingAction(request,env,db,uid,input);
   }
   if (path === '/api/supporter/account' && request.method === 'GET') {
    const account = await db.prepare('SELECT * FROM supporter_accounts WHERE discord_user_id=?').bind(uid).first();
