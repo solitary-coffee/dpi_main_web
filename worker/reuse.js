@@ -802,7 +802,7 @@ function validateEditableApplicationInput(input, existing = null) {
     };
 }
 
-async function fetchGuildChannels(guildId, env) {
+export async function fetchGuildChannels(guildId, env) {
     const response = await fetch(`${DISCORD_API}/guilds/${guildId}/channels`, {
         headers: { Authorization: `Bot ${clean(env.DISCORD_BOT_TOKEN)}` },
     });

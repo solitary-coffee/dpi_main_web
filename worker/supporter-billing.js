@@ -17,6 +17,23 @@ export function selection(input){
  return {plan:input.plan,packs:input.packs,monthly:input.plan==='plus'?800:300+200*input.packs,channels:input.plan==='plus'?10:2+3*input.packs};
 }
 async function subscriptions(env,customer){return (await stripe(env,`subscriptions?customer=${encodeURIComponent(customer)}&status=all&limit=100`)).data.filter(s=>!['canceled','incomplete_expired'].includes(s.status));}
+const unix = value => Number.isFinite(Number(value)) && Number(value) > 0 ? Number(value) : null;
+export function subscriptionSummary(subscription,env={}){
+ const labels=new Map([
+  [env.STRIPE_PRICE_SUPPORTER,'Supporter'],
+  [env.STRIPE_PRICE_PLUS,'Plus'],
+  [env.STRIPE_PRICE_ADDON,'追加3チャンネル'],
+ ].filter(([id])=>id));
+ const items=(subscription.items?.data||[]).map(item=>{
+  const quantity=Number.isFinite(Number(item.quantity))&&Number(item.quantity)>0?Number(item.quantity):1;
+  const unitAmount=Number.isFinite(Number(item.price?.unit_amount))?Number(item.price.unit_amount):0;
+  return {price:item.price?.id||'',label:labels.get(item.price?.id)||item.price?.nickname||'契約項目',quantity,unitAmount,subtotal:unitAmount*quantity,currency:(item.price?.currency||'jpy').toLowerCase(),periodStart:unix(item.current_period_start),periodEnd:unix(item.current_period_end)};
+ });
+ const currentPeriodStart=items.map(item=>item.periodStart).filter(Boolean).sort((a,b)=>a-b)[0]||unix(subscription.current_period_start);
+ const nextRenewalAt=items.map(item=>item.periodEnd).filter(Boolean).sort((a,b)=>b-a)[0]||unix(subscription.current_period_end);
+ const currency=items.find(item=>item.currency)?.currency||'jpy';
+ return {status:subscription.status||'unknown',cancelAtPeriodEnd:subscription.cancel_at_period_end===true,startedAt:unix(subscription.start_date)||unix(subscription.created),currentPeriodStart,nextRenewalAt,amount:items.reduce((sum,item)=>sum+item.subtotal,0),currency,plan:items.filter(item=>item.price!==env.STRIPE_PRICE_ADDON).map(item=>item.label).join(' + ')||'契約中プラン',items};
+}
 export async function billingAction(request,env,db,uid,input={}){
  const action=new URL(request.url).pathname.split('/').pop();
  if(!billingReady(env))return json({message:'テスト決済の設定が完了していません。'},503);
@@ -25,7 +42,7 @@ export async function billingAction(request,env,db,uid,input={}){
  let row=await db.prepare('SELECT * FROM supporter_billing WHERE discord_user_id=?').bind(uid).first();
  if(action==='status'){
   const subs=row.customer_id?await subscriptions(env,row.customer_id):[];
-  return json({mode:'test',subscriptions:subs.map(s=>({status:s.status,cancelAtPeriodEnd:s.cancel_at_period_end,items:s.items.data.map(i=>({price:i.price.id,quantity:i.quantity,periodEnd:i.current_period_end}))})),deliveryEnabled:false});
+  return json({mode:'test',subscriptions:subs.map(s=>subscriptionSummary(s,env)),deliveryEnabled:false});
  }
  if(!row.customer_id){const customer=await stripe(env,'customers',{'metadata[dpi_user]':uid},`dpi-customer-${uid}`);await db.prepare('UPDATE supporter_billing SET customer_id=? WHERE discord_user_id=? AND customer_id IS NULL').bind(customer.id,uid).run();row=await db.prepare('SELECT * FROM supporter_billing WHERE discord_user_id=?').bind(uid).first();}
  const origin=env.SUPPORTER_PUBLIC_ORIGIN;

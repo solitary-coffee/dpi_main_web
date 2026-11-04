@@ -1,32 +1,15 @@
 let session;
 let revision = 0;
 let rules = [];
+let options;
+const channelsByGuild = new Map();
 
 const $ = id => document.getElementById(id);
 const status = text => { $('status').textContent = text; };
-const REGIONS = [
- ['all', '全国'],
- ['hokkaido', '北海道地方'],
- ['tohoku', '東北地方'],
- ['kanto-koshin', '関東甲信地方'],
- ['hokuriku', '北陸地方'],
- ['tokai', '東海地方'],
- ['kinki', '近畿地方'],
- ['chugoku', '中国地方'],
- ['shikoku', '四国地方'],
- ['kyushu-north', '九州北部地方（山口県を含む）'],
- ['kyushu-south-amami', '九州南部・奄美地方'],
- ['okinawa', '沖縄地方'],
-];
-const WEATHER_LEVELS = [
- ['all', 'すべての気象情報'],
- ['1', 'レベル1 早期注意情報以上'],
- ['2', 'レベル2 注意報以上'],
- ['3', 'レベル3 警報以上'],
- ['4', 'レベル4 危険警報以上'],
- ['5', 'レベル5 特別警報'],
-];
 const INTENSITIES = [['1','1'],['2','2'],['3','3'],['4','4'],['5-','5弱'],['5+','5強'],['6-','6弱'],['6+','6強'],['7','7']];
+const TYPES = [['earthquake','地震情報'],['eew','緊急地震速報'],['weather','気象情報']];
+const WEATHER_ALERT_DETAILS = new Set(['heavy-rain-level','landslide-level','storm-surge-level']);
+const WEATHER_WARNING_DETAILS = new Set(['storm-blizzard-warning','wave-warning','heavy-snow-warning','other-advisory']);
 
 async function api(path, method = 'GET', body) {
  const response = await fetch(path, {
@@ -39,31 +22,85 @@ async function api(path, method = 'GET', body) {
  return data;
 }
 
-function field(article, rule, key, label, options) {
- const wrapper = document.createElement('label');
- wrapper.textContent = label;
- const input = document.createElement(options ? 'select' : 'input');
- if (options) {
-  for (const [value, text] of options) {
-   const option = document.createElement('option');
-   option.value = value;
-   option.textContent = text;
-   input.append(option);
-  }
+async function loadChannels(guildId, force = false) {
+ if (!guildId) return [];
+ if (!force && channelsByGuild.has(guildId)) return channelsByGuild.get(guildId);
+ const data = await api(`/api/reuse/channels?guild_id=${encodeURIComponent(guildId)}`);
+ channelsByGuild.set(guildId, data.channels);
+ return data.channels;
+}
+
+function selectOptions(input, values, current, placeholder) {
+ input.replaceChildren();
+ if (placeholder) {
+  const option = document.createElement('option');
+  option.value = '';
+  option.textContent = placeholder;
+  input.append(option);
  }
- input.value = rule[key] ?? '';
- input.onchange = () => {
+ for (const [value, text] of values) {
+  const option = document.createElement('option');
+  option.value = value;
+  option.textContent = text;
+  input.append(option);
+ }
+ input.value = current ?? '';
+}
+
+function field(article, rule, key, label, values, attributes = {}) {
+ const wrapper = document.createElement('label');
+ const caption = document.createElement('span');
+ caption.textContent = label;
+ const input = document.createElement(values ? 'select' : 'input');
+ if (values) selectOptions(input, values, rule[key]);
+ else input.value = rule[key] ?? '';
+ for (const [name,value] of Object.entries(attributes)) input.setAttribute(name,value);
+ input.onchange = async () => {
   rule[key] = input.value;
-  if (key === 'type') render();
+  if (key === 'guildId') {
+   rule.channelId = '';
+   status('チャンネルを取得しています…');
+   try { await loadChannels(rule.guildId, true); status(''); } catch (error) { status(error.message); }
+   render();
+  } else if (key === 'type' || key === 'detail') {
+   if (key === 'type') rule.detail = 'all';
+   render();
+  }
  };
- wrapper.append(input);
+ wrapper.append(caption,input);
  article.append(wrapper);
+ return input;
+}
+
+function channelField(article, rule) {
+ const channels = channelsByGuild.get(rule.guildId) || [];
+ const choices = channels.map(channel => [channel.id, `${channel.announcement ? '📣' : '#'} ${channel.name}`]);
+ const input = field(article, rule, 'channelId', '通知チャンネル', choices);
+ if (!choices.length) selectOptions(input, [], '', '利用可能なチャンネルがありません');
+ else if (!choices.some(([id]) => id === rule.channelId)) selectOptions(input, choices, '', 'チャンネルを選択');
+}
+
+function detailOptions(type) {
+ if (type === 'earthquake') return options.earthquakeDetails;
+ if (type === 'eew') return options.eewDetails;
+ return options.weatherDetails;
 }
 
 function normalizeRule(rule) {
- const region = REGIONS.some(([value]) => value === rule.region) ? rule.region : 'all';
- const weatherLevel = WEATHER_LEVELS.some(([value]) => value === rule.weatherLevel) ? rule.weatherLevel : 'all';
- return {...rule, region, weatherLevel, intensity: rule.intensity || '4'};
+ const type = TYPES.some(([value]) => value === rule.type) ? rule.type : 'earthquake';
+ return {
+  ...rule,
+  type,
+  detail: rule.detail || 'all',
+  region: rule.region || 'all',
+  intensity: rule.intensity || '4',
+  intensityChange: rule.intensityChange || 'all',
+  magnitudeMin: rule.magnitudeMin ?? '',
+  magnitudeMax: rule.magnitudeMax ?? '',
+  magnitudeChange: rule.magnitudeChange || 'all',
+  weatherLevel: rule.weatherLevel || 'all',
+  warningLevel: rule.warningLevel || 'all',
+ };
 }
 
 function render() {
@@ -71,14 +108,28 @@ function render() {
  rules.forEach((rule, index) => {
   const article = document.createElement('article');
   article.className = 'rule';
-  field(article, rule, 'name', 'ルール名');
+  const heading = document.createElement('h3');
+  heading.textContent = `通知ルール ${index + 1}`;
+  article.append(heading);
+  field(article, rule, 'name', 'ルール名', null, {maxlength:'80'});
   field(article, rule, 'guildId', 'サーバー', session.guilds.map(guild => [guild.id, guild.name]));
-  field(article, rule, 'channelId', 'チャンネルID');
-  field(article, rule, 'type', '情報種別', [['earthquake','地震情報'],['eew','緊急地震速報'],['weather','気象情報']]);
-  field(article, rule, 'region', '対象地方', REGIONS);
-  if (rule.type === 'weather') field(article, rule, 'weatherLevel', '大雨等の警戒レベル', WEATHER_LEVELS);
-  else field(article, rule, 'intensity', '震度以上', INTENSITIES);
+  channelField(article, rule);
+  field(article, rule, 'type', '情報種別', TYPES);
+  field(article, rule, 'detail', '詳細', detailOptions(rule.type));
+  field(article, rule, 'region', '対象地方', options.regions);
+  if (rule.type === 'weather') {
+   if (WEATHER_ALERT_DETAILS.has(rule.detail)) field(article, rule, 'weatherLevel', '警戒レベル', options.weatherLevels);
+   if (WEATHER_WARNING_DETAILS.has(rule.detail)) field(article, rule, 'warningLevel', '警報・注意報', options.warningLevels);
+  } else {
+   field(article, rule, 'intensity', '最低震度', INTENSITIES);
+   field(article, rule, 'intensityChange', '震度変化', options.changeDirections);
+   field(article, rule, 'magnitudeMin', 'マグニチュード下限', null, {type:'number',min:'0',max:'10',step:'0.1',placeholder:'指定なし'});
+   field(article, rule, 'magnitudeMax', 'マグニチュード上限', null, {type:'number',min:'0',max:'10',step:'0.1',placeholder:'指定なし'});
+   field(article, rule, 'magnitudeChange', 'マグニチュード変化', options.changeDirections);
+  }
   const remove = document.createElement('button');
+  remove.type = 'button';
+  remove.className = 'danger';
   remove.textContent = '削除';
   remove.onclick = () => { rules.splice(index, 1); render(); };
   article.append(remove);
@@ -94,11 +145,13 @@ async function load() {
  }
  $('user').textContent = session.user.username;
  $('register').disabled = false;
+ options = await api('/api/supporter/options');
  const {account} = await api('/api/supporter/account');
  $('add').disabled = $('save').disabled = !account;
  if (account) {
   revision = account.revision;
   rules = JSON.parse(account.settings_json).rules.map(normalizeRule);
+  await Promise.all([...new Set(rules.map(rule => rule.guildId).filter(Boolean))].map(guildId => loadChannels(guildId)));
   render();
   $('register').disabled = true;
  }
@@ -114,11 +167,13 @@ $('register').onclick = run(async () => {
  await load();
  status('先行登録しました。料金は発生していません。');
 });
-$('add').onclick = () => {
+$('add').onclick = run(async () => {
  if (rules.length >= 5) return status('下書きは5件までです。');
- rules.push({name:'新しいルール',guildId:session.guilds[0]?.id || '',channelId:'',type:'earthquake',region:'all',intensity:'4',weatherLevel:'all'});
+ const guildId = session.guilds[0]?.id || '';
+ if (guildId) await loadChannels(guildId);
+ rules.push(normalizeRule({name:'新しいルール',guildId,channelId:'',type:'earthquake'}));
  render();
-};
+});
 $('save').onclick = run(async () => {
  const data = await api('/api/supporter/settings','PUT',{revision,rules});
  revision = data.revision;
@@ -130,32 +185,64 @@ const billing = $('billing');
 billing.replaceChildren();
 const title = document.createElement('h2');
 title.textContent = 'Stripe テスト決済';
-billing.append(title);
 const note = document.createElement('p');
-note.textContent = 'テスト専用です。実際のお支払い・配信は発生しません。決済完了後は契約状態を確認してください。';
-billing.append(note);
+note.textContent = 'テスト専用です。実際のお支払い・配信は発生しません。決済完了後は契約情報を更新してください。';
+const contract = document.createElement('div');
+contract.className = 'contract';
+contract.textContent = '契約情報は「契約情報を更新」から確認できます。';
+billing.append(title,note,contract);
 const plan = document.createElement('select');
 plan.setAttribute('aria-label','テスト契約プラン');
-for (const [value,text] of [['supporter','Supporter 月額300円'],['plus','Plus 月額800円']]) {
- const option = document.createElement('option');
- option.value = value;
- option.textContent = text;
- plan.append(option);
-}
+selectOptions(plan,[['supporter','Supporter 月額300円'],['plus','Plus 月額800円']],'supporter');
 const packs = document.createElement('select');
 packs.setAttribute('aria-label','追加パック');
-for (let index = 0; index <= 2; index += 1) {
- const option = document.createElement('option');
- option.value = index;
- option.textContent = `追加${index * 3}チャンネル / 月額＋${index * 200}円`;
- packs.append(option);
-}
+selectOptions(packs,[[0,'追加なし'],[1,'追加3チャンネル / 月額＋200円'],[2,'追加6チャンネル / 月額＋400円']],0);
 plan.onchange = () => {
  packs.disabled = plan.value === 'plus';
  if (packs.disabled) packs.value = '0';
 };
 billing.append(plan,packs);
-for (const [label,action] of [['テスト決済へ','checkout'],['支払方法・解約の管理','portal'],['契約状態を確認','status']]) {
+
+const dateText = seconds => seconds ? new Intl.DateTimeFormat('ja-JP',{dateStyle:'medium',timeStyle:'short',timeZone:'Asia/Tokyo'}).format(new Date(seconds * 1000)) : '—';
+const moneyText = (amount,currency) => new Intl.NumberFormat('ja-JP',{style:'currency',currency:(currency || 'jpy').toUpperCase(),maximumFractionDigits:0}).format(amount || 0);
+const STATUS_LABELS = {active:'有効',trialing:'試用中',past_due:'支払い遅延',unpaid:'未払い',paused:'一時停止',incomplete:'手続き未完了'};
+
+function renderContracts(subscriptions) {
+ contract.replaceChildren();
+ if (!subscriptions.length) {
+  contract.textContent = '現在の契約はありません。';
+  return;
+ }
+ for (const subscription of subscriptions) {
+  const card = document.createElement('article');
+  card.className = 'contract-card';
+  const heading = document.createElement('h3');
+  heading.textContent = subscription.plan;
+  const data = document.createElement('dl');
+  const entries = [
+   ['状態',`${STATUS_LABELS[subscription.status] || subscription.status}${subscription.cancelAtPeriodEnd ? '（期間末で解約予定）' : ''}`],
+   ['支払い開始日',dateText(subscription.startedAt)],
+   ['現在の期間開始',dateText(subscription.currentPeriodStart)],
+   [subscription.cancelAtPeriodEnd ? '契約終了予定' : '次回更新日',dateText(subscription.nextRenewalAt)],
+   ['月額合計',moneyText(subscription.amount,subscription.currency)],
+  ];
+  for (const [term,value] of entries) {
+   const dt=document.createElement('dt'); dt.textContent=term;
+   const dd=document.createElement('dd'); dd.textContent=value;
+   data.append(dt,dd);
+  }
+  const list = document.createElement('ul');
+  for (const item of subscription.items) {
+   const row = document.createElement('li');
+   row.textContent = `${item.label} × ${item.quantity}：${moneyText(item.subtotal,item.currency)}`;
+   list.append(row);
+  }
+  card.append(heading,data,list);
+  contract.append(card);
+ }
+}
+
+for (const [label,action] of [['テスト決済へ','checkout'],['支払方法・解約の管理','portal'],['契約情報を更新','status']]) {
  const button = document.createElement('button');
  button.textContent = label;
  button.onclick = run(async () => {
@@ -167,7 +254,8 @@ for (const [label,action] of [['テスト決済へ','checkout'],['支払方法�
     if (url.protocol !== 'https:' || !['checkout.stripe.com','billing.stripe.com'].includes(url.hostname)) throw Error('不正な決済URLです。');
     location.assign(url.href);
    } else {
-    status(result.subscriptions.length ? result.subscriptions.map(subscription => `${subscription.status}${subscription.cancelAtPeriodEnd ? '（期間末解約予定）' : ''}`).join(' / ') : '契約はありません。');
+    renderContracts(result.subscriptions);
+    status('契約情報を更新しました。');
    }
   } finally { button.disabled = false; }
  });
