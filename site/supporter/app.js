@@ -3,6 +3,7 @@ let revision = 0;
 let rules = [];
 let options;
 let entitlements = {servers:1,channels:2,rules:5,complexConditions:false,multiDestination:false};
+let hasConfigurableContract = false;
 const channelsByGuild = new Map();
 
 const $ = id => document.getElementById(id);
@@ -66,8 +67,8 @@ function field(article, rule, key, label, values, attributes = {}) {
    status(different?'別のサーバーが選択されています。契約中のサーバー数上限を確認してください。':'チャンネルを取得しています…');
    try { await loadChannels(rule.guildId, true); if(!different)status(''); } catch (error) { status(error.message); }
    render();
-  } else if (key === 'type' || key === 'detail' || key === 'intensityMode' || key === 'magnitudeMode') {
-   if (key === 'type') rule.detail = 'all';
+  } else if (key === 'type' || key === 'detail' || key === 'intensityMode' || key === 'magnitudeMode' || key === 'conditionLogic') {
+   if (key === 'type') {rule.detail = 'all';rule.conditions=[];}
    render();
   }
  };
@@ -123,6 +124,41 @@ function detailOptions(type) {
  return options.weatherDetails;
 }
 
+function conditionKinds(rule){
+ const common=[['region','対象地方'],['detail','詳細種別']];
+ return rule.type==='weather'?[...common,['weatherLevel','警戒レベル'],['warningLevel','警報・注意報']]:[...common,['intensity','震度の下限'],['magnitude','マグニチュードの下限']];
+}
+function conditionValues(rule,kind){
+ if(kind==='region')return options.regions;
+ if(kind==='detail')return detailOptions(rule.type);
+ if(kind==='intensity')return INTENSITIES;
+ if(kind==='weatherLevel')return options.weatherLevels;
+ if(kind==='warningLevel')return options.warningLevels;
+ return null;
+}
+function defaultConditionValue(rule,kind){return kind==='magnitude'?'4.0':String(conditionValues(rule,kind)?.[0]?.[0]||'');}
+function additionalConditionsField(article,rule){
+ const wrapper=document.createElement('fieldset');wrapper.className='condition-builder';
+ const legend=document.createElement('legend');legend.textContent='追加条件（Pro・最大8件）';wrapper.append(legend);
+ const help=document.createElement('p');help.className='help';help.textContent=`上の「条件の組み合わせ」に従い、基本条件と追加条件を${rule.conditionLogic==='or'?'いずれか':'すべて'}判定します。`;wrapper.append(help);
+ const list=document.createElement('div');list.className='condition-list';
+ rule.conditions.forEach((condition,index)=>{
+  const row=document.createElement('div');row.className='condition-row';
+  const kind=document.createElement('select');kind.setAttribute('aria-label',`追加条件${index+1}の種類`);selectOptions(kind,conditionKinds(rule),condition.kind);
+  const values=conditionValues(rule,condition.kind);
+  const value=document.createElement(values?'select':'input');value.setAttribute('aria-label',`追加条件${index+1}の値`);
+  if(values)selectOptions(value,values,String(condition.value??''));else{value.value=String(condition.value??'');value.inputMode='decimal';value.placeholder='0〜10';}
+  kind.onchange=()=>{condition.kind=kind.value;condition.value=defaultConditionValue(rule,condition.kind);render();};
+  value.onchange=()=>{condition.value=value.value;};
+  const remove=document.createElement('button');remove.type='button';remove.className='condition-remove';remove.textContent='条件を削除';remove.onclick=()=>{rule.conditions.splice(index,1);render();};
+  row.append(kind,value,remove);list.append(row);
+ });
+ wrapper.append(list);
+ const add=document.createElement('button');add.type='button';add.className='secondary';add.textContent='＋ 条件を追加';add.disabled=rule.conditions.length>=8;
+ add.onclick=()=>{const kind=conditionKinds(rule)[0][0];rule.conditions.push({kind,operator:'equals',value:defaultConditionValue(rule,kind)});render();};
+ wrapper.append(add);article.append(wrapper);
+}
+
 function normalizeRule(rule) {
  const type = TYPES.some(([value]) => value === rule.type) ? rule.type : 'earthquake';
  const detail = type === 'eew' && rule.detail === 'intensity-change' ? 'forecast' : (rule.detail || 'all');
@@ -140,11 +176,13 @@ function normalizeRule(rule) {
   eewWarningAreaMode: rule.eewWarningAreaMode || 'all',
   channelIds: Array.isArray(rule.channelIds)&&rule.channelIds.length?rule.channelIds:[rule.channelId].filter(Boolean),
   conditionLogic: rule.conditionLogic || 'and',
+  conditions: Array.isArray(rule.conditions)?rule.conditions.slice(0,8).map(condition=>({kind:String(condition.kind||'region'),operator:String(condition.operator||'equals'),value:condition.value??'all'})):[],
  };
 }
 
 function render() {
  $('rules').replaceChildren();
+ if(!hasConfigurableContract)return;
  rules.forEach((rule, index) => {
   const article = document.createElement('article');
   article.className = 'rule';
@@ -174,6 +212,7 @@ function render() {
    field(article, rule, 'magnitudeMode', 'マグニチュードの通知条件', options.thresholdModes);
    if(rule.magnitudeMode==='threshold')field(article, rule, 'magnitudeMin', 'マグニチュードの閾値', null, {inputmode:'decimal',placeholder:'0〜10'});
   }
+  if(entitlements.complexConditions)additionalConditionsField(article,rule);
   const remove = document.createElement('button');
   remove.type = 'button';
   remove.className = 'danger';
@@ -182,6 +221,14 @@ function render() {
   article.append(remove);
   $('rules').append(article);
  });
+}
+
+function setRuleAccess(enabled){
+ hasConfigurableContract=enabled===true;
+ $('add').disabled=!hasConfigurableContract;
+ $('save').disabled=!hasConfigurableContract;
+ $('rules-lock').classList.toggle('hidden',hasConfigurableContract);
+ render();
 }
 
 async function load() {
@@ -195,7 +242,7 @@ async function load() {
  options = await api('/api/supporter/options');
  const {account,billingEnabled} = await api('/api/supporter/account');
  $('billing-email').value = account?.billing_email || '';
- $('add').disabled = $('save').disabled = !account;
+ $('add').disabled = $('save').disabled = true;
  $('register').textContent = account ? 'メールアドレスを更新' : '有料プラン利用情報を登録（決済前）';
  if (account) {
   revision = account.revision;
@@ -205,10 +252,10 @@ async function load() {
   if(billingEnabled){
    try{
     const billingState=await api('/api/supporter/billing/status');
-    renderContracts(billingState.subscriptions||[]);
+    renderContracts(billingState.subscriptions||[]);renderInvoices(billingState.invoices||[]);
     const credits=Number(billingState.credits||0);
     credit.textContent=`利用可能クレジット: ${credits.toLocaleString('ja-JP')}クレジット（${credits.toLocaleString('ja-JP')}円）`;
-   }catch{contract.textContent='契約情報を自動取得できませんでした。「契約情報を更新」を押してください。';}
+   }catch{contract.textContent='契約情報を自動取得できませんでした。「最新の契約・明細を読み込む」を押してください。';setRuleAccess(false);}
   }
  }
 }
@@ -226,7 +273,8 @@ $('register').onclick = run(async () => {
  status('登録情報を保存しました。この操作だけでは料金は発生しません。');
 });
 $('add').onclick = run(async () => {
- if (rules.length >= entitlements.rules) return status(`現在のプランでは下書きは${entitlements.rules}件までです。`);
+ if(!hasConfigurableContract)return status('通知設定は有料プランの契約後に利用できます。');
+ if (rules.length >= entitlements.rules) return status(`現在のプランでは通知ルールは${entitlements.rules}件までです。`);
  const guildId = rules[0]?.guildId || session.guilds[0]?.id || '';
  rules.push(normalizeRule({name:'新しいルール',guildId,channelId:'',type:'earthquake'}));
  render();
@@ -241,9 +289,10 @@ $('add').onclick = run(async () => {
  }
 });
 $('save').onclick = run(async () => {
+ if(!hasConfigurableContract)return status('通知設定は有料プランの契約後に利用できます。');
  const data = await api('/api/supporter/settings','PUT',{revision,rules});
  revision = data.revision;
- status('下書きを保存しました。配信には反映されません。');
+ status('通知設定を保存しました。先行提供期間中のため、通知配信にはまだ反映されません。');
 });
 run(load)();
 
@@ -261,6 +310,9 @@ const credit = document.createElement('p');
 credit.className = 'credit-balance';
 credit.textContent = '利用可能クレジット: 0クレジット（0円）';
 billing.append(credit);
+const invoiceTitle=document.createElement('h3');invoiceTitle.className='invoice-title';invoiceTitle.textContent='支払い明細';
+const invoiceHistory=document.createElement('div');invoiceHistory.className='invoice-history';invoiceHistory.textContent='契約後に請求明細を確認できます。';
+billing.append(invoiceTitle,invoiceHistory);
 const plan = document.createElement('select');
 plan.setAttribute('aria-label','契約プラン');
 selectOptions(plan,[['supporter','BASIC 月額300円'],['plus','Plus 月額800円'],['pro','Pro 月額1,280円']],'supporter');
@@ -279,7 +331,7 @@ updatePricePreview();billing.append(optionGrid,pricePreview);
 
 const dateText = seconds => seconds ? new Intl.DateTimeFormat('ja-JP',{dateStyle:'medium',timeStyle:'short',timeZone:'Asia/Tokyo'}).format(new Date(seconds * 1000)) : '—';
 const moneyText = (amount,currency) => new Intl.NumberFormat('ja-JP',{style:'currency',currency:(currency || 'jpy').toUpperCase(),maximumFractionDigits:0}).format(amount || 0);
-const STATUS_LABELS = {active:'有効',trialing:'試用中',past_due:'支払い遅延',unpaid:'未払い',paused:'一時停止',incomplete:'手続き未完了'};
+const STATUS_LABELS = {active:'有効',trialing:'試用中',past_due:'支払い遅延',unpaid:'未払い',paused:'一時停止',incomplete:'手続き未完了',paid:'支払い済み',open:'支払い待ち',draft:'作成中',void:'無効'};
 
 function stripeDestination(value) {
  const link = document.createElement('a');
@@ -290,16 +342,36 @@ function stripeDestination(value) {
  return link.href;
 }
 
+function stripeDocumentDestination(value){
+ const link=document.createElement('a');link.href=typeof value==='string'?value:'';
+ if(link.protocol!=='https:'||!['invoice.stripe.com','pay.stripe.com'].includes(link.hostname))throw Error('Stripeの請求書URLを確認できませんでした。');
+ return link.href;
+}
+
+function renderInvoices(invoices){
+ invoiceHistory.replaceChildren();
+ if(!invoices.length){invoiceHistory.textContent='表示できる支払い明細はまだありません。';return;}
+ for(const invoice of invoices){
+  const card=document.createElement('article');card.className='invoice-card';
+  const heading=document.createElement('h4');heading.textContent=invoice.number?`請求書 ${invoice.number}`:'Stripe請求書';
+  const meta=document.createElement('p');meta.textContent=`${dateText(invoice.created)}・${STATUS_LABELS[invoice.status]||invoice.status}・${moneyText(invoice.total,invoice.currency)}`;
+  const actions=document.createElement('div');actions.className='invoice-actions';
+  for(const [label,url] of [['請求書を見る',invoice.hostedInvoiceUrl],['PDFを開く',invoice.invoicePdf]])if(url){const anchor=document.createElement('a');anchor.className='secondary-btn';anchor.textContent=label;anchor.href=stripeDocumentDestination(url);anchor.target='_blank';anchor.rel='noopener noreferrer';actions.append(anchor);}
+  card.append(heading,meta,actions);invoiceHistory.append(card);
+ }
+}
+
 function renderContracts(subscriptions) {
  contract.replaceChildren();
  if (!subscriptions.length) {
   contract.textContent = '現在の契約はありません。';
   entitlements={servers:1,channels:2,rules:5,complexConditions:false,multiDestination:false};
-  if(options)render();
+  if(options)setRuleAccess(false);
   return;
  }
- entitlements=subscriptions.reduce((limits,item)=>({servers:Math.max(limits.servers,Number(item.servers)||1),channels:Math.max(limits.channels,Number(item.channels)||2),rules:Math.max(limits.rules,Number(item.rules)||5),complexConditions:limits.complexConditions||item.complexConditions===true,multiDestination:limits.multiDestination||item.multiDestination===true}),{servers:1,channels:2,rules:5,complexConditions:false,multiDestination:false});
- const current=subscriptions.find(item=>['active','trialing','past_due','unpaid','paused'].includes(item.status))||subscriptions[0];
+ const active=subscriptions.filter(item=>['active','trialing','past_due','unpaid','paused'].includes(item.status));
+ entitlements=active.reduce((limits,item)=>({servers:Math.max(limits.servers,Number(item.servers)||1),channels:Math.max(limits.channels,Number(item.channels)||2),rules:Math.max(limits.rules,Number(item.rules)||5),complexConditions:limits.complexConditions||item.complexConditions===true,multiDestination:limits.multiDestination||item.multiDestination===true}),{servers:1,channels:2,rules:5,complexConditions:false,multiDestination:false});
+ const current=active[0]||subscriptions[0];
  if(current){plan.value=current.planId||'supporter';channelPacks.value=String(current.channelPacks||0);serverPacks.value=String(current.serverPacks||0);updatePricePreview();}
  for (const subscription of subscriptions) {
   const card = document.createElement('article');
@@ -330,9 +402,12 @@ function renderContracts(subscriptions) {
    list.append(row);
   }
   card.append(heading,data,list);
+  if(subscription.scheduledChange){
+   const scheduled=document.createElement('p');scheduled.className='scheduled-change';scheduled.textContent=`予約中：${dateText(subscription.scheduledChange.effectiveAt)}から${subscription.scheduledChange.plan}（月額${moneyText(subscription.scheduledChange.monthly,'jpy')}）へ変更。返金はありません。`;card.append(scheduled);
+  }
   contract.append(card);
  }
- if(options)render();
+ if(options)setRuleAccess(active.length>0);
 }
 
 let pendingUpdate=null;
@@ -342,7 +417,7 @@ const signedMoney=value=>`${Number(value)>0?'+':''}${moneyText(Number(value)||0,
 function showBillingPreview(result,requested){
  pendingUpdate={requested,prorationDate:result.prorationDate};
  previewContent.replaceChildren();
- const heading=document.createElement('p');heading.className='preview-lead';heading.textContent='以下の内容で契約を更新します。料金と利用枠を確認してから確定してください。';
+ const heading=document.createElement('p');heading.className='preview-lead';heading.textContent=result.changeTiming==='next_period'?'以下のダウングレードを次回更新日から予約します。現在の契約は今期末まで利用できます。':'以下の内容で契約を更新します。料金と利用枠を確認してから確定してください。';
  const data=document.createElement('dl');data.className='preview-grid';
  const rows=[
   ['プラン',`${result.current.plan} → ${result.next.plan}`],
@@ -355,7 +430,9 @@ function showBillingPreview(result,requested){
   ['サーバー上限',`${result.current.servers} → ${result.next.servers}`],
   ['通知ルール上限',`${result.current.rules} → ${result.next.rules}`],
  ];
- if(result.planChanged){
+ if(result.changeTiming==='next_period'){
+  rows.splice(3,0,['適用タイミング',`${dateText(result.effectiveAt)}から`],['今回の返金','なし'],['今回の追加請求','なし']);
+ } else if(result.planChanged){
   const breakdown=result.planProrationBreakdown||{unusedPlanCredit:0,newPlanCharge:Math.max(0,result.planProration),net:result.planProration};
   rows.splice(3,0,
    ['旧プラン未使用分（返金相当）',breakdown.unusedPlanCredit?`−${moneyText(breakdown.unusedPlanCredit,'jpy')}`:moneyText(0,'jpy')],
@@ -375,12 +452,13 @@ $('billing-preview-confirm').onclick=run(async()=>{
  const button=$('billing-preview-confirm');button.disabled=true;
  try{
   const result=await api('/api/supporter/billing/update','POST',{...pendingUpdate.requested,prorationDate:pendingUpdate.prorationDate,requestId:crypto.randomUUID()});
-  pendingUpdate=null;previewDialog.close();renderContracts(result.subscriptions||[]);
-  const credits=Number(result.credits||0);credit.textContent=`利用可能クレジット: ${credits.toLocaleString('ja-JP')}クレジット（${credits.toLocaleString('ja-JP')}円）`;status(result.message||'契約情報を更新しました。');
+  pendingUpdate=null;previewDialog.close();
+  const state=await api('/api/supporter/billing/status');renderContracts(state.subscriptions||[]);renderInvoices(state.invoices||[]);
+  const credits=Number(state.credits||result.credits||0);credit.textContent=`利用可能クレジット: ${credits.toLocaleString('ja-JP')}クレジット（${credits.toLocaleString('ja-JP')}円）`;status(result.message||'契約情報を更新しました。');
  } finally {button.disabled=false;}
 });
 
-for (const [label,action] of [['申し込みへ','checkout'],['変更内容を確認','update'],['支払方法・解約の管理','portal'],['契約情報を更新','status']]) {
+for (const [label,action] of [['申し込みへ','checkout'],['プラン・オプションを変更','update'],['支払方法・解約の管理','portal'],['最新の契約・明細を読み込む','status']]) {
  const button = document.createElement('button');
  button.textContent = label;
  button.onclick = run(async () => {
@@ -396,7 +474,7 @@ for (const [label,action] of [['申し込みへ','checkout'],['変更内容を�
    if (result.url) {
     location.href = stripeDestination(result.url);
    } else {
-    renderContracts(result.subscriptions);
+    renderContracts(result.subscriptions||[]);renderInvoices(result.invoices||[]);
     const credits=Number(result.credits||0);
     credit.textContent=`利用可能クレジット: ${credits.toLocaleString('ja-JP')}クレジット（${credits.toLocaleString('ja-JP')}円）`;
     status(result.message||'契約情報を更新しました。');
