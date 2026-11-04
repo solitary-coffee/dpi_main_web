@@ -829,7 +829,7 @@ async function discordFetch(pathname, authorization) {
     return response;
 }
 
-async function requireSession(request, env) {
+export async function requireSession(request, env) {
     await ensureDatabase(env);
     const rawToken = readCookie(request, 'dpi_reuse_session');
     if (!rawToken || rawToken.length > 200) {
@@ -1159,21 +1159,21 @@ function assertMethod(request, methods) {
     if (!methods.includes(request.method)) throw new ReuseError(405, '許可されていない操作です。', 'method_not_allowed');
 }
 
-function assertSameOrigin(request) {
+export function assertSameOrigin(request) {
     const origin = request.headers.get('origin');
     if (!origin || origin !== new URL(request.url).origin) {
         throw new ReuseError(403, 'このページ以外からは操作できません。', 'invalid_origin');
     }
 }
 
-function assertCsrf(request, session) {
+export function assertCsrf(request, session) {
     const provided = request.headers.get('x-reuse-csrf') || '';
     if (!timingSafeEqual(provided, session.csrf_token)) {
         throw new ReuseError(403, '操作の確認情報が一致しません。再読み込みしてください。', 'invalid_csrf');
     }
 }
 
-async function readJson(request) {
+export async function readJson(request) {
     const type = request.headers.get('content-type') || '';
     if (!type.toLowerCase().startsWith('application/json')) {
         throw new ReuseError(415, '送信形式が正しくありません。', 'invalid_content_type');

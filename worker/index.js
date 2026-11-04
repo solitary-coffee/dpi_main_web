@@ -1,4 +1,6 @@
 import { publicMaintenanceGate } from './maintenance.js';
+import { handleSupporterRequest } from './supporter.js';
+import { billingWebhook } from './supporter-billing.js';
 import { isPrivateAssetPath } from './private-assets.js';
 import { handleNewsletterQueue, handleNewsletterRequest } from './newsletter.js';
 import { blockResponseForRequest } from './ip-block.js';
@@ -42,6 +44,10 @@ class ContactError extends Error {
 
 const application = {
     async fetch(request, env, ctx) {
+        if (new URL(request.url).pathname === '/api/supporter/stripe/webhook') {
+            try { return await billingWebhook(request, env); }
+            catch { return new Response('Webhook temporarily unavailable', {status:503}); }
+        }
         const accessLogResponse = await handleAccessLogRequest(request, env);
         if (accessLogResponse) return accessLogResponse;
         if (isPrivateAssetPath(new URL(request.url).pathname)) {
@@ -71,6 +77,8 @@ const application = {
         const newsletterResponse = await handleNewsletterRequest(request, env, ctx);
         if (newsletterResponse) return newsletterResponse;
 
+        const supporterResponse = await handleSupporterRequest(request, env);
+        if (supporterResponse) return supporterResponse;
         const reuseResponse = await handleReuseRequest(request, env);
         if (reuseResponse) return reuseResponse;
 
