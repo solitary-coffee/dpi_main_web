@@ -1,33 +1,76 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="ja">
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>DPI-Bot Supporter</title>
-<link rel="stylesheet" href="style.css">
+<head>
+ <meta charset="UTF-8">
+ <meta name="viewport" content="width=device-width, initial-scale=1.0">
+ <meta name="robots" content="noindex,nofollow">
+ <meta name="description" content="DPI-Bot BASICの通知ルールと契約情報を管理します。">
+ <title>BASIC - ユーザーダッシュボード | DPI-Bot</title>
+ <link rel="icon" href="../../img/dpi.png" type="image/png">
+ <link rel="stylesheet" href="/site/reuse/style.css">
+ <link rel="stylesheet" href="style.css">
+</head>
 <body>
-<header><a href="/">DPI-Bot</a><span>Supporter Dashboard</span></header>
-<main>
- <p class="eyebrow">あなたのサーバーに、必要な情報を。</p>
- <h1>通知を、自分たちに合わせる。</h1>
- <p>登録と通知設定の先行準備画面です。保存した設定からの配信・課金はまだ開始されません。</p>
- <section class="plans">
-  <article><h2>Supporter</h2><strong>300円<small> / 月・予定</small></strong><p>2チャンネル / 通知ルール5件</p><p>＋200円で3チャンネル追加</p></article>
-  <article><h2>Plus</h2><strong>800円<small> / 月・予定</small></strong><p>10チャンネル</p><p>提供内容は準備中です</p></article>
-  <article><h2>Pro</h2><strong>個別相談</strong><p>団体・複数拠点向け</p><a href="/site/contact/">お問い合わせ</a></article>
- </section>
- <section>
-  <h2>アカウント</h2><p id="user">確認中…</p><a href="/api/reuse/oauth/start">Discordでログイン</a>
-  <p class="hint">現在は既存のログイン画面を利用します。認証後にこのページへ戻ってください。</p>
-  <button id="register" disabled>先行登録する（無料）</button><button id="reload">再読み込み</button>
- </section>
- <section>
-  <h2>通知ルールの下書き</h2>
-  <p>Discordの通知先チャンネル、地震・緊急地震速報の詳細条件、気象庁の地方区分と防災気象情報を選択できます。現在は下書き保存のみで、配信には反映されません。</p>
-  <div id="rules"></div><button id="add" disabled>＋ ルールを追加</button><button id="save" disabled>変更を保存</button>
- </section>
- <section id="billing"><h2>お支払い</h2><p>読み込み中…</p></section>
- <p id="status" role="status" aria-live="polite"></p>
-</main>
-<script type="module" src="app.js"></script>
+ <button id="menu-toggle-btn" type="button" aria-label="メニューを開く"><span></span><span></span><span></span></button>
+ <div class="overlay"></div>
+ <div class="page-container">
+  <nav class="sidebar" aria-label="サイトメニュー">
+   <div class="sidebar-header"><h2>メニュー</h2></div>
+   <ul>
+    <li><a href="/index.html">トップページ</a></li>
+    <li><a href="/site/status/index.html">お知らせ</a></li>
+    <li><a href="/site/info/index.html">配信内容</a></li>
+    <li><a href="/site/about/index.html">コマンド</a></li>
+    <li><a href="/site/dever/index.html">開発者紹介</a></li>
+    <li class="menu-spacer" aria-hidden="true"></li>
+    <li><a href="/site/mail/index.html">メール配信</a></li>
+    <li><a href="/site/reuse/" class="active">二次利用申請</a></li>
+    <li class="menu-spacer" aria-hidden="true"></li>
+    <li><a href="/site/invi/index.html">BOTを招待</a></li>
+    <li><a href="/site/buy/index.html">ご支援のお願い</a></li>
+    <li><a href="/terms/index.html">利用規約等</a></li>
+    <li><a href="/site/supp/index.html">お問い合わせ</a></li>
+   </ul>
+  </nav>
+  <main class="main-content">
+   <header><h1>ユーザーダッシュボード</h1></header>
+   <p id="status" class="form-status" role="status" aria-live="polite"></p>
+   <section class="section basic-hero">
+    <p class="eyebrow">BASIC PREVIEW</p>
+    <h2>通知を、自分たちに合わせる。</h2>
+    <p>登録、通知ルール、テスト契約を管理できます。保存した設定からの通知配信はまだ開始されません。</p>
+   </section>
+   <section class="section service-dashboard" aria-labelledby="dashboard-menu-title">
+    <div class="dashboard-heading"><div><h2 id="dashboard-menu-title">利用メニュー</h2><p>ユーザーダッシュボード内の機能を切り替えます。</p></div></div>
+    <div class="service-grid">
+     <article class="service-card"><span class="service-badge">利用可能</span><h3>二次利用申請</h3><p>申請状況、新規申請、修正・停止の手続き。</p><a class="secondary-btn" href="/site/reuse/">二次利用申請を開く</a></article>
+     <article class="service-card current-service"><span class="service-badge preview">先行公開</span><h3>BASIC</h3><p>通知条件、チャンネル、契約情報の設定。</p><span class="current-label">現在の画面</span></article>
+    </div>
+   </section>
+   <section class="section">
+    <h2>アカウント</h2>
+    <div class="account-row"><div><span class="account-label">Discordアカウント</span><h3 id="user">確認中…</h3></div><a class="discord-btn" href="/api/reuse/oauth/start">Discordでログイン</a></div>
+    <p class="help account-help">認証後にこのページへ戻ると、管理可能なDiscordサーバーを選択できます。</p>
+    <div class="button-row"><button id="register" class="primary-btn" disabled>先行登録する（無料）</button><button id="reload" class="secondary-btn">再読み込み</button></div>
+   </section>
+   <section class="section plan-section">
+    <h2>プラン</h2>
+    <div class="plans">
+     <article><span class="service-badge">基本プラン</span><h3>BASIC</h3><strong>300円<small> / 月・予定</small></strong><p>2チャンネル / 通知ルール5件</p><p>＋200円で3チャンネル追加</p></article>
+     <article><h3>Plus</h3><strong>800円<small> / 月・予定</small></strong><p>10チャンネル</p><p>提供内容は準備中です</p></article>
+     <article><h3>Pro</h3><strong>個別相談</strong><p>団体・複数拠点向け</p><a href="/site/supp/index.html">お問い合わせ</a></article>
+    </div>
+   </section>
+   <section class="section">
+    <h2>通知ルールの下書き</h2>
+    <p>通知先チャンネル、地震・緊急地震速報の詳細条件、気象庁の地方区分と防災気象情報を選択できます。現在は下書き保存のみで、配信には反映されません。</p>
+    <div id="rules"></div>
+    <div class="button-row"><button id="add" class="secondary-btn" disabled>＋ ルールを追加</button><button id="save" class="primary-btn" disabled>変更を保存</button></div>
+   </section>
+   <section id="billing" class="section"><h2>お支払い・契約情報</h2><p>読み込み中…</p></section>
+  </main>
+ </div>
+ <script src="../../script.js"></script>
+ <script type="module" src="app.js"></script>
 </body>
 </html>

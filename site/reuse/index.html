@@ -3,8 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="DPI-Botの配信をDiscordサーバーで二次利用するための申請ページです。">
-    <title>二次利用申請 - DPI-Bot</title>
+    <meta name="description" content="DPI-Botの二次利用申請や利用中サービスを管理するユーザーダッシュボードです。">
+    <title>ユーザーダッシュボード - DPI-Bot</title>
     <link rel="icon" href="../../img/dpi.png" type="image/png">
     <link rel="stylesheet" href="style.css">
 </head>
@@ -33,7 +33,7 @@
         </nav>
 
         <main class="main-content">
-            <header><h1>二次利用申請</h1></header>
+            <header><h1>ユーザーダッシュボード</h1></header>
             <div id="global-status" class="form-status" role="alert" aria-live="assertive"></div>
 
             <section class="section intro">
@@ -54,6 +54,25 @@
                     <div><span class="account-label">ログイン中</span><h2 id="account-name"></h2></div>
                     <button id="logout-btn" type="button" class="secondary-btn">ログアウト</button>
                 </div>
+
+                <section class="service-dashboard" aria-labelledby="services-title">
+                    <div class="dashboard-heading"><div><h2 id="services-title">利用メニュー</h2><p>DPI-Botで利用できる申請・設定をまとめて管理できます。</p></div></div>
+                    <div class="service-grid">
+                        <article class="service-card current-service">
+                            <span class="service-badge">利用可能</span>
+                            <h3>二次利用申請</h3>
+                            <p>申請状況の確認、新規申請、修正・停止の手続きができます。</p>
+                            <a class="secondary-btn" href="#my-applications-title">申請一覧を見る</a>
+                        </article>
+                        <article id="basic-dashboard-card" class="service-card hidden">
+                            <span class="service-badge preview">先行公開</span>
+                            <h3>BASIC</h3>
+                            <p>通知ルール、対象地域・震度、配信チャンネル、契約情報を設定できます。</p>
+                            <p id="basic-registration-state" class="service-state"></p>
+                            <a class="primary-btn" href="/site/supporter/">BASICを開く</a>
+                        </article>
+                    </div>
+                </section>
 
                 <section class="application-dashboard" aria-labelledby="my-applications-title">
                     <div class="dashboard-heading">

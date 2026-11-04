@@ -1,6 +1,6 @@
 import { requireSession, assertCsrf, assertSameOrigin, readJson, fetchGuildChannels } from './reuse.js';
 import { authenticateNewsletterAdmin } from './access.js';
-import { billingAction, billingReady } from './supporter-billing.js';
+import { adminBillingAction, billingAction, billingReady, subscriptionSummariesByCustomer } from './supporter-billing.js';
 
 const response = (data, status = 200) => Response.json(data, {status, headers: {'Cache-Control':'no-store'}});
 const notFound = () => new Response('Not Found', {
@@ -13,6 +13,41 @@ const notFound = () => new Response('Not Found', {
 });
 
 function clean(value) { return typeof value === 'string' ? value.trim() : ''; }
+function ruleCount(settingsJson) {
+ try {
+  const settings = JSON.parse(settingsJson || '{}');
+  return Array.isArray(settings.rules) ? settings.rules.length : 0;
+ } catch { return 0; }
+}
+export function supporterAdminAccount(row, subscriptions = [], billingError = '') {
+ return {
+  discordUserId: row.discord_user_id,
+  registeredAt: row.registered_at,
+  updatedAt: row.updated_at,
+  revision: Number(row.revision || 0),
+  ruleCount: ruleCount(row.settings_json),
+  subscriptions,
+  billingError,
+ };
+}
+function assertAdminOrigin(request) {
+ const url = new URL(request.url);
+ const origin = clean(request.headers.get('origin'));
+ const site = clean(request.headers.get('sec-fetch-site'));
+ if ((origin && origin !== url.origin) || site === 'cross-site') throw Object.assign(new Error('別サイトからの管理操作は許可されていません。'),{status:403});
+}
+async function writeSupporterAudit(db, actor, action, uid, details) {
+ try {
+  await db.prepare(`INSERT INTO admin_audit_events
+   (id, actor, action, entity_type, entity_id, details_json, created_at)
+   VALUES (?, ?, ?, ?, ?, ?, ?)`)
+   .bind(crypto.randomUUID(),actor,`supporter.${action}`,'supporter_account',uid,JSON.stringify(details).slice(0,8000),new Date().toISOString()).run();
+  return true;
+ } catch (error) {
+  console.error('BASIC billing audit write failed',{action,errorName:error?.name||'Error'});
+  return false;
+ }
+}
 export const SUPPORTER_REGIONS = Object.freeze([
  ['all', '全国'],
  ['hokkaido', '北海道地方'],
@@ -193,18 +228,53 @@ async function supporterSite(request, env, db) {
 export async function handleSupporterRequest(request, env) {
  const path = new URL(request.url).pathname;
  const isSupporterSite = path === '/site/supporter' || path.startsWith('/site/supporter/');
- if (!path.startsWith('/api/supporter/') && !path.startsWith('/site/supporter-admin/') && !isSupporterSite) return null;
+ const isSupporterAdmin = path === '/site/supporter-admin' || path.startsWith('/site/supporter-admin/');
+ if (!path.startsWith('/api/supporter/') && !isSupporterAdmin && !isSupporterSite) return null;
  try {
   const db = env.REUSE_DB || env.NEWSLETTER_DB;
   if (isSupporterSite) return await supporterSite(request, env, db);
-  if (path.startsWith('/site/supporter-admin/')) {
-   await authenticateNewsletterAdmin(request, env);
+  if (isSupporterAdmin) {
+   const admin = await authenticateNewsletterAdmin(request, env);
+   if (path === '/site/supporter-admin') {
+    const redirect = new URL(request.url);redirect.pathname='/site/supporter-admin/';
+    return new Response(null,{status:308,headers:{Location:redirect.toString(),'Cache-Control':'no-store'}});
+   }
+   if (path === '/site/supporter-admin/api/action') {
+    if (request.method !== 'POST') return response({message:'Method not allowed'},405);
+    assertAdminOrigin(request);
+    const input = await readJson(request);
+    const uid = clean(input.discordUserId);
+    if (!/^\d{17,20}$/.test(uid) || input.confirmDiscordUserId !== uid) return response({message:'対象Discord IDの確認入力が一致しません。'},400);
+    const account = await db.prepare(`SELECT a.discord_user_id, b.customer_id
+     FROM supporter_accounts a LEFT JOIN supporter_billing b ON b.discord_user_id=a.discord_user_id
+     WHERE a.discord_user_id=?`).bind(uid).first();
+    if (!account) return response({message:'対象のBASIC登録者が見つかりません。'},404);
+    const result = await adminBillingAction(env,account.customer_id,uid,input);
+    const auditRecorded = await writeSupporterAudit(db,admin.email,input.action,uid,{reason:clean(input.reason),amount:Number(input.amount)||null,plan:clean(input.plan)||null,packs:Number.isInteger(Number(input.packs))?Number(input.packs):null,requestId:clean(input.requestId),resultMessage:result.message});
+    return response({success:true,...result,auditRecorded});
+   }
    if (request.method !== 'GET') return response({message:'Method not allowed'},405);
    if (path === '/site/supporter-admin/api/accounts') {
-    const rows = await db.prepare('SELECT discord_user_id, registered_at, updated_at, revision FROM supporter_accounts ORDER BY updated_at DESC LIMIT 100').all();
-    return response({accounts:rows.results});
+    const rows = await db.prepare(`SELECT a.discord_user_id, a.registered_at, a.updated_at,
+     a.revision, a.settings_json, b.customer_id
+     FROM supporter_accounts a
+     LEFT JOIN supporter_billing b ON b.discord_user_id = a.discord_user_id
+     ORDER BY a.updated_at DESC LIMIT 100`).all();
+    const stripeEnabled = billingReady(env);
+    let grouped = new Map();
+    let billingError = '';
+    if (stripeEnabled) {
+     try { grouped = await subscriptionSummariesByCustomer(env,(rows.results||[]).map(row=>row.customer_id)); }
+     catch { billingError = 'Stripeから契約情報を取得できませんでした。'; }
+    }
+    const accounts = (rows.results||[]).map(row=>supporterAdminAccount(row,grouped.get(row.customer_id)||[],row.customer_id?billingError:''));
+    return response({billingEnabled:stripeEnabled,accounts});
    }
-   return env.ASSETS.fetch(request);
+   const asset = await env.ASSETS.fetch(request);
+   const headers = new Headers(asset.headers);
+   headers.set('Cache-Control','no-store');headers.set('X-Content-Type-Options','nosniff');headers.set('Referrer-Policy','no-referrer');
+   if ((headers.get('content-type')||'').includes('text/html')) headers.set('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'");
+   return new Response(asset.body,{status:asset.status,statusText:asset.statusText,headers});
   }
   if (path === '/api/supporter/plans' && request.method === 'GET' && supporterPublicEnabled(env)) {
    return response({billingEnabled:false, deliveryEnabled:false, plans:[{id:'supporter',yen:300,channels:2},{id:'plus',yen:800,channels:10}], addon:{yen:200,channels:3}});
