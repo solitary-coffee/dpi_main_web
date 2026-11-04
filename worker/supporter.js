@@ -68,7 +68,9 @@ export async function handleSupporterRequest(request, env) {
   if (path === '/api/supporter/plans' && request.method === 'GET' && supporterPublicEnabled(env)) {
    return response({billingEnabled:false, deliveryEnabled:false, plans:[{id:'supporter',yen:300,channels:2},{id:'plus',yen:800,channels:10}], addon:{yen:200,channels:3}});
   }
-  const session = await requireSession(request, {...env,REUSE_DB:db});
+  let session;
+  try { session = await requireSession(request, {...env,REUSE_DB:db}); }
+  catch (error) { if (!supporterPublicEnabled(env)) return notFound(); throw error; }
   const uid = session.discord_user_id;
   if (!supporterTestUserAllowed(env, uid)) return notFound();
   if (path === '/api/supporter/plans' && request.method === 'GET') {
