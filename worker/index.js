@@ -1,4 +1,5 @@
 import { publicMaintenanceGate } from './maintenance.js';
+import { handleSupporterRequest } from './supporter.js';
 import { isPrivateAssetPath } from './private-assets.js';
 import { handleNewsletterQueue, handleNewsletterRequest } from './newsletter.js';
 import { blockResponseForRequest } from './ip-block.js';
@@ -71,6 +72,8 @@ const application = {
         const newsletterResponse = await handleNewsletterRequest(request, env, ctx);
         if (newsletterResponse) return newsletterResponse;
 
+        const supporterResponse = await handleSupporterRequest(request, env);
+        if (supporterResponse) return supporterResponse;
         const reuseResponse = await handleReuseRequest(request, env);
         if (reuseResponse) return reuseResponse;
 

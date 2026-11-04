@@ -1,0 +1,12 @@
+let session,revision=0,rules=[];
+const $=id=>document.getElementById(id);
+const status=text=>{$('status').textContent=text;};
+async function api(path,method='GET',body){const r=await fetch(path,{method,headers:{'Content-Type':'application/json','x-reuse-csrf':session?.csrfToken||''},body:body?JSON.stringify(body):undefined});const d=await r.json();if(!r.ok)throw Error(d.message||'操作に失敗しました');return d;}
+function render(){ $('rules').replaceChildren();rules.forEach((rule,i)=>{const article=document.createElement('article');article.className='rule';for(const [key,label,options] of [['name','ルール名'],['guildId','サーバー',session.guilds.map(g=>[g.id,g.name])],['channelId','チャンネルID'],['type','情報種別',[['earthquake','地震情報'],['eew','緊急地震速報'],['weather','気象情報']]],['region','地域（下書き）'],['intensity','震度以上',[['1','1'],['2','2'],['3','3'],['4','4'],['5-','5弱'],['5+','5強'],['6-','6弱'],['6+','6強'],['7','7']]]]){const l=document.createElement('label');l.textContent=label;const input=document.createElement(options?'select':'input');if(options)for(const [value,text] of options){const o=document.createElement('option');o.value=value;o.textContent=text;input.append(o);}input.value=rule[key];input.onchange=()=>{rule[key]=input.value;};l.append(input);article.append(l);}const remove=document.createElement('button');remove.textContent='削除';remove.onclick=()=>{rules.splice(i,1);render();};article.append(remove);$('rules').append(article);});}
+async function load(){session=await api('/api/reuse/session');if(!session.authenticated){$('user').textContent='Discordログインが必要です。';return;}$('user').textContent=session.user.username;$('register').disabled=false;const {account}=await api('/api/supporter/account');$('add').disabled=$('save').disabled=!account;if(account){revision=account.revision;rules=JSON.parse(account.settings_json).rules;render();$('register').disabled=true;}}
+function run(fn){return()=>Promise.resolve().then(fn).catch(e=>status(e.message));}
+$('reload').onclick=run(load);
+$('register').onclick=run(async()=>{await api('/api/supporter/account','POST',{});await load();status('先行登録しました。料金は発生していません。');});
+$('add').onclick=()=>{if(rules.length>=5)return status('下書きは5件までです。');rules.push({name:'新しいルール',guildId:session.guilds[0]?.id||'',channelId:'',type:'earthquake',region:'',intensity:'4'});render();};
+$('save').onclick=run(async()=>{const d=await api('/api/supporter/settings','PUT',{revision,rules});revision=d.revision;status('下書きを保存しました。配信には反映されません。');});
+run(load)();
