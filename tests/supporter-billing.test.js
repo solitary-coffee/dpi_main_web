@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHmac} from 'node:crypto';
-import {billingAction,selection,billingReady,billingSchedule,creditsFromBalance,customerInvoices,prorationBreakdown,scheduledChangeSummary,staleCheckoutAttempt,subscriptionSummary,verifySignature} from '../worker/supporter-billing.js';
+import {billingAction,selection,billingReady,billingSchedule,creditsFromBalance,customerInvoices,paidCheckoutSubscriptionParams,provisionPaidCheckoutSubscription,prorationBreakdown,scheduledChangeSummary,staleCheckoutAttempt,subscriptionSummary,verifySignature} from '../worker/supporter-billing.js';
 import {supporterAdminAccount} from '../worker/supporter.js';
 import {readFile} from 'node:fs/promises';
 test('plan, channel and server add-ons are server controlled',()=>{
@@ -25,8 +25,9 @@ test('abandoned pre-Checkout state is detected without touching created sessions
  assert.equal(staleCheckoutAttempt({checkout_key:'key',checkout_id:'cs_test_x',checkout_params:'{"expires_at":"100"}'},101),false);
  assert.equal(staleCheckoutAttempt({checkout_key:null,checkout_id:null,checkout_params:null},101),false);
  assert.equal(staleCheckoutAttempt({checkout_key:'key',checkout_id:null,checkout_params:'{"expires_at":"200","subscription_data[proration_behavior]":"none","subscription_data[billing_cycle_anchor]":"150"}'},101),true);
+ assert.equal(staleCheckoutAttempt({checkout_key:'key',checkout_id:'cs_test_old',checkout_params:'{"mode":"subscription","expires_at":"200","subscription_data[trial_end]":"150"}'},101),true);
 });
-test('new Checkout uses the 26th as trial end and charges only the stated initial fee',async()=>{
+test('new Checkout charges the stated initial fee without a free trial',async()=>{
  const env={SUPPORTER_BILLING_MODE:'test',STRIPE_SECRET_KEY:'rk_test_example',STRIPE_WEBHOOK_SECRET:'whsec_x',STRIPE_PRICE_SUPPORTER:'price_basic',STRIPE_PRICE_PLUS:'price_plus',STRIPE_PRICE_PRO:'price_pro',STRIPE_PRICE_ADDON:'price_addon',STRIPE_PORTAL_CONFIG:'bpc_x',SUPPORTER_PUBLIC_ORIGIN:'https://dpi-bot.com'};
  const row={discord_user_id:'123',customer_id:'cus_x',checkout_id:null,checkout_key:null,checkout_params:null};
  const db={prepare(sql){return{values:[],bind(...values){this.values=values;return this;},async first(){if(sql.includes('supporter_accounts'))return{discord_user_id:'123',billing_email:'user@example.jp'};if(sql.includes('supporter_billing'))return{...row};return null;},async run(){if(sql.includes('SET checkout_key=')){row.checkout_key=this.values[0];row.checkout_params=this.values[1];}if(sql.includes('SET checkout_id='))row.checkout_id=this.values[0];return{meta:{changes:1}};}};}};
@@ -36,10 +37,31 @@ test('new Checkout uses the 26th as trial end and charges only the stated initia
   const response=await billingAction(new Request('https://dpi-bot.com/api/supporter/billing/checkout'),env,db,'123',{plan:'supporter',channelPacks:0,serverPacks:0,legalConsentVersion:'2026-11-04'});
   assert.equal(response.status,200);
   const checkout=calls.find(call=>call.path==='/v1/checkout/sessions');
-  assert.ok(Number(checkout.params.get('subscription_data[trial_end]'))>Math.floor(Date.now()/1000));
+  assert.equal(checkout.params.get('mode'),'payment');
+  assert.equal(checkout.params.get('payment_intent_data[setup_future_usage]'),'off_session');
+  assert.ok(Number(checkout.params.get('metadata[dpi_billing_anchor]'))>Math.floor(Date.now()/1000));
+  assert.equal(checkout.params.get('subscription_data[trial_end]'),null);
   assert.equal(checkout.params.get('subscription_data[billing_cycle_anchor]'),null);
   assert.equal(checkout.params.get('subscription_data[proration_behavior]'),null);
-  assert.equal(checkout.params.get('line_items[1][price_data][unit_amount]'),'300');
+  assert.equal(checkout.params.get('line_items[0][price_data][unit_amount]'),'300');
+ }finally{globalThis.fetch=originalFetch;}
+});
+test('paid initial Checkout creates a fixed-26th subscription without trial',()=>{
+ const env={STRIPE_PRICE_SUPPORTER:'price_basic',STRIPE_PRICE_PLUS:'price_plus',STRIPE_PRICE_PRO:'price_pro',STRIPE_PRICE_ADDON:'price_addon'};
+ const anchor=Math.floor(Date.now()/1000)+86400;
+ const params=paidCheckoutSubscriptionParams(env,{mode:'payment',payment_status:'paid',customer:'cus_x',client_reference_id:'123',metadata:{dpi_checkout_kind:'initial_subscription',dpi_user:'123',dpi_plan:'plus',dpi_channel_packs:'1',dpi_server_packs:'1',dpi_billing_anchor:String(anchor),dpi_legal_consent_version:'v1'}},{payment_method:'pm_x'});
+ assert.equal(params.customer,'cus_x');assert.equal(params.default_payment_method,'pm_x');assert.equal(params.billing_cycle_anchor,String(anchor));assert.equal(params.proration_behavior,'none');
+ assert.equal(params['items[0][price]'],'price_plus');assert.equal(params['items[1][price]'],'price_addon');assert.equal(params['items[1][quantity]'],'2');
+ assert.equal(params.trial_end,undefined);assert.equal(params['trial_settings[end_behavior][missing_payment_method]'],undefined);
+});
+test('paid Checkout provisioning is idempotent and uses the saved payment method',async()=>{
+ const env={SUPPORTER_BILLING_MODE:'test',STRIPE_SECRET_KEY:'rk_test_example',STRIPE_WEBHOOK_SECRET:'whsec_x',STRIPE_PRICE_SUPPORTER:'price_basic',STRIPE_PRICE_PLUS:'price_plus',STRIPE_PRICE_PRO:'price_pro',STRIPE_PRICE_ADDON:'price_addon',STRIPE_PORTAL_CONFIG:'bpc_x'};
+ const calls=[];const originalFetch=globalThis.fetch;
+ globalThis.fetch=async(url,init={})=>{const path=new URL(url).pathname;const params=new URLSearchParams(init.body||'');calls.push({path,params,key:init.headers?.['Idempotency-Key']});let data={livemode:false};if(path==='/v1/subscriptions'&&init.method==='GET')data={livemode:false,data:[]};if(path==='/v1/payment_intents/pi_x')data={livemode:false,id:'pi_x',payment_method:'pm_x'};if(path==='/v1/subscriptions'&&init.method==='POST')data={livemode:false,id:'sub_x',status:'active'};return new Response(JSON.stringify(data),{status:200,headers:{'content-type':'application/json'}});};
+ try{
+  const anchor=Math.floor(Date.now()/1000)+86400;
+  const result=await provisionPaidCheckoutSubscription(env,{id:'cs_test_x',mode:'payment',payment_status:'paid',customer:'cus_x',payment_intent:'pi_x',metadata:{dpi_checkout_kind:'initial_subscription',dpi_user:'123',dpi_plan:'supporter',dpi_channel_packs:'0',dpi_server_packs:'0',dpi_billing_anchor:String(anchor),dpi_legal_consent_version:'v1'}});
+  assert.equal(result.id,'sub_x');const create=calls.find(call=>call.path==='/v1/subscriptions'&&call.params.size);assert.equal(create.key,'dpi-initial-subscription-cs_test_x');assert.equal(create.params.get('default_payment_method'),'pm_x');assert.equal(create.params.get('billing_cycle_anchor'),String(anchor));assert.equal(create.params.get('proration_behavior'),'none');assert.equal(create.params.get('trial_end'),null);
  }finally{globalThis.fetch=originalFetch;}
 });
 test('live secrets can never enable billing',()=>{
@@ -85,7 +107,7 @@ test('paid plans stay separate from secondary-use applications and private in na
  assert.doesNotMatch(basicHtml,/service-dashboard/);
  assert.doesNotMatch(basicHtml,/<nav[\s\S]*?<a href="\/site\/supporter\//);
  assert.doesNotMatch(billingSource,/payment_method_types/);
- assert.match(billingSource,/subscription_data\[trial_end\]/);
+ assert.match(billingSource,/payment_intent_data\[setup_future_usage\].*off_session/);
  assert.match(billingSource,/初回利用料（当月分・翌月分の2か月分）/);
  assert.match(billingSource,/invoices\/create_preview/);
  assert.match(billingSource,/proration_behavior:'none'/);
@@ -200,6 +222,8 @@ test('supporter UI avoids WebKit URL constructor errors for Stripe redirects',as
  assert.match(source,/invoice\.stripe\.com/);
  assert.match(source,/pay\.stripe\.com/);
  assert.match(source,/このプランで申し込む/);
+ assert.match(source,/hasExistingContract/);
+ assert.match(source,/契約済み（新規申込不可）/);
  assert.match(source,/email:billingEmail\.value/);
  assert.match(source,/legalConsent:true/);
  assert.match(source,/\/terms\/terms\.html/);

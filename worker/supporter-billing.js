@@ -79,21 +79,55 @@ export function billingSchedule(now=Date.now()){
  return {billingDay:26,anchor,initialMonths:day>=26?2:1,lateMonth:day>=26};
 }
 export function staleCheckoutAttempt(row,now=Math.floor(Date.now()/1000)){
- if(!row?.checkout_key||row.checkout_id)return false;
+ if(!row?.checkout_key)return false;
  try{
   const saved=JSON.parse(row.checkout_params||'');
   const expiresAt=Number(saved?.expires_at);
   const incompatibleAnchor=saved?.['subscription_data[proration_behavior]']==='none'&&!!saved?.['subscription_data[billing_cycle_anchor]'];
-  return incompatibleAnchor||!Number.isFinite(expiresAt)||expiresAt<=now;
+  const legacySubscriptionCheckout=saved?.mode==='subscription'||!!saved?.['subscription_data[trial_end]'];
+  if(incompatibleAnchor||legacySubscriptionCheckout)return true;
+  return !row.checkout_id&&(!Number.isFinite(expiresAt)||expiresAt<=now);
  }catch{return true;}
 }
 async function recoverStaleCheckoutAttempt(db,uid,row){
  if(!staleCheckoutAttempt(row))return row;
  await db.prepare(`UPDATE supporter_billing SET checkout_key=NULL,checkout_id=NULL,checkout_params=NULL
-  WHERE discord_user_id=? AND checkout_key=? AND checkout_id IS NULL`).bind(uid,row.checkout_key).run();
+  WHERE discord_user_id=? AND checkout_key=?`).bind(uid,row.checkout_key).run();
  return await db.prepare('SELECT * FROM supporter_billing WHERE discord_user_id=?').bind(uid).first();
 }
 async function subscriptions(env,customer){return (await stripe(env,`subscriptions?customer=${encodeURIComponent(customer)}&status=all&limit=100`)).data.filter(s=>!['canceled','incomplete_expired'].includes(s.status));}
+function checkoutMetadata(session){return session?.metadata&&typeof session.metadata==='object'?session.metadata:{};}
+export function paidCheckoutSubscriptionParams(env,session,paymentIntent,now=Math.floor(Date.now()/1000)){
+ const metadata=checkoutMetadata(session);
+ if(session?.mode!=='payment'||metadata.dpi_checkout_kind!=='initial_subscription'||session.payment_status!=='paid')return null;
+ const customer=typeof session.customer==='string'?session.customer:session.customer?.id;
+ const paymentMethod=typeof paymentIntent?.payment_method==='string'?paymentIntent.payment_method:paymentIntent?.payment_method?.id;
+ if(!customer||!paymentMethod)fail('初回決済の支払方法を確認できませんでした。',502);
+ const choice=selection({plan:metadata.dpi_plan,channelPacks:Number(metadata.dpi_channel_packs),serverPacks:Number(metadata.dpi_server_packs)});
+ let anchor=Number(metadata.dpi_billing_anchor);
+ if(!Number.isInteger(anchor)||anchor<=now+60)anchor=billingSchedule(now*1000).anchor;
+ const params={customer,default_payment_method:paymentMethod,collection_method:'charge_automatically',billing_cycle_anchor:String(anchor),proration_behavior:'none','billing_mode[type]':'flexible',
+  'items[0][price]':planPrice(env,choice.plan),'items[0][quantity]':'1',
+  'metadata[dpi_user]':String(metadata.dpi_user||session.client_reference_id||''),'metadata[dpi_plan]':choice.plan,
+  'metadata[dpi_legal_consent_version]':String(metadata.dpi_legal_consent_version||''),
+  'metadata[dpi_channel_packs]':String(choice.channelPacks),'metadata[dpi_server_packs]':String(choice.serverPacks)};
+ const optionPacks=choice.channelPacks+choice.serverPacks;
+ if(optionPacks){params['items[1][price]']=env.STRIPE_PRICE_ADDON;params['items[1][quantity]']=String(optionPacks);}
+ return params;
+}
+export async function provisionPaidCheckoutSubscription(env,session){
+ const metadata=checkoutMetadata(session);
+ if(session?.mode!=='payment'||metadata.dpi_checkout_kind!=='initial_subscription'||session.payment_status!=='paid')return null;
+ const customer=typeof session.customer==='string'?session.customer:session.customer?.id;
+ if(!customer)fail('初回決済の顧客情報を確認できませんでした。',502);
+ const existing=await subscriptions(env,customer);
+ if(existing.length)return existing[0];
+ const paymentIntentId=typeof session.payment_intent==='string'?session.payment_intent:session.payment_intent?.id;
+ if(!paymentIntentId)fail('初回決済情報を確認できませんでした。',502);
+ const paymentIntent=await stripe(env,`payment_intents/${encodeURIComponent(paymentIntentId)}`);
+ const params=paidCheckoutSubscriptionParams(env,session,paymentIntent);
+ return await stripe(env,'subscriptions',params,`dpi-initial-subscription-${session.id}`);
+}
 const unix = value => Number.isFinite(Number(value)) && Number(value) > 0 ? Number(value) : null;
 export function subscriptionSummary(subscription,env={}){
  const labels=new Map([
@@ -210,21 +244,16 @@ export async function billingAction(request,env,db,uid,input={}){
  if(!legalConsentVersion)return json({message:'申込み同意を確認できません。画面を再読み込みしてください。'},400);
  row=await recoverStaleCheckoutAttempt(db,uid,row);
  // Persist exact parameters and key before network IO. Concurrent clicks share one session.
- const params={mode:'subscription',customer:row.customer_id,client_reference_id:uid,
-  'subscription_data[metadata][dpi_user]':uid,'subscription_data[metadata][dpi_plan]':choice.plan,
-  'subscription_data[metadata][dpi_legal_consent_version]':legalConsentVersion,'metadata[dpi_legal_consent_version]':legalConsentVersion,
-  'subscription_data[metadata][dpi_channel_packs]':String(choice.channelPacks),'subscription_data[metadata][dpi_server_packs]':String(choice.serverPacks),
-  // Delay recurring billing until the fixed 26th while the one-time line below
-  // collects the stated initial month(s) immediately.
-  'subscription_data[billing_mode][type]':'flexible','subscription_data[trial_end]':String(schedule.anchor),
-  'line_items[0][price]':planPrice(env,choice.plan),'line_items[0][quantity]':'1',
+ const params={mode:'payment',customer:row.customer_id,client_reference_id:uid,
+  'payment_intent_data[setup_future_usage]':'off_session','payment_intent_data[metadata][dpi_user]':uid,
+  'metadata[dpi_checkout_kind]':'initial_subscription','metadata[dpi_user]':uid,'metadata[dpi_plan]':choice.plan,
+  'metadata[dpi_legal_consent_version]':legalConsentVersion,'metadata[dpi_channel_packs]':String(choice.channelPacks),
+  'metadata[dpi_server_packs]':String(choice.serverPacks),'metadata[dpi_billing_anchor]':String(schedule.anchor),
   success_url:`${origin}/site/supporter/?checkout=returned`,cancel_url:`${origin}/site/supporter/?checkout=canceled`,expires_at:String(Math.floor(Date.now()/1000)+3600),integration_identifier:integrationIdentifier('dpi_paid_')};
- let line=1;
- const optionPacks=choice.channelPacks+choice.serverPacks;
- if(optionPacks){params[`line_items[${line}][price]`]=env.STRIPE_PRICE_ADDON;params[`line_items[${line}][quantity]`]=String(optionPacks);line+=1;}
+ const line=0;
  params[`line_items[${line}][price_data][currency]`]='jpy';
  params[`line_items[${line}][price_data][unit_amount]`]=String(choice.monthly*schedule.initialMonths);
- params[`line_items[${line}][price_data][product_data][name]`]=schedule.lateMonth?'初回利用料（当月分・翌月分の2か月分）':'初回利用料（当月分）';
+ params[`line_items[${line}][price_data][product_data][name]`]=`${PLAN_CATALOG[choice.plan].name} ${schedule.lateMonth?'初回利用料（当月分・翌月分の2か月分）':'初回利用料（当月分）'}`;
  params[`line_items[${line}][quantity]`]='1';
  await db.prepare('UPDATE supporter_billing SET checkout_key=?,checkout_params=? WHERE discord_user_id=? AND checkout_key IS NULL').bind(crypto.randomUUID(),JSON.stringify(params),uid).run();
  row=await db.prepare('SELECT * FROM supporter_billing WHERE discord_user_id=?').bind(uid).first();
@@ -234,7 +263,7 @@ export async function billingAction(request,env,db,uid,input={}){
  await db.prepare('UPDATE supporter_billing SET checkout_id=? WHERE discord_user_id=? AND checkout_key=?').bind(checkout.id,uid,row.checkout_key).run();
  if(checkout.status==='expired'){await db.prepare('UPDATE supporter_billing SET checkout_key=NULL,checkout_id=NULL,checkout_params=NULL WHERE discord_user_id=? AND checkout_key=?').bind(uid,row.checkout_key).run();return json({message:'前の決済画面が期限切れです。再度お試しください。'},409);}
  if(checkout.status!=='open')return json({message:'決済結果を確認中です。契約状態を更新してください。'},409);
- if(saved['line_items[0][price]']!==params['line_items[0][price]']||saved['subscription_data[metadata][dpi_channel_packs]']!==params['subscription_data[metadata][dpi_channel_packs]']||saved['subscription_data[metadata][dpi_server_packs]']!==params['subscription_data[metadata][dpi_server_packs]'])return json({message:'別の条件で決済画面を作成済みです。期限切れ後に変更できます（最大1時間）。'},409);
+ if(saved['metadata[dpi_plan]']!==params['metadata[dpi_plan]']||saved['metadata[dpi_channel_packs]']!==params['metadata[dpi_channel_packs]']||saved['metadata[dpi_server_packs]']!==params['metadata[dpi_server_packs]'])return json({message:'別の条件で決済画面を作成済みです。期限切れ後に変更できます（最大1時間）。'},409);
  return json({url:checkout.url,mode:'test'});
 }
 function adminChoice(input){
@@ -426,6 +455,9 @@ export async function billingWebhook(request,env){
  const allowed=['checkout.session.completed','checkout.session.async_payment_succeeded','checkout.session.async_payment_failed','checkout.session.expired','customer.subscription.created','customer.subscription.updated','customer.subscription.deleted','invoice.paid','invoice.payment_failed','charge.refunded','charge.dispute.created','radar.early_fraud_warning.created'];
  if(!allowed.includes(event.type))return json({received:true});
  const db=env.REUSE_DB||env.NEWSLETTER_DB;
+ const alreadyProcessed=await db.prepare('SELECT id FROM supporter_stripe_events WHERE id=?').bind(event.id).first();
+ if(alreadyProcessed)return json({received:true});
+ if(['checkout.session.completed','checkout.session.async_payment_succeeded'].includes(event.type))await provisionPaidCheckoutSubscription(env,event.data?.object);
  // Events invalidate a cache only; status always comes from Stripe, never from stale event payloads.
  await db.batch([db.prepare('INSERT INTO supporter_stripe_events(id,received_at) VALUES(?,?) ON CONFLICT DO NOTHING').bind(event.id,Date.now()),db.prepare('UPDATE supporter_billing SET dirty=1 WHERE customer_id=?').bind(event.data?.object?.customer||'')]);
  return json({received:true});

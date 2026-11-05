@@ -6,6 +6,7 @@ let entitlements = {servers:1,channels:2,rules:5,complexConditions:false,multiDe
 let hasConfigurableContract = false;
 let billingAvailable = false;
 let checkoutButton;
+let hasExistingContract=false;
 const channelsByGuild = new Map();
 
 const $ = id => document.getElementById(id);
@@ -386,6 +387,8 @@ function renderInvoices(invoices){
 
 function renderContracts(subscriptions) {
  contract.replaceChildren();
+ hasExistingContract=subscriptions.length>0;
+ updateCheckoutAvailability();
  if (!subscriptions.length) {
   contract.textContent = '現在の契約はありません。';
   entitlements={servers:1,channels:2,rules:5,complexConditions:false,multiDestination:false};
@@ -489,7 +492,12 @@ const billingActions=document.createElement('div');
 billingActions.className='billing-actions';
 application.append(billingActions,billingActionStatus);
 
-function updateCheckoutAvailability(){if(checkoutButton)checkoutButton.disabled=!billingAvailable||!legalConsent.checked;}
+function updateCheckoutAvailability(){
+ if(!checkoutButton)return;
+ checkoutButton.disabled=!billingAvailable||!legalConsent.checked||hasExistingContract;
+ checkoutButton.title=hasExistingContract?'既に契約済みです。プラン変更をご利用ください。':'';
+ checkoutButton.textContent=hasExistingContract?'契約済み（新規申込不可）':'このプランで申し込む';
+}
 
 for (const [label,action] of [['このプランで申し込む','checkout'],['プラン・オプションを変更','update'],['支払方法・解約の管理','portal'],['最新の契約・明細を読み込む','status']]) {
  const button = document.createElement('button');
