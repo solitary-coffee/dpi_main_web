@@ -127,8 +127,8 @@ test('危険操作は確認文字列を入力させずポップアップ確認�
 });
 
 test('すべての管理画面から用途別タブへ移動できる', async () => {
-    const pages = ['admin-center', 'system-admin', 'ec2-admin', 'xml-admin', 'status-admin', 'delivery-admin', 'delivery-flow-admin', 'system-admin/audit', 'channel-admin', 'reuse-admin', 'mail-admin', 'discord-admin', 'ip-admin'];
-    const expected = ['/site/admin-center/', '/site/system-admin/', '/site/ec2-admin/', '/site/xml-admin/', '/site/status-admin/', '/site/delivery-admin/', '/site/delivery-flow-admin/', '/site/system-admin/audit/', '/site/channel-admin/', '/site/reuse-admin/', '/site/mail-admin/', '/site/discord-admin/', '/site/ip-admin/'];
+    const pages = ['admin-center', 'system-admin', 'ec2-admin', 'xml-admin', 'status-admin', 'delivery-admin', 'delivery-flow-admin', 'system-admin/audit', 'channel-admin', 'reuse-admin', 'supporter-admin', 'mail-admin', 'discord-admin', 'ip-admin'];
+    const expected = ['/site/admin-center/', '/site/system-admin/', '/site/ec2-admin/', '/site/xml-admin/', '/site/status-admin/', '/site/delivery-admin/', '/site/delivery-flow-admin/', '/site/system-admin/audit/', '/site/channel-admin/', '/site/reuse-admin/', '/site/supporter-admin/', '/site/mail-admin/', '/site/discord-admin/', '/site/ip-admin/'];
     for (const page of pages) {
         const html = await readFile(new URL(`../site/${page}/index.html`, import.meta.url), 'utf8');
         const sidebar = html.match(/<nav class="sidebar"[\s\S]*?<ul>([\s\S]*?)<\/ul>/u)?.[1] || '';
