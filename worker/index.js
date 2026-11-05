@@ -1,6 +1,6 @@
 import { publicMaintenanceGate } from './maintenance.js';
 import { handleSupporterRequest } from './supporter.js';
-import { billingWebhook } from './supporter-billing.js';
+import { billingWebhook, runSupporterBillingSchedule } from './supporter-billing.js';
 import { isPrivateAssetPath } from './private-assets.js';
 import { handleNewsletterQueue, handleNewsletterRequest } from './newsletter.js';
 import { blockResponseForRequest } from './ip-block.js';
@@ -104,6 +104,9 @@ const application = {
     async queue(batch, env) {
         await handleNewsletterQueue(batch, env);
     },
+    async scheduled(_controller, env) {
+        await runSupporterBillingSchedule(env);
+    },
 };
 
 export default {
@@ -112,6 +115,9 @@ export default {
     },
     queue(batch, env) {
         return application.queue(batch, env);
+    },
+    scheduled(controller, env) {
+        return application.scheduled(controller, env);
     },
 };
 

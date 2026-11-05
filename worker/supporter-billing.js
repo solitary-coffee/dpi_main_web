@@ -1,6 +1,16 @@
 // Test-only integration. Live keys are deliberately rejected until delivery is ready.
 const json = (data,status=200)=>Response.json(data,{status,headers:{'Cache-Control':'no-store'}});
 const fail=(message,status=400)=>{throw Object.assign(new Error(message),{status});};
+const clean=value=>String(value??'').trim();
+const invoiceSubscriptionId=invoice=>typeof invoice?.subscription==='string'?invoice.subscription:typeof invoice?.parent?.subscription_details?.subscription==='string'?invoice.parent.subscription_details.subscription:'';
+const safeInvoiceUrl=value=>{try{const url=new URL(clean(value));return url.protocol==='https:'&&['invoice.stripe.com','pay.stripe.com'].includes(url.hostname)?url.href:'';}catch{return '';}};
+export function dunningSchedule(timestamp=Math.floor(Date.now()/1000)){
+ const jst=new Date(Number(timestamp)*1000+9*60*60*1000);const year=jst.getUTCFullYear(),month=jst.getUTCMonth();
+ const lastDay=new Date(Date.UTC(year,month+1,0)).getUTCDate();
+ const retryAt=Math.floor((Date.UTC(year,month,lastDay,12,0,0)-9*60*60*1000)/1000);
+ const suspendAt=Math.floor((Date.UTC(year,month+1,1,0,0,0)-9*60*60*1000)/1000);
+ return {retryAt,suspendAt};
+}
 function integrationIdentifier(prefix){const bytes=crypto.getRandomValues(new Uint8Array(8));return `${prefix}${[...bytes].map(value=>String.fromCharCode(97+value%26)).join('')}`;}
 export const PLAN_CATALOG=Object.freeze({
  supporter:Object.freeze({id:'supporter',name:'BASIC',yen:300,channels:2,servers:1,rules:5,complexConditions:false,multiDestination:false,priceEnv:'STRIPE_PRICE_SUPPORTER'}),
@@ -48,6 +58,61 @@ export async function customerInvoices(env,customer){
   amountDue:Number(invoice.amount_due||0),amountPaid:Number(invoice.amount_paid||0),total:Number(invoice.total||0),
   hostedInvoiceUrl:stripeInvoiceUrl(invoice.hosted_invoice_url),invoicePdf:stripeInvoiceUrl(invoice.invoice_pdf),
  })).filter(invoice=>invoice.number||invoice.hostedInvoiceUrl||invoice.invoicePdf);
+}
+async function dunningState(db,customer){
+ if(!customer)return {usageSuspended:false,status:null,retryAt:null,suspendAt:null};
+ const row=await db.prepare(`SELECT status,retry_at,suspend_at FROM supporter_dunning
+  WHERE customer_id=? AND status IN ('retry_scheduled','retrying','suspend_scheduled','suspended')
+  ORDER BY initial_failed_at DESC LIMIT 1`).bind(customer).first();
+ return {usageSuspended:row?.status==='suspended',status:row?.status||null,retryAt:unix(row?.retry_at),suspendAt:unix(row?.suspend_at)};
+}
+function billingMailContent(kind,invoice,retryAt,suspendAt){
+ const amount=new Intl.NumberFormat('ja-JP',{style:'currency',currency:clean(invoice.currency||'jpy').toUpperCase(),maximumFractionDigits:0}).format(Number(invoice.amount_paid||invoice.amount_due||invoice.total||0));
+ const date=value=>value?new Intl.DateTimeFormat('ja-JP',{dateStyle:'long',timeStyle:'short',timeZone:'Asia/Tokyo'}).format(new Date(Number(value)*1000)):'—';
+ const number=clean(invoice.number)||clean(invoice.id);const url=safeInvoiceUrl(invoice.hosted_invoice_url);
+ const definitions={
+  payment_succeeded:['【DPI-Bot】お支払い完了のお知らせ',[`DPI-Bot有料プランのお支払いが完了しました。`,`請求額: ${amount}`,`請求書: ${number}`]],
+  retry_succeeded:['【DPI-Bot】再決済完了のお知らせ',[`月末の再決済が完了しました。引き続き有料プランをご利用いただけます。`,`請求額: ${amount}`,`請求書: ${number}`]],
+  payment_failed:['【DPI-Bot】お支払い失敗と月末再決済のお知らせ',[`26日のお支払いを完了できませんでした。`,`月末再決済日時: ${date(retryAt)}`,`請求額: ${amount}`,`請求書: ${number}`,'月末までに契約管理画面から支払方法をご確認ください。']],
+  final_failed:['【DPI-Bot】月末再決済失敗・利用停止のお知らせ',[`月末の再決済を完了できませんでした。`,`利用停止日時: ${date(suspendAt)}`,`請求額: ${amount}`,`請求書: ${number}`,'翌月以降、有料プランの通知設定は支払い完了まで利用停止となります。']],
+ };
+ const [subject,lines]=definitions[kind];if(url)lines.push(`請求書・支払方法の確認: ${url}`);
+ lines.push('','----------------------------------------','DPI-Bot 運営','公式サイト: https://dpi-bot.com/','公式サポートサーバー: https://discord.gg/qFuZcGUb4K');
+ return {subject,text:lines.join('\n')};
+}
+async function sendBillingNotification(env,db,kind,invoice,retryAt=null,suspendAt=null){
+ const customer=typeof invoice.customer==='string'?invoice.customer:invoice.customer?.id;if(!customer)return;
+ const account=await db.prepare(`SELECT a.billing_email FROM supporter_accounts a JOIN supporter_billing b ON b.discord_user_id=a.discord_user_id WHERE b.customer_id=?`).bind(customer).first();
+ if(!account?.billing_email)return;
+ const now=Math.floor(Date.now()/1000),invoiceId=clean(invoice.id);if(!invoiceId)return;
+ await db.prepare(`INSERT INTO supporter_billing_notifications(invoice_id,kind,status,updated_at) VALUES(?,?,'pending',?) ON CONFLICT DO NOTHING`).bind(invoiceId,kind,now).run();
+ const notice=await db.prepare('SELECT status FROM supporter_billing_notifications WHERE invoice_id=? AND kind=?').bind(invoiceId,kind).first();if(notice?.status==='sent')return;
+ await db.prepare(`UPDATE supporter_billing_notifications SET status='sending',attempts=attempts+1,last_error=NULL,updated_at=? WHERE invoice_id=? AND kind=?`).bind(now,invoiceId,kind).run();
+ const content=billingMailContent(kind,invoice,retryAt,suspendAt);
+ try{
+  await env.NOTICE_EMAIL.send({to:account.billing_email,from:{email:clean(env.NOTICE_FROM_EMAIL),name:'DPI-Bot'},subject:content.subject,text:content.text,...(clean(env.NOTICE_REPLY_TO_EMAIL)?{replyTo:clean(env.NOTICE_REPLY_TO_EMAIL)}:{}),headers:{'Auto-Submitted':'auto-generated','Content-Language':'ja','X-DPI-Mail-Type':`supporter-${kind}`}});
+  await db.prepare(`UPDATE supporter_billing_notifications SET status='sent',sent_at=?,updated_at=? WHERE invoice_id=? AND kind=?`).bind(now,now,invoiceId,kind).run();
+ }catch(error){await db.prepare(`UPDATE supporter_billing_notifications SET status='failed',last_error=?,updated_at=? WHERE invoice_id=? AND kind=?`).bind(clean(error?.code||error?.name||'unknown').slice(0,80),now,invoiceId,kind).run();throw error;}
+}
+async function recordInvoicePaid(env,db,invoice){
+ const customer=typeof invoice.customer==='string'?invoice.customer:invoice.customer?.id,invoiceId=clean(invoice.id);if(!customer||!invoiceId||!invoiceSubscriptionId(invoice))return;
+ const previous=await db.prepare('SELECT status,retry_at,suspend_at FROM supporter_dunning WHERE invoice_id=?').bind(invoiceId).first();const now=Math.floor(Date.now()/1000);
+ await db.prepare(`UPDATE supporter_dunning SET status='paid',paid_at=?,suspended_at=NULL,updated_at=? WHERE invoice_id=?`).bind(now,now,invoiceId).run();
+ await sendBillingNotification(env,db,previous?'retry_succeeded':'payment_succeeded',invoice,previous?.retry_at,previous?.suspend_at);
+}
+async function recordInvoiceFailed(env,db,invoice){
+ const customer=typeof invoice.customer==='string'?invoice.customer:invoice.customer?.id,invoiceId=clean(invoice.id),subscriptionId=invoiceSubscriptionId(invoice);
+ if(!customer||!invoiceId||!subscriptionId||invoice.billing_reason!=='subscription_cycle')return;
+ const now=Math.floor(Date.now()/1000),schedule=dunningSchedule(Number(invoice.created)||now);
+ await stripe(env,`invoices/${encodeURIComponent(invoiceId)}`,{auto_advance:'false'},`dpi-disable-auto-retry-${invoiceId}`);
+ const existing=await db.prepare('SELECT status,retry_attempted_at FROM supporter_dunning WHERE invoice_id=?').bind(invoiceId).first();
+ if(existing?.retry_attempted_at||Number(invoice.attempt_count)>1){
+  await db.prepare(`UPDATE supporter_dunning SET status='suspend_scheduled',retry_attempted_at=COALESCE(retry_attempted_at,?),updated_at=? WHERE invoice_id=?`).bind(now,now,invoiceId).run();
+  return sendBillingNotification(env,db,'final_failed',invoice,schedule.retryAt,schedule.suspendAt);
+ }
+ await db.prepare(`INSERT INTO supporter_dunning(invoice_id,customer_id,subscription_id,amount_due,currency,status,initial_failed_at,retry_at,suspend_at,updated_at)
+  VALUES(?,?,?,?,?,'retry_scheduled',?,?,?,?) ON CONFLICT(invoice_id) DO UPDATE SET amount_due=excluded.amount_due,currency=excluded.currency,retry_at=excluded.retry_at,suspend_at=excluded.suspend_at,updated_at=excluded.updated_at`).bind(invoiceId,customer,subscriptionId,Number(invoice.amount_due||invoice.total||0),clean(invoice.currency||'jpy'),now,schedule.retryAt,schedule.suspendAt,now).run();
+ return sendBillingNotification(env,db,'payment_failed',invoice,schedule.retryAt,schedule.suspendAt);
 }
 export async function creditsByCustomer(env,customers){
  const wanted=new Set((customers||[]).filter(Boolean));
@@ -209,8 +274,8 @@ export async function billingAction(request,env,db,uid,input={}){
  await db.prepare('INSERT INTO supporter_billing(discord_user_id) VALUES(?) ON CONFLICT DO NOTHING').bind(uid).run();
  let row=await db.prepare('SELECT * FROM supporter_billing WHERE discord_user_id=?').bind(uid).first();
  if(action==='status'){
-  const [summaries,invoices,credits]=await Promise.all([customerSubscriptionSummaries(env,row.customer_id),customerInvoices(env,row.customer_id),customerCredits(env,row.customer_id)]);
-  return json({mode:'test',billingDay:26,subscriptions:summaries,invoices,credits,deliveryEnabled:false});
+  const [summaries,invoices,credits,dunning]=await Promise.all([customerSubscriptionSummaries(env,row.customer_id),customerInvoices(env,row.customer_id),customerCredits(env,row.customer_id),dunningState(db,row.customer_id)]);
+  return json({mode:'test',billingDay:26,subscriptions:summaries,invoices,credits,dunning,deliveryEnabled:false});
  }
  if(!row.customer_id){const customer=await createBillingCustomer(env,uid,account.billing_email,`dpi-customer-${uid}`);await db.prepare('UPDATE supporter_billing SET customer_id=? WHERE discord_user_id=? AND customer_id IS NULL').bind(customer.id,uid).run();row=await db.prepare('SELECT * FROM supporter_billing WHERE discord_user_id=?').bind(uid).first();}
  else if(account.billing_email)await stripe(env,`customers/${encodeURIComponent(row.customer_id)}`,{email:account.billing_email},`dpi-customer-email-${uid}-${account.billing_email}`);
@@ -458,7 +523,33 @@ export async function billingWebhook(request,env){
  const alreadyProcessed=await db.prepare('SELECT id FROM supporter_stripe_events WHERE id=?').bind(event.id).first();
  if(alreadyProcessed)return json({received:true});
  if(['checkout.session.completed','checkout.session.async_payment_succeeded'].includes(event.type))await provisionPaidCheckoutSubscription(env,event.data?.object);
+ if(event.type==='invoice.paid')await recordInvoicePaid(env,db,event.data?.object);
+ if(event.type==='invoice.payment_failed')await recordInvoiceFailed(env,db,event.data?.object);
  // Events invalidate a cache only; status always comes from Stripe, never from stale event payloads.
  await db.batch([db.prepare('INSERT INTO supporter_stripe_events(id,received_at) VALUES(?,?) ON CONFLICT DO NOTHING').bind(event.id,Date.now()),db.prepare('UPDATE supporter_billing SET dirty=1 WHERE customer_id=?').bind(event.data?.object?.customer||'')]);
  return json({received:true});
+}
+export async function runSupporterBillingSchedule(env,nowMs=Date.now()){
+ if(!billingReady(env))return {retried:0,paid:0,failed:0,suspended:0};
+ const db=env.REUSE_DB||env.NEWSLETTER_DB,now=Math.floor(Number(nowMs)/1000);let retried=0,paid=0,failed=0,suspended=0;
+ const due=await db.prepare(`SELECT * FROM supporter_dunning WHERE status='retry_scheduled' AND retry_at<=? ORDER BY retry_at LIMIT 50`).bind(now).all();
+ for(const row of due.results||[]){
+  const claim=await db.prepare(`UPDATE supporter_dunning SET status='retrying',retry_attempted_at=?,updated_at=? WHERE invoice_id=? AND status='retry_scheduled'`).bind(now,now,row.invoice_id).run();
+  if(!claim.meta?.changes)continue;retried+=1;
+  let invoice=null;
+  try{invoice=await stripe(env,`invoices/${encodeURIComponent(row.invoice_id)}/pay`,{},`dpi-month-end-retry-${row.invoice_id}`);}catch(error){console.error('Supporter month-end payment retry failed',{invoiceId:row.invoice_id,errorName:error?.name||'Error'});}
+  if(invoice?.status==='paid'){
+   try{await recordInvoicePaid(env,db,invoice);}catch(error){console.error('Supporter payment success email failed',{invoiceId:row.invoice_id,errorName:error?.name||'Error'});}paid+=1;continue;
+  }
+  const fallback=invoice||{id:row.invoice_id,customer:row.customer_id,subscription:row.subscription_id,amount_due:row.amount_due,currency:row.currency};
+  await db.prepare(`UPDATE supporter_dunning SET status='suspend_scheduled',updated_at=? WHERE invoice_id=?`).bind(now,row.invoice_id).run();failed+=1;
+  try{await sendBillingNotification(env,db,'final_failed',fallback,row.retry_at,row.suspend_at);}catch(error){console.error('Supporter final payment failure email failed',{invoiceId:row.invoice_id,errorName:error?.name||'Error'});}
+ }
+ const stopping=await db.prepare(`SELECT invoice_id FROM supporter_dunning WHERE status='suspend_scheduled' AND suspend_at<=? ORDER BY suspend_at LIMIT 100`).bind(now).all();
+ for(const row of stopping.results||[]){const result=await db.prepare(`UPDATE supporter_dunning SET status='suspended',suspended_at=?,updated_at=? WHERE invoice_id=? AND status='suspend_scheduled'`).bind(now,now,row.invoice_id).run();suspended+=Number(result.meta?.changes||0);}
+ const failedNotices=await db.prepare(`SELECT n.invoice_id,n.kind,d.customer_id,d.subscription_id,d.amount_due,d.currency,d.retry_at,d.suspend_at
+  FROM supporter_billing_notifications n JOIN supporter_dunning d ON d.invoice_id=n.invoice_id
+  WHERE n.status='failed' AND n.kind IN ('retry_succeeded','final_failed') ORDER BY n.updated_at LIMIT 25`).all();
+ for(const row of failedNotices.results||[]){const invoice={id:row.invoice_id,customer:row.customer_id,subscription:row.subscription_id,amount_due:row.amount_due,amount_paid:row.kind==='retry_succeeded'?row.amount_due:0,currency:row.currency};try{await sendBillingNotification(env,db,row.kind,invoice,row.retry_at,row.suspend_at);}catch(error){console.error('Supporter billing email retry failed',{invoiceId:row.invoice_id,kind:row.kind,errorName:error?.name||'Error'});}}
+ return {retried,paid,failed,suspended};
 }
