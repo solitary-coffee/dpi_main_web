@@ -228,8 +228,10 @@ function render() {
    if (WEATHER_ALERT_DETAILS.has(rule.detail)) field(conditionFields, rule, 'weatherLevel', '警戒レベル', options.weatherLevels);
    if (WEATHER_WARNING_DETAILS.has(rule.detail)) field(conditionFields, rule, 'warningLevel', '警報・注意報', options.warningLevels);
   } else {
-   field(conditionFields, rule, 'intensityMode', '震度の通知条件', options.thresholdModes);
-   if(rule.intensityMode==='threshold')field(conditionFields, rule, 'intensity', '震度の閾値', INTENSITIES);
+   const intensityRow=document.createElement('div');intensityRow.className='intensity-condition-row';
+   field(intensityRow, rule, 'intensityMode', '震度の通知条件', options.thresholdModes);
+   if(rule.intensityMode==='threshold')field(intensityRow, rule, 'intensity', '震度の閾値', INTENSITIES);
+   conditionFields.append(intensityRow);
    const magnitudeRow=document.createElement('div');magnitudeRow.className='magnitude-condition-row';
    field(magnitudeRow, rule, 'magnitudeMode', 'マグニチュードの通知条件', options.thresholdModes);
    if(rule.magnitudeMode==='threshold')field(magnitudeRow, rule, 'magnitudeMin', 'マグニチュードの閾値', null, {inputmode:'decimal',placeholder:'0〜10'});
