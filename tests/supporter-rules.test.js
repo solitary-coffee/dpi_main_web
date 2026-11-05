@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { normalizeSupporterRules, SUPPORTER_REGIONS, WEATHER_LEVELS, WEATHER_DETAILS, EARTHQUAKE_DETAILS, EEW_DETAILS, EEW_WARNING_AREA_MODES, THRESHOLD_MODES } from '../worker/supporter.js';
+import { reconcileRulesForLimits } from '../worker/supporter-billing.js';
 
 const guilds = [{id:'12345678901234567',name:'DPI Test'}];
 const base = {name:'北海道の大雨',guildId:guilds[0].id,channelId:'98765432109876543',type:'weather',region:'hokkaido'};
@@ -98,4 +99,34 @@ test('PROだけOR条件と複数配信先を保存できる',()=>{
  assert.equal(normalized.conditionLogic,'or');
  assert.deepEqual(normalized.conditions,[{kind:'region',operator:'equals',value:'tohoku'},{kind:'weatherLevel',operator:'equals',value:'4'}]);
  assert.throws(()=>normalizeSupporterRules([{...proRule,conditions:Array.from({length:9},()=>({kind:'region',value:'tohoku'}))}],guilds,{servers:5,channels:20,rules:30,complexConditions:true,multiDestination:true}),/8件まで/);
+});
+
+test('ダウングレード確定時は上からルールを残して下側から削除する',()=>{
+ const rules=Array.from({length:8},(_,index)=>({...base,name:`ルール${index+1}`,channelId:`9876543210987654${index}`,channelIds:[`9876543210987654${index}`]}));
+ const result=reconcileRulesForLimits(JSON.stringify({rules,display:'keep'}),{servers:1,channels:10,rules:5,complexConditions:false,multiDestination:false});
+ assert.equal(result.changed,true);assert.equal(result.removedRules,3);assert.deepEqual(result.rules.map(rule=>rule.name),['ルール1','ルール2','ルール3','ルール4','ルール5']);
+ assert.equal(JSON.parse(result.settingsJson).display,'keep');
+});
+
+test('PROから下位プランへの変更は複数配信先とOR条件を安全に整理する',()=>{
+ const rule={...base,channelIds:['98765432109876543','87654321098765432'],conditionLogic:'or',conditions:[{kind:'region',operator:'equals',value:'tohoku'}]};
+ const result=reconcileRulesForLimits(JSON.stringify({rules:[rule]}),{servers:1,channels:2,rules:5,complexConditions:false,multiDestination:false});
+ assert.equal(result.removedRules,0);assert.equal(result.removedDestinations,1);assert.equal(result.simplifiedRules,1);
+ assert.deepEqual(result.rules[0].channelIds,['98765432109876543']);assert.equal(result.rules[0].conditionLogic,'and');assert.deepEqual(result.rules[0].conditions,[]);
+});
+
+test('サーバー・チャンネル上限超過でも上側の設定を優先する',()=>{
+ const rules=[
+  {...base,name:'残す1',channelIds:['98765432109876543']},
+  {...base,name:'残す2',channelId:'87654321098765432',channelIds:['87654321098765432']},
+  {...base,name:'チャンネル超過',channelId:'76543210987654321',channelIds:['76543210987654321']},
+  {...base,name:'サーバー超過',guildId:'22222222222222222',channelId:'65432109876543210',channelIds:['65432109876543210']},
+ ];
+ const result=reconcileRulesForLimits(JSON.stringify({rules}),{servers:1,channels:2,rules:15,complexConditions:false,multiDestination:false});
+ assert.deepEqual(result.rules.map(rule=>rule.name),['残す1','残す2']);assert.equal(result.removedRules,2);
+});
+
+test('壊れた設定JSONは自動削除せず調査可能な状態を保つ',()=>{
+ const result=reconcileRulesForLimits('<invalid>',{servers:1,channels:2,rules:5});
+ assert.equal(result.changed,false);assert.equal(result.invalidSettings,true);assert.equal(result.settingsJson,'<invalid>');
 });

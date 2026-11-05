@@ -231,9 +231,59 @@ export function subscriptionSummary(subscription,env={}){
  const storedServerPacks=Number(metadata.dpi_server_packs);
  const channelPacks=Number.isInteger(storedChannelPacks)&&storedChannelPacks>=0?storedChannelPacks:addonQuantity;
  const serverPacks=Number.isInteger(storedServerPacks)&&storedServerPacks>=0?storedServerPacks:0;
- const planId=basePrice===env.STRIPE_PRICE_PRO?'pro':basePrice===env.STRIPE_PRICE_PLUS?'plus':'supporter';
- const choice=selection({plan:planId,channelPacks,serverPacks});
- return {status:subscription.status||'unknown',cancelAtPeriodEnd:subscription.cancel_at_period_end===true,startedAt:unix(subscription.start_date)||unix(subscription.created),currentPeriodStart,nextRenewalAt,amount:items.reduce((sum,item)=>sum+item.subtotal,0),currency,plan:PLAN_CATALOG[planId].name,planId,channelPacks,serverPacks,channels:choice.channels,servers:choice.servers,rules:choice.rules,complexConditions:choice.complexConditions,multiDestination:choice.multiDestination,items,scheduledChange:null};
+ const planId=basePrice===env.STRIPE_PRICE_PRO?'pro':basePrice===env.STRIPE_PRICE_PLUS?'plus':basePrice===env.STRIPE_PRICE_SUPPORTER?'supporter':'';
+ const choice=planId?selection({plan:planId,channelPacks,serverPacks}):{channels:0,servers:0,rules:0,complexConditions:false,multiDestination:false};
+ return {status:subscription.status||'unknown',cancelAtPeriodEnd:subscription.cancel_at_period_end===true,startedAt:unix(subscription.start_date)||unix(subscription.created),currentPeriodStart,nextRenewalAt,amount:items.reduce((sum,item)=>sum+item.subtotal,0),currency,plan:planId?PLAN_CATALOG[planId].name:'確認が必要な契約',planId,recognizedPlan:!!planId,channelPacks,serverPacks,channels:choice.channels,servers:choice.servers,rules:choice.rules,complexConditions:choice.complexConditions,multiDestination:choice.multiDestination,items,scheduledChange:null};
+}
+export function reconcileRulesForLimits(settingsJson,limits={}){
+ let settings;
+ try{settings=JSON.parse(settingsJson||'{}');}catch{return{changed:false,invalidSettings:true,rules:[],removedRules:0,removedDestinations:0,simplifiedRules:0,settingsJson};}
+ if(!settings||typeof settings!=='object'||Array.isArray(settings)||!Array.isArray(settings.rules))return{changed:false,invalidSettings:true,rules:[],removedRules:0,removedDestinations:0,simplifiedRules:0,settingsJson};
+ const ruleLimit=Math.max(0,Number(limits.rules)||0),serverLimit=Math.max(0,Number(limits.servers)||0),channelLimit=Math.max(0,Number(limits.channels)||0);
+ const kept=[],guilds=new Set(),channels=new Set();let removedRules=0,removedDestinations=0,simplifiedRules=0;
+ for(const source of settings.rules){
+  if(kept.length>=ruleLimit){removedRules+=1;continue;}
+  const rule=source&&typeof source==='object'&&!Array.isArray(source)?{...source}:source;
+  if(!rule||typeof rule!=='object'){removedRules+=1;continue;}
+  const guildId=clean(rule.guildId);
+  if(!guilds.has(guildId)&&guilds.size>=serverLimit){removedRules+=1;continue;}
+  const requested=[...new Set((Array.isArray(rule.channelIds)&&rule.channelIds.length?rule.channelIds:[rule.channelId]).map(clean).filter(Boolean))];
+  const destinationLimit=limits.multiDestination===true?requested.length:Math.min(1,requested.length);
+  const destinations=[];
+  for(const channelId of requested){
+   if(destinations.length>=destinationLimit){removedDestinations+=1;continue;}
+   const key=`${guildId}:${channelId}`;
+   if(!channels.has(key)&&channels.size>=channelLimit){removedDestinations+=1;continue;}
+   destinations.push(channelId);channels.add(key);
+  }
+  if(!destinations.length){removedRules+=1;continue;}
+  let simplified=false;
+  if(limits.complexConditions!==true&&((rule.conditionLogic&&rule.conditionLogic!=='and')||(Array.isArray(rule.conditions)&&rule.conditions.length))){rule.conditionLogic='and';rule.conditions=[];simplified=true;}
+  if(!Array.isArray(rule.channelIds)||rule.channelIds.length!==destinations.length||rule.channelIds.some((value,index)=>clean(value)!==destinations[index]))simplified=true;
+  rule.channelId=destinations[0];rule.channelIds=destinations;
+  if(simplified)simplifiedRules+=1;
+  guilds.add(guildId);kept.push(rule);
+ }
+ const changed=removedRules>0||removedDestinations>0||simplifiedRules>0;
+ if(!changed)return{changed:false,invalidSettings:false,rules:settings.rules,removedRules:0,removedDestinations:0,simplifiedRules:0,settingsJson};
+ return{changed:true,invalidSettings:false,rules:kept,removedRules,removedDestinations,simplifiedRules,settingsJson:JSON.stringify({...settings,rules:kept})};
+}
+function combinedLimits(summaries){
+ return summaries.reduce((limits,item)=>({servers:Math.max(limits.servers,Number(item.servers)||0),channels:Math.max(limits.channels,Number(item.channels)||0),rules:Math.max(limits.rules,Number(item.rules)||0),complexConditions:limits.complexConditions||item.complexConditions===true,multiDestination:limits.multiDestination||item.multiDestination===true}),{servers:0,channels:0,rules:0,complexConditions:false,multiDestination:false});
+}
+export async function reconcileStoredRulesForCustomer(db,customer,limits){
+ const customerId=typeof customer==='string'?customer:customer?.id;
+ const validLimits=limits&&[limits.rules,limits.servers,limits.channels].every(value=>Number.isInteger(Number(value))&&Number(value)>=1);
+ if(!customerId||!validLimits)return{changed:false,invalidLimits:true,removedRules:0,removedDestinations:0,simplifiedRules:0};
+ for(let attempt=0;attempt<2;attempt+=1){
+  const row=await db.prepare(`SELECT a.discord_user_id,a.settings_json,a.revision FROM supporter_accounts a JOIN supporter_billing b ON b.discord_user_id=a.discord_user_id WHERE b.customer_id=?`).bind(customerId).first();
+  if(!row)return{changed:false,removedRules:0,removedDestinations:0,simplifiedRules:0};
+  const adjustment=reconcileRulesForLimits(row.settings_json,limits);
+  if(!adjustment.changed)return{...adjustment,revision:Number(row.revision)||0};
+  const result=await db.prepare('UPDATE supporter_accounts SET settings_json=?, revision=revision+1, updated_at=? WHERE discord_user_id=? AND revision=?').bind(adjustment.settingsJson,new Date().toISOString(),row.discord_user_id,row.revision).run();
+  if(result.meta?.changes)return{...adjustment,revision:(Number(row.revision)||0)+1};
+ }
+ return{changed:false,conflict:true,removedRules:0,removedDestinations:0,simplifiedRules:0};
 }
 function scheduleId(subscription){return typeof subscription.schedule==='string'?subscription.schedule:subscription.schedule?.id;}
 export function scheduledChangeSummary(schedule,env,currentSummary){
@@ -292,7 +342,9 @@ export async function billingAction(request,env,db,uid,input={}){
   const recovery=await reconcilePaidCheckoutSubscription(env,row.customer_id,uid);
   if(recovery.recovered&&recovery.checkoutId)await db.prepare('UPDATE supporter_billing SET checkout_id=?,dirty=1 WHERE discord_user_id=?').bind(recovery.checkoutId,uid).run();
   const [summaries,invoices,credits,dunning]=await Promise.all([customerSubscriptionSummaries(env,row.customer_id),customerInvoices(env,row.customer_id),customerCredits(env,row.customer_id),dunningState(db,row.customer_id)]);
-  return json({mode:'test',billingDay:26,subscriptions:summaries,invoices,credits,dunning,recoveredSubscription:recovery.recovered,deliveryEnabled:false});
+  const active=summaries.filter(item=>item.recognizedPlan!==false&&['active','trialing','past_due','unpaid','paused'].includes(item.status));
+  const rulesAdjustment=active.length?await reconcileStoredRulesForCustomer(db,row.customer_id,combinedLimits(active)):{changed:false,removedRules:0,removedDestinations:0,simplifiedRules:0};
+  return json({mode:'test',billingDay:26,subscriptions:summaries,invoices,credits,dunning,rulesAdjustment,recoveredSubscription:recovery.recovered,deliveryEnabled:false});
  }
  if(!row.customer_id){const customer=await createBillingCustomer(env,uid,account.billing_email,`dpi-customer-${uid}`);await db.prepare('UPDATE supporter_billing SET customer_id=? WHERE discord_user_id=? AND customer_id IS NULL').bind(customer.id,uid).run();row=await db.prepare('SELECT * FROM supporter_billing WHERE discord_user_id=?').bind(uid).first();}
  else if(account.billing_email)await stripe(env,`customers/${encodeURIComponent(row.customer_id)}`,{email:account.billing_email},`dpi-customer-email-${uid}-${account.billing_email}`);
@@ -563,9 +615,18 @@ export async function billingWebhook(request,env){
  const db=env.REUSE_DB||env.NEWSLETTER_DB;
  const alreadyProcessed=await db.prepare('SELECT id FROM supporter_stripe_events WHERE id=?').bind(event.id).first();
  if(alreadyProcessed)return json({received:true});
- if(['checkout.session.completed','checkout.session.async_payment_succeeded'].includes(event.type))await provisionPaidCheckoutSubscription(env,event.data?.object);
+ if(['checkout.session.completed','checkout.session.async_payment_succeeded'].includes(event.type)){
+  const session=event.data?.object;
+  const provisioned=await provisionPaidCheckoutSubscription(env,session);
+  if(provisioned&&session?.payment_status==='paid')await sendBillingNotification(env,db,'payment_succeeded',{id:session.id,customer:session.customer,amount_paid:Number(session.amount_total||0),currency:session.currency||'jpy'});
+ }
  if(event.type==='invoice.paid')await recordInvoicePaid(env,db,event.data?.object);
  if(event.type==='invoice.payment_failed')await recordInvoiceFailed(env,db,event.data?.object);
+ if(['customer.subscription.created','customer.subscription.updated'].includes(event.type)){
+  const subscription=event.data?.object;
+  const summary=subscriptionSummary(subscription,env);
+  if(summary.recognizedPlan&&['active','trialing','past_due','unpaid','paused'].includes(subscription?.status))await reconcileStoredRulesForCustomer(db,subscription.customer,summary);
+ }
  // Events invalidate a cache only; status always comes from Stripe, never from stale event payloads.
  await db.batch([db.prepare('INSERT INTO supporter_stripe_events(id,received_at) VALUES(?,?) ON CONFLICT DO NOTHING').bind(event.id,Date.now()),db.prepare('UPDATE supporter_billing SET dirty=1 WHERE customer_id=?').bind(event.data?.object?.customer||'')]);
  return json({received:true});

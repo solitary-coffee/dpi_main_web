@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHmac} from 'node:crypto';
-import {billingAction,selection,billingReady,billingSchedule,creditApplication,creditsFromBalance,customerInvoices,dunningSchedule,paidCheckoutSubscriptionParams,provisionPaidCheckoutSubscription,prorationBreakdown,reconcilePaidCheckoutSubscription,scheduledChangeSummary,staleCheckoutAttempt,subscriptionSummary,verifySignature} from '../worker/supporter-billing.js';
+import {billingAction,billingWebhook,selection,billingReady,billingSchedule,creditApplication,creditsFromBalance,customerInvoices,dunningSchedule,paidCheckoutSubscriptionParams,provisionPaidCheckoutSubscription,prorationBreakdown,reconcilePaidCheckoutSubscription,reconcileStoredRulesForCustomer,scheduledChangeSummary,staleCheckoutAttempt,subscriptionSummary,verifySignature} from '../worker/supporter-billing.js';
 import {supporterAdminAccount,supporterAdminDetails} from '../worker/supporter.js';
 import {readFile} from 'node:fs/promises';
 test('plan, channel and server add-ons are server controlled',()=>{
@@ -111,6 +111,12 @@ test('subscription summary includes plan, dates, amount and item details',()=>{
  assert.equal(result.channels,5);
  assert.equal(result.servers,2);
  assert.deepEqual(result.items.map(item=>[item.label,item.quantity,item.subtotal]),[['BASIC',1,300],['追加オプション',2,400]]);
+});
+
+test('未知のStripe価格は契約枠として扱わずルールを破壊しない',()=>{
+ const env={STRIPE_PRICE_SUPPORTER:'price_basic',STRIPE_PRICE_PLUS:'price_plus',STRIPE_PRICE_PRO:'price_pro',STRIPE_PRICE_ADDON:'price_addon'};
+ const summary=subscriptionSummary({status:'active',items:{data:[{quantity:1,price:{id:'price_unknown',unit_amount:999,currency:'jpy'}}]}},env);
+ assert.equal(summary.recognizedPlan,false);assert.equal(summary.planId,'');assert.equal(summary.rules,0);assert.equal(summary.channels,0);assert.equal(summary.servers,0);
 });
 test('admin contract data excludes Stripe identifiers and counts rules',()=>{
  const account=supporterAdminAccount({discord_user_id:'123',discord_name:'DPI利用者',billing_email:'user@example.jp',registered_at:'2026-01-01',updated_at:'2026-01-02',revision:2,settings_json:'{"rules":[{},{}]}',customer_id:'cus_private'},[{status:'active',amount:300}],'',500);
@@ -370,4 +376,85 @@ test('webhook rejects tampering stale timestamps and wrong secrets; rotation wor
  assert.equal(await verifySignature(raw+' ',header,secret,ts*1000),false);
  assert.equal(await verifySignature(raw,header,secret,(ts+301)*1000),false);
  assert.equal(await verifySignature(raw,header,'other',ts*1000),false);
+});
+
+test('発効済みダウングレードだけが保存ルールを改訂し、競合時は再読込する',async()=>{
+ let account={discord_user_id:'123',settings_json:JSON.stringify({rules:Array.from({length:7},(_,index)=>({name:`R${index+1}`,guildId:'12345678901234567',channelId:'98765432109876543',channelIds:['98765432109876543']}))}),revision:4};
+ let firstUpdate=true,selects=0;
+ const db={prepare(sql){let values=[];return{bind(...input){values=input;return this;},async first(){if(sql.includes('JOIN supporter_billing')){selects+=1;return{...account};}return null;},async run(){if(sql.startsWith('UPDATE supporter_accounts')){if(firstUpdate){firstUpdate=false;return{meta:{changes:0}};}account={...account,settings_json:values[0],revision:account.revision+1};return{meta:{changes:1}};}return{meta:{changes:1}};}};}};
+ const result=await reconcileStoredRulesForCustomer(db,'cus_x',{servers:1,channels:2,rules:5,complexConditions:false,multiDestination:false});
+ assert.equal(selects,2);assert.equal(result.changed,true);assert.equal(result.removedRules,2);assert.equal(result.revision,5);assert.deepEqual(result.rules.map(rule=>rule.name),['R1','R2','R3','R4','R5']);
+ const invalid=await reconcileStoredRulesForCustomer(db,'cus_x',{servers:1,channels:2});assert.equal(invalid.invalidLimits,true);assert.equal(selects,2);
+});
+
+test('契約状態の再取得はWebhookを補完して発効済み上限をDBと画面へ返す',async()=>{
+ const env={SUPPORTER_BILLING_MODE:'test',STRIPE_SECRET_KEY:'rk_test_example',STRIPE_WEBHOOK_SECRET:'whsec_x',STRIPE_PRICE_SUPPORTER:'price_basic',STRIPE_PRICE_PLUS:'price_plus',STRIPE_PRICE_PRO:'price_pro',STRIPE_PRICE_ADDON:'price_addon',STRIPE_PORTAL_CONFIG:'bpc_x',SUPPORTER_PUBLIC_ORIGIN:'https://dpi-bot.com'};
+ let account={discord_user_id:'123',billing_email:'user@example.jp',settings_json:JSON.stringify({rules:Array.from({length:7},(_,index)=>({name:`R${index+1}`,guildId:'12345678901234567',channelId:'98765432109876543',channelIds:['98765432109876543']}))}),revision:1};
+ const db={prepare(sql){let values=[];return{bind(...input){values=input;return this;},async first(){
+  if(sql.includes('FROM supporter_accounts WHERE'))return account;
+  if(sql.includes('FROM supporter_billing WHERE'))return{discord_user_id:'123',customer_id:'cus_x'};
+  if(sql.includes('FROM supporter_dunning'))return null;
+  if(sql.includes('JOIN supporter_billing'))return account;
+  return null;
+ },async run(){if(sql.startsWith('UPDATE supporter_accounts')){account={...account,settings_json:values[0],revision:account.revision+1};return{meta:{changes:1}};}return{meta:{changes:1}};}};}};
+ const renewal=Math.floor(Date.now()/1000)+86400;
+ const subscription={id:'sub_basic',status:'active',customer:'cus_x',start_date:1700000000,metadata:{dpi_channel_packs:'0',dpi_server_packs:'0'},items:{data:[{id:'si_base',quantity:1,current_period_start:1700000000,current_period_end:renewal,price:{id:'price_basic',unit_amount:300,currency:'jpy'}}]}};
+ const originalFetch=globalThis.fetch;
+ globalThis.fetch=async url=>{const parsed=new URL(url);let data={livemode:false};if(parsed.pathname==='/v1/subscriptions')data={livemode:false,data:[subscription]};else if(parsed.pathname==='/v1/invoices')data={livemode:false,data:[]};else if(parsed.pathname==='/v1/customers/cus_x')data={livemode:false,balance:0};return new Response(JSON.stringify(data),{status:200,headers:{'content-type':'application/json'}});};
+ try{
+  const response=await billingAction(new Request('https://dpi-bot.com/api/supporter/billing/status'),env,db,'123');
+  assert.equal(response.status,200);const result=await response.json();assert.equal(result.rulesAdjustment.changed,true);assert.equal(result.rulesAdjustment.removedRules,2);assert.equal(result.rulesAdjustment.revision,2);assert.equal(result.rulesAdjustment.rules.length,5);assert.equal(JSON.parse(account.settings_json).rules.length,5);
+ }finally{globalThis.fetch=originalFetch;}
+});
+
+test('請求Webhookは初回決済成功メールとダウングレード発効時のルール同期を扱う',async()=>{
+ const source=await readFile(new URL('../worker/supporter-billing.js',import.meta.url),'utf8');
+ assert.match(source,/checkout\.session\.async_payment_succeeded[\s\S]*sendBillingNotification\(env,db,'payment_succeeded'/);
+ assert.match(source,/customer\.subscription\.created[\s\S]*customer\.subscription\.updated[\s\S]*reconcileStoredRulesForCustomer/);
+ assert.match(source,/changeTiming==='next_period'[\s\S]*scheduleSubscriptionChange/);
+ assert.doesNotMatch(source,/scheduleSubscriptionChange[\s\S]{0,500}reconcileStoredRulesForCustomer/);
+});
+
+test('初回決済Webhookは契約を作成し成功メールを重複送信しない',async()=>{
+ const secret='whsec_example',timestamp=Math.floor(Date.now()/1000);
+ const event={id:'evt_checkout_paid',livemode:false,type:'checkout.session.completed',data:{object:{id:'cs_test_paid',mode:'payment',status:'complete',payment_status:'paid',customer:'cus_x',payment_intent:'pi_x',client_reference_id:'123',amount_total:300,currency:'jpy',metadata:{dpi_checkout_kind:'initial_subscription',dpi_user:'123',dpi_plan:'supporter',dpi_channel_packs:'0',dpi_server_packs:'0',dpi_billing_anchor:String(timestamp+86400),dpi_legal_consent_version:'2026-11-04'}}}};
+ const raw=JSON.stringify(event),signature=createHmac('sha256',secret).update(`${timestamp}.${raw}`).digest('hex');
+ const env={SUPPORTER_BILLING_MODE:'test',STRIPE_SECRET_KEY:'rk_test_example',STRIPE_WEBHOOK_SECRET:secret,STRIPE_PRICE_SUPPORTER:'price_basic',STRIPE_PRICE_PLUS:'price_plus',STRIPE_PRICE_PRO:'price_pro',STRIPE_PRICE_ADDON:'price_addon',STRIPE_PORTAL_CONFIG:'bpc_x',NOTICE_FROM_EMAIL:'notice@example.jp'};
+ const events=new Set(),notices=new Map(),emails=[];
+ env.NOTICE_EMAIL={async send(message){emails.push(message);}};
+ const db={
+  prepare(sql){
+   let values=[];
+   return{
+    bind(...input){values=input;return this;},
+    async first(){
+     if(sql.includes('supporter_stripe_events'))return events.has(values[0])?{id:values[0]}:null;
+     if(sql.includes('JOIN supporter_billing'))return{billing_email:'user@example.jp'};
+     if(sql.includes('supporter_billing_notifications'))return notices.has(`${values[0]}:${values[1]}`)?{status:notices.get(`${values[0]}:${values[1]}`)}:null;
+     return null;
+    },
+    async run(){
+     if(sql.startsWith('INSERT INTO supporter_stripe_events'))events.add(values[0]);
+     if(sql.startsWith('INSERT INTO supporter_billing_notifications')){const key=`${values[0]}:${values[1]}`;if(!notices.has(key))notices.set(key,'pending');}
+     if(sql.includes("SET status='sending'"))notices.set(`${values[1]}:${values[2]}`,'sending');
+     if(sql.includes("SET status='sent'"))notices.set(`${values[2]}:${values[3]}`,'sent');
+     return{meta:{changes:1}};
+    },
+   };
+  },
+  async batch(statements){for(const statement of statements)await statement.run();},
+ };
+ env.REUSE_DB=db;
+ const originalFetch=globalThis.fetch;let subscriptionCreates=0;
+ globalThis.fetch=async(url,init={})=>{const parsed=new URL(url);let data={livemode:false};if(parsed.pathname==='/v1/subscriptions'&&(init.method||'GET')==='GET')data={livemode:false,data:[]};else if(parsed.pathname==='/v1/payment_intents/pi_x')data={livemode:false,id:'pi_x',payment_method:'pm_x'};else if(parsed.pathname==='/v1/subscriptions'){subscriptionCreates+=1;data={livemode:false,id:'sub_x',status:'active',customer:'cus_x'};}return new Response(JSON.stringify(data),{status:200,headers:{'content-type':'application/json'}});};
+ try{
+  const request=()=>new Request('https://dpi-bot.com/api/supporter/stripe/webhook',{method:'POST',headers:{'stripe-signature':`t=${timestamp},v1=${signature}`},body:raw});
+  assert.equal((await billingWebhook(request(),env)).status,200);assert.equal(subscriptionCreates,1);assert.equal(emails.length,1);assert.equal(emails[0].to,'user@example.jp');assert.match(emails[0].subject,/お支払い完了/);
+  assert.equal((await billingWebhook(request(),env)).status,200);assert.equal(subscriptionCreates,1);assert.equal(emails.length,1);
+ }finally{globalThis.fetch=originalFetch;}
+});
+
+test('利用者画面は契約同期で削除されたルールと改訂番号を即時反映する',async()=>{
+ const source=await readFile(new URL('../site/supporter/app.js',import.meta.url),'utf8');
+ assert.match(source,/billingState\.rulesAdjustment\?\.changed/);assert.match(source,/rulesAdjustment\.revision/);assert.match(source,/下側の通知ルール/);assert.match(source,/function savedRules\(account\)/);
 });

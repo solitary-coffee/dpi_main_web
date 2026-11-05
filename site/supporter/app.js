@@ -200,6 +200,13 @@ function normalizeRule(rule) {
  };
 }
 
+function savedRules(account){
+ try{
+  const settings=JSON.parse(account?.settings_json||'{}');
+  return Array.isArray(settings.rules)?settings.rules.map(normalizeRule):[];
+ }catch{return [];}
+}
+
 function render() {
  $('rules').replaceChildren();
  if(!hasConfigurableContract)return;
@@ -273,13 +280,21 @@ async function load() {
  $('add').disabled = $('save').disabled = true;
  if (account) {
   revision = account.revision;
-  rules = JSON.parse(account.settings_json).rules.map(normalizeRule);
+  rules = savedRules(account);
   await Promise.all([...new Set(rules.map(rule => rule.guildId).filter(Boolean))].map(guildId => loadChannels(guildId)));
   render();
   if(billingEnabled){
    try{
     const billingState=await api('/api/supporter/billing/status');
     renderContracts(billingState.subscriptions||[],billingState.dunning);renderInvoices(billingState.invoices||[]);
+    if(billingState.rulesAdjustment?.changed){
+     revision=Number(billingState.rulesAdjustment.revision)||revision;
+     rules=(billingState.rulesAdjustment.rules||[]).map(normalizeRule);
+     await Promise.all([...new Set(rules.map(rule=>rule.guildId).filter(Boolean))].map(guildId=>loadChannels(guildId)));
+     render();
+     const removed=Number(billingState.rulesAdjustment.removedRules||0),destinations=Number(billingState.rulesAdjustment.removedDestinations||0),simplified=Number(billingState.rulesAdjustment.simplifiedRules||0);
+     status(`契約上限の変更を反映しました。${removed?`下側の通知ルールを${removed}件削除しました。`:''}${destinations?`上限を超える通知先を${destinations}件解除しました。`:''}${simplified?`下位プラン向けに${simplified}件の条件を調整しました。`:''}`);
+    }
     const credits=Number(billingState.credits||0);
     credit.textContent=`利用可能クレジット: ${credits.toLocaleString('ja-JP')}クレジット（${credits.toLocaleString('ja-JP')}円）`;
     if(billingState.recoveredSubscription)status('支払い済みの申込みから契約を復旧し、有料プランを有効化しました。');
@@ -419,7 +434,7 @@ function renderContracts(subscriptions,dunning={}) {
   if(options)setRuleAccess(false);
   return;
  }
- const active=subscriptions.filter(item=>['active','trialing','past_due','unpaid','paused'].includes(item.status));
+ const active=subscriptions.filter(item=>item.recognizedPlan!==false&&['active','trialing','past_due','unpaid','paused'].includes(item.status));
  entitlements=active.reduce((limits,item)=>({servers:Math.max(limits.servers,Number(item.servers)||1),channels:Math.max(limits.channels,Number(item.channels)||2),rules:Math.max(limits.rules,Number(item.rules)||5),complexConditions:limits.complexConditions||item.complexConditions===true,multiDestination:limits.multiDestination||item.multiDestination===true}),{servers:1,channels:2,rules:5,complexConditions:false,multiDestination:false});
  const current=active[0]||subscriptions[0];
  if(dunning?.usageSuspended){const warning=document.createElement('p');warning.className='billing-suspension';warning.textContent='月末再決済を確認できなかったため、有料プランの通知設定は利用停止中です。契約管理画面からお支払いを完了してください。';contract.append(warning);}
