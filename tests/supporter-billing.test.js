@@ -354,6 +354,7 @@ test('supporter rule creation is resilient to WebKit input and channel errors',a
  assert.match(source,/unexpected_html_response/);
  assert.match(source,/method==='GET'&&retry&&response\.status>=500/);
  assert.match(source,/rule-condition-fields/);
+ assert.match(source,/intensity-condition-row/);
  assert.match(source,/magnitude-condition-row/);
  assert.match(source,/checkbox\.type='checkbox'/);
  assert.match(source,/rule\.channelIds=\[\.\.\.selected\]/);
