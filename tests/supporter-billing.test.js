@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHmac} from 'node:crypto';
-import {billingAction,selection,billingReady,billingSchedule,creditsFromBalance,customerInvoices,dunningSchedule,paidCheckoutSubscriptionParams,provisionPaidCheckoutSubscription,prorationBreakdown,reconcilePaidCheckoutSubscription,scheduledChangeSummary,staleCheckoutAttempt,subscriptionSummary,verifySignature} from '../worker/supporter-billing.js';
+import {billingAction,selection,billingReady,billingSchedule,creditApplication,creditsFromBalance,customerInvoices,dunningSchedule,paidCheckoutSubscriptionParams,provisionPaidCheckoutSubscription,prorationBreakdown,reconcilePaidCheckoutSubscription,scheduledChangeSummary,staleCheckoutAttempt,subscriptionSummary,verifySignature} from '../worker/supporter-billing.js';
 import {supporterAdminAccount} from '../worker/supporter.js';
 import {readFile} from 'node:fs/promises';
 test('plan, channel and server add-ons are server controlled',()=>{
@@ -166,6 +166,11 @@ test('Stripe customer balance converts to non-negative yen credits',()=>{
  assert.equal(creditsFromBalance(0),0);
  assert.equal(creditsFromBalance(200),0);
 });
+test('credits pay the immediate plan difference first and the next option invoice second',()=>{
+ assert.deepEqual(creditApplication(1000,600,1480),{available:1000,immediateCreditApplied:600,nextInvoiceCreditApplied:400,totalCreditApplied:1000,immediateDue:0,nextInvoiceDue:1080,remainingAfterNext:0});
+ assert.deepEqual(creditApplication(400,0,500),{available:400,immediateCreditApplied:0,nextInvoiceCreditApplied:400,totalCreditApplied:400,immediateDue:0,nextInvoiceDue:100,remainingAfterNext:0});
+ assert.deepEqual(creditApplication(1000,0,500),{available:1000,immediateCreditApplied:0,nextInvoiceCreditApplied:500,totalCreditApplied:500,immediateDue:0,nextInvoiceDue:0,remainingAfterNext:500});
+});
 test('plan proration separates the old-plan refund equivalent from the new-plan charge',()=>{
  assert.deepEqual(prorationBreakdown([
   {amount:-100,parent:{subscription_item_details:{proration:true}}},
@@ -199,7 +204,7 @@ test('update preview prorates only the base plan and confirms options without pr
  };
  try{
   const previewResponse=await billingAction(new Request('https://dpi-bot.com/api/supporter/billing/preview-update'),env,db,'123',{plan:'pro',channelPacks:1,serverPacks:0});
-  const preview=await previewResponse.json();assert.equal(preview.planChanged,true);assert.deepEqual(preview.planProrationBreakdown,{unusedPlanCredit:100,newPlanCharge:700,net:600});assert.equal(preview.planProration,600);assert.equal(preview.creditApplied,100);assert.equal(preview.immediateDue,500);assert.equal(preview.next.servers,5);assert.equal(preview.next.channels,23);
+  const preview=await previewResponse.json();assert.equal(preview.planChanged,true);assert.deepEqual(preview.planProrationBreakdown,{unusedPlanCredit:100,newPlanCharge:700,net:600});assert.equal(preview.planProration,600);assert.equal(preview.creditApplied,100);assert.equal(preview.immediateCreditApplied,100);assert.equal(preview.nextInvoiceCreditApplied,0);assert.equal(preview.immediateDue,500);assert.equal(preview.nextInvoiceSubtotal,1480);assert.equal(preview.nextInvoiceDue,1480);assert.equal(preview.next.servers,5);assert.equal(preview.next.channels,23);
   const previewCall=calls.find(call=>call.path==='/v1/invoices/create_preview');assert.equal(previewCall.params.get('subscription_details[items][0][price]'),'price_pro');assert.equal(previewCall.params.get('subscription_details[items][1][price]'),null);
   calls.length=0;
   const requestId='123e4567-e89b-42d3-a456-426614174000';
@@ -213,6 +218,30 @@ test('update preview prorates only the base plan and confirms options without pr
   assert.equal(base.params.get('proration_date'),String(preview.prorationDate));assert.equal(base.params.get('items[0][price]'),'price_pro');
   assert.equal(options.params.get('items[0][price]'),'price_addon');assert.equal(options.params.get('items[0][quantity]'),'1');assert.equal(options.params.get('proration_date'),null);
  } finally {globalThis.fetch=originalFetch;}
+});
+test('option-only additions apply credits to the next 26th invoice after user confirmation',async()=>{
+ const env={SUPPORTER_BILLING_MODE:'test',STRIPE_SECRET_KEY:'rk_test_example',STRIPE_WEBHOOK_SECRET:'whsec_x',STRIPE_PRICE_SUPPORTER:'price_basic',STRIPE_PRICE_PLUS:'price_plus',STRIPE_PRICE_PRO:'price_pro',STRIPE_PRICE_ADDON:'price_addon',STRIPE_PORTAL_CONFIG:'bpc_x',SUPPORTER_PUBLIC_ORIGIN:'https://dpi-bot.com'};
+ const renewal=Math.floor(Date.now()/1000)+86400;
+ const current={id:'sub_options',status:'active',customer:'cus_x',start_date:1700000000,metadata:{dpi_channel_packs:'0',dpi_server_packs:'0'},items:{data:[{id:'si_base',quantity:1,current_period_start:1700000000,current_period_end:renewal,price:{id:'price_basic',unit_amount:300,currency:'jpy'}}]}};
+ const db={prepare(sql){return{bind(){return this;},async first(){if(sql.includes('supporter_accounts'))return{discord_user_id:'123',billing_email:'user@example.jp'};if(sql.includes('supporter_billing'))return{discord_user_id:'123',customer_id:'cus_x'};return null;},async run(){return{meta:{changes:1}};}};}};
+ const calls=[];const originalFetch=globalThis.fetch;
+ globalThis.fetch=async(url,init={})=>{const path=new URL(url).pathname;const params=new URLSearchParams(init.body||'');calls.push({path,method:init.method||'GET',params});let data={livemode:false};
+  if(path==='/v1/subscriptions')data={livemode:false,data:[current]};
+  else if(path==='/v1/customers/cus_x')data={livemode:false,balance:-400};
+  else if(path==='/v1/subscriptions/sub_options')data={...current,livemode:false};
+  return new Response(JSON.stringify(data),{status:200,headers:{'content-type':'application/json'}});
+ };
+ try{
+  const previewResponse=await billingAction(new Request('https://dpi-bot.com/api/supporter/billing/preview-update'),env,db,'123',{plan:'supporter',channelPacks:1,serverPacks:0});
+  const preview=await previewResponse.json();assert.equal(preview.planChanged,false);assert.equal(preview.planProration,0);assert.equal(preview.immediateCreditApplied,0);assert.equal(preview.nextInvoiceCreditApplied,400);assert.equal(preview.creditApplied,400);assert.equal(preview.immediateDue,0);assert.equal(preview.nextInvoiceSubtotal,500);assert.equal(preview.nextInvoiceDue,100);
+  assert.equal(calls.some(call=>call.path==='/v1/invoices/create_preview'),false);calls.length=0;
+  const requestId='123e4567-e89b-42d3-a456-426614174001';
+  const blocked=await billingAction(new Request('https://dpi-bot.com/api/supporter/billing/update'),env,db,'123',{plan:'supporter',channelPacks:1,serverPacks:0,prorationDate:preview.prorationDate,expectedCreditApplied:400,useCredits:false,requestId});
+  assert.equal(blocked.status,409);assert.equal(calls.some(call=>call.path==='/v1/subscriptions/sub_options'),false);calls.length=0;
+  const response=await billingAction(new Request('https://dpi-bot.com/api/supporter/billing/update'),env,db,'123',{plan:'supporter',channelPacks:1,serverPacks:0,prorationDate:preview.prorationDate,expectedCreditApplied:400,useCredits:true,requestId});
+  assert.equal(response.status,200);const result=await response.json();assert.match(result.message,/26日の請求書確定時に消費/);assert.deepEqual(result.creditApplication,{immediate:0,nextInvoice:400,nextInvoiceDue:100});
+  const optionUpdate=calls.find(call=>call.path==='/v1/subscriptions/sub_options'&&call.method==='POST');assert.equal(optionUpdate.params.get('proration_behavior'),'none');assert.equal(optionUpdate.params.get('items[0][price]'),'price_addon');assert.equal(optionUpdate.params.get('items[0][quantity]'),'1');
+ }finally{globalThis.fetch=originalFetch;}
 });
 test('downgrades are scheduled for the next renewal without refund or immediate invoice',async()=>{
  const env={SUPPORTER_BILLING_MODE:'test',STRIPE_SECRET_KEY:'rk_test_example',STRIPE_WEBHOOK_SECRET:'whsec_x',STRIPE_PRICE_SUPPORTER:'price_basic',STRIPE_PRICE_PLUS:'price_plus',STRIPE_PRICE_PRO:'price_pro',STRIPE_PRICE_ADDON:'price_addon',STRIPE_PORTAL_CONFIG:'bpc_x',SUPPORTER_PUBLIC_ORIGIN:'https://dpi-bot.com'};
@@ -302,7 +331,8 @@ test('supporter rule creation is resilient to WebKit input and channel errors',a
  assert.match(source,/billing-preview-dialog/);
  assert.match(source,/expectedCreditApplied/);
  assert.match(source,/credit-consent/);
- assert.match(source,/クレジットを使用し、残額/);
+ assert.match(source,/クレジットを.*使用し、今回/);
+ assert.match(source,/次回26日のお支払い見込み/);
  assert.doesNotMatch(source,/window\.confirm\('契約内容を更新/);
  assert.match(source,/rules\.push\(normalizeRule[\s\S]+render\(\);[\s\S]+await loadChannels/);
  assert.match(source,/チャンネルを再取得/);
