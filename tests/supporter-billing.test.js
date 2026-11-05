@@ -349,6 +349,12 @@ test('supporter rule creation is resilient to WebKit input and channel errors',a
  assert.doesNotMatch(source,/window\.confirm\('契約内容を更新/);
  assert.match(source,/rules\.push\(normalizeRule[\s\S]+render\(\);[\s\S]+await loadChannels/);
  assert.match(source,/チャンネルを再取得/);
+ assert.match(source,/channel-refresh/);
+ assert.match(source,/response\.text\(\)/);
+ assert.match(source,/unexpected_html_response/);
+ assert.match(source,/method==='GET'&&retry&&response\.status>=500/);
+ assert.match(source,/rule-condition-fields/);
+ assert.match(source,/magnitude-condition-row/);
  assert.match(source,/checkbox\.type='checkbox'/);
  assert.match(source,/rule\.channelIds=\[\.\.\.selected\]/);
  assert.doesNotMatch(source,/input\.multiple=true/);
