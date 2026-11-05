@@ -354,7 +354,7 @@ legalConsent.addEventListener('change',updateCheckoutAvailability);
 
 const dateText = seconds => seconds ? new Intl.DateTimeFormat('ja-JP',{dateStyle:'medium',timeStyle:'short',timeZone:'Asia/Tokyo'}).format(new Date(seconds * 1000)) : '—';
 const moneyText = (amount,currency) => new Intl.NumberFormat('ja-JP',{style:'currency',currency:(currency || 'jpy').toUpperCase(),maximumFractionDigits:0}).format(amount || 0);
-const STATUS_LABELS = {active:'有効',trialing:'試用中',past_due:'支払い遅延',unpaid:'未払い',paused:'一時停止',incomplete:'手続き未完了',paid:'支払い済み',open:'支払い待ち',draft:'作成中',void:'無効'};
+const STATUS_LABELS = {active:'有効',trialing:'有効（次回請求待ち）',past_due:'支払い遅延',unpaid:'未払い',paused:'一時停止',incomplete:'手続き未完了',paid:'支払い済み',open:'支払い待ち',draft:'作成中',void:'無効'};
 
 function stripeDestination(value) {
  const link = document.createElement('a');

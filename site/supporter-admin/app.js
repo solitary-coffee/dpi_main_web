@@ -2,7 +2,7 @@ let accounts = [];
 let selectedAccount = null;
 
 const $ = id => document.getElementById(id);
-const STATUS_LABELS = Object.freeze({active:'有効',trialing:'試用中',past_due:'支払い遅延',unpaid:'未払い',paused:'一時停止',incomplete:'手続き未完了'});
+const STATUS_LABELS = Object.freeze({active:'有効',trialing:'有効（次回請求待ち）',past_due:'支払い遅延',unpaid:'未払い',paused:'一時停止',incomplete:'手続き未完了'});
 const ACTIVE_STATUSES = new Set(['active','trialing','past_due','unpaid','paused']);
 
 document.addEventListener('DOMContentLoaded', () => {
