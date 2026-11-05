@@ -256,7 +256,7 @@ async function load() {
   if(billingEnabled){
    try{
     const billingState=await api('/api/supporter/billing/status');
-    renderContracts(billingState.subscriptions||[]);renderInvoices(billingState.invoices||[]);
+    renderContracts(billingState.subscriptions||[],billingState.dunning);renderInvoices(billingState.invoices||[]);
     const credits=Number(billingState.credits||0);
     credit.textContent=`利用可能クレジット: ${credits.toLocaleString('ja-JP')}クレジット（${credits.toLocaleString('ja-JP')}円）`;
    }catch{contract.textContent='契約情報を自動取得できませんでした。「最新の契約・明細を読み込む」を押してください。';setRuleAccess(false);}
@@ -297,7 +297,7 @@ billing.replaceChildren();
 const title = document.createElement('h2');
 title.textContent = 'お支払い・契約情報';
 const note = document.createElement('p');
-note.textContent = '請求日は毎月26日です。1〜25日の申込は当月分を申込時、翌月分を26日に請求します。26〜31日の申込は当月分と翌月分の2か月分を申込時にまとめて請求し、以後は毎月26日に翌月分を請求します。現在の接続先はStripeテスト環境のため、実際の請求は発生しません。';
+note.textContent = '請求日は毎月26日です。1〜25日の申込は当月分を申込時、翌月分を26日に請求します。26〜31日の申込は当月分と翌月分の2か月分を申込時にまとめて請求し、以後は毎月26日に翌月分を請求します。26日の支払いに失敗した場合はメールでお知らせし、月の最終日に1回再決済します。再決済にも失敗した場合は翌月から支払い完了まで有料機能を停止します。支払い成功時にもメールでお知らせします。現在の接続先はStripeテスト環境のため、実際の請求は発生しません。';
 const application = document.createElement('div');
 application.className = 'billing-application';
 const applicationTitle = document.createElement('h3');
@@ -385,7 +385,7 @@ function renderInvoices(invoices){
  }
 }
 
-function renderContracts(subscriptions) {
+function renderContracts(subscriptions,dunning={}) {
  contract.replaceChildren();
  hasExistingContract=subscriptions.length>0;
  updateCheckoutAvailability();
@@ -398,6 +398,7 @@ function renderContracts(subscriptions) {
  const active=subscriptions.filter(item=>['active','trialing','past_due','unpaid','paused'].includes(item.status));
  entitlements=active.reduce((limits,item)=>({servers:Math.max(limits.servers,Number(item.servers)||1),channels:Math.max(limits.channels,Number(item.channels)||2),rules:Math.max(limits.rules,Number(item.rules)||5),complexConditions:limits.complexConditions||item.complexConditions===true,multiDestination:limits.multiDestination||item.multiDestination===true}),{servers:1,channels:2,rules:5,complexConditions:false,multiDestination:false});
  const current=active[0]||subscriptions[0];
+ if(dunning?.usageSuspended){const warning=document.createElement('p');warning.className='billing-suspension';warning.textContent='月末再決済を確認できなかったため、有料プランの通知設定は利用停止中です。契約管理画面からお支払いを完了してください。';contract.append(warning);}
  if(current){plan.value=current.planId||'supporter';channelPacks.value=String(current.channelPacks||0);serverPacks.value=String(current.serverPacks||0);updatePricePreview();}
  for (const subscription of subscriptions) {
   const card = document.createElement('article');
@@ -433,7 +434,7 @@ function renderContracts(subscriptions) {
   }
   contract.append(card);
  }
- if(options)setRuleAccess(active.length>0);
+ if(options)setRuleAccess(active.length>0&&!dunning?.usageSuspended);
 }
 
 let pendingUpdate=null;
@@ -479,7 +480,7 @@ $('billing-preview-confirm').onclick=run(async()=>{
  try{
   const result=await api('/api/supporter/billing/update','POST',{...pendingUpdate.requested,prorationDate:pendingUpdate.prorationDate,requestId:crypto.randomUUID()});
   pendingUpdate=null;previewDialog.close();
-  const state=await api('/api/supporter/billing/status');renderContracts(state.subscriptions||[]);renderInvoices(state.invoices||[]);
+  const state=await api('/api/supporter/billing/status');renderContracts(state.subscriptions||[],state.dunning);renderInvoices(state.invoices||[]);
   const credits=Number(state.credits||result.credits||0);credit.textContent=`利用可能クレジット: ${credits.toLocaleString('ja-JP')}クレジット（${credits.toLocaleString('ja-JP')}円）`;status(result.message||'契約情報を更新しました。');
  } finally {button.disabled=false;}
 });
@@ -523,7 +524,7 @@ for (const [label,action] of [['このプランで申し込む','checkout'],['�
    if (result.url) {
     location.href = stripeDestination(result.url);
    } else {
-    renderContracts(result.subscriptions||[]);renderInvoices(result.invoices||[]);
+    renderContracts(result.subscriptions||[],result.dunning);renderInvoices(result.invoices||[]);
     const credits=Number(result.credits||0);
     credit.textContent=`利用可能クレジット: ${credits.toLocaleString('ja-JP')}クレジット（${credits.toLocaleString('ja-JP')}円）`;
     status(result.message||'契約情報を更新しました。');

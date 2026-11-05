@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHmac} from 'node:crypto';
-import {billingAction,selection,billingReady,billingSchedule,creditsFromBalance,customerInvoices,paidCheckoutSubscriptionParams,provisionPaidCheckoutSubscription,prorationBreakdown,scheduledChangeSummary,staleCheckoutAttempt,subscriptionSummary,verifySignature} from '../worker/supporter-billing.js';
+import {billingAction,selection,billingReady,billingSchedule,creditsFromBalance,customerInvoices,dunningSchedule,paidCheckoutSubscriptionParams,provisionPaidCheckoutSubscription,prorationBreakdown,scheduledChangeSummary,staleCheckoutAttempt,subscriptionSummary,verifySignature} from '../worker/supporter-billing.js';
 import {supporterAdminAccount} from '../worker/supporter.js';
 import {readFile} from 'node:fs/promises';
 test('plan, channel and server add-ons are server controlled',()=>{
@@ -17,6 +17,14 @@ test('billing is anchored to the 26th JST and late-month signup charges two mont
  assert.deepEqual(after,{billingDay:26,anchor:Math.floor(Date.parse('2026-12-25T15:00:00Z')/1000),initialMonths:2,lateMonth:true});
  const yearEnd=billingSchedule(Date.parse('2026-12-31T03:00:00Z'));
  assert.equal(yearEnd.anchor,Math.floor(Date.parse('2027-01-25T15:00:00Z')/1000));
+});
+test('failed 26th payment retries at noon on the final JST day and suspends next month',()=>{
+ const feb=dunningSchedule(Math.floor(Date.parse('2026-02-25T15:00:00Z')/1000));
+ assert.deepEqual(feb,{retryAt:Math.floor(Date.parse('2026-02-28T03:00:00Z')/1000),suspendAt:Math.floor(Date.parse('2026-02-28T15:00:00Z')/1000)});
+ const leap=dunningSchedule(Math.floor(Date.parse('2028-02-25T15:00:00Z')/1000));
+ assert.equal(leap.retryAt,Math.floor(Date.parse('2028-02-29T03:00:00Z')/1000));
+ const december=dunningSchedule(Math.floor(Date.parse('2026-12-25T15:00:00Z')/1000));
+ assert.equal(december.suspendAt,Math.floor(Date.parse('2026-12-31T15:00:00Z')/1000));
 });
 test('abandoned pre-Checkout state is detected without touching created sessions',()=>{
  assert.equal(staleCheckoutAttempt({checkout_key:'key',checkout_id:null,checkout_params:'{"expires_at":"100"}'},101),true);
@@ -251,6 +259,15 @@ test('paid plan configuration contains test catalog IDs and consent storage',asy
  assert.match(terms,/第 10 条（有料通知プラン）/);assert.match(terms,/故意または重大な過失/);
  assert.match(policy,/Stripe/);assert.match(policy,/安全管理措置/);
  for(const text of ['販売価格','支払時期・請求日','契約期間・自動更新','解約方法・条件','キャンセル・返金'])assert.match(specified,new RegExp(text));
+});
+test('billing dunning sends success and failure mail and blocks access after month-end failure',async()=>{
+ const [billingSource,supporterSource,uiSource,migration,configText,indexSource]=await Promise.all([
+  readFile(new URL('../worker/supporter-billing.js',import.meta.url),'utf8'),readFile(new URL('../worker/supporter.js',import.meta.url),'utf8'),readFile(new URL('../site/supporter/app.js',import.meta.url),'utf8'),readFile(new URL('../migrations/0017_supporter_dunning.sql',import.meta.url),'utf8'),readFile(new URL('../wrangler.jsonc',import.meta.url),'utf8'),readFile(new URL('../worker/index.js',import.meta.url),'utf8'),
+ ]);
+ assert.match(billingSource,/invoice\.payment_failed/);assert.match(billingSource,/invoice\.paid/);assert.match(billingSource,/auto_advance:'false'/);assert.match(billingSource,/月末再決済/);assert.match(billingSource,/payment_succeeded/);assert.match(billingSource,/status='suspended'/);
+ assert.match(supporterSource,/supporter_dunning[\s\S]*status='suspended'/);assert.match(uiSource,/usageSuspended/);
+ assert.match(migration,/CREATE TABLE IF NOT EXISTS supporter_dunning/);assert.match(migration,/supporter_billing_notifications/);
+ assert.deepEqual(JSON.parse(configText).triggers.crons,['0 3 * * *','5 15 * * *']);assert.match(indexSource,/runSupporterBillingSchedule/);
 });
 test('supporter rule creation is resilient to WebKit input and channel errors',async()=>{
  const source=await readFile(new URL('../site/supporter/app.js',import.meta.url),'utf8');
