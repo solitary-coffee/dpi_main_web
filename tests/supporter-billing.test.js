@@ -24,6 +24,23 @@ test('abandoned pre-Checkout state is detected without touching created sessions
  assert.equal(staleCheckoutAttempt({checkout_key:'key',checkout_id:null,checkout_params:'invalid'},101),true);
  assert.equal(staleCheckoutAttempt({checkout_key:'key',checkout_id:'cs_test_x',checkout_params:'{"expires_at":"100"}'},101),false);
  assert.equal(staleCheckoutAttempt({checkout_key:null,checkout_id:null,checkout_params:null},101),false);
+ assert.equal(staleCheckoutAttempt({checkout_key:'key',checkout_id:null,checkout_params:'{"expires_at":"200","subscription_data[proration_behavior]":"none","subscription_data[billing_cycle_anchor]":"150"}'},101),true);
+});
+test('new Checkout uses the 26th as trial end and charges only the stated initial fee',async()=>{
+ const env={SUPPORTER_BILLING_MODE:'test',STRIPE_SECRET_KEY:'rk_test_example',STRIPE_WEBHOOK_SECRET:'whsec_x',STRIPE_PRICE_SUPPORTER:'price_basic',STRIPE_PRICE_PLUS:'price_plus',STRIPE_PRICE_PRO:'price_pro',STRIPE_PRICE_ADDON:'price_addon',STRIPE_PORTAL_CONFIG:'bpc_x',SUPPORTER_PUBLIC_ORIGIN:'https://dpi-bot.com'};
+ const row={discord_user_id:'123',customer_id:'cus_x',checkout_id:null,checkout_key:null,checkout_params:null};
+ const db={prepare(sql){return{values:[],bind(...values){this.values=values;return this;},async first(){if(sql.includes('supporter_accounts'))return{discord_user_id:'123',billing_email:'user@example.jp'};if(sql.includes('supporter_billing'))return{...row};return null;},async run(){if(sql.includes('SET checkout_key=')){row.checkout_key=this.values[0];row.checkout_params=this.values[1];}if(sql.includes('SET checkout_id='))row.checkout_id=this.values[0];return{meta:{changes:1}};}};}};
+ const calls=[];const originalFetch=globalThis.fetch;
+ globalThis.fetch=async(url,init={})=>{const path=new URL(url).pathname;const params=new URLSearchParams(init.body||'');calls.push({path,params});let data={livemode:false,id:'cus_x'};if(path==='/v1/subscriptions')data={livemode:false,data:[]};if(path==='/v1/checkout/sessions')data={livemode:false,id:'cs_test_x',status:'open',url:'https://checkout.stripe.com/c/pay/cs_test_x'};return new Response(JSON.stringify(data),{status:200,headers:{'content-type':'application/json'}});};
+ try{
+  const response=await billingAction(new Request('https://dpi-bot.com/api/supporter/billing/checkout'),env,db,'123',{plan:'supporter',channelPacks:0,serverPacks:0,legalConsentVersion:'2026-11-04'});
+  assert.equal(response.status,200);
+  const checkout=calls.find(call=>call.path==='/v1/checkout/sessions');
+  assert.ok(Number(checkout.params.get('subscription_data[trial_end]'))>Math.floor(Date.now()/1000));
+  assert.equal(checkout.params.get('subscription_data[billing_cycle_anchor]'),null);
+  assert.equal(checkout.params.get('subscription_data[proration_behavior]'),null);
+  assert.equal(checkout.params.get('line_items[1][price_data][unit_amount]'),'300');
+ }finally{globalThis.fetch=originalFetch;}
 });
 test('live secrets can never enable billing',()=>{
  const env={SUPPORTER_BILLING_MODE:'test',STRIPE_SECRET_KEY:'sk_live_example',STRIPE_WEBHOOK_SECRET:'x',STRIPE_PRICE_SUPPORTER:'x',STRIPE_PRICE_PLUS:'x',STRIPE_PRICE_PRO:'x',STRIPE_PRICE_ADDON:'x',STRIPE_PORTAL_CONFIG:'x'};
@@ -68,8 +85,7 @@ test('paid plans stay separate from secondary-use applications and private in na
  assert.doesNotMatch(basicHtml,/service-dashboard/);
  assert.doesNotMatch(basicHtml,/<nav[\s\S]*?<a href="\/site\/supporter\//);
  assert.doesNotMatch(billingSource,/payment_method_types/);
- assert.match(billingSource,/subscription_data\[billing_cycle_anchor\]/);
- assert.match(billingSource,/subscription_data\[proration_behavior\].*none/);
+ assert.match(billingSource,/subscription_data\[trial_end\]/);
  assert.match(billingSource,/初回利用料（当月分・翌月分の2か月分）/);
  assert.match(billingSource,/invoices\/create_preview/);
  assert.match(billingSource,/proration_behavior:'none'/);

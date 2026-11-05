@@ -17,7 +17,12 @@ async function stripe(env,path,params,key,method=params?'POST':'GET'){
  if(key)headers['Idempotency-Key']=key;
  if(params)headers['Content-Type']='application/x-www-form-urlencoded';
  const r=await fetch(`https://api.stripe.com/v1/${path}`,{method,headers,body:params?new URLSearchParams(params):undefined,signal:AbortSignal.timeout(15000)});
- const result=await r.json();if(!r.ok)fail('Stripeへの接続に失敗しました。時間をおいて再試行してください。',502);
+ const result=await r.json();
+ if(!r.ok){
+  const detail=String(result?.error?.message||'').replace(/[\r\n\t]/g,' ').slice(0,300);
+  console.error('Stripe API request failed',{path,status:r.status,requestId:r.headers.get('request-id')||'',type:result?.error?.type||'',code:result?.error?.code||'',param:result?.error?.param||''});
+  fail(detail&&env.SUPPORTER_BILLING_MODE==='test'?`Stripeテスト環境が決済情報を拒否しました: ${detail}`:'Stripeへの接続に失敗しました。時間をおいて再試行してください。',502);
+ }
  if(result.livemode===true)fail('本番決済は無効です。',503);
  return result;
 }
@@ -78,7 +83,8 @@ export function staleCheckoutAttempt(row,now=Math.floor(Date.now()/1000)){
  try{
   const saved=JSON.parse(row.checkout_params||'');
   const expiresAt=Number(saved?.expires_at);
-  return !Number.isFinite(expiresAt)||expiresAt<=now;
+  const incompatibleAnchor=saved?.['subscription_data[proration_behavior]']==='none'&&!!saved?.['subscription_data[billing_cycle_anchor]'];
+  return incompatibleAnchor||!Number.isFinite(expiresAt)||expiresAt<=now;
  }catch{return true;}
 }
 async function recoverStaleCheckoutAttempt(db,uid,row){
@@ -208,7 +214,9 @@ export async function billingAction(request,env,db,uid,input={}){
   'subscription_data[metadata][dpi_user]':uid,'subscription_data[metadata][dpi_plan]':choice.plan,
   'subscription_data[metadata][dpi_legal_consent_version]':legalConsentVersion,'metadata[dpi_legal_consent_version]':legalConsentVersion,
   'subscription_data[metadata][dpi_channel_packs]':String(choice.channelPacks),'subscription_data[metadata][dpi_server_packs]':String(choice.serverPacks),
-  'subscription_data[billing_mode][type]':'flexible','subscription_data[billing_cycle_anchor]':String(schedule.anchor),'subscription_data[proration_behavior]':'none',
+  // Delay recurring billing until the fixed 26th while the one-time line below
+  // collects the stated initial month(s) immediately.
+  'subscription_data[billing_mode][type]':'flexible','subscription_data[trial_end]':String(schedule.anchor),
   'line_items[0][price]':planPrice(env,choice.plan),'line_items[0][quantity]':'1',
   success_url:`${origin}/site/supporter/?checkout=returned`,cancel_url:`${origin}/site/supporter/?checkout=canceled`,expires_at:String(Math.floor(Date.now()/1000)+3600),integration_identifier:integrationIdentifier('dpi_paid_')};
  let line=1;
