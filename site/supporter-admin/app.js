@@ -8,6 +8,7 @@ const ACTIVE_STATUSES = new Set(['active','trialing','past_due','unpaid','paused
 document.addEventListener('DOMContentLoaded', () => {
  $('refresh-btn').addEventListener('click', loadAccounts);
  $('account-search').addEventListener('input', renderAccounts);
+ $('detail-close').addEventListener('click', () => $('detail-dialog').close());
  $('dialog-close').addEventListener('click', () => $('action-dialog').close());
  $('action-kind').addEventListener('change', updateActionFields);
  $('action-form').addEventListener('submit', submitAction);
@@ -58,7 +59,7 @@ function renderSummary() {
 
 function renderAccounts() {
  const query=$('account-search').value.trim().toLowerCase();
- const filtered=accounts.filter(account=>`${account.discordUserId} ${account.billingEmail||''} ${(account.subscriptions||[]).map(item=>item.plan).join(' ')}`.toLowerCase().includes(query));
+ const filtered=accounts.filter(account=>`${account.discordName||''} ${account.discordUserId} ${account.billingEmail||''} ${(account.subscriptions||[]).map(item=>item.plan).join(' ')}`.toLowerCase().includes(query));
  const container=$('accounts');container.replaceChildren();
  if(!filtered.length){container.append(element('p','empty-list',query?'条件に一致する登録者はいません。':'有料プラン登録者はいません。'));return;}
  for(const account of filtered)container.append(accountCard(account));
@@ -67,11 +68,13 @@ function renderAccounts() {
 function accountCard(account) {
  const card=element('article','account-card');
  const heading=element('div','account-heading');
- const title=element('h3','',account.discordUserId);
+ const title=element('h3','',account.discordName||'契約者名を取得できません');
+ const actions=element('div','account-actions');
+ const details=element('button','detail-btn','詳細');details.type='button';details.addEventListener('click',()=>openDetails(account));
  const manage=element('button','manage-btn','契約を管理');manage.type='button';manage.addEventListener('click',()=>openAction(account));
- heading.append(title,manage);
+ actions.append(details,manage);heading.append(title,actions);
  const meta=element('div','account-meta');
- meta.append(element('span','',`メール ${account.billingEmail||'未登録'}`),element('span','',`クレジット ${Number(account.credits||0).toLocaleString('ja-JP')}（${Number(account.credits||0).toLocaleString('ja-JP')}円分）`),element('span','',`登録 ${dateText(account.registeredAt)}`),element('span','',`更新 ${dateText(account.updatedAt)}`),element('span','',`通知ルール ${account.ruleCount}件`),element('span','',`設定revision ${account.revision}`));
+ meta.append(element('span','',`Discord ID ${account.discordUserId}`),element('span','',`メール ${account.billingEmail||'未登録'}`),element('span','',`クレジット ${Number(account.credits||0).toLocaleString('ja-JP')}（${Number(account.credits||0).toLocaleString('ja-JP')}円分）`),element('span','',`登録 ${dateText(account.registeredAt)}`),element('span','',`更新 ${dateText(account.updatedAt)}`),element('span','',`通知ルール ${account.ruleCount}件`),element('span','',`設定revision ${account.revision}`));
  card.append(heading,meta);
  if(account.billingError)card.append(element('p','billing-error',account.billingError));
  const subscriptions=account.subscriptions||[];
@@ -80,6 +83,51 @@ function accountCard(account) {
  for(const subscription of subscriptions)grid.append(subscriptionCard(subscription));
  card.append(grid);return card;
 }
+
+async function openDetails(account) {
+ const content=$('detail-content');
+ content.replaceChildren(element('p','detail-loading','契約者と通知ルールの詳細を読み込み中…'));
+ $('detail-dialog').showModal();
+ try{
+  const response=await fetch(`/site/supporter-admin/api/accounts/${encodeURIComponent(account.discordUserId)}`,{credentials:'same-origin',headers:{Accept:'application/json'}});
+  const data=await response.json().catch(()=>({}));
+  if(!response.ok)throw new Error(data.message||`詳細の取得に失敗しました（HTTP ${response.status}）。`);
+  renderDetails(data.account,data.channelLookupFailedGuildIds||[]);
+ }catch(error){content.replaceChildren(element('p','billing-error',error.message));}
+}
+
+function renderDetails(account, failedGuildIds) {
+ const content=$('detail-content');content.replaceChildren();
+ const identity=element('div','detail-identity');
+ identity.append(element('h3','',account.discordName||'契約者名を取得できません'),element('p','',`Discord ID: ${account.discordUserId}`));
+ content.append(identity);
+ if(failedGuildIds.length)content.append(element('p','detail-warning','一部サーバーのチャンネル名をDiscordから取得できませんでした。IDは確認できます。'));
+ const rules=Array.isArray(account.rules)?account.rules:[];
+ if(!rules.length){content.append(element('p','empty-list','通知ルールは登録されていません。'));return;}
+ const list=element('div','rule-list');
+ rules.forEach((rule,index)=>list.append(ruleDetailCard(rule,index)));
+ content.append(list);
+}
+
+function ruleDetailCard(rule,index) {
+ const card=element('article','rule-detail-card');
+ card.append(element('h3','',rule.name||`通知ルール ${index+1}`));
+ const destination=element('section','destination-detail');
+ destination.append(element('h4','','配信先'));
+ const destinationList=element('dl','detail-grid');
+ appendDetail(destinationList,'サーバー',rule.guildName||'サーバー名を取得できません');
+ appendDetail(destinationList,'サーバーID',rule.guildId||'未設定');
+ const channels=Array.isArray(rule.channels)?rule.channels:[];
+ appendDetail(destinationList,'チャンネル',channels.length?channels.map(channel=>`${channel.name?`#${channel.name}`:'チャンネル名を取得できません'}（ID: ${channel.id}）`).join(' / '):'未設定');
+ destination.append(destinationList);card.append(destination);
+ const conditions=element('section','condition-detail');conditions.append(element('h4','','ルール条件'));
+ const detailList=element('dl','detail-grid');
+ for(const item of rule.details||[])appendDetail(detailList,item.label,item.value);
+ conditions.append(detailList);card.append(conditions);
+ return card;
+}
+
+function appendDetail(list,label,value){list.append(element('dt','',label),element('dd','',String(value||'—')));}
 
 function subscriptionCard(subscription) {
  const card=element('article',`subscription-card${subscription.cancelAtPeriodEnd?' canceling':''}`);
@@ -94,7 +142,7 @@ function subscriptionCard(subscription) {
 function openAction(account) {
  selectedAccount=account;
  const current=(account.subscriptions||[]).find(subscription=>ACTIVE_STATUSES.has(subscription.status))||(account.subscriptions||[])[0];
- $('action-target').textContent=account.discordUserId;
+ $('action-target').textContent=`${account.discordName||'契約者名を取得できません'}（${account.discordUserId}）`;
  $('action-kind').value='change_subscription';
  $('action-reason').value='';$('confirm-discord-id').value='';$('action-amount').value='';$('payment-description').value='';
  $('change-plan').value=current?.planId||'supporter';$('change-packs').value=String(current?.channelPacks||0);$('change-server-packs').value=String(current?.serverPacks||0);

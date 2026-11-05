@@ -22,6 +22,7 @@ function ruleCount(settingsJson) {
 export function supporterAdminAccount(row, subscriptions = [], billingError = '', credits = 0) {
  return {
   discordUserId: row.discord_user_id,
+  discordName: row.discord_name || '',
   billingEmail: row.billing_email || '',
   registeredAt: row.registered_at,
   updatedAt: row.updated_at,
@@ -153,6 +154,70 @@ const DETAILS = {
 };
 const WEATHER_ALERT_DETAILS = new Set(['heavy-rain-level','landslide-level','storm-surge-level']);
 const WEATHER_WARNING_DETAILS = new Set(['storm-blizzard-warning','wave-warning','heavy-snow-warning','other-advisory']);
+const SUPPORTER_TYPE_LABELS = Object.freeze({earthquake:'地震情報',eew:'緊急地震速報',weather:'気象情報'});
+const INTENSITY_LABELS = Object.freeze({'1':'震度1','2':'震度2','3':'震度3','4':'震度4','5-':'震度5弱','5+':'震度5強','6-':'震度6弱','6+':'震度6強','7':'震度7'});
+
+function optionLabel(options, value, fallback = '未設定') {
+ return options.find(([id])=>id===value)?.[1] || (clean(value) || fallback);
+}
+
+function adminConditionLabel(condition, type) {
+ const kind=clean(condition?.kind);const value=condition?.value;
+ if(kind==='region')return `対象地方：${optionLabel(SUPPORTER_REGIONS,clean(value))}`;
+ if(kind==='detail')return `詳細種別：${optionLabel(type==='earthquake'?EARTHQUAKE_DETAILS:type==='eew'?EEW_DETAILS:WEATHER_DETAILS,clean(value))}`;
+ if(kind==='intensity')return `震度：${INTENSITY_LABELS[clean(value)]||clean(value)}以上`;
+ if(kind==='magnitude')return `マグニチュード：M${Number(value)}以上`;
+ if(kind==='weatherLevel')return `警戒レベル：${optionLabel(WEATHER_LEVELS,clean(value))}`;
+ if(kind==='warningLevel')return `警報・注意報：${optionLabel(WARNING_LEVELS,clean(value))}`;
+ return `不明な条件：${clean(value)||'未設定'}`;
+}
+
+function thresholdLabel(mode, value, kind) {
+ if(mode==='increase')return '上昇時のみ';
+ if(mode!=='threshold')return 'すべて';
+ if(kind==='intensity')return `${INTENSITY_LABELS[clean(value)]||clean(value)}以上`;
+ return `M${Number(value)}以上`;
+}
+
+export function supporterAdminDetails(row, channelsByGuild = {}) {
+ let settings={};let guilds=[];
+ try{settings=JSON.parse(row.settings_json||'{}');}catch{/* Keep an empty rule set for malformed legacy data. */}
+ try{const parsed=JSON.parse(row.guilds_json||'[]');guilds=Array.isArray(parsed)?parsed:[];}catch{/* Guild names remain unavailable. */}
+ const rules=Array.isArray(settings.rules)?settings.rules:[];
+ return {
+  discordUserId:row.discord_user_id,
+  discordName:row.discord_name||'',
+  rules:rules.map((rule,index)=>{
+   const type=clean(rule?.type);const guildId=clean(rule?.guildId);
+   const requested=Array.isArray(rule?.channelIds)?rule.channelIds.map(clean).filter(Boolean):[];
+   const channelIds=[...new Set(requested.length?requested:[clean(rule?.channelId)].filter(Boolean))];
+   const channels=Array.isArray(channelsByGuild[guildId])?channelsByGuild[guildId]:[];
+   const details=[
+    {label:'情報種別',value:SUPPORTER_TYPE_LABELS[type]||type||'未設定'},
+    {label:'詳細種別',value:optionLabel(type==='earthquake'?EARTHQUAKE_DETAILS:type==='eew'?EEW_DETAILS:WEATHER_DETAILS,clean(rule?.detail)||'all')},
+    {label:'対象地方',value:optionLabel(SUPPORTER_REGIONS,clean(rule?.region)||'all')},
+    {label:'条件の組み合わせ',value:clean(rule?.conditionLogic)==='or'?'いずれかを満たす（OR）':'すべて満たす（AND）'},
+   ];
+   if(type==='weather'){
+    if(clean(rule?.weatherLevel))details.push({label:'警戒レベル',value:optionLabel(WEATHER_LEVELS,clean(rule.weatherLevel))});
+    if(clean(rule?.warningLevel))details.push({label:'警報・注意報',value:optionLabel(WARNING_LEVELS,clean(rule.warningLevel))});
+   }else{
+    details.push({label:'震度条件',value:thresholdLabel(clean(rule?.intensityMode)||'all',rule?.intensity,'intensity')});
+    details.push({label:'マグニチュード条件',value:thresholdLabel(clean(rule?.magnitudeMode)||'all',rule?.magnitudeMin,'magnitude')});
+    if(type==='eew'&&clean(rule?.detail)==='warning')details.push({label:'警報地方条件',value:optionLabel(EEW_WARNING_AREA_MODES,clean(rule?.eewWarningAreaMode)||'all')});
+   }
+   const additional=Array.isArray(rule?.conditions)?rule.conditions:[];
+   additional.forEach((condition,conditionIndex)=>details.push({label:`追加条件 ${conditionIndex+1}`,value:adminConditionLabel(condition,type)}));
+   return {
+    name:clean(rule?.name)||`通知ルール ${index+1}`,
+    guildId,
+    guildName:guilds.find(guild=>String(guild?.id)===guildId)?.name||'',
+    channels:channelIds.map(id=>({id,name:channels.find(channel=>String(channel?.id)===id)?.name||''})),
+    details,
+   };
+  }),
+ };
+}
 
 function optionalMagnitude(value) {
  if (value === '' || value === undefined || value === null) return null;
@@ -354,7 +419,12 @@ export async function handleSupporterRequest(request, env) {
    if (request.method !== 'GET') return response({message:'Method not allowed'},405);
    if (path === '/site/supporter-admin/api/accounts') {
     const rows = await db.prepare(`SELECT a.discord_user_id, a.billing_email, a.registered_at, a.updated_at,
-     a.revision, a.settings_json, b.customer_id
+     a.revision, a.settings_json, b.customer_id,
+     COALESCE(NULLIF(a.discord_name,''),
+      (SELECT s.discord_username FROM reuse_sessions s WHERE s.discord_user_id=a.discord_user_id ORDER BY s.expires_at DESC LIMIT 1),
+      (SELECT r.discord_username FROM reuse_applications r WHERE r.discord_user_id=a.discord_user_id ORDER BY r.updated_at DESC LIMIT 1),
+      ''
+     ) AS discord_name
      FROM supporter_accounts a
      LEFT JOIN supporter_billing b ON b.discord_user_id = a.discord_user_id
      ORDER BY a.updated_at DESC LIMIT 100`).all();
@@ -372,6 +442,30 @@ export async function handleSupporterRequest(request, env) {
     }
     const accounts = (rows.results||[]).map(row=>supporterAdminAccount(row,grouped.get(row.customer_id)||[],row.customer_id?billingError:'',creditBalances.get(row.customer_id)||0));
     return response({billingEnabled:stripeEnabled,accounts});
+   }
+   const detailMatch=path.match(/^\/site\/supporter-admin\/api\/accounts\/(\d{17,20})$/);
+   if(detailMatch){
+    const uid=detailMatch[1];
+    const row=await db.prepare(`SELECT a.discord_user_id, a.settings_json,
+     COALESCE(NULLIF(a.discord_name,''),
+      (SELECT s.discord_username FROM reuse_sessions s WHERE s.discord_user_id=a.discord_user_id ORDER BY s.expires_at DESC LIMIT 1),
+      (SELECT r.discord_username FROM reuse_applications r WHERE r.discord_user_id=a.discord_user_id ORDER BY r.updated_at DESC LIMIT 1),
+      ''
+     ) AS discord_name,
+     COALESCE(
+      (SELECT s.guilds_json FROM reuse_sessions s WHERE s.discord_user_id=a.discord_user_id ORDER BY s.expires_at DESC LIMIT 1),
+      '[]'
+     ) AS guilds_json
+     FROM supporter_accounts a WHERE a.discord_user_id=?`).bind(uid).first();
+    if(!row)return response({message:'対象の有料プラン登録者が見つかりません。'},404);
+    let settings={};try{settings=JSON.parse(row.settings_json||'{}');}catch{/* Return an empty detail set for malformed legacy data. */}
+    const guildIds=[...new Set((Array.isArray(settings.rules)?settings.rules:[]).map(rule=>clean(rule?.guildId)).filter(id=>/^\d{17,20}$/.test(id)))];
+    const channelResults=await Promise.all(guildIds.map(async guildId=>{
+     try{return{guildId,channels:await fetchGuildChannels(guildId,env),failed:false};}
+     catch{return{guildId,channels:[],failed:true};}
+    }));
+    const channelsByGuild=Object.fromEntries(channelResults.map(result=>[result.guildId,result.channels]));
+    return response({account:supporterAdminDetails(row,channelsByGuild),channelLookupFailedGuildIds:channelResults.filter(result=>result.failed).map(result=>result.guildId)});
    }
    const asset = await env.ASSETS.fetch(request);
    const headers = new Headers(asset.headers);
@@ -401,24 +495,28 @@ export async function handleSupporterRequest(request, env) {
    if(path.endsWith('/checkout')){
     const email=normalizeBillingEmail(input.email);
     const consentVersion=supporterConsentVersion(input,env);
+    const discordName=clean(session.discord_username).slice(0,100);
     const now=new Date().toISOString();
-    await db.prepare(`INSERT INTO supporter_accounts(discord_user_id,billing_email,legal_consent_version,legal_consent_at,registered_at,updated_at) VALUES(?,?,?,?,?,?)
-     ON CONFLICT(discord_user_id) DO UPDATE SET billing_email=excluded.billing_email,legal_consent_version=excluded.legal_consent_version,legal_consent_at=excluded.legal_consent_at,updated_at=excluded.updated_at`).bind(uid,email,consentVersion,now,now,now).run();
+    await db.prepare(`INSERT INTO supporter_accounts(discord_user_id,discord_name,billing_email,legal_consent_version,legal_consent_at,registered_at,updated_at) VALUES(?,?,?,?,?,?,?)
+     ON CONFLICT(discord_user_id) DO UPDATE SET discord_name=excluded.discord_name,billing_email=excluded.billing_email,legal_consent_version=excluded.legal_consent_version,legal_consent_at=excluded.legal_consent_at,updated_at=excluded.updated_at`).bind(uid,discordName,email,consentVersion,now,now,now).run();
     input.email=email;
     input.legalConsentVersion=consentVersion;
    }
    return await billingAction(request,env,db,uid,input);
   }
   if (path === '/api/supporter/account' && request.method === 'GET') {
+   const discordName=clean(session.discord_username).slice(0,100);
+   if(discordName)await db.prepare('UPDATE supporter_accounts SET discord_name=? WHERE discord_user_id=? AND COALESCE(discord_name,\'\')<>?').bind(discordName,uid,discordName).run();
    const account = await db.prepare('SELECT * FROM supporter_accounts WHERE discord_user_id=?').bind(uid).first();
    return response({account,deliveryEnabled:false,billingEnabled:billingReady(env)});
   }
   if (path === '/api/supporter/account' && request.method === 'POST') {
    const input = await readJson(request);
    const email = normalizeBillingEmail(input.email);
+   const discordName=clean(session.discord_username).slice(0,100);
    const now = new Date().toISOString();
-   await db.prepare(`INSERT INTO supporter_accounts(discord_user_id,billing_email,registered_at,updated_at) VALUES(?,?,?,?)
-    ON CONFLICT(discord_user_id) DO UPDATE SET billing_email=excluded.billing_email,updated_at=excluded.updated_at`).bind(uid,email,now,now).run();
+   await db.prepare(`INSERT INTO supporter_accounts(discord_user_id,discord_name,billing_email,registered_at,updated_at) VALUES(?,?,?,?,?)
+    ON CONFLICT(discord_user_id) DO UPDATE SET discord_name=excluded.discord_name,billing_email=excluded.billing_email,updated_at=excluded.updated_at`).bind(uid,discordName,email,now,now).run();
    return response({success:true});
   }
   if (path === '/api/supporter/settings' && request.method === 'PUT') {

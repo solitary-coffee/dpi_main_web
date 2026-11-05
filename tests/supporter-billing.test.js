@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHmac} from 'node:crypto';
 import {billingAction,selection,billingReady,billingSchedule,creditApplication,creditsFromBalance,customerInvoices,dunningSchedule,paidCheckoutSubscriptionParams,provisionPaidCheckoutSubscription,prorationBreakdown,reconcilePaidCheckoutSubscription,scheduledChangeSummary,staleCheckoutAttempt,subscriptionSummary,verifySignature} from '../worker/supporter-billing.js';
-import {supporterAdminAccount} from '../worker/supporter.js';
+import {supporterAdminAccount,supporterAdminDetails} from '../worker/supporter.js';
 import {readFile} from 'node:fs/promises';
 test('plan, channel and server add-ons are server controlled',()=>{
  assert.deepEqual(selection({plan:'supporter',channelPacks:2,serverPacks:1}),{plan:'supporter',packs:2,channelPacks:2,serverPacks:1,baseMonthly:300,monthly:900,channels:8,servers:2,rules:5,complexConditions:false,multiDestination:false});
@@ -113,13 +113,23 @@ test('subscription summary includes plan, dates, amount and item details',()=>{
  assert.deepEqual(result.items.map(item=>[item.label,item.quantity,item.subtotal]),[['BASIC',1,300],['追加オプション',2,400]]);
 });
 test('admin contract data excludes Stripe identifiers and counts rules',()=>{
- const account=supporterAdminAccount({discord_user_id:'123',billing_email:'user@example.jp',registered_at:'2026-01-01',updated_at:'2026-01-02',revision:2,settings_json:'{"rules":[{},{}]}',customer_id:'cus_private'},[{status:'active',amount:300}],'',500);
+ const account=supporterAdminAccount({discord_user_id:'123',discord_name:'DPI利用者',billing_email:'user@example.jp',registered_at:'2026-01-01',updated_at:'2026-01-02',revision:2,settings_json:'{"rules":[{},{}]}',customer_id:'cus_private'},[{status:'active',amount:300}],'',500);
  assert.equal(account.discordUserId,'123');
+ assert.equal(account.discordName,'DPI利用者');
  assert.equal(account.billingEmail,'user@example.jp');
  assert.equal(account.credits,500);
  assert.equal(account.ruleCount,2);
  assert.equal(account.subscriptions[0].amount,300);
  assert.equal('customer_id' in account,false);
+});
+test('admin rule details expose subscriber, server, channel names and readable conditions',()=>{
+ const settings={rules:[{name:'首都圏EEW',guildId:'11111111111111111',channelId:'22222222222222222',channelIds:['22222222222222222','33333333333333333'],type:'eew',detail:'warning',region:'kanto-koshin',conditionLogic:'or',intensityMode:'threshold',intensity:'5-',magnitudeMode:'increase',magnitudeMin:null,eewWarningAreaMode:'target-only',conditions:[{kind:'magnitude',operator:'at_least',value:6.5}]}]};
+ const account=supporterAdminDetails({discord_user_id:'123',discord_name:'DPI利用者',settings_json:JSON.stringify(settings),guilds_json:JSON.stringify([{id:'11111111111111111',name:'防災サーバー'}])},{'11111111111111111':[{id:'22222222222222222',name:'地震速報'}]});
+ assert.equal(account.discordName,'DPI利用者');
+ assert.equal(account.rules[0].name,'首都圏EEW');
+ assert.equal(account.rules[0].guildName,'防災サーバー');
+ assert.deepEqual(account.rules[0].channels,[{id:'22222222222222222',name:'地震速報'},{id:'33333333333333333',name:''}]);
+ assert.deepEqual(account.rules[0].details.map(item=>item.value),['緊急地震速報','緊急地震速報（警報）','関東甲信地方','いずれかを満たす（OR）','震度5弱以上','上昇時のみ','対象警報地方のみ','マグニチュード：M6.5以上']);
 });
 test('paid plans stay separate from secondary-use applications and private in navigation',async()=>{
  const [reuseHtml,reuseScript,basicHtml,billingSource]=await Promise.all([
@@ -159,6 +169,9 @@ test('admin billing operations require confirmation, reason, same-origin and aud
  assert.match(worker,/SET checkout_key=NULL, checkout_id=NULL, checkout_params=NULL/);
  assert.match(script,/Stripe Customerと契約情報は保持されます/);
  assert.match(script,/crypto\.randomUUID\(\)/);
+ assert.match(script,/openDetails/);
+ assert.match(html,/id="detail-dialog"/);
+ assert.match(worker,/supporterAdminDetails/);
  assert.doesNotMatch(script,/\.innerHTML\s*=/);
 });
 test('Stripe customer balance converts to non-negative yen credits',()=>{
