@@ -451,24 +451,30 @@ function showBillingPreview(result,requested){
   ['プラン',`${result.current.plan} → ${result.next.plan}`],
   ['月額',`${moneyText(result.current.monthly,'jpy')} → ${moneyText(result.next.monthly,'jpy')}`],
   ['月額差額',signedMoney(result.monthlyDifference)],
-  ['利用クレジット',result.creditApplied?`−${moneyText(result.creditApplied,'jpy')}`:'なし'],
-  ['今回のお支払い見込み',moneyText(result.immediateDue,'jpy')],
-  ['次回更新日',dateText(result.nextRenewalAt)],
-  ['チャンネル上限',`${result.current.channels} → ${result.next.channels}`],
-  ['サーバー上限',`${result.current.servers} → ${result.next.servers}`],
-  ['通知ルール上限',`${result.current.rules} → ${result.next.rules}`],
  ];
  if(result.changeTiming==='next_period'){
-  rows.splice(3,0,['適用タイミング',`${dateText(result.effectiveAt)}から`],['今回の返金','なし'],['今回の追加請求','なし']);
+  rows.push(['適用タイミング',`${dateText(result.effectiveAt)}から`],['今回の返金','なし'],['今回の追加請求','なし']);
  } else if(result.planChanged){
   const breakdown=result.planProrationBreakdown||{unusedPlanCredit:0,newPlanCharge:Math.max(0,result.planProration),net:result.planProration};
-  rows.splice(3,0,
+  rows.push(
    ['旧プラン未使用分（返金相当）',breakdown.unusedPlanCredit?`−${moneyText(breakdown.unusedPlanCredit,'jpy')}`:moneyText(0,'jpy')],
    ['新プラン残期間分',moneyText(breakdown.newPlanCharge,'jpy')],
    ['基本プランの今回差額',signedMoney(breakdown.net)],
   );
  }
- if(result.creditGenerated)rows.splice(result.planChanged?9:6,0,['差額から発生するクレジット',moneyText(result.creditGenerated,'jpy')]);
+ rows.push(
+  ['今回利用するクレジット',result.immediateCreditApplied?`−${moneyText(result.immediateCreditApplied,'jpy')}`:'なし'],
+  ['今回のお支払い見込み',moneyText(result.immediateDue,'jpy')],
+  ['次回26日の請求予定額',moneyText(result.nextInvoiceSubtotal,'jpy')],
+  ['次回利用するクレジット',result.nextInvoiceCreditApplied?`−${moneyText(result.nextInvoiceCreditApplied,'jpy')}`:'なし'],
+  ['次回26日のお支払い見込み',moneyText(result.nextInvoiceDue,'jpy')],
+  ['適用後の残クレジット',moneyText(result.remainingCreditsAfterNext,'jpy')],
+  ['次回更新日',dateText(result.nextRenewalAt)],
+  ['チャンネル上限',`${result.current.channels} → ${result.next.channels}`],
+  ['サーバー上限',`${result.current.servers} → ${result.next.servers}`],
+  ['通知ルール上限',`${result.current.rules} → ${result.next.rules}`],
+ );
+ if(result.creditGenerated)rows.push(['差額から発生するクレジット',moneyText(result.creditGenerated,'jpy')]);
  for(const [term,value] of rows){const dt=document.createElement('dt');dt.textContent=term;const dd=document.createElement('dd');dd.textContent=value;data.append(dt,dd);}
  const optionNote=document.createElement('p');optionNote.className='preview-notice';optionNote.textContent=result.notice;
  previewContent.append(heading,data,optionNote);
@@ -476,7 +482,10 @@ function showBillingPreview(result,requested){
  if(result.creditApplied>0){
   const creditConsent=document.createElement('label');creditConsent.className='credit-consent';
   const creditConsentInput=document.createElement('input');creditConsentInput.type='checkbox';
-  const creditConsentText=document.createElement('span');creditConsentText.textContent=`${moneyText(result.creditApplied,'jpy')}分のクレジットを使用し、残額${moneyText(result.immediateDue,'jpy')}を支払うことを確認しました。`;
+  const creditParts=[];
+  if(result.immediateCreditApplied)creditParts.push(`今回${moneyText(result.immediateCreditApplied,'jpy')}`);
+  if(result.nextInvoiceCreditApplied)creditParts.push(`次回26日${moneyText(result.nextInvoiceCreditApplied,'jpy')}`);
+  const creditConsentText=document.createElement('span');creditConsentText.textContent=`クレジットを${creditParts.join('、')}使用し、今回${moneyText(result.immediateDue,'jpy')}・次回26日${moneyText(result.nextInvoiceDue,'jpy')}を支払うことを確認しました。`;
   creditConsentInput.addEventListener('change',()=>{if(pendingUpdate)pendingUpdate.useCredits=creditConsentInput.checked;confirmButton.disabled=!creditConsentInput.checked;});
   creditConsent.append(creditConsentInput,creditConsentText);previewContent.append(creditConsent);confirmButton.disabled=true;
  }else confirmButton.disabled=false;

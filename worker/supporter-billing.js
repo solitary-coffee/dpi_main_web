@@ -321,7 +321,9 @@ export async function billingAction(request,env,db,uid,input={}){
   if(preview.creditApplied>0&&input.useCredits!==true)return json({message:'クレジット利用と差額支払いへの確認が必要です。料金をもう一度確認してください。'},409);
   if(preview.changeTiming==='next_period')await scheduleSubscriptionChange(env,current,choice,`dpi-user-update-${uid}-${requestId}`,{'dpi_updated_by':'user'});
   else await updateSubscription(env,current,choice,`dpi-user-update-${uid}-${requestId}`,{'metadata[dpi_updated_by]':'user'},prorationDate);
-  return json({message:preview.changeTiming==='next_period'?'ダウングレードを予約しました。返金は行わず、次回26日から新しい内容を適用します。':'プランと追加オプションを更新しました。基本プランの差額だけを日割りし、追加オプションは次回26日から反映します。',billingDay:26,subscriptions:await customerSubscriptionSummaries(env,row.customer_id),credits:await customerCredits(env,row.customer_id),deliveryEnabled:false});
+  const baseMessage=preview.changeTiming==='next_period'?'ダウングレードを予約しました。返金は行わず、次回26日から新しい内容を適用します。':'プランと追加オプションを更新しました。基本プランの差額だけを日割りし、追加オプションは次回26日から反映します。';
+  const creditMessage=preview.nextInvoiceCreditApplied>0?' 次回分のクレジットは26日の請求書確定時に消費されます。':'';
+  return json({message:`${baseMessage}${creditMessage}`,billingDay:26,subscriptions:await customerSubscriptionSummaries(env,row.customer_id),credits:await customerCredits(env,row.customer_id),creditApplication:{immediate:preview.immediateCreditApplied,nextInvoice:preview.nextInvoiceCreditApplied,nextInvoiceDue:preview.nextInvoiceDue},deliveryEnabled:false});
  }
  if(action!=='checkout')return json({message:'Not found'},404);
  if(existing.length||recovery.subscription)return json({message:'契約が存在します。「プラン・オプションを更新」をご利用ください。'},409);
@@ -367,6 +369,21 @@ export function prorationBreakdown(lines){
  const unusedPlanCredit=prorations.reduce((sum,line)=>sum+Math.max(0,-Number(line.amount||0)),0);
  return {unusedPlanCredit,newPlanCharge,net:newPlanCharge-unusedPlanCredit};
 }
+export function creditApplication(credits,immediateCharge,nextInvoiceSubtotal){
+ const available=Math.max(0,Number(credits)||0);
+ const immediateCreditApplied=Math.min(available,Math.max(0,Number(immediateCharge)||0));
+ const afterImmediate=available-immediateCreditApplied;
+ const nextInvoiceCreditApplied=Math.min(afterImmediate,Math.max(0,Number(nextInvoiceSubtotal)||0));
+ return {
+  available,
+  immediateCreditApplied,
+  nextInvoiceCreditApplied,
+  totalCreditApplied:immediateCreditApplied+nextInvoiceCreditApplied,
+  immediateDue:Math.max(0,(Number(immediateCharge)||0)-immediateCreditApplied),
+  nextInvoiceDue:Math.max(0,(Number(nextInvoiceSubtotal)||0)-nextInvoiceCreditApplied),
+  remainingAfterNext:afterImmediate-nextInvoiceCreditApplied,
+ };
+}
 async function previewSubscriptionUpdate(env,customer,current,choice,requestedProrationDate){
  const currentSummary=subscriptionSummary(current,env);
  const base=current.items?.data?.find(item=>item.price?.id!==env.STRIPE_PRICE_ADDON);
@@ -387,17 +404,20 @@ async function previewSubscriptionUpdate(env,customer,current,choice,requestedPr
   planProrationBreakdown=prorationBreakdown(invoice.lines?.data);
  }
  const planProration=planProrationBreakdown.net;
- const credits=changeTiming==='immediate'?await customerCredits(env,customer):0;
- const creditApplied=Math.min(credits,Math.max(0,planProration));
+ const credits=await customerCredits(env,customer);
+ const creditUse=creditApplication(credits,changeTiming==='immediate'?planProration:0,choice.monthly);
  return {
   prorationDate,expiresAt:prorationDate+600,billingDay:26,
   current:{plan:currentSummary.plan,planId:currentSummary.planId,monthly:currentSummary.amount,channels:currentSummary.channels,servers:currentSummary.servers,rules:currentSummary.rules},
   next:{plan:PLAN_CATALOG[choice.plan].name,planId:choice.plan,monthly:choice.monthly,channels:choice.channels,servers:choice.servers,rules:choice.rules,complexConditions:choice.complexConditions,multiDestination:choice.multiDestination},
   monthlyDifference:choice.monthly-currentSummary.amount,
-  planChanged,changeTiming,effectiveAt:changeTiming==='next_period'?currentSummary.nextRenewalAt:null,planProration,planProrationBreakdown,creditApplied,immediateDue:changeTiming==='next_period'?0:Math.max(0,planProration-creditApplied),creditGenerated:changeTiming==='next_period'?0:Math.max(0,-planProration),
+  planChanged,changeTiming,effectiveAt:changeTiming==='next_period'?currentSummary.nextRenewalAt:null,planProration,planProrationBreakdown,
+  creditApplied:creditUse.totalCreditApplied,immediateCreditApplied:creditUse.immediateCreditApplied,nextInvoiceCreditApplied:creditUse.nextInvoiceCreditApplied,
+  immediateDue:changeTiming==='next_period'?0:creditUse.immediateDue,nextInvoiceSubtotal:choice.monthly,nextInvoiceDue:creditUse.nextInvoiceDue,remainingCreditsAfterNext:creditUse.remainingAfterNext,
+  creditGenerated:changeTiming==='next_period'?0:Math.max(0,-planProration),
   optionChange:{currentChannelPacks:currentSummary.channelPacks,nextChannelPacks:choice.channelPacks,currentServerPacks:currentSummary.serverPacks,nextServerPacks:choice.serverPacks,prorated:false,effectiveAt:currentSummary.nextRenewalAt},
   nextRenewalAt:currentSummary.nextRenewalAt,
-  notice:changeTiming==='next_period'?'ダウングレードでは返金・日割り精算を行いません。現在の契約内容は今期末まで利用でき、新しいプランと利用枠は次回26日から適用します。':'アップグレード時は基本プランの未使用分を返金相当額として新プランの残期間分へ充当し、差額を精算します。追加オプションは日割り請求を行わず、次回26日の請求から月額へ反映します。',
+  notice:changeTiming==='next_period'?'ダウングレードでは返金・日割り精算を行いません。現在の契約内容は今期末まで利用でき、新しいプランと利用枠は次回26日から適用します。クレジットは次回26日の請求書に自動適用されます。':'アップグレード時は基本プランの未使用分を返金相当額として新プランの残期間分へ充当し、差額を精算します。追加オプションは日割り請求を行わず、次回26日の請求から月額へ反映し、利用可能なクレジットを自動適用します。',
  };
 }
 function phaseItems(params,index,items){
