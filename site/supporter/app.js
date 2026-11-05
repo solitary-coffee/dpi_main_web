@@ -259,6 +259,7 @@ async function load() {
     renderContracts(billingState.subscriptions||[],billingState.dunning);renderInvoices(billingState.invoices||[]);
     const credits=Number(billingState.credits||0);
     credit.textContent=`利用可能クレジット: ${credits.toLocaleString('ja-JP')}クレジット（${credits.toLocaleString('ja-JP')}円）`;
+    if(billingState.recoveredSubscription)status('支払い済みの申込みから契約を復旧し、有料プランを有効化しました。');
    }catch{contract.textContent='契約情報を自動取得できませんでした。「最新の契約・明細を読み込む」を押してください。';setRuleAccess(false);}
   }
  }
@@ -442,7 +443,7 @@ const previewDialog=$('billing-preview-dialog');
 const previewContent=$('billing-preview-content');
 const signedMoney=value=>`${Number(value)>0?'+':''}${moneyText(Number(value)||0,'jpy')}`;
 function showBillingPreview(result,requested){
- pendingUpdate={requested,prorationDate:result.prorationDate};
+ pendingUpdate={requested,prorationDate:result.prorationDate,expectedCreditApplied:Number(result.creditApplied||0),useCredits:false};
  previewContent.replaceChildren();
  const heading=document.createElement('p');heading.className='preview-lead';heading.textContent=result.changeTiming==='next_period'?'以下のダウングレードを次回更新日から予約します。現在の契約は今期末まで利用できます。':'以下の内容で契約を更新します。料金と利用枠を確認してから確定してください。';
  const data=document.createElement('dl');data.className='preview-grid';
@@ -471,14 +472,22 @@ function showBillingPreview(result,requested){
  for(const [term,value] of rows){const dt=document.createElement('dt');dt.textContent=term;const dd=document.createElement('dd');dd.textContent=value;data.append(dt,dd);}
  const optionNote=document.createElement('p');optionNote.className='preview-notice';optionNote.textContent=result.notice;
  previewContent.append(heading,data,optionNote);
+ const confirmButton=$('billing-preview-confirm');
+ if(result.creditApplied>0){
+  const creditConsent=document.createElement('label');creditConsent.className='credit-consent';
+  const creditConsentInput=document.createElement('input');creditConsentInput.type='checkbox';
+  const creditConsentText=document.createElement('span');creditConsentText.textContent=`${moneyText(result.creditApplied,'jpy')}分のクレジットを使用し、残額${moneyText(result.immediateDue,'jpy')}を支払うことを確認しました。`;
+  creditConsentInput.addEventListener('change',()=>{if(pendingUpdate)pendingUpdate.useCredits=creditConsentInput.checked;confirmButton.disabled=!creditConsentInput.checked;});
+  creditConsent.append(creditConsentInput,creditConsentText);previewContent.append(creditConsent);confirmButton.disabled=true;
+ }else confirmButton.disabled=false;
  previewDialog.showModal();
 }
-$('billing-preview-cancel').onclick=()=>{pendingUpdate=null;previewDialog.close();};
+$('billing-preview-cancel').onclick=()=>{pendingUpdate=null;$('billing-preview-confirm').disabled=false;previewDialog.close();};
 $('billing-preview-confirm').onclick=run(async()=>{
  if(!pendingUpdate)return;
  const button=$('billing-preview-confirm');button.disabled=true;
  try{
-  const result=await api('/api/supporter/billing/update','POST',{...pendingUpdate.requested,prorationDate:pendingUpdate.prorationDate,requestId:crypto.randomUUID()});
+  const result=await api('/api/supporter/billing/update','POST',{...pendingUpdate.requested,prorationDate:pendingUpdate.prorationDate,expectedCreditApplied:pendingUpdate.expectedCreditApplied,useCredits:pendingUpdate.useCredits,requestId:crypto.randomUUID()});
   pendingUpdate=null;previewDialog.close();
   const state=await api('/api/supporter/billing/status');renderContracts(state.subscriptions||[],state.dunning);renderInvoices(state.invoices||[]);
   const credits=Number(state.credits||result.credits||0);credit.textContent=`利用可能クレジット: ${credits.toLocaleString('ja-JP')}クレジット（${credits.toLocaleString('ja-JP')}円）`;status(result.message||'契約情報を更新しました。');
