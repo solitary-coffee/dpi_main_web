@@ -191,7 +191,22 @@ export async function provisionPaidCheckoutSubscription(env,session){
  if(!paymentIntentId)fail('初回決済情報を確認できませんでした。',502);
  const paymentIntent=await stripe(env,`payment_intents/${encodeURIComponent(paymentIntentId)}`);
  const params=paidCheckoutSubscriptionParams(env,session,paymentIntent);
- return await stripe(env,'subscriptions',params,`dpi-initial-subscription-${session.id}`);
+ return await stripe(env,'subscriptions',params,`dpi-initial-subscription-v2-${session.id}`);
+}
+function recoverablePaidCheckout(session,customer,uid){
+ const metadata=checkoutMetadata(session);
+ const sessionCustomer=typeof session?.customer==='string'?session.customer:session?.customer?.id;
+ return session?.mode==='payment'&&session?.status==='complete'&&session?.payment_status==='paid'&&metadata.dpi_checkout_kind==='initial_subscription'&&sessionCustomer===customer&&String(metadata.dpi_user||session.client_reference_id||'')===String(uid);
+}
+export async function reconcilePaidCheckoutSubscription(env,customer,uid){
+ if(!customer||!uid||!billingReady(env))return {subscription:null,recovered:false,checkoutId:null};
+ const existing=await subscriptions(env,customer);
+ if(existing.length)return {subscription:existing[0],recovered:false,checkoutId:null};
+ const result=await stripe(env,`checkout/sessions?customer=${encodeURIComponent(customer)}&limit=20`);
+ const session=(result.data||[]).filter(item=>recoverablePaidCheckout(item,customer,uid)).sort((a,b)=>Number(b.created||0)-Number(a.created||0))[0];
+ if(!session)return {subscription:null,recovered:false,checkoutId:null};
+ const subscription=await provisionPaidCheckoutSubscription(env,session);
+ return {subscription,recovered:!!subscription,checkoutId:session.id};
 }
 const unix = value => Number.isFinite(Number(value)) && Number(value) > 0 ? Number(value) : null;
 export function subscriptionSummary(subscription,env={}){
@@ -274,8 +289,10 @@ export async function billingAction(request,env,db,uid,input={}){
  await db.prepare('INSERT INTO supporter_billing(discord_user_id) VALUES(?) ON CONFLICT DO NOTHING').bind(uid).run();
  let row=await db.prepare('SELECT * FROM supporter_billing WHERE discord_user_id=?').bind(uid).first();
  if(action==='status'){
+  const recovery=await reconcilePaidCheckoutSubscription(env,row.customer_id,uid);
+  if(recovery.recovered&&recovery.checkoutId)await db.prepare('UPDATE supporter_billing SET checkout_id=?,dirty=1 WHERE discord_user_id=?').bind(recovery.checkoutId,uid).run();
   const [summaries,invoices,credits,dunning]=await Promise.all([customerSubscriptionSummaries(env,row.customer_id),customerInvoices(env,row.customer_id),customerCredits(env,row.customer_id),dunningState(db,row.customer_id)]);
-  return json({mode:'test',billingDay:26,subscriptions:summaries,invoices,credits,dunning,deliveryEnabled:false});
+  return json({mode:'test',billingDay:26,subscriptions:summaries,invoices,credits,dunning,recoveredSubscription:recovery.recovered,deliveryEnabled:false});
  }
  if(!row.customer_id){const customer=await createBillingCustomer(env,uid,account.billing_email,`dpi-customer-${uid}`);await db.prepare('UPDATE supporter_billing SET customer_id=? WHERE discord_user_id=? AND customer_id IS NULL').bind(customer.id,uid).run();row=await db.prepare('SELECT * FROM supporter_billing WHERE discord_user_id=?').bind(uid).first();}
  else if(account.billing_email)await stripe(env,`customers/${encodeURIComponent(row.customer_id)}`,{email:account.billing_email},`dpi-customer-email-${uid}-${account.billing_email}`);
@@ -283,6 +300,7 @@ export async function billingAction(request,env,db,uid,input={}){
  if(!origin || !/^https:\/\/[^/]+$/.test(origin))fail('公開URLが未設定です。',503);
  if(action==='portal'){const portal=await stripe(env,'billing_portal/sessions',{customer:row.customer_id,configuration:env.STRIPE_PORTAL_CONFIG,return_url:`${origin}/site/supporter/`});return json({url:portal.url});}
  const choice=selection(input);
+ const recovery=await reconcilePaidCheckoutSubscription(env,row.customer_id,uid);
  const existing=await subscriptions(env,row.customer_id);
  if(action==='preview-update'){
   const current=activeSubscription(existing);
@@ -298,12 +316,15 @@ export async function billingAction(request,env,db,uid,input={}){
   const current=activeSubscription(existing);
   if(!current)return json({message:'更新できる契約がありません。先にプランを申し込んでください。'},409);
   const preview=await previewSubscriptionUpdate(env,row.customer_id,current,choice,prorationDate);
+  const expectedCreditApplied=Number(input.expectedCreditApplied||0);
+  if(!Number.isInteger(expectedCreditApplied)||expectedCreditApplied!==preview.creditApplied)return json({message:'利用可能クレジットが変更されました。料金をもう一度確認してください。'},409);
+  if(preview.creditApplied>0&&input.useCredits!==true)return json({message:'クレジット利用と差額支払いへの確認が必要です。料金をもう一度確認してください。'},409);
   if(preview.changeTiming==='next_period')await scheduleSubscriptionChange(env,current,choice,`dpi-user-update-${uid}-${requestId}`,{'dpi_updated_by':'user'});
   else await updateSubscription(env,current,choice,`dpi-user-update-${uid}-${requestId}`,{'metadata[dpi_updated_by]':'user'},prorationDate);
   return json({message:preview.changeTiming==='next_period'?'ダウングレードを予約しました。返金は行わず、次回26日から新しい内容を適用します。':'プランと追加オプションを更新しました。基本プランの差額だけを日割りし、追加オプションは次回26日から反映します。',billingDay:26,subscriptions:await customerSubscriptionSummaries(env,row.customer_id),credits:await customerCredits(env,row.customer_id),deliveryEnabled:false});
  }
  if(action!=='checkout')return json({message:'Not found'},404);
- if(existing.length)return json({message:'契約が存在します。「プラン・オプションを更新」をご利用ください。'},409);
+ if(existing.length||recovery.subscription)return json({message:'契約が存在します。「プラン・オプションを更新」をご利用ください。'},409);
  const schedule=billingSchedule();
  const legalConsentVersion=String(input.legalConsentVersion||'');
  if(!legalConsentVersion)return json({message:'申込み同意を確認できません。画面を再読み込みしてください。'},400);

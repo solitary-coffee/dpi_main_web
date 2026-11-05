@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHmac} from 'node:crypto';
-import {billingAction,selection,billingReady,billingSchedule,creditsFromBalance,customerInvoices,dunningSchedule,paidCheckoutSubscriptionParams,provisionPaidCheckoutSubscription,prorationBreakdown,scheduledChangeSummary,staleCheckoutAttempt,subscriptionSummary,verifySignature} from '../worker/supporter-billing.js';
+import {billingAction,selection,billingReady,billingSchedule,creditsFromBalance,customerInvoices,dunningSchedule,paidCheckoutSubscriptionParams,provisionPaidCheckoutSubscription,prorationBreakdown,reconcilePaidCheckoutSubscription,scheduledChangeSummary,staleCheckoutAttempt,subscriptionSummary,verifySignature} from '../worker/supporter-billing.js';
 import {supporterAdminAccount} from '../worker/supporter.js';
 import {readFile} from 'node:fs/promises';
 test('plan, channel and server add-ons are server controlled',()=>{
@@ -44,7 +44,7 @@ test('new Checkout charges the stated initial fee without a free trial',async()=
  try{
   const response=await billingAction(new Request('https://dpi-bot.com/api/supporter/billing/checkout'),env,db,'123',{plan:'supporter',channelPacks:0,serverPacks:0,legalConsentVersion:'2026-11-04'});
   assert.equal(response.status,200);
-  const checkout=calls.find(call=>call.path==='/v1/checkout/sessions');
+  const checkout=calls.find(call=>call.path==='/v1/checkout/sessions'&&call.params.get('mode')==='payment');
   assert.equal(checkout.params.get('mode'),'payment');
   assert.equal(checkout.params.get('payment_intent_data[setup_future_usage]'),'off_session');
   assert.ok(Number(checkout.params.get('metadata[dpi_billing_anchor]'))>Math.floor(Date.now()/1000));
@@ -69,7 +69,26 @@ test('paid Checkout provisioning is idempotent and uses the saved payment method
  try{
   const anchor=Math.floor(Date.now()/1000)+86400;
   const result=await provisionPaidCheckoutSubscription(env,{id:'cs_test_x',mode:'payment',payment_status:'paid',customer:'cus_x',payment_intent:'pi_x',metadata:{dpi_checkout_kind:'initial_subscription',dpi_user:'123',dpi_plan:'supporter',dpi_channel_packs:'0',dpi_server_packs:'0',dpi_billing_anchor:String(anchor),dpi_legal_consent_version:'v1'}});
-  assert.equal(result.id,'sub_x');const create=calls.find(call=>call.path==='/v1/subscriptions'&&call.params.size);assert.equal(create.key,'dpi-initial-subscription-cs_test_x');assert.equal(create.params.get('default_payment_method'),'pm_x');assert.equal(create.params.get('billing_cycle_anchor'),String(anchor));assert.equal(create.params.get('proration_behavior'),'none');assert.equal(create.params.get('trial_end'),null);
+  assert.equal(result.id,'sub_x');const create=calls.find(call=>call.path==='/v1/subscriptions'&&call.params.size);assert.equal(create.key,'dpi-initial-subscription-v2-cs_test_x');assert.equal(create.params.get('default_payment_method'),'pm_x');assert.equal(create.params.get('billing_cycle_anchor'),String(anchor));assert.equal(create.params.get('proration_behavior'),'none');assert.equal(create.params.get('trial_end'),null);
+ }finally{globalThis.fetch=originalFetch;}
+});
+test('missing subscription is recovered from the newest paid Checkout for the same user',async()=>{
+ const env={SUPPORTER_BILLING_MODE:'test',STRIPE_SECRET_KEY:'rk_test_example',STRIPE_WEBHOOK_SECRET:'whsec_x',STRIPE_PRICE_SUPPORTER:'price_basic',STRIPE_PRICE_PLUS:'price_plus',STRIPE_PRICE_PRO:'price_pro',STRIPE_PRICE_ADDON:'price_addon',STRIPE_PORTAL_CONFIG:'bpc_x'};
+ const anchor=Math.floor(Date.now()/1000)+86400;const calls=[];const originalFetch=globalThis.fetch;
+ globalThis.fetch=async(url,init={})=>{const path=new URL(url).pathname;const params=new URLSearchParams(init.body||'');calls.push({path,params,key:init.headers?.['Idempotency-Key']});let data={livemode:false};
+  if(path==='/v1/subscriptions'&&(init.method||'GET')==='GET')data={livemode:false,data:[]};
+  else if(path==='/v1/checkout/sessions')data={livemode:false,data:[
+   {id:'cs_old',created:10,mode:'payment',status:'complete',payment_status:'paid',customer:'cus_x',payment_intent:'pi_old',metadata:{dpi_checkout_kind:'initial_subscription',dpi_user:'123',dpi_plan:'supporter',dpi_channel_packs:'0',dpi_server_packs:'0',dpi_billing_anchor:String(anchor)}},
+   {id:'cs_latest',created:20,mode:'payment',status:'complete',payment_status:'paid',customer:'cus_x',payment_intent:'pi_latest',metadata:{dpi_checkout_kind:'initial_subscription',dpi_user:'123',dpi_plan:'plus',dpi_channel_packs:'0',dpi_server_packs:'0',dpi_billing_anchor:String(anchor)}},
+   {id:'cs_other',created:30,mode:'payment',status:'complete',payment_status:'paid',customer:'cus_x',payment_intent:'pi_other',metadata:{dpi_checkout_kind:'initial_subscription',dpi_user:'999',dpi_plan:'pro',dpi_channel_packs:'0',dpi_server_packs:'0',dpi_billing_anchor:String(anchor)}},
+  ]};
+  else if(path==='/v1/payment_intents/pi_latest')data={livemode:false,id:'pi_latest',payment_method:'pm_latest'};
+  else if(path==='/v1/subscriptions'&&init.method==='POST')data={livemode:false,id:'sub_recovered',status:'active'};
+  return new Response(JSON.stringify(data),{status:200,headers:{'content-type':'application/json'}});
+ };
+ try{
+  const result=await reconcilePaidCheckoutSubscription(env,'cus_x','123');assert.equal(result.recovered,true);assert.equal(result.checkoutId,'cs_latest');assert.equal(result.subscription.id,'sub_recovered');
+  const create=calls.find(call=>call.path==='/v1/subscriptions'&&call.params.size);assert.equal(create.params.get('items[0][price]'),'price_plus');assert.equal(create.key,'dpi-initial-subscription-v2-cs_latest');
  }finally{globalThis.fetch=originalFetch;}
 });
 test('live secrets can never enable billing',()=>{
@@ -184,7 +203,9 @@ test('update preview prorates only the base plan and confirms options without pr
   const previewCall=calls.find(call=>call.path==='/v1/invoices/create_preview');assert.equal(previewCall.params.get('subscription_details[items][0][price]'),'price_pro');assert.equal(previewCall.params.get('subscription_details[items][1][price]'),null);
   calls.length=0;
   const requestId='123e4567-e89b-42d3-a456-426614174000';
-  const updateResponse=await billingAction(new Request('https://dpi-bot.com/api/supporter/billing/update'),env,db,'123',{plan:'pro',channelPacks:1,serverPacks:0,prorationDate:preview.prorationDate,requestId});
+  const blocked=await billingAction(new Request('https://dpi-bot.com/api/supporter/billing/update'),env,db,'123',{plan:'pro',channelPacks:1,serverPacks:0,prorationDate:preview.prorationDate,expectedCreditApplied:100,useCredits:false,requestId});
+  assert.equal(blocked.status,409);assert.equal(calls.some(call=>call.path==='/v1/subscriptions/sub_x'),false);calls.length=0;
+  const updateResponse=await billingAction(new Request('https://dpi-bot.com/api/supporter/billing/update'),env,db,'123',{plan:'pro',channelPacks:1,serverPacks:0,prorationDate:preview.prorationDate,expectedCreditApplied:100,useCredits:true,requestId});
   assert.equal(updateResponse.status,200);
   const updates=calls.filter(call=>call.path==='/v1/subscriptions/sub_x');
   const base=updates.find(call=>call.params.get('proration_behavior')==='always_invoice');
@@ -279,6 +300,9 @@ test('supporter rule creation is resilient to WebKit input and channel errors',a
  assert.match(source,/server-warning/);
  assert.match(source,/billing\/preview-update/);
  assert.match(source,/billing-preview-dialog/);
+ assert.match(source,/expectedCreditApplied/);
+ assert.match(source,/credit-consent/);
+ assert.match(source,/クレジットを使用し、残額/);
  assert.doesNotMatch(source,/window\.confirm\('契約内容を更新/);
  assert.match(source,/rules\.push\(normalizeRule[\s\S]+render\(\);[\s\S]+await loadChannels/);
  assert.match(source,/チャンネルを再取得/);
