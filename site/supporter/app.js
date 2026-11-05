@@ -16,13 +16,30 @@ const TYPES = [['earthquake','地震情報'],['eew','緊急地震速報'],['weat
 const WEATHER_ALERT_DETAILS = new Set(['heavy-rain-level','landslide-level','storm-surge-level']);
 const WEATHER_WARNING_DETAILS = new Set(['storm-blizzard-warning','wave-warning','heavy-snow-warning','other-advisory']);
 
-async function api(path, method = 'GET', body) {
+async function api(path, method = 'GET', body, retry = true) {
  const response = await fetch(path, {
   method,
-  headers: {'Content-Type':'application/json','x-reuse-csrf':session?.csrfToken || ''},
+  headers: {Accept:'application/json','Content-Type':'application/json','x-reuse-csrf':session?.csrfToken || ''},
+  credentials:'same-origin',
+  cache:'no-store',
   body: body ? JSON.stringify(body) : undefined,
  });
- const data = await response.json();
+ const raw = await response.text();
+ let data = {};
+ try { data = raw ? JSON.parse(raw) : {}; }
+ catch {
+  const htmlResponse=/^\s*<!doctype\s+html|^\s*<html[\s>]/i.test(raw);
+  if(method==='GET'&&retry&&response.status>=500)return api(path,method,body,false);
+  const authResponse=response.status===401||response.status===403||response.redirected||response.url.includes('/cdn-cgi/access/');
+  const message=authResponse
+   ?'ログインの有効期限が切れた可能性があります。ページを再読み込みして、もう一度ログインしてください。'
+   :response.status>=500
+    ?'サーバーから一時的に正しくない応答が返されました。時間をおいて再読み込みしてください。'
+    :htmlResponse
+     ?'画面データを取得できませんでした。ページを再読み込みしてください。'
+     :'サーバーの応答を読み込めませんでした。時間をおいて再試行してください。';
+  const error=new Error(message);error.status=response.status;error.code=htmlResponse?'unexpected_html_response':'invalid_json_response';throw error;
+ }
  if (!response.ok) throw Error(data.message || '操作に失敗しました');
  return data;
 }
@@ -110,7 +127,7 @@ function channelField(article, rule) {
  }
  const refresh = document.createElement('button');
  refresh.type = 'button';
- refresh.className = 'secondary';
+ refresh.className = 'secondary channel-refresh';
  refresh.textContent = 'チャンネルを再取得';
  refresh.onclick = run(async () => {
   if (!rule.guildId) return status('先にサーバーを選択してください。');
@@ -205,16 +222,20 @@ function render() {
   field(article, rule, 'detail', '詳細', detailOptions(rule.type));
   if(entitlements.complexConditions)field(article, rule, 'conditionLogic', '条件の組み合わせ', [['and','すべて満たす（AND）'],['or','いずれかを満たす（OR）']]);
   if (rule.type === 'eew' && rule.detail === 'warning') field(article, rule, 'eewWarningAreaMode', '警報地方の条件', options.eewWarningAreaModes);
-  field(article, rule, 'region', '対象地方', options.regions);
+  const conditionFields=document.createElement('div');conditionFields.className='rule-condition-fields';
+  field(conditionFields, rule, 'region', '対象地方', options.regions);
   if (rule.type === 'weather') {
-   if (WEATHER_ALERT_DETAILS.has(rule.detail)) field(article, rule, 'weatherLevel', '警戒レベル', options.weatherLevels);
-   if (WEATHER_WARNING_DETAILS.has(rule.detail)) field(article, rule, 'warningLevel', '警報・注意報', options.warningLevels);
+   if (WEATHER_ALERT_DETAILS.has(rule.detail)) field(conditionFields, rule, 'weatherLevel', '警戒レベル', options.weatherLevels);
+   if (WEATHER_WARNING_DETAILS.has(rule.detail)) field(conditionFields, rule, 'warningLevel', '警報・注意報', options.warningLevels);
   } else {
-   field(article, rule, 'intensityMode', '震度の通知条件', options.thresholdModes);
-   if(rule.intensityMode==='threshold')field(article, rule, 'intensity', '震度の閾値', INTENSITIES);
-   field(article, rule, 'magnitudeMode', 'マグニチュードの通知条件', options.thresholdModes);
-   if(rule.magnitudeMode==='threshold')field(article, rule, 'magnitudeMin', 'マグニチュードの閾値', null, {inputmode:'decimal',placeholder:'0〜10'});
+   field(conditionFields, rule, 'intensityMode', '震度の通知条件', options.thresholdModes);
+   if(rule.intensityMode==='threshold')field(conditionFields, rule, 'intensity', '震度の閾値', INTENSITIES);
+   const magnitudeRow=document.createElement('div');magnitudeRow.className='magnitude-condition-row';
+   field(magnitudeRow, rule, 'magnitudeMode', 'マグニチュードの通知条件', options.thresholdModes);
+   if(rule.magnitudeMode==='threshold')field(magnitudeRow, rule, 'magnitudeMin', 'マグニチュードの閾値', null, {inputmode:'decimal',placeholder:'0〜10'});
+   conditionFields.append(magnitudeRow);
   }
+  article.append(conditionFields);
   if(entitlements.complexConditions)additionalConditionsField(article,rule);
   const remove = document.createElement('button');
   remove.type = 'button';
