@@ -451,9 +451,9 @@ function renderContracts(subscriptions,dunning={}) {
    ['現在の期間開始',dateText(subscription.currentPeriodStart)],
    [subscription.cancelAtPeriodEnd ? '契約終了予定' : '次回更新日',dateText(subscription.nextRenewalAt)],
    ['月額合計',moneyText(subscription.amount,subscription.currency)],
-   ['チャンネル上限',`${subscription.channels}チャンネル`],
-   ['サーバー上限',`${subscription.servers}サーバー`],
-   ['通知ルール上限',`${subscription.rules||5}件`],
+   ['チャンネル上限',subscription.recognizedPlan===false?'確認が必要':`${subscription.channels}チャンネル`],
+   ['サーバー上限',subscription.recognizedPlan===false?'確認が必要':`${subscription.servers}サーバー`],
+   ['通知ルール上限',subscription.recognizedPlan===false?'確認が必要':`${subscription.rules}件`],
    ['固定請求日','毎月26日'],
   ];
   for (const [term,value] of entries) {

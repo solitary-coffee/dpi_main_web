@@ -4,6 +4,11 @@ const fail=(message,status=400)=>{throw Object.assign(new Error(message),{status
 const clean=value=>String(value??'').trim();
 const invoiceSubscriptionId=invoice=>typeof invoice?.subscription==='string'?invoice.subscription:typeof invoice?.parent?.subscription_details?.subscription==='string'?invoice.parent.subscription_details.subscription:'';
 const safeInvoiceUrl=value=>{try{const url=new URL(clean(value));return url.protocol==='https:'&&['invoice.stripe.com','pay.stripe.com'].includes(url.hostname)?url.href:'';}catch{return '';}};
+const stripeId=value=>typeof value==='string'?value:value?.id||'';
+async function idempotencyKey(prefix,value){
+ const bytes=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(String(value??'')));
+ return `${prefix}${[...new Uint8Array(bytes)].slice(0,16).map(byte=>byte.toString(16).padStart(2,'0')).join('')}`;
+}
 export function dunningSchedule(timestamp=Math.floor(Date.now()/1000)){
  const jst=new Date(Number(timestamp)*1000+9*60*60*1000);const year=jst.getUTCFullYear(),month=jst.getUTCMonth();
  const lastDay=new Date(Date.UTC(year,month+1,0)).getUTCDate();
@@ -27,11 +32,16 @@ async function stripe(env,path,params,key,method=params?'POST':'GET'){
  if(key)headers['Idempotency-Key']=key;
  if(params)headers['Content-Type']='application/x-www-form-urlencoded';
  const r=await fetch(`https://api.stripe.com/v1/${path}`,{method,headers,body:params?new URLSearchParams(params):undefined,signal:AbortSignal.timeout(15000)});
- const result=await r.json();
+ let result;
+ try{result=await r.json();}
+ catch{
+  console.error('Stripe API returned invalid JSON',{path,status:r.status,requestId:r.headers.get('request-id')||''});
+  throw Object.assign(new Error('Stripeから正しい応答を受信できませんでした。時間をおいて再試行してください。'),{status:502,stripeStatus:r.status});
+ }
  if(!r.ok){
   const detail=String(result?.error?.message||'').replace(/[\r\n\t]/g,' ').slice(0,300);
   console.error('Stripe API request failed',{path,status:r.status,requestId:r.headers.get('request-id')||'',type:result?.error?.type||'',code:result?.error?.code||'',param:result?.error?.param||''});
-  fail(detail&&env.SUPPORTER_BILLING_MODE==='test'?`Stripeテスト環境が決済情報を拒否しました: ${detail}`:'Stripeへの接続に失敗しました。時間をおいて再試行してください。',502);
+  throw Object.assign(new Error(detail&&env.SUPPORTER_BILLING_MODE==='test'?`Stripeテスト環境が決済情報を拒否しました: ${detail}`:'Stripeへの接続に失敗しました。時間をおいて再試行してください。'),{status:502,stripeStatus:r.status,stripeCode:clean(result?.error?.code)});
  }
  if(result.livemode===true)fail('本番決済は無効です。',503);
  return result;
@@ -80,14 +90,16 @@ function billingMailContent(kind,invoice,retryAt,suspendAt){
  lines.push('','----------------------------------------','DPI-Bot 運営','公式サイト: https://dpi-bot.com/','公式サポートサーバー: https://discord.gg/qFuZcGUb4K');
  return {subject,text:lines.join('\n')};
 }
-async function sendBillingNotification(env,db,kind,invoice,retryAt=null,suspendAt=null){
+export async function sendBillingNotification(env,db,kind,invoice,retryAt=null,suspendAt=null){
  const customer=typeof invoice.customer==='string'?invoice.customer:invoice.customer?.id;if(!customer)return;
  const account=await db.prepare(`SELECT a.billing_email FROM supporter_accounts a JOIN supporter_billing b ON b.discord_user_id=a.discord_user_id WHERE b.customer_id=?`).bind(customer).first();
  if(!account?.billing_email)return;
  const now=Math.floor(Date.now()/1000),invoiceId=clean(invoice.id);if(!invoiceId)return;
  await db.prepare(`INSERT INTO supporter_billing_notifications(invoice_id,kind,status,updated_at) VALUES(?,?,'pending',?) ON CONFLICT DO NOTHING`).bind(invoiceId,kind,now).run();
  const notice=await db.prepare('SELECT status FROM supporter_billing_notifications WHERE invoice_id=? AND kind=?').bind(invoiceId,kind).first();if(notice?.status==='sent')return;
- await db.prepare(`UPDATE supporter_billing_notifications SET status='sending',attempts=attempts+1,last_error=NULL,updated_at=? WHERE invoice_id=? AND kind=?`).bind(now,invoiceId,kind).run();
+ const claim=await db.prepare(`UPDATE supporter_billing_notifications SET status='sending',attempts=attempts+1,last_error=NULL,updated_at=?
+  WHERE invoice_id=? AND kind=? AND (status IN ('pending','failed') OR (status='sending' AND updated_at<=?))`).bind(now,invoiceId,kind,now-300).run();
+ if(!claim.meta?.changes)return;
  const content=billingMailContent(kind,invoice,retryAt,suspendAt);
  try{
   await env.NOTICE_EMAIL.send({to:account.billing_email,from:{email:clean(env.NOTICE_FROM_EMAIL),name:'DPI-Bot'},subject:content.subject,text:content.text,...(clean(env.NOTICE_REPLY_TO_EMAIL)?{replyTo:clean(env.NOTICE_REPLY_TO_EMAIL)}:{}),headers:{'Auto-Submitted':'auto-generated','Content-Language':'ja','X-DPI-Mail-Type':`supporter-${kind}`}});
@@ -209,6 +221,14 @@ export async function reconcilePaidCheckoutSubscription(env,customer,uid){
  return {subscription,recovered:!!subscription,checkoutId:session.id};
 }
 const unix = value => Number.isFinite(Number(value)) && Number(value) > 0 ? Number(value) : null;
+function optionPackSummary(metadata={},addonQuantity=0){
+ const combined=Number(addonQuantity);
+ const channelRaw=clean(metadata.dpi_channel_packs),serverRaw=clean(metadata.dpi_server_packs);
+ const channelPacks=channelRaw===''?(serverRaw===''?combined:0):Number(channelRaw);
+ const serverPacks=serverRaw===''?0:Number(serverRaw);
+ const valid=Number.isInteger(combined)&&combined>=0&&Number.isInteger(channelPacks)&&channelPacks>=0&&channelPacks<=5&&Number.isInteger(serverPacks)&&serverPacks>=0&&serverPacks<=5&&channelPacks+serverPacks===combined;
+ return {valid,channelPacks:valid?channelPacks:0,serverPacks:valid?serverPacks:0};
+}
 export function subscriptionSummary(subscription,env={}){
  const labels=new Map([
   [env.STRIPE_PRICE_SUPPORTER,'BASIC'],
@@ -227,13 +247,12 @@ export function subscriptionSummary(subscription,env={}){
  const basePrice=items.find(item=>item.price!==env.STRIPE_PRICE_ADDON)?.price;
  const addonQuantity=items.find(item=>item.price===env.STRIPE_PRICE_ADDON)?.quantity||0;
  const metadata=subscription.metadata||{};
- const storedChannelPacks=Number(metadata.dpi_channel_packs);
- const storedServerPacks=Number(metadata.dpi_server_packs);
- const channelPacks=Number.isInteger(storedChannelPacks)&&storedChannelPacks>=0?storedChannelPacks:addonQuantity;
- const serverPacks=Number.isInteger(storedServerPacks)&&storedServerPacks>=0?storedServerPacks:0;
+ const options=optionPackSummary(metadata,addonQuantity);
+ const {channelPacks,serverPacks}=options;
  const planId=basePrice===env.STRIPE_PRICE_PRO?'pro':basePrice===env.STRIPE_PRICE_PLUS?'plus':basePrice===env.STRIPE_PRICE_SUPPORTER?'supporter':'';
- const choice=planId?selection({plan:planId,channelPacks,serverPacks}):{channels:0,servers:0,rules:0,complexConditions:false,multiDestination:false};
- return {status:subscription.status||'unknown',cancelAtPeriodEnd:subscription.cancel_at_period_end===true,startedAt:unix(subscription.start_date)||unix(subscription.created),currentPeriodStart,nextRenewalAt,amount:items.reduce((sum,item)=>sum+item.subtotal,0),currency,plan:planId?PLAN_CATALOG[planId].name:'確認が必要な契約',planId,recognizedPlan:!!planId,channelPacks,serverPacks,channels:choice.channels,servers:choice.servers,rules:choice.rules,complexConditions:choice.complexConditions,multiDestination:choice.multiDestination,items,scheduledChange:null};
+ const recognizedPlan=!!planId&&options.valid;
+ const choice=recognizedPlan?selection({plan:planId,channelPacks,serverPacks}):{channels:0,servers:0,rules:0,complexConditions:false,multiDestination:false};
+ return {status:subscription.status||'unknown',cancelAtPeriodEnd:subscription.cancel_at_period_end===true,startedAt:unix(subscription.start_date)||unix(subscription.created),currentPeriodStart,nextRenewalAt,amount:items.reduce((sum,item)=>sum+item.subtotal,0),currency,plan:planId?PLAN_CATALOG[planId].name:'確認が必要な契約',planId,recognizedPlan,configurationValid:options.valid,channelPacks,serverPacks,channels:choice.channels,servers:choice.servers,rules:choice.rules,complexConditions:choice.complexConditions,multiDestination:choice.multiDestination,items,scheduledChange:null};
 }
 export function reconcileRulesForLimits(settingsJson,limits={}){
  let settings;
@@ -297,8 +316,9 @@ export function scheduledChangeSummary(schedule,env,currentSummary){
  const addon=items.find(item=>(item.price?.id||item.price)===env.STRIPE_PRICE_ADDON);
  const metadata=phase.metadata||{};
  const combined=Number(addon?.quantity||0);
- const channelPacks=Number.isInteger(Number(metadata.dpi_channel_packs))?Number(metadata.dpi_channel_packs):combined;
- const serverPacks=Number.isInteger(Number(metadata.dpi_server_packs))?Number(metadata.dpi_server_packs):0;
+ const options=optionPackSummary(metadata,combined);
+ if(!options.valid)return null;
+ const {channelPacks,serverPacks}=options;
  const choice=selection({plan:planId,channelPacks,serverPacks});
  if(choice.plan===currentSummary.planId&&choice.channelPacks===currentSummary.channelPacks&&choice.serverPacks===currentSummary.serverPacks)return null;
  return {effectiveAt:unix(phase.start_date),plan:PLAN_CATALOG[planId].name,planId,monthly:choice.monthly,channels:choice.channels,servers:choice.servers,rules:choice.rules,channelPacks,serverPacks};
@@ -347,7 +367,7 @@ export async function billingAction(request,env,db,uid,input={}){
   return json({mode:'test',billingDay:26,subscriptions:summaries,invoices,credits,dunning,rulesAdjustment,recoveredSubscription:recovery.recovered,deliveryEnabled:false});
  }
  if(!row.customer_id){const customer=await createBillingCustomer(env,uid,account.billing_email,`dpi-customer-${uid}`);await db.prepare('UPDATE supporter_billing SET customer_id=? WHERE discord_user_id=? AND customer_id IS NULL').bind(customer.id,uid).run();row=await db.prepare('SELECT * FROM supporter_billing WHERE discord_user_id=?').bind(uid).first();}
- else if(account.billing_email)await stripe(env,`customers/${encodeURIComponent(row.customer_id)}`,{email:account.billing_email},`dpi-customer-email-${uid}-${account.billing_email}`);
+ else if(account.billing_email)await stripe(env,`customers/${encodeURIComponent(row.customer_id)}`,{email:account.billing_email},await idempotencyKey(`dpi-customer-email-${uid}-`,account.billing_email));
  const origin=env.SUPPORTER_PUBLIC_ORIGIN;
  if(!origin || !/^https:\/\/[^/]+$/.test(origin))fail('公開URLが未設定です。',503);
  if(action==='portal'){const portal=await stripe(env,'billing_portal/sessions',{customer:row.customer_id,configuration:env.STRIPE_PORTAL_CONFIG,return_url:`${origin}/site/supporter/`});return json({url:portal.url});}
@@ -371,11 +391,13 @@ export async function billingAction(request,env,db,uid,input={}){
   const expectedCreditApplied=Number(input.expectedCreditApplied||0);
   if(!Number.isInteger(expectedCreditApplied)||expectedCreditApplied!==preview.creditApplied)return json({message:'利用可能クレジットが変更されました。料金をもう一度確認してください。'},409);
   if(preview.creditApplied>0&&input.useCredits!==true)return json({message:'クレジット利用と差額支払いへの確認が必要です。料金をもう一度確認してください。'},409);
+  let updateResult=null;
   if(preview.changeTiming==='next_period')await scheduleSubscriptionChange(env,current,choice,`dpi-user-update-${uid}-${requestId}`,{'dpi_updated_by':'user'});
-  else await updateSubscription(env,current,choice,`dpi-user-update-${uid}-${requestId}`,{'metadata[dpi_updated_by]':'user'},prorationDate);
-  const baseMessage=preview.changeTiming==='next_period'?'ダウングレードを予約しました。返金は行わず、次回26日から新しい内容を適用します。':'プランと追加オプションを更新しました。基本プランの差額だけを日割りし、追加オプションは次回26日から反映します。';
+  else updateResult=await updateSubscription(env,current,choice,`dpi-user-update-${uid}-${requestId}`,{'metadata[dpi_updated_by]':'user'},prorationDate);
+  const baseMessage=preview.changeTiming==='next_period'?'ダウングレードを予約しました。返金は行わず、次回26日から新しい内容を適用します。':updateResult?.paymentPending?`基本プランの変更は支払い確認待ちです。契約管理から支払い方法をご確認ください。${updateResult.optionsDeferred?'追加オプションは支払い完了後に改めて変更してください。':''}`:'プランと追加オプションを更新しました。基本プランの差額だけを日割りし、追加オプションは次回26日から反映します。';
   const creditMessage=preview.nextInvoiceCreditApplied>0?' 次回分のクレジットは26日の請求書確定時に消費されます。':'';
-  return json({message:`${baseMessage}${creditMessage}`,billingDay:26,subscriptions:await customerSubscriptionSummaries(env,row.customer_id),credits:await customerCredits(env,row.customer_id),creditApplication:{immediate:preview.immediateCreditApplied,nextInvoice:preview.nextInvoiceCreditApplied,nextInvoiceDue:preview.nextInvoiceDue},deliveryEnabled:false});
+  const scheduleMessage=updateResult?.releasedSchedule?' 以前予約したダウングレードは取り消しました。':'';
+  return json({message:`${baseMessage}${scheduleMessage}${creditMessage}`,paymentPending:updateResult?.paymentPending===true,optionsDeferred:updateResult?.optionsDeferred===true,releasedScheduledChange:updateResult?.releasedSchedule===true,billingDay:26,subscriptions:await customerSubscriptionSummaries(env,row.customer_id),credits:await customerCredits(env,row.customer_id),creditApplication:{immediate:preview.immediateCreditApplied,nextInvoice:preview.nextInvoiceCreditApplied,nextInvoiceDue:preview.nextInvoiceDue},deliveryEnabled:false});
  }
  if(action!=='checkout')return json({message:'Not found'},404);
  if(existing.length||recovery.subscription)return json({message:'契約が存在します。「プラン・オプションを更新」をご利用ください。'},409);
@@ -512,11 +534,14 @@ async function updateSubscription(env,current,choice,key,extra={},prorationDate)
  const baseChanged=currentSummary.planId!==choice.plan;
  const optionsChanged=currentOptionPacks!==optionPacks||currentSummary.channelPacks!==choice.channelPacks||currentSummary.serverPacks!==choice.serverPacks;
  const metadata={'metadata[dpi_plan]':choice.plan,'metadata[dpi_channel_packs]':String(choice.channelPacks),'metadata[dpi_server_packs]':String(choice.serverPacks),...extra};
- let result=current;
+ let result=current,releasedSchedule=false;
  if(baseChanged){
+  const existingScheduleId=scheduleId(current);
+  if(existingScheduleId){await stripe(env,`subscription_schedules/${encodeURIComponent(existingScheduleId)}/release`,{},`${key}-schedule-release`);releasedSchedule=true;}
   const baseParams={'items[0][id]':base.id,'items[0][price]':planPrice(env,choice.plan),'items[0][quantity]':'1',proration_behavior:'always_invoice',payment_behavior:'pending_if_incomplete',proration_date:String(prorationDate||Math.floor(Date.now()/1000))};
   if(!optionsChanged)Object.assign(baseParams,metadata);
   result=await stripe(env,`subscriptions/${encodeURIComponent(current.id)}`,baseParams,`${key}-base`);
+  if(result.pending_update)return{subscription:result,paymentPending:true,optionsDeferred:optionsChanged,releasedSchedule};
  }
  if(optionsChanged){
   const optionParams={proration_behavior:'none',payment_behavior:'pending_if_incomplete',...metadata};
@@ -526,7 +551,7 @@ async function updateSubscription(env,current,choice,key,extra={},prorationDate)
  } else if(!baseChanged){
   result=await stripe(env,`subscriptions/${encodeURIComponent(current.id)}`,{proration_behavior:'none',...metadata},`${key}-metadata`);
  }
- return result;
+ return{subscription:result,paymentPending:false,optionsDeferred:false,releasedSchedule};
 }
 function actionOrigin(env){
  const origin=env.SUPPORTER_PUBLIC_ORIGIN;
@@ -570,9 +595,11 @@ export async function adminBillingAction(env,customer,uid,input){
   if(!current)fail('変更できる契約がありません。',409);
   const choice=adminChoice(input);
   const preview=await previewSubscriptionUpdate(env,customer,current,choice);
+  let updateResult=null;
   if(preview.changeTiming==='next_period')await scheduleSubscriptionChange(env,current,choice,key,{dpi_admin_reason:reason,dpi_updated_by:'admin'});
-  else await updateSubscription(env,current,choice,key,{'metadata[dpi_admin_reason]':reason,'metadata[dpi_updated_by]':'admin'},preview.prorationDate);
-  return {message:preview.changeTiming==='next_period'?'ダウングレードを次回26日から適用するよう予約しました。返金は行いません。':'契約内容を変更しました。基本プランだけ日割りし、追加オプションは日割りせず次回26日から反映します。',subscriptions:await customerSubscriptionSummaries(env,customer)};
+  else updateResult=await updateSubscription(env,current,choice,key,{'metadata[dpi_admin_reason]':reason,'metadata[dpi_updated_by]':'admin'},preview.prorationDate);
+  const message=preview.changeTiming==='next_period'?'ダウングレードを次回26日から適用するよう予約しました。返金は行いません。':updateResult?.paymentPending?`基本プランの変更は支払い確認待ちです。${updateResult.optionsDeferred?'追加オプションは支払い完了後に改めて変更してください。':''}`:'契約内容を変更しました。基本プランだけ日割りし、追加オプションは日割りせず次回26日から反映します。';
+  return {message,paymentPending:updateResult?.paymentPending===true,optionsDeferred:updateResult?.optionsDeferred===true,subscriptions:await customerSubscriptionSummaries(env,customer)};
  }
  if(action==='refund_latest'){
   const amount=Number(input.amount);
@@ -603,6 +630,17 @@ export async function verifySignature(raw,header,secret,now=Date.now()){
  for(const [,sig] of parts.filter(p=>p[0]==='v1'&&/^[0-9a-f]{64}$/.test(p[1]||''))){const bytes=Uint8Array.from(sig.match(/../g),h=>parseInt(h,16));if(await crypto.subtle.verify('HMAC',key,bytes,enc.encode(`${ts}.${raw}`)))return true;}
  return false;
 }
+function eventCustomerId(event){
+ const object=event?.data?.object;
+ if(event?.type==='customer.updated')return clean(object?.id);
+ return clean(stripeId(object?.customer));
+}
+async function syncCustomerEmail(db,customer){
+ const customerId=clean(customer?.id),email=clean(customer?.email).toLowerCase();
+ if(!customerId||email.length>254||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))return false;
+ const result=await db.prepare(`UPDATE supporter_accounts SET billing_email=?,updated_at=? WHERE discord_user_id=(SELECT discord_user_id FROM supporter_billing WHERE customer_id=?)`).bind(email,new Date().toISOString(),customerId).run();
+ return Number(result.meta?.changes||0)>0;
+}
 export async function billingWebhook(request,env){
  if(request.method!=='POST')return json({message:'Method not allowed'},405);
  if(!billingReady(env))return json({message:'Unavailable'},503);
@@ -610,7 +648,7 @@ export async function billingWebhook(request,env){
  if(!await verifySignature(raw,request.headers.get('stripe-signature'),env.STRIPE_WEBHOOK_SECRET))return json({},400);
  let event;try{event=JSON.parse(raw);}catch{return json({},400);}
  if(event.livemode!==false||typeof event.id!=='string')return json({},400);
- const allowed=['checkout.session.completed','checkout.session.async_payment_succeeded','checkout.session.async_payment_failed','checkout.session.expired','customer.subscription.created','customer.subscription.updated','customer.subscription.deleted','invoice.paid','invoice.payment_failed','charge.refunded','charge.dispute.created','radar.early_fraud_warning.created'];
+ const allowed=['checkout.session.completed','checkout.session.async_payment_succeeded','checkout.session.async_payment_failed','checkout.session.expired','customer.updated','customer.subscription.created','customer.subscription.updated','customer.subscription.deleted','invoice.paid','invoice.payment_failed','charge.refunded','charge.dispute.created','radar.early_fraud_warning.created'];
  if(!allowed.includes(event.type))return json({received:true});
  const db=env.REUSE_DB||env.NEWSLETTER_DB;
  const alreadyProcessed=await db.prepare('SELECT id FROM supporter_stripe_events WHERE id=?').bind(event.id).first();
@@ -622,13 +660,15 @@ export async function billingWebhook(request,env){
  }
  if(event.type==='invoice.paid')await recordInvoicePaid(env,db,event.data?.object);
  if(event.type==='invoice.payment_failed')await recordInvoiceFailed(env,db,event.data?.object);
+ if(['checkout.session.async_payment_failed','checkout.session.expired'].includes(event.type))await db.prepare('UPDATE supporter_billing SET checkout_key=NULL,checkout_id=NULL,checkout_params=NULL,dirty=1 WHERE checkout_id=?').bind(clean(event.data?.object?.id)).run();
+ if(event.type==='customer.updated')await syncCustomerEmail(db,event.data?.object);
  if(['customer.subscription.created','customer.subscription.updated'].includes(event.type)){
   const subscription=event.data?.object;
   const summary=subscriptionSummary(subscription,env);
   if(summary.recognizedPlan&&['active','trialing','past_due','unpaid','paused'].includes(subscription?.status))await reconcileStoredRulesForCustomer(db,subscription.customer,summary);
  }
  // Events invalidate a cache only; status always comes from Stripe, never from stale event payloads.
- await db.batch([db.prepare('INSERT INTO supporter_stripe_events(id,received_at) VALUES(?,?) ON CONFLICT DO NOTHING').bind(event.id,Date.now()),db.prepare('UPDATE supporter_billing SET dirty=1 WHERE customer_id=?').bind(event.data?.object?.customer||'')]);
+ await db.batch([db.prepare('INSERT INTO supporter_stripe_events(id,received_at) VALUES(?,?) ON CONFLICT DO NOTHING').bind(event.id,Date.now()),db.prepare('UPDATE supporter_billing SET dirty=1 WHERE customer_id=?').bind(eventCustomerId(event))]);
  return json({received:true});
 }
 export async function runSupporterBillingSchedule(env,nowMs=Date.now()){
@@ -638,10 +678,15 @@ export async function runSupporterBillingSchedule(env,nowMs=Date.now()){
  for(const row of due.results||[]){
   const claim=await db.prepare(`UPDATE supporter_dunning SET status='retrying',retry_attempted_at=?,updated_at=? WHERE invoice_id=? AND status='retry_scheduled'`).bind(now,now,row.invoice_id).run();
   if(!claim.meta?.changes)continue;retried+=1;
-  let invoice=null;
-  try{invoice=await stripe(env,`invoices/${encodeURIComponent(row.invoice_id)}/pay`,{},`dpi-month-end-retry-${row.invoice_id}`);}catch(error){console.error('Supporter month-end payment retry failed',{invoiceId:row.invoice_id,errorName:error?.name||'Error'});}
+  let invoice=null,paymentError=null;
+  try{invoice=await stripe(env,`invoices/${encodeURIComponent(row.invoice_id)}/pay`,{},`dpi-month-end-retry-${row.invoice_id}`);}catch(error){paymentError=error;console.error('Supporter month-end payment retry failed',{invoiceId:row.invoice_id,errorName:error?.name||'Error',stripeStatus:Number(error?.stripeStatus)||null});}
   if(invoice?.status==='paid'){
    try{await recordInvoicePaid(env,db,invoice);}catch(error){console.error('Supporter payment success email failed',{invoiceId:row.invoice_id,errorName:error?.name||'Error'});}paid+=1;continue;
+  }
+  const confirmedPaymentFailure=paymentError&&Number(paymentError.stripeStatus)===402&&!!clean(paymentError.stripeCode);
+  if(paymentError&&!confirmedPaymentFailure){
+   await db.prepare(`UPDATE supporter_dunning SET status='retry_scheduled',retry_attempted_at=NULL,updated_at=? WHERE invoice_id=? AND status='retrying'`).bind(now,row.invoice_id).run();
+   continue;
   }
   const fallback=invoice||{id:row.invoice_id,customer:row.customer_id,subscription:row.subscription_id,amount_due:row.amount_due,currency:row.currency};
   await db.prepare(`UPDATE supporter_dunning SET status='suspend_scheduled',updated_at=? WHERE invoice_id=?`).bind(now,row.invoice_id).run();failed+=1;
