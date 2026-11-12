@@ -24,7 +24,7 @@ npx wrangler secret put SURVEY_DATA_SECRET
 - `SURVEY_SUBMISSION_SECRET`: Apps ScriptとのHMAC署名に使用する32バイト以上のランダム値
 - `SURVEY_DATA_SECRET`: 回答編集URLの暗号化に使用する別の32バイト以上のランダム値
 
-`SURVEY_TOKEN_ENTRY_ID` は公開用の項目識別子であり、`wrangler.jsonc` に設定します。フォームURLとSecretは公開設定へ入れません。
+`SURVEY_TOKEN_ENTRY_ID` は公開用の項目識別子であり、`wrangler.jsonc` に設定します。旧デプロイとの互換用に `SURVEY_UUID_ENTRY_ID` も残しますが、新しい回答画面では使用しません。フォームURLとSecretは公開設定へ入れません。
 
 ## Google Apps Script
 
