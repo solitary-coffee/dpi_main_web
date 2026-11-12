@@ -29,6 +29,7 @@ const expectedMenu = [
     ['/site/about/index.html', 'コマンド'],
     ['/site/dever/index.html', '開発者紹介'],
     ['/site/mail/index.html', 'メール配信'],
+    ['/site/survey/', '利用者アンケート'],
     ['/site/reuse/', '二次利用申請'],
     ['/site/invi/index.html', 'BOTを招待'],
     ['/site/buy/index.html', 'ご支援のお願い'],
@@ -60,7 +61,7 @@ test('公開ページの左メニューは同じ項目と順序を使用する',
         assert.deepEqual(links, expectedMenu, relativePath);
         checked += 1;
     }
-    assert.equal(checked, 61);
+    assert.equal(checked, 62);
 });
 
 test('配信一覧と申請用カタログの状態が一致する', async () => {
