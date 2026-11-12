@@ -1,6 +1,7 @@
 import { assertCsrf, assertSameOrigin, requireSession } from './reuse.js';
 
 const ACCESS_TOKEN_SECONDS = 30 * 60;
+const ACCESS_CREDENTIAL_VERSION = 'v1';
 const MAX_BODY_BYTES = 32 * 1024;
 const JSON_HEADERS = Object.freeze({
     'Content-Type': 'application/json; charset=utf-8',
@@ -93,8 +94,8 @@ async function surveyAccess(request, env) {
 
     const formUrl = validatedFormUrl(env.SURVEY_FORM_URL);
     formUrl.searchParams.set('usp', 'pp_url');
-    formUrl.searchParams.set(`entry.${digits(env.SURVEY_UUID_ENTRY_ID, 'UUID項目ID')}`, participant.participant_uuid);
-    formUrl.searchParams.set(`entry.${digits(env.SURVEY_TOKEN_ENTRY_ID, 'トークン項目ID')}`, accessToken);
+    const accessCredential = `${ACCESS_CREDENTIAL_VERSION}.${participant.participant_uuid}.${accessToken}`;
+    formUrl.searchParams.set(`entry.${digits(env.SURVEY_TOKEN_ENTRY_ID, 'トークン項目ID')}`, accessCredential);
     return jsonResponse({ success: true, mode: 'new', url: formUrl.toString(), expiresIn: ACCESS_TOKEN_SECONDS });
 }
 
@@ -105,8 +106,7 @@ async function googleSubmission(request, env) {
     let input;
     try { input = JSON.parse(rawBody); } catch { throw new SurveyError(400, '送信内容を読み取れません。', 'invalid_json'); }
 
-    const participantUuid = uuid(input.participantUuid);
-    const accessToken = bounded(input.accessToken, 40, 200, '回答トークン');
+    const { participantUuid, accessToken } = parseAccessCredential(input.accessToken, input.participantUuid);
     const responseId = bounded(input.responseId, 1, 200, '回答ID');
     const editUrl = validatedEditUrl(input.editUrl).toString();
     const tokenHash = await sha256(accessToken);
@@ -187,7 +187,6 @@ function assertSurveyConfigured(env) {
     assertSurveyDatabase(env);
     const missing = [
         ['SURVEY_FORM_URL', env.SURVEY_FORM_URL],
-        ['SURVEY_UUID_ENTRY_ID', env.SURVEY_UUID_ENTRY_ID],
         ['SURVEY_TOKEN_ENTRY_ID', env.SURVEY_TOKEN_ENTRY_ID],
         ['SURVEY_SUBMISSION_SECRET', env.SURVEY_SUBMISSION_SECRET],
         ['SURVEY_DATA_SECRET', env.SURVEY_DATA_SECRET],
@@ -257,6 +256,21 @@ function uuid(value) {
         throw new SurveyError(400, '回答者UUIDが不正です。', 'invalid_uuid');
     }
     return text;
+}
+
+function parseAccessCredential(value, legacyParticipantUuid = '') {
+    const credential = bounded(value, 40, 260, '回答トークン');
+    if (String(legacyParticipantUuid || '').trim()) {
+        return { participantUuid: uuid(legacyParticipantUuid), accessToken: credential, legacy: true };
+    }
+    const [version, participantUuidText, accessToken, ...extra] = credential.split('.');
+    if (version !== ACCESS_CREDENTIAL_VERSION || !participantUuidText || !accessToken || extra.length) {
+        throw new SurveyError(400, '回答トークンが不正です。', 'invalid_access_credential');
+    }
+    if (!/^[A-Za-z0-9_-]{40,200}$/u.test(accessToken)) {
+        throw new SurveyError(400, '回答トークンが不正です。', 'invalid_access_credential');
+    }
+    return { participantUuid: uuid(participantUuidText), accessToken, legacy: false };
 }
 
 function bounded(value, min, max, label) {
@@ -338,4 +352,11 @@ function surveyErrorResponse(error) {
     return jsonResponse({ success: false, message: '処理に失敗しました。時間をおいて再度お試しください。', code: 'internal_error' }, 500);
 }
 
-export const __test = Object.freeze({ decryptValue, encryptValue, timingSafeEqual, validatedEditUrl, validatedFormUrl });
+export const __test = Object.freeze({
+    decryptValue,
+    encryptValue,
+    parseAccessCredential,
+    timingSafeEqual,
+    validatedEditUrl,
+    validatedFormUrl,
+});

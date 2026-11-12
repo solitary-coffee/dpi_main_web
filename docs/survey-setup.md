@@ -4,8 +4,8 @@
 
 1. `/site/survey/` で既存のDiscord OAuthセッションを確認します。
 2. DiscordユーザーIDに対する回答者UUIDをD1で初回発行し、以後は同じUUIDを使用します。
-3. 回答開始時に30分有効のワンタイムトークンを発行し、UUIDとともにGoogleフォームへ事前入力します。
-4. Google Apps Scriptが送信時に署名付きでWorkerへ照会し、UUIDとトークンが一致した回答だけを有効化します。
+3. 回答開始時に30分有効のワンタイムトークンを発行し、回答者UUIDを内包した1つの回答アクセストークンとしてGoogleフォームへ事前入力します。
+4. Google Apps Scriptが送信時に署名付きでWorkerへ照会し、回答アクセストークンから復元したUUIDとトークンが一致する回答だけを有効化します。
 5. 回答編集URLはAES-GCMで暗号化してD1に保存し、回答済みユーザーは公式サイトから編集画面へ戻れます。
 
 GoogleフォームのURLはブラウザーで開いた時点で回答者本人には見えます。完全な秘匿はできないため、URL自体ではなく、短時間トークンと送信後検証で漏えい時の不正回答を防ぎます。
@@ -24,7 +24,7 @@ npx wrangler secret put SURVEY_DATA_SECRET
 - `SURVEY_SUBMISSION_SECRET`: Apps ScriptとのHMAC署名に使用する32バイト以上のランダム値
 - `SURVEY_DATA_SECRET`: 回答編集URLの暗号化に使用する別の32バイト以上のランダム値
 
-`SURVEY_UUID_ENTRY_ID` と `SURVEY_TOKEN_ENTRY_ID` は公開用の項目識別子であり、`wrangler.jsonc` に設定します。フォームURLとSecretは公開設定へ入れません。
+`SURVEY_TOKEN_ENTRY_ID` は公開用の項目識別子であり、`wrangler.jsonc` に設定します。フォームURLとSecretは公開設定へ入れません。
 
 ## Google Apps Script
 
