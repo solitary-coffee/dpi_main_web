@@ -2,7 +2,31 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { __test as reuseTest } from '../worker/reuse.js';
-import { __test as surveyTest } from '../worker/survey.js';
+import { __test as surveyTest, handleSurveyRequest } from '../worker/survey.js';
+
+function surveyDatabase() {
+    return {
+        prepare() {
+            return {
+                bind() { return this; },
+                async first() { return null; },
+            };
+        },
+    };
+}
+
+test('未ログインのアンケート状態確認はWorker例外にせずJSON 401を返す', async () => {
+    const response = await handleSurveyRequest(
+        new Request('https://dpi-bot.com/api/survey/status'),
+        { REUSE_DB: surveyDatabase() },
+    );
+    assert.equal(response.status, 401);
+    assert.deepEqual(await response.json(), {
+        success: false,
+        message: 'Discordでログインしてください。',
+        code: 'login_required',
+    });
+});
 
 test('Discord OAuthの戻り先はアンケート画面と二次利用画面だけを許可する', () => {
     assert.equal(reuseTest.safeOAuthReturnPath('/site/survey/'), '/site/survey/');
