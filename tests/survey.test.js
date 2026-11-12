@@ -88,8 +88,8 @@ test('アンケート画面はフォームURLを埋め込まず認証APIから�
 
 test('GoogleフォームURLと連携Secretを公開設定へ保存しない', async () => {
     const wrangler = await readFile(new URL('../wrangler.jsonc', import.meta.url), 'utf8');
+    assert.match(wrangler, /"SURVEY_UUID_ENTRY_ID": "266196952"/u);
     assert.match(wrangler, /"SURVEY_TOKEN_ENTRY_ID": "1806004575"/u);
-    assert.doesNotMatch(wrangler, /SURVEY_UUID_ENTRY_ID/u);
     assert.doesNotMatch(wrangler, /SURVEY_FORM_URL/u);
     assert.doesNotMatch(wrangler, /SURVEY_SUBMISSION_SECRET/u);
     assert.doesNotMatch(wrangler, /SURVEY_DATA_SECRET/u);
