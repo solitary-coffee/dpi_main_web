@@ -26,15 +26,15 @@ export async function handleSurveyRequest(request, rawEnv) {
     try {
         if (pathname === '/api/survey/status') {
             assertMethod(request, 'GET');
-            return surveyStatus(request, env);
+            return await surveyStatus(request, env);
         }
         if (pathname === '/api/survey/access') {
             assertMethod(request, 'POST');
-            return surveyAccess(request, env);
+            return await surveyAccess(request, env);
         }
         if (pathname === '/api/survey/google-submit') {
             assertMethod(request, 'POST');
-            return googleSubmission(request, env);
+            return await googleSubmission(request, env);
         }
         throw new SurveyError(404, '指定されたAPIはありません。', 'not_found');
     } catch (error) {
