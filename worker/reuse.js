@@ -140,6 +140,7 @@ async function startDiscordOAuth(request, env) {
     await ensureDatabase(env);
 
     const state = randomToken(32);
+    const returnTo = safeOAuthReturnPath(new URL(request.url).searchParams.get('return_to'));
     const stateHash = await sha256(state);
     const now = Date.now();
     await env.REUSE_DB.batch([
@@ -158,14 +159,16 @@ async function startDiscordOAuth(request, env) {
     authorizeUrl.searchParams.set('state', state);
     authorizeUrl.searchParams.set('prompt', 'consent');
 
+    const headers = new Headers({
+        Location: authorizeUrl.toString(),
+        'Cache-Control': 'no-store',
+        'Referrer-Policy': 'no-referrer',
+    });
+    headers.append('Set-Cookie', cookie('dpi_reuse_oauth', state, OAUTH_STATE_SECONDS));
+    headers.append('Set-Cookie', cookie('dpi_reuse_return', returnTo, OAUTH_STATE_SECONDS));
     return new Response(null, {
         status: 302,
-        headers: {
-            Location: authorizeUrl.toString(),
-            'Cache-Control': 'no-store',
-            'Set-Cookie': cookie('dpi_reuse_oauth', state, OAUTH_STATE_SECONDS),
-            'Referrer-Policy': 'no-referrer',
-        },
+        headers,
     });
 }
 
@@ -176,9 +179,13 @@ async function completeDiscordOAuth(request, env) {
     const code = stringValue(url.searchParams.get('code'));
     const state = stringValue(url.searchParams.get('state'));
     const cookieState = readCookie(request, 'dpi_reuse_oauth');
+    const returnTo = safeOAuthReturnPath(readCookie(request, 'dpi_reuse_return'));
 
     if (url.searchParams.get('error')) {
-        return redirectToReuse('discord_denied', clearCookie('dpi_reuse_oauth'));
+        return redirectAfterOAuth('discord_denied', returnTo, [
+            clearCookie('dpi_reuse_oauth'),
+            clearCookie('dpi_reuse_return'),
+        ]);
     }
     if (!code || code.length > 512 || !state || !timingSafeEqual(state, cookieState)) {
         throw new ReuseError(400, 'Discord認証の状態を確認できません。最初からやり直してください。', 'invalid_oauth_state');
@@ -248,8 +255,9 @@ async function completeDiscordOAuth(request, env) {
         now + SESSION_SECONDS * 1_000,
     ).run();
 
-    return redirectToReuse('connected', [
+    return redirectAfterOAuth('connected', returnTo, [
         clearCookie('dpi_reuse_oauth'),
+        clearCookie('dpi_reuse_return'),
         cookie('dpi_reuse_session', rawSession, SESSION_SECONDS),
     ]);
 }
@@ -1084,14 +1092,18 @@ function manageUrlFor(env, token) {
     return url.toString();
 }
 
-function redirectToReuse(result, setCookie) {
-    const url = new URL('https://dpi-bot.com/site/reuse/');
+function redirectAfterOAuth(result, returnTo, setCookie) {
+    const url = new URL(safeOAuthReturnPath(returnTo), 'https://dpi-bot.com');
     url.searchParams.set('oauth', result);
     const headers = new Headers({ Location: url.toString(), 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' });
     for (const value of Array.isArray(setCookie) ? setCookie : [setCookie]) {
         if (value) headers.append('Set-Cookie', value);
     }
     return new Response(null, { status: 302, headers });
+}
+
+function safeOAuthReturnPath(value) {
+    return value === '/site/survey/' ? value : '/site/reuse/';
 }
 
 function oauthRedirectUri(request, env) {
@@ -1357,4 +1369,5 @@ export const __test = Object.freeze({
     validateEditableApplicationInput,
     isApplicationEditable,
     reuseEmailSignature,
+    safeOAuthReturnPath,
 });

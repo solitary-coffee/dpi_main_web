@@ -6,6 +6,7 @@ import { handleNewsletterQueue, handleNewsletterRequest } from './newsletter.js'
 import { blockResponseForRequest } from './ip-block.js';
 import { handleIpAdminRequest } from './ip-admin.js';
 import { handleReuseRequest } from './reuse.js';
+import { handleSurveyRequest } from './survey.js';
 import { handleChannelDirectoryRequest } from './channel-directory.js';
 import { handleAdminCenterRequest } from './admin-center.js';
 import { handleStatuspageAdminRequest } from './statuspage-admin.js';
@@ -81,6 +82,8 @@ const application = {
         if (supporterResponse) return supporterResponse;
         const reuseResponse = await handleReuseRequest(request, env);
         if (reuseResponse) return reuseResponse;
+        const surveyResponse = await handleSurveyRequest(request, env);
+        if (surveyResponse) return surveyResponse;
 
         if (pathname === '/api/contact/config' && request.method === 'GET') {
             return contactConfig(env);

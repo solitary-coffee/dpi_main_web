@@ -3,10 +3,20 @@ import path from 'node:path';
 
 const root = path.resolve(import.meta.dirname, '..');
 const excluded = new Set([
+    'site/admin-center/index.html',
+    'site/system-admin/index.html',
+    'site/ec2-admin/index.html',
+    'site/xml-admin/index.html',
+    'site/status-admin/index.html',
+    'site/delivery-admin/index.html',
+    'site/delivery-flow-admin/index.html',
+    'site/system-admin/audit/index.html',
+    'site/discord-admin/index.html',
     'site/channel-admin/index.html',
     'site/ip-admin/index.html',
     'site/mail-admin/index.html',
     'site/reuse-admin/index.html',
+    'site/supporter-admin/index.html',
 ]);
 
 const menuItems = [
@@ -17,6 +27,7 @@ const menuItems = [
     ['/site/dever/index.html', '開発者紹介', 'dever'],
     null,
     ['/site/mail/index.html', 'メール配信', 'mail'],
+    ['/site/survey/', '利用者アンケート', 'survey'],
     ['/site/reuse/', '二次利用申請', 'reuse'],
     null,
     ['/site/invi/index.html', 'BOTを招待', 'invi'],
@@ -44,6 +55,7 @@ function activeSection(relativePath) {
     if (relativePath.startsWith('site/about/')) return 'about';
     if (relativePath.startsWith('site/dever/')) return 'dever';
     if (relativePath.startsWith('site/mail/')) return 'mail';
+    if (relativePath.startsWith('site/survey/')) return 'survey';
     if (relativePath.startsWith('site/reuse/')) return 'reuse';
     if (relativePath.startsWith('site/invi/')) return 'invi';
     if (relativePath.startsWith('site/buy/')) return 'buy';

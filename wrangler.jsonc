@@ -93,6 +93,8 @@
     "STRIPE_PORTAL_CONFIG": "bpc_1UXuJC07fNOOHc1q2wa49u5h",
     "DISCORD_CLIENT_ID": "943752169029505114",
     "DISCORD_REDIRECT_URI": "https://dpi-bot.com/api/reuse/oauth/callback",
+    "SURVEY_UUID_ENTRY_ID": "266196952",
+    "SURVEY_TOKEN_ENTRY_ID": "1806004575",
     "NEWSLETTER_CONSENT_VERSION": "2026-08-29",
     "STATUSPAGE_PAGE_ID": "28grbz2c7xtm",
     "STATUSPAGE_PUBLIC_URL": "https://coffeebousai.statuspage.io/"

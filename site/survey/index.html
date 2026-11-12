@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="DPI-Bot利用者向けアンケートの回答ページです。Discord認証後にGoogleフォームへ進みます。">
+    <meta name="robots" content="noindex,nofollow,noarchive">
+    <title>DPI-Bot利用者向けアンケート（2026）</title>
+    <link rel="icon" href="../../img/dpi.png" type="image/png">
+    <link rel="stylesheet" href="../reuse/style.css">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <button id="menu-toggle-btn" type="button" aria-label="メニューを開く"><span></span><span></span><span></span></button>
+    <div class="overlay"></div>
+    <div class="page-container">
+        <nav class="sidebar" aria-label="サイトメニュー">
+            <div class="sidebar-header"><h2>メニュー</h2></div>
+            <ul>
+                <li><a href="/index.html">トップページ</a></li>
+                <li><a href="/site/status/index.html">お知らせ</a></li>
+                <li><a href="/site/info/index.html">配信内容</a></li>
+                <li><a href="/site/about/index.html">コマンド</a></li>
+                <li><a href="/site/dever/index.html">開発者紹介</a></li>
+                <li class="menu-spacer" aria-hidden="true" style="height:10px"></li>
+                <li><a href="/site/mail/index.html">メール配信</a></li>
+                <li><a href="/site/survey/" class="active" aria-current="page">利用者アンケート</a></li>
+                <li><a href="/site/reuse/">二次利用申請</a></li>
+                <li class="menu-spacer" aria-hidden="true" style="height:10px"></li>
+                <li><a href="/site/invi/index.html">BOTを招待</a></li>
+                <li><a href="/site/buy/index.html">ご支援のお願い</a></li>
+                <li><a href="/terms/index.html">利用規約等</a></li>
+                <li><a href="/site/supp/index.html">お問い合わせ</a></li>
+            </ul>
+        </nav>
+
+        <main class="main-content">
+            <header><h1>DPI-Bot利用者向けアンケート（2026）</h1></header>
+            <p id="page-status" class="form-status info" role="status" aria-live="polite">回答状況を確認しています。</p>
+
+            <section class="section intro">
+                <h2>アンケートについて</h2>
+                <p>DPI-Botの利用状況や改善点を確認するためのアンケートです。回答にはDiscordログインが必要です。</p>
+                <ul>
+                    <li>Discord IDはGoogleフォームへ送信せず、内部で発行した回答者UUIDを使用します。</li>
+                    <li>Googleフォームでメールアドレスを収集し、必要な場合はDPI-Bot公式メールから連絡します。</li>
+                    <li>利用規約とプライバシーポリシーへの同意をフォーム内で確認します。</li>
+                    <li>回答済みの場合は、同じDiscordアカウントでログインすると回答内容を編集できます。</li>
+                </ul>
+            </section>
+
+            <section id="login-panel" class="section login-panel hidden">
+                <h2>Discordで本人確認</h2>
+                <p>回答者UUIDを確認するため、Discordでログインしてください。</p>
+                <a class="discord-btn" href="/api/reuse/oauth/start?return_to=%2Fsite%2Fsurvey%2F">Discordでログイン</a>
+            </section>
+
+            <section id="account-panel" class="section hidden">
+                <div class="account-row">
+                    <div>
+                        <span class="account-label">ログイン中</span>
+                        <h2 id="account-name"></h2>
+                    </div>
+                    <button id="logout-btn" type="button" class="secondary-btn">ログアウト</button>
+                </div>
+                <div class="uuid-card">
+                    <span>回答者UUID</span>
+                    <code id="participant-uuid"></code>
+                    <p>このUUIDはDiscord IDの代わりに回答の確認・編集に使用します。</p>
+                </div>
+                <div id="answer-state" class="answer-state"></div>
+                <button id="open-form-btn" type="button" class="primary-btn">Googleフォームで回答する</button>
+                <p class="help access-note">回答用URLは短時間のみ有効です。URLを第三者へ共有しないでください。</p>
+            </section>
+
+            <section class="section restriction-box">
+                <h2>直リンクから開いた場合</h2>
+                <p>公式サイトでDiscord認証を行わず、GoogleフォームのURLを直接開いた回答は、UUIDと短時間トークンを検証できないため有効な回答として受け付けません。</p>
+            </section>
+        </main>
+    </div>
+    <script src="../../script.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>
