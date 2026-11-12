@@ -47,6 +47,20 @@ test('GoogleフォームURLと回答編集URLをGoogle Formsへ限定する', ()
     assert.throws(() => surveyTest.validatedEditUrl('https://docs.google.com/forms/d/e/form-id/viewform'));
 });
 
+test('回答トークン1項目から回答者UUIDと秘密トークンを復元する', () => {
+    const participantUuid = 'c9a6fffb-b326-4599-bdd8-c29fad214afb';
+    const accessToken = 'A'.repeat(43);
+    assert.deepEqual(
+        surveyTest.parseAccessCredential(`v1.${participantUuid}.${accessToken}`),
+        { participantUuid, accessToken, legacy: false },
+    );
+    assert.deepEqual(
+        surveyTest.parseAccessCredential(accessToken, participantUuid),
+        { participantUuid, accessToken, legacy: true },
+    );
+    assert.throws(() => surveyTest.parseAccessCredential(`v2.${participantUuid}.${accessToken}`));
+});
+
 test('回答編集URLは暗号化して保存し復号できる', async () => {
     const secret = 'test-secret-at-least-long-enough-for-derivation';
     const editUrl = 'https://docs.google.com/forms/d/e/form-id/viewform?edit2=response-secret';
@@ -74,8 +88,8 @@ test('アンケート画面はフォームURLを埋め込まず認証APIから�
 
 test('GoogleフォームURLと連携Secretを公開設定へ保存しない', async () => {
     const wrangler = await readFile(new URL('../wrangler.jsonc', import.meta.url), 'utf8');
-    assert.match(wrangler, /"SURVEY_UUID_ENTRY_ID": "266196952"/u);
     assert.match(wrangler, /"SURVEY_TOKEN_ENTRY_ID": "1806004575"/u);
+    assert.doesNotMatch(wrangler, /SURVEY_UUID_ENTRY_ID/u);
     assert.doesNotMatch(wrangler, /SURVEY_FORM_URL/u);
     assert.doesNotMatch(wrangler, /SURVEY_SUBMISSION_SECRET/u);
     assert.doesNotMatch(wrangler, /SURVEY_DATA_SECRET/u);
