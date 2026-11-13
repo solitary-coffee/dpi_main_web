@@ -74,9 +74,9 @@ export async function customerCredits(env,customer){
 async function purchasedCreditStatus(db,uid,stripeCredits){
  const now=Math.floor(Date.now()/1000);
  let lots;
- try{lots=await db.prepare(`SELECT id,remaining_amount,expires_at,status FROM supporter_credit_lots
-  WHERE discord_user_id=? AND source_type='purchase' AND status='active' AND remaining_amount>0
-  ORDER BY expires_at,id`).bind(uid).all();}
+ try{lots=await db.prepare(`SELECT id,source_type,remaining_amount,expires_at,status FROM supporter_credit_lots
+  WHERE discord_user_id=? AND source_type IN ('purchase','admin') AND status='active' AND remaining_amount>0
+  ORDER BY CASE source_type WHEN 'purchase' THEN 0 ELSE 1 END,expires_at,id`).bind(uid).all();}
  catch(error){
   console.warn('Supporter credit history is unavailable',{errorName:error?.name||'Error'});
   return {balance:Math.max(0,Number(stripeCredits)||0),purchasedBalance:0,nextExpiry:null,topups:[]};
