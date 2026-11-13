@@ -47,6 +47,21 @@ async function stripe(env,path,params,key,method=params?'POST':'GET'){
  return result;
 }
 export function creditsFromBalance(balance){return Math.max(0,-Number(balance||0));}
+export const CREDIT_TOPUP_MIN=500;
+export const CREDIT_TOPUP_MAX=100000;
+export function normalizeCreditTopupAmount(value){
+ const amount=Number(value);
+ if(!Number.isInteger(amount)||amount<CREDIT_TOPUP_MIN||amount>CREDIT_TOPUP_MAX)fail(`チャージ金額は${CREDIT_TOPUP_MIN.toLocaleString('ja-JP')}〜${CREDIT_TOPUP_MAX.toLocaleString('ja-JP')}円で指定してください。`,400);
+ return amount;
+}
+export function creditExpiresAt(purchasedAt){
+ const date=new Date(Number(purchasedAt)*1000);
+ if(!Number.isFinite(date.getTime()))fail('クレジット購入日時を確認できませんでした。',400);
+ const year=date.getUTCFullYear()+1,month=date.getUTCMonth(),day=date.getUTCDate();
+ const lastDay=new Date(Date.UTC(year,month+1,0)).getUTCDate();
+ date.setUTCFullYear(year,month,Math.min(day,lastDay));
+ return Math.floor(date.getTime()/1000);
+}
 export async function createBillingCustomer(env,uid,email,key){
  const params={'metadata[dpi_user]':uid};
  if(email)params.email=email;
@@ -55,6 +70,107 @@ export async function createBillingCustomer(env,uid,email,key){
 export async function customerCredits(env,customer){
  if(!customer||!billingReady(env))return 0;
  return creditsFromBalance((await stripe(env,`customers/${encodeURIComponent(customer)}`)).balance);
+}
+async function purchasedCreditStatus(db,uid,stripeCredits){
+ const now=Math.floor(Date.now()/1000);
+ let lots;
+ try{lots=await db.prepare(`SELECT id,source_type,remaining_amount,expires_at,status FROM supporter_credit_lots
+  WHERE discord_user_id=? AND source_type IN ('purchase','admin') AND status='active' AND remaining_amount>0
+  ORDER BY CASE source_type WHEN 'purchase' THEN 0 ELSE 1 END,expires_at,id`).bind(uid).all();}
+ catch(error){
+  console.warn('Supporter credit history is unavailable',{errorName:error?.name||'Error'});
+  return {balance:Math.max(0,Number(stripeCredits)||0),purchasedBalance:0,nextExpiry:null,topups:[]};
+ }
+ let tracked=(lots.results||[]).reduce((sum,row)=>sum+Number(row.remaining_amount||0),0);
+ let consumed=Math.max(0,tracked-Math.max(0,Number(stripeCredits)||0));
+ for(const lot of lots.results||[]){
+  if(consumed<=0)break;
+  const current=Number(lot.remaining_amount||0),used=Math.min(current,consumed),remaining=current-used;
+  const result=await db.prepare(`UPDATE supporter_credit_lots SET remaining_amount=?,status=?,updated_at=?
+   WHERE id=? AND remaining_amount=? AND status='active'`).bind(remaining,remaining?'active':'consumed',now,lot.id,current).run();
+  if(result.meta?.changes)consumed-=used;
+ }
+ const active=await db.prepare(`SELECT COALESCE(SUM(remaining_amount),0) AS purchased_balance,MIN(expires_at) AS next_expiry
+  FROM supporter_credit_lots WHERE discord_user_id=? AND source_type='purchase' AND status='active' AND remaining_amount>0`).bind(uid).first();
+ const history=await db.prepare(`SELECT request_id,amount,status,purchased_at,expires_at,created_at
+  FROM supporter_credit_topups WHERE discord_user_id=? ORDER BY created_at DESC LIMIT 20`).bind(uid).all();
+ return {
+  balance:Math.max(0,Number(stripeCredits)||0),
+  purchasedBalance:Math.max(0,Number(active?.purchased_balance)||0),
+  nextExpiry:unix(active?.next_expiry),
+  topups:(history.results||[]).map(row=>({id:clean(row.request_id),amount:Number(row.amount)||0,status:clean(row.status),purchasedAt:unix(row.purchased_at),expiresAt:unix(row.expires_at),createdAt:unix(row.created_at)})),
+ };
+}
+async function fulfillCreditTopup(env,db,session){
+ const metadata=checkoutMetadata(session);
+ if(session?.mode!=='payment'||metadata.dpi_checkout_kind!=='credit_topup'||session.payment_status!=='paid')return null;
+ const uid=clean(metadata.dpi_user||session.client_reference_id),requestId=clean(metadata.dpi_topup_request_id);
+ const customer=clean(stripeId(session.customer)),paymentIntent=clean(stripeId(session.payment_intent));
+ const amount=normalizeCreditTopupAmount(metadata.dpi_credit_amount);
+ if(!/^\d{17,20}$/.test(uid)||!/^[0-9a-f-]{36}$/i.test(requestId)||!customer||!paymentIntent||clean(session.currency).toLowerCase()!=='jpy'||Number(session.amount_total)!==amount)fail('クレジット決済情報を確認できませんでした。',409);
+ const billing=await db.prepare('SELECT customer_id FROM supporter_billing WHERE discord_user_id=?').bind(uid).first();
+ if(!billing?.customer_id||billing.customer_id!==customer)fail('クレジット決済の利用者を確認できませんでした。',409);
+ const purchasedAt=Number(session.created)||Math.floor(Date.now()/1000),expiresAt=creditExpiresAt(purchasedAt),now=Math.floor(Date.now()/1000);
+ const transaction=await stripe(env,`customers/${encodeURIComponent(customer)}/balance_transactions`,{
+  amount:String(-amount),currency:'jpy',description:`DPI-Bot credit top-up: ${session.id}`,
+  'metadata[dpi_user]':uid,'metadata[dpi_credit_action]':'user_topup','metadata[dpi_checkout_session]':session.id,
+ },`dpi-credit-topup-${session.id}`);
+ const balanceAfter=creditsFromBalance(transaction.ending_balance);
+ await db.batch([
+  db.prepare(`INSERT INTO supporter_credit_topups
+   (request_id,discord_user_id,customer_id,checkout_session_id,payment_intent_id,stripe_balance_transaction_id,amount,currency,status,purchased_at,expires_at,created_at,updated_at)
+   VALUES(?,?,?,?,?,?,?,'jpy','credited',?,?,?,?)
+   ON CONFLICT(request_id) DO UPDATE SET checkout_session_id=excluded.checkout_session_id,payment_intent_id=excluded.payment_intent_id,
+    stripe_balance_transaction_id=excluded.stripe_balance_transaction_id,status='credited',purchased_at=excluded.purchased_at,expires_at=excluded.expires_at,updated_at=excluded.updated_at`)
+   .bind(requestId,uid,customer,session.id,paymentIntent,transaction.id,amount,purchasedAt,expiresAt,purchasedAt,now),
+  db.prepare(`INSERT INTO supporter_credit_lots
+   (id,discord_user_id,source_type,source_id,original_amount,remaining_amount,expires_at,status,created_at,updated_at)
+   VALUES(?,?,'purchase',?,?,?,?, 'active',?,?) ON CONFLICT(source_type,source_id) DO NOTHING`)
+   .bind(`topup:${session.id}`,uid,session.id,amount,amount,expiresAt,purchasedAt,now),
+  db.prepare(`INSERT INTO supporter_credit_events
+   (id,discord_user_id,credit_delta,balance_after,stripe_transaction_id,reason,actor,created_at)
+   VALUES(?,?,?,?,?,'credit_topup','user',?) ON CONFLICT DO NOTHING`)
+   .bind(`topup:${session.id}`,uid,amount,balanceAfter,transaction.id,new Date(purchasedAt*1000).toISOString()),
+ ]);
+ return {uid,amount,balanceAfter,expiresAt};
+}
+async function revokeCreditTopup(env,db,object,reason){
+ let paymentIntent=clean(stripeId(object?.payment_intent));
+ if(!paymentIntent&&reason==='disputed'&&stripeId(object?.charge)){
+  const charge=await stripe(env,`charges/${encodeURIComponent(stripeId(object.charge))}`);
+  paymentIntent=clean(stripeId(charge.payment_intent));object={...charge,amount:Number(object?.amount||charge.amount||0)};
+ }
+ if(!paymentIntent)return null;
+ const topup=await db.prepare(`SELECT request_id,discord_user_id,customer_id,checkout_session_id,amount,refunded_amount,status
+  FROM supporter_credit_topups WHERE payment_intent_id=?`).bind(paymentIntent).first();
+ if(!topup)return null;
+ const target=Math.min(Number(topup.amount)||0,reason==='disputed'?Number(object?.amount||topup.amount):Number(object?.amount_refunded||0));
+ const previous=Number(topup.refunded_amount||0),delta=Math.max(0,target-previous);
+ if(!delta)return null;
+ const now=Math.floor(Date.now()/1000),lot=await db.prepare(`SELECT id,remaining_amount,status FROM supporter_credit_lots
+  WHERE source_type='purchase' AND source_id=?`).bind(topup.checkout_session_id).first();
+ const remaining=lot?.status==='active'?Math.max(0,Number(lot.remaining_amount)||0):0;
+ const lotReduction=Math.min(delta,remaining),available=await customerCredits(env,topup.customer_id),remove=Math.min(lotReduction,available);
+ let transactionId=`${reason}:${object?.id||paymentIntent}:${target}`,balanceAfter=available;
+ if(remove>0){
+  const transaction=await stripe(env,`customers/${encodeURIComponent(topup.customer_id)}/balance_transactions`,{
+   amount:String(remove),currency:'jpy',description:`DPI-Bot credit ${reason}: ${topup.checkout_session_id}`,
+   'metadata[dpi_user]':topup.discord_user_id,'metadata[dpi_credit_action]':reason,'metadata[dpi_payment_intent]':paymentIntent,
+  },await idempotencyKey('dpi-credit-reversal-',`${object?.id||paymentIntent}:${reason}:${target}`));
+  transactionId=transaction.id;balanceAfter=creditsFromBalance(transaction.ending_balance);
+ }
+ const nextRemaining=Math.max(0,remaining-lotReduction),topupStatus=target>=Number(topup.amount)?reason:'credited';
+ const statements=[
+  db.prepare(`UPDATE supporter_credit_topups SET refunded_amount=?,status=?,updated_at=?
+   WHERE request_id=? AND refunded_amount=?`).bind(target,topupStatus,now,topup.request_id,previous),
+  db.prepare(`INSERT INTO supporter_credit_events
+   (id,discord_user_id,credit_delta,balance_after,stripe_transaction_id,reason,actor,created_at)
+   VALUES(?,?,?,?,?,?, 'system',?) ON CONFLICT DO NOTHING`).bind(`${reason}:${object?.id||paymentIntent}:${target}`,topup.discord_user_id,-remove,balanceAfter,transactionId,`credit_${reason}`,new Date(now*1000).toISOString()),
+ ];
+ if(lot?.id)statements.push(db.prepare(`UPDATE supporter_credit_lots SET remaining_amount=?,status=?,updated_at=?
+  WHERE id=? AND remaining_amount=?`).bind(nextRemaining,nextRemaining?'active':'revoked',now,lot.id,remaining));
+ await db.batch(statements);
+ return {uid:topup.discord_user_id,removed:remove,status:topupStatus};
 }
 function stripeInvoiceUrl(value){
  try{const url=new URL(String(value||''));return url.protocol==='https:'&&['invoice.stripe.com','pay.stripe.com'].includes(url.hostname)?url.href:null;}catch{return null;}
@@ -362,15 +478,52 @@ export async function billingAction(request,env,db,uid,input={}){
   const recovery=await reconcilePaidCheckoutSubscription(env,row.customer_id,uid);
   if(recovery.recovered&&recovery.checkoutId)await db.prepare('UPDATE supporter_billing SET checkout_id=?,dirty=1 WHERE discord_user_id=?').bind(recovery.checkoutId,uid).run();
   const [summaries,invoices,credits,dunning]=await Promise.all([customerSubscriptionSummaries(env,row.customer_id),customerInvoices(env,row.customer_id),customerCredits(env,row.customer_id),dunningState(db,row.customer_id)]);
+  const creditDetails=await purchasedCreditStatus(db,uid,credits);
   const active=summaries.filter(item=>item.recognizedPlan!==false&&['active','trialing','past_due','unpaid','paused'].includes(item.status));
   const rulesAdjustment=active.length?await reconcileStoredRulesForCustomer(db,row.customer_id,combinedLimits(active)):{changed:false,removedRules:0,removedDestinations:0,simplifiedRules:0};
-  return json({mode:'test',billingDay:26,subscriptions:summaries,invoices,credits,dunning,rulesAdjustment,recoveredSubscription:recovery.recovered,deliveryEnabled:false});
+  return json({mode:'test',billingDay:26,subscriptions:summaries,invoices,credits,creditDetails,dunning,rulesAdjustment,recoveredSubscription:recovery.recovered,deliveryEnabled:false});
  }
  if(!row.customer_id){const customer=await createBillingCustomer(env,uid,account.billing_email,`dpi-customer-${uid}`);await db.prepare('UPDATE supporter_billing SET customer_id=? WHERE discord_user_id=? AND customer_id IS NULL').bind(customer.id,uid).run();row=await db.prepare('SELECT * FROM supporter_billing WHERE discord_user_id=?').bind(uid).first();}
  else if(account.billing_email)await stripe(env,`customers/${encodeURIComponent(row.customer_id)}`,{email:account.billing_email},await idempotencyKey(`dpi-customer-email-${uid}-`,account.billing_email));
  const origin=env.SUPPORTER_PUBLIC_ORIGIN;
  if(!origin || !/^https:\/\/[^/]+$/.test(origin))fail('公開URLが未設定です。',503);
  if(action==='portal'){const portal=await stripe(env,'billing_portal/sessions',{customer:row.customer_id,configuration:env.STRIPE_PORTAL_CONFIG,return_url:`${origin}/site/supporter/`});return json({url:portal.url});}
+ if(action==='topup'){
+  const amount=normalizeCreditTopupAmount(input.amount);
+  const requestId=clean(input.requestId),legalConsentVersion=clean(input.legalConsentVersion);
+  if(!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestId))return json({message:'チャージ情報が正しくありません。再読み込みしてください。'},400);
+  if(!legalConsentVersion)return json({message:'クレジット購入条件への同意を確認できません。'},400);
+  const now=Math.floor(Date.now()/1000);
+  const previous=await db.prepare('SELECT * FROM supporter_credit_topups WHERE request_id=?').bind(requestId).first();
+  if(previous&&(previous.discord_user_id!==uid||previous.customer_id!==row.customer_id||Number(previous.amount)!==amount))return json({message:'別の条件でチャージリンクを作成済みです。'},409);
+  await db.prepare(`INSERT INTO supporter_credit_topups
+   (request_id,discord_user_id,customer_id,amount,currency,status,created_at,updated_at)
+   VALUES(?,?,?,?,'jpy','pending',?,?) ON CONFLICT(request_id) DO NOTHING`).bind(requestId,uid,row.customer_id,amount,now,now).run();
+  const existing=await db.prepare('SELECT checkout_session_id,status FROM supporter_credit_topups WHERE request_id=?').bind(requestId).first();
+  let checkout=existing?.checkout_session_id?await stripe(env,`checkout/sessions/${encodeURIComponent(existing.checkout_session_id)}`):null;
+  if(!checkout){
+   checkout=await stripe(env,'checkout/sessions',{
+    mode:'payment',customer:row.customer_id,client_reference_id:uid,
+    'line_items[0][price_data][currency]':'jpy',
+    'line_items[0][price_data][unit_amount]':String(amount),
+    'line_items[0][price_data][product_data][name]':`DPI-Bot クレジット ${amount.toLocaleString('ja-JP')}ポイント`,
+    'line_items[0][quantity]':'1',
+    'metadata[dpi_checkout_kind]':'credit_topup','metadata[dpi_user]':uid,
+    'metadata[dpi_credit_amount]':String(amount),'metadata[dpi_topup_request_id]':requestId,
+    'metadata[dpi_legal_consent_version]':legalConsentVersion,
+    'payment_intent_data[metadata][dpi_checkout_kind]':'credit_topup',
+    'payment_intent_data[metadata][dpi_user]':uid,
+    'payment_intent_data[metadata][dpi_topup_request_id]':requestId,
+    success_url:`${origin}/site/supporter/?credit=completed`,
+    cancel_url:`${origin}/site/supporter/?credit=canceled`,
+    expires_at:String(now+86400),integration_identifier:integrationIdentifier('dpi_credit_'),
+   },`dpi-credit-checkout-${requestId}`);
+   await db.prepare('UPDATE supporter_credit_topups SET checkout_session_id=?,updated_at=? WHERE request_id=? AND discord_user_id=?').bind(checkout.id,now,requestId,uid).run();
+  }
+  if(checkout.status==='expired')return json({message:'チャージ用支払いリンクの有効期限が切れました。もう一度作成してください。'},409);
+  if(checkout.status!=='open')return json({message:'チャージ決済の反映を確認中です。残高を再読み込みしてください。'},409);
+  return json({url:checkout.url,amount,credits:amount,expiresAt:checkout.expires_at||now+86400,mode:'test'});
+ }
  const choice=selection(input);
  const recovery=await reconcilePaidCheckoutSubscription(env,row.customer_id,uid);
  const existing=await subscriptions(env,row.customer_id);
@@ -641,6 +794,38 @@ async function syncCustomerEmail(db,customer){
  const result=await db.prepare(`UPDATE supporter_accounts SET billing_email=?,updated_at=? WHERE discord_user_id=(SELECT discord_user_id FROM supporter_billing WHERE customer_id=?)`).bind(email,new Date().toISOString(),customerId).run();
  return Number(result.meta?.changes||0)>0;
 }
+async function expirePurchasedCredits(env,db,limit=100){
+ const now=Math.floor(Date.now()/1000);
+ const due=await db.prepare(`SELECT l.id,l.discord_user_id,l.remaining_amount,l.source_id,l.expires_at,b.customer_id
+  FROM supporter_credit_lots l JOIN supporter_billing b ON b.discord_user_id=l.discord_user_id
+  WHERE l.source_type='purchase' AND l.status='active' AND l.remaining_amount>0 AND l.expires_at<=?
+  ORDER BY l.expires_at,l.id LIMIT ?`).bind(now,limit).all();
+ let expired=0;
+ for(const candidate of due.results||[]){
+  const credits=await customerCredits(env,candidate.customer_id);
+  await purchasedCreditStatus(db,candidate.discord_user_id,credits);
+  const lot=await db.prepare(`SELECT remaining_amount,status FROM supporter_credit_lots WHERE id=?`).bind(candidate.id).first();
+  if(!lot||lot.status!=='active'||Number(lot.remaining_amount)<=0)continue;
+  const remaining=Number(lot.remaining_amount),available=await customerCredits(env,candidate.customer_id),remove=Math.min(remaining,available);
+  let transactionId=`expiry:${candidate.id}`,balanceAfter=available;
+  if(remove>0){
+   const transaction=await stripe(env,`customers/${encodeURIComponent(candidate.customer_id)}/balance_transactions`,{
+    amount:String(remove),currency:'jpy',description:`DPI-Bot expired credit: ${candidate.source_id}`,
+    'metadata[dpi_user]':candidate.discord_user_id,'metadata[dpi_credit_action]':'expiry','metadata[dpi_credit_lot]':candidate.id,
+   },await idempotencyKey('dpi-credit-expiry-',candidate.id));
+   transactionId=transaction.id;balanceAfter=creditsFromBalance(transaction.ending_balance);
+  }
+  const claimed=await db.prepare(`UPDATE supporter_credit_lots SET remaining_amount=0,status='expired',updated_at=?
+   WHERE id=? AND remaining_amount=? AND status='active'`).bind(now,candidate.id,remaining).run();
+  if(!claimed.meta?.changes)continue;
+  await db.prepare(`INSERT INTO supporter_credit_events
+   (id,discord_user_id,credit_delta,balance_after,stripe_transaction_id,reason,actor,created_at)
+   VALUES(?,?,?,?,?,'credit_expired','system',?) ON CONFLICT DO NOTHING`).bind(`expiry:${candidate.id}`,candidate.discord_user_id,-remove,balanceAfter,transactionId,new Date(now*1000).toISOString()).run();
+  await db.prepare(`UPDATE supporter_credit_topups SET status='expired',updated_at=? WHERE checkout_session_id=? AND status='credited'`).bind(now,candidate.source_id).run();
+  expired+=1;
+ }
+ return expired;
+}
 export async function billingWebhook(request,env){
  if(request.method!=='POST')return json({message:'Method not allowed'},405);
  if(!billingReady(env))return json({message:'Unavailable'},503);
@@ -655,12 +840,23 @@ export async function billingWebhook(request,env){
  if(alreadyProcessed)return json({received:true});
  if(['checkout.session.completed','checkout.session.async_payment_succeeded'].includes(event.type)){
   const session=event.data?.object;
-  const provisioned=await provisionPaidCheckoutSubscription(env,session);
-  if(provisioned&&session?.payment_status==='paid')await sendBillingNotification(env,db,'payment_succeeded',{id:session.id,customer:session.customer,amount_paid:Number(session.amount_total||0),currency:session.currency||'jpy'});
+  if(checkoutMetadata(session).dpi_checkout_kind==='credit_topup')await fulfillCreditTopup(env,db,session);
+  else{
+   const provisioned=await provisionPaidCheckoutSubscription(env,session);
+   if(provisioned&&session?.payment_status==='paid')await sendBillingNotification(env,db,'payment_succeeded',{id:session.id,customer:session.customer,amount_paid:Number(session.amount_total||0),currency:session.currency||'jpy'});
+  }
  }
  if(event.type==='invoice.paid')await recordInvoicePaid(env,db,event.data?.object);
  if(event.type==='invoice.payment_failed')await recordInvoiceFailed(env,db,event.data?.object);
- if(['checkout.session.async_payment_failed','checkout.session.expired'].includes(event.type))await db.prepare('UPDATE supporter_billing SET checkout_key=NULL,checkout_id=NULL,checkout_params=NULL,dirty=1 WHERE checkout_id=?').bind(clean(event.data?.object?.id)).run();
+ if(event.type==='charge.refunded')await revokeCreditTopup(env,db,event.data?.object,'refunded');
+ if(event.type==='charge.dispute.created')await revokeCreditTopup(env,db,event.data?.object,'disputed');
+ if(['checkout.session.async_payment_failed','checkout.session.expired'].includes(event.type)){
+  const sessionId=clean(event.data?.object?.id);
+  await db.batch([
+   db.prepare('UPDATE supporter_billing SET checkout_key=NULL,checkout_id=NULL,checkout_params=NULL,dirty=1 WHERE checkout_id=?').bind(sessionId),
+   db.prepare(`UPDATE supporter_credit_topups SET status='failed',updated_at=? WHERE checkout_session_id=? AND status='pending'`).bind(Math.floor(Date.now()/1000),sessionId),
+  ]);
+ }
  if(event.type==='customer.updated')await syncCustomerEmail(db,event.data?.object);
  if(['customer.subscription.created','customer.subscription.updated'].includes(event.type)){
   const subscription=event.data?.object;
@@ -672,7 +868,7 @@ export async function billingWebhook(request,env){
  return json({received:true});
 }
 export async function runSupporterBillingSchedule(env,nowMs=Date.now()){
- if(!billingReady(env))return {retried:0,paid:0,failed:0,suspended:0};
+ if(!billingReady(env))return {retried:0,paid:0,failed:0,suspended:0,expiredCredits:0};
  const db=env.REUSE_DB||env.NEWSLETTER_DB,now=Math.floor(Number(nowMs)/1000);let retried=0,paid=0,failed=0,suspended=0;
  const due=await db.prepare(`SELECT * FROM supporter_dunning WHERE status='retry_scheduled' AND retry_at<=? ORDER BY retry_at LIMIT 50`).bind(now).all();
  for(const row of due.results||[]){
@@ -698,5 +894,6 @@ export async function runSupporterBillingSchedule(env,nowMs=Date.now()){
   FROM supporter_billing_notifications n JOIN supporter_dunning d ON d.invoice_id=n.invoice_id
   WHERE n.status='failed' AND n.kind IN ('retry_succeeded','final_failed') ORDER BY n.updated_at LIMIT 25`).all();
  for(const row of failedNotices.results||[]){const invoice={id:row.invoice_id,customer:row.customer_id,subscription:row.subscription_id,amount_due:row.amount_due,amount_paid:row.kind==='retry_succeeded'?row.amount_due:0,currency:row.currency};try{await sendBillingNotification(env,db,row.kind,invoice,row.retry_at,row.suspend_at);}catch(error){console.error('Supporter billing email retry failed',{invoiceId:row.invoice_id,kind:row.kind,errorName:error?.name||'Error'});}}
- return {retried,paid,failed,suspended};
+ const expiredCredits=await expirePurchasedCredits(env,db);
+ return {retried,paid,failed,suspended,expiredCredits};
 }
