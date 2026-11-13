@@ -102,3 +102,14 @@ test('トップページのクイックリンクはホバー時も暗色背景�
     assert.doesNotMatch(css, /\.link-card:hover\s*\{[^}]*background-color:\s*#fff;/su);
 });
 
+
+
+test('トップページにはアンケートの案内と回答導線を目立つ位置に表示する', async () => {
+    const html = await readFile(path.join(root, 'index.html'), 'utf8');
+    const css = await readFile(path.join(root, 'style.css'), 'utf8');
+    assert.match(html, /<aside class="survey-callout" aria-labelledby="survey-callout-heading">/u);
+    assert.match(html, /href="\/site\/survey\/">アンケートに回答する<\/a>/u);
+    assert.ok(html.indexOf('class="survey-callout"') < html.indexOf('<h2>BOTについて</h2>'));
+    assert.match(css, /\.survey-callout\s*\{/u);
+    assert.match(css, /@media \(max-width: 768px\)\s*\{\s*\.survey-callout/u);
+});
