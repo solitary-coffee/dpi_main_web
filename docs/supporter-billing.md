@@ -2,7 +2,7 @@
 
 配信は未接続。本実装はテスト用の `sk_test_` または権限を限定できる `rk_test_` キーだけを受け付け、本番課金はできません。運用には `rk_test_` を推奨します。
 
-適用順序: D1 migrations 0012〜0015 → Worker Secrets/vars → Workerデプロイ → StripeテストWebhook登録 → E2E確認。
+適用順序: D1 migrations 0012〜0019 → Worker Secrets/vars → Workerデプロイ → StripeテストWebhook登録 → E2E確認。
 
 Secrets: STRIPE_SECRET_KEY（テスト用）、STRIPE_WEBHOOK_SECRET。秘密値をGitやチャットへ貼らないこと。
 
@@ -18,7 +18,7 @@ vars: SUPPORTER_BILLING_MODE=test、SUPPORTER_PUBLIC_ORIGIN=https://dpi-bot.com�
 
 `GET /api/supporter/billing/status` は最大12件の請求明細を返す。ユーザー画面からStripeの `hosted_invoice_url` と `invoice_pdf` を開けるが、`invoice.stripe.com` または `pay.stripe.com` のHTTPS URLのみを許可する。
 
-Webhook: /api/supporter/stripe/webhook。対象はcheckout.session.completed/expired、customer.subscription.created/updated/deleted、invoice.paid/payment_failed。raw body署名検証、5分の許容差、テストイベント限定。メンテナンス・ブラウザCSRFから独立して受信。
+Webhook: /api/supporter/stripe/webhook。対象はcheckout.session.completed/expired、checkout.session.async_payment_succeeded/failed、customer.subscription.created/updated/deleted、invoice.paid/payment_failed。raw body署名検証、5分の許容差、テストイベント限定。メンテナンス・ブラウザCSRFから独立して受信。
 
 契約状態はStripeから都度取得し、順不同Webhookの内容で状態を上書きしない。イベントIDを保存。通知設定は有効な契約を確認したユーザーのみ保存可能で、Proは1ルール最大8件の追加条件を持てる。現時点では保存内容と配信プログラムの接続なし。
 
@@ -26,9 +26,12 @@ POST /api/supporter/billing/checkout: {plan:"supporter"|"plus"|"pro",channelPack
 POST /api/supporter/billing/preview-update: 契約変更の料金・利用枠プレビュー。
 POST /api/supporter/billing/update: プレビューの `prorationDate` と同じ選択内容を確定。
 POST /api/supporter/billing/portal: {}。
+POST /api/supporter/billing/topup: {amount:500..100000,email,legalConsent:true,requestId:<UUID v4>}。1円を1クレジットとしてStripeの都度払いCheckout URLを利用者・金額ごとに発行する。チャージはサブスクリプションではない。決済成功Webhookの署名とCustomer・Discordユーザー・金額・PaymentIntentを照合してから、Stripe Customer Balanceへ1度だけ反映する。
 GET /api/supporter/billing/status: 現在の契約状態。
 POSTはDiscordセッション、同一Origin、x-reuse-csrfが必要。
 
 決済作成前にD1へ固定パラメータと冪等キーを保存し、同時クリックは同じCheckoutを再利用。契約存在時は新規決済を拒否。別条件での再作成は既存Sessionの期限切れ後。通信断で作成結果不明のまま期限が過ぎた場合は自動再課金をせず管理者確認を要求。
+
+購入クレジットはチャージ単位のロットとしてD1へ保存し、購入日時の1年後（うるう日の場合は翌年2月末）に未使用分を失効する。定期処理はStripe残高とロット残高を照合し、利用済み分を期限の近い購入ロットから減算する。管理者が臨時付与したクレジットは購入ロットと区別し、この1年失効処理の対象外とする。利用者画面には総残高、購入分残高、最も近い有効期限、直近20件のチャージ履歴を表示する。
 
 未完: 解約後の再契約、Webhookイベント保持期限、ブラウザE2E、配信プログラムへの権限接続。現段階で本番公開・課金開始しない。
