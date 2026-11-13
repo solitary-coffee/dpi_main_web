@@ -488,11 +488,11 @@ export async function handleSupporterRequest(request, env) {
    return response({regions:SUPPORTER_REGIONS,weatherLevels:WEATHER_LEVELS,warningLevels:WARNING_LEVELS,earthquakeDetails:EARTHQUAKE_DETAILS,eewDetails:EEW_DETAILS,eewWarningAreaModes:EEW_WARNING_AREA_MODES,weatherDetails:WEATHER_DETAILS,thresholdModes:THRESHOLD_MODES});
   }
   if (request.method !== 'GET') { assertSameOrigin(request); assertCsrf(request,session); }
-  if (/^\/api\/supporter\/billing\/(checkout|preview-update|update|portal|status)$/.test(path)) {
+  if (/^\/api\/supporter\/billing\/(checkout|topup|preview-update|update|portal|status)$/.test(path)) {
    const expected=path.endsWith('/status')?'GET':'POST';
    if(request.method!==expected)return response({message:'Method not allowed'},405);
    const input=request.method==='POST'?await readJson(request):{};
-   if(path.endsWith('/checkout')){
+   if(path.endsWith('/checkout')||path.endsWith('/topup')){
     const email=normalizeBillingEmail(input.email);
     const consentVersion=supporterConsentVersion(input,env);
     const discordName=clean(session.discord_username).slice(0,100);
