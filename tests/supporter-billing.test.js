@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHmac} from 'node:crypto';
-import {billingAction,billingWebhook,selection,billingReady,billingSchedule,creditApplication,creditsFromBalance,customerInvoices,dunningSchedule,paidCheckoutSubscriptionParams,provisionPaidCheckoutSubscription,prorationBreakdown,reconcilePaidCheckoutSubscription,reconcileStoredRulesForCustomer,scheduledChangeSummary,staleCheckoutAttempt,subscriptionSummary,verifySignature} from '../worker/supporter-billing.js';
+import {billingAction,billingWebhook,selection,billingReady,billingSchedule,creditApplication,creditExpiresAt,creditsFromBalance,customerInvoices,dunningSchedule,normalizeCreditTopupAmount,paidCheckoutSubscriptionParams,provisionPaidCheckoutSubscription,prorationBreakdown,reconcilePaidCheckoutSubscription,reconcileStoredRulesForCustomer,scheduledChangeSummary,staleCheckoutAttempt,subscriptionSummary,verifySignature} from '../worker/supporter-billing.js';
 import {supporterAdminAccount,supporterAdminDetails} from '../worker/supporter.js';
 import {readFile} from 'node:fs/promises';
 test('plan, channel and server add-ons are server controlled',()=>{
@@ -185,6 +185,66 @@ test('Stripe customer balance converts to non-negative yen credits',()=>{
  assert.equal(creditsFromBalance(0),0);
  assert.equal(creditsFromBalance(200),0);
 });
+
+test('クレジットチャージは500〜100000円の整数だけを受け付け、購入日の1年後に失効する',()=>{
+ assert.equal(normalizeCreditTopupAmount(500),500);
+ assert.equal(normalizeCreditTopupAmount('100000'),100000);
+ for(const value of [499,100001,500.5,'not-a-number'])assert.throws(()=>normalizeCreditTopupAmount(value));
+ assert.equal(creditExpiresAt(Date.parse('2026-11-13T12:34:56Z')/1000),Date.parse('2027-11-13T12:34:56Z')/1000);
+ assert.equal(creditExpiresAt(Date.parse('2024-02-29T12:34:56Z')/1000),Date.parse('2025-02-28T12:34:56Z')/1000);
+});
+
+test('利用者ごとのStripeチャージURLへ任意金額と同意情報を固定する',async()=>{
+ const uid='637850681666961408',requestId='6fb5b84e-03f7-44c0-bf04-4ee3ad22db20';
+ const env={SUPPORTER_BILLING_MODE:'test',STRIPE_SECRET_KEY:'rk_test_example',STRIPE_WEBHOOK_SECRET:'whsec_x',STRIPE_PRICE_SUPPORTER:'price_basic',STRIPE_PRICE_PLUS:'price_plus',STRIPE_PRICE_PRO:'price_pro',STRIPE_PRICE_ADDON:'price_addon',STRIPE_PORTAL_CONFIG:'bpc_x',SUPPORTER_PUBLIC_ORIGIN:'https://dpi-bot.com'};
+ const topup={request_id:requestId,discord_user_id:uid,customer_id:'cus_credit',amount:1234,checkout_session_id:null,status:'pending'};
+ const db={prepare(sql){let values=[];return{bind(...input){values=input;return this;},async first(){
+  if(sql.includes('FROM supporter_accounts'))return{discord_user_id:uid,billing_email:'credit@example.jp'};
+  if(sql.includes('FROM supporter_billing'))return{discord_user_id:uid,customer_id:'cus_credit'};
+  if(sql.includes('FROM supporter_credit_topups'))return topup;
+  return null;
+ },async run(){if(sql.startsWith('UPDATE supporter_credit_topups SET checkout_session_id='))topup.checkout_session_id=values[0];return{meta:{changes:1}};}};}};
+ const calls=[],originalFetch=globalThis.fetch;
+ globalThis.fetch=async(url,init={})=>{const path=new URL(url).pathname,params=new URLSearchParams(init.body||'');calls.push({path,params});
+  const data=path==='/v1/checkout/sessions'?{livemode:false,id:'cs_credit',status:'open',url:'https://checkout.stripe.com/c/pay/cs_credit',expires_at:1900000000}:{livemode:false,id:'cus_credit'};
+  return new Response(JSON.stringify(data),{status:200,headers:{'content-type':'application/json'}});
+ };
+ try{
+  const response=await billingAction(new Request('https://dpi-bot.com/api/supporter/billing/topup'),env,db,uid,{amount:1234,requestId,legalConsentVersion:'2026-11-13'});
+  assert.equal(response.status,200);assert.equal((await response.json()).credits,1234);
+  const checkout=calls.find(call=>call.path==='/v1/checkout/sessions');
+  assert.equal(checkout.params.get('mode'),'payment');
+  assert.equal(checkout.params.get('customer'),'cus_credit');
+  assert.equal(checkout.params.get('client_reference_id'),uid);
+  assert.equal(checkout.params.get('line_items[0][price_data][unit_amount]'),'1234');
+  assert.equal(checkout.params.get('metadata[dpi_checkout_kind]'),'credit_topup');
+  assert.equal(checkout.params.get('metadata[dpi_topup_request_id]'),requestId);
+  assert.equal(checkout.params.get('metadata[dpi_legal_consent_version]'),'2026-11-13');
+  assert.equal(checkout.params.get('payment_method_types'),null);
+ }finally{globalThis.fetch=originalFetch;}
+});
+
+test('チャージ完了Webhookはクレジットを1度だけ付与して有効期限ロットを保存する',async()=>{
+ const uid='637850681666961408',secret='whsec_example',timestamp=Math.floor(Date.now()/1000),executed=[],events=new Set();
+ const event={id:'evt_credit_topup',livemode:false,type:'checkout.session.completed',data:{object:{id:'cs_credit_paid',mode:'payment',status:'complete',payment_status:'paid',customer:'cus_credit',payment_intent:'pi_credit',client_reference_id:uid,amount_total:1000,currency:'jpy',created:timestamp,metadata:{dpi_checkout_kind:'credit_topup',dpi_user:uid,dpi_credit_amount:'1000',dpi_topup_request_id:'6fb5b84e-03f7-44c0-bf04-4ee3ad22db20'}}}};
+ const raw=JSON.stringify(event),signature=createHmac('sha256',secret).update(`${timestamp}.${raw}`).digest('hex');
+ const env={SUPPORTER_BILLING_MODE:'test',STRIPE_SECRET_KEY:'rk_test_example',STRIPE_WEBHOOK_SECRET:secret,STRIPE_PRICE_SUPPORTER:'price_basic',STRIPE_PRICE_PLUS:'price_plus',STRIPE_PRICE_PRO:'price_pro',STRIPE_PRICE_ADDON:'price_addon',STRIPE_PORTAL_CONFIG:'bpc_x'};
+ const db={prepare(sql){let values=[];const statement={sql,values,bind(...input){values=input;this.values=input;return this;},async first(){
+  if(sql.includes('supporter_stripe_events'))return events.has(values[0])?{id:values[0]}:null;
+  if(sql.includes('SELECT customer_id FROM supporter_billing'))return{customer_id:'cus_credit'};
+  return null;
+ },async run(){executed.push({sql,values});if(sql.includes('INSERT INTO supporter_stripe_events'))events.add(values[0]);return{meta:{changes:1}};}};return statement;},async batch(statements){for(const statement of statements)await statement.run();return statements.map(()=>({meta:{changes:1}}));}};
+ let balanceCalls=0;const originalFetch=globalThis.fetch;
+ globalThis.fetch=async(url)=>{if(new URL(url).pathname.includes('/balance_transactions'))balanceCalls+=1;return new Response(JSON.stringify({livemode:false,id:'cbtxn_credit',ending_balance:-1000}),{status:200,headers:{'content-type':'application/json'}});};
+ try{
+  for(let i=0;i<2;i+=1){const request=new Request('https://dpi-bot.com/api/supporter/billing/webhook',{method:'POST',headers:{'stripe-signature':`t=${timestamp},v1=${signature}`},body:raw});assert.equal((await billingWebhook(request,{...env,REUSE_DB:db})).status,200);}
+  assert.equal(balanceCalls,1);
+  assert.ok(executed.some(item=>item.sql.includes('INSERT INTO supporter_credit_lots')));
+  assert.ok(executed.some(item=>item.sql.includes('INSERT INTO supporter_credit_events')));
+  const topup=executed.find(item=>item.sql.includes('INSERT INTO supporter_credit_topups'));
+  assert.equal(topup.values[6],1000);assert.equal(topup.values[8],creditExpiresAt(timestamp));
+ }finally{globalThis.fetch=originalFetch;}
+});
 test('credits pay the immediate plan difference first and the next option invoice second',()=>{
  assert.deepEqual(creditApplication(1000,600,1480),{available:1000,immediateCreditApplied:600,nextInvoiceCreditApplied:400,totalCreditApplied:1000,immediateDue:0,nextInvoiceDue:1080,remainingAfterNext:0});
  assert.deepEqual(creditApplication(400,0,500),{available:400,immediateCreditApplied:0,nextInvoiceCreditApplied:400,totalCreditApplied:400,immediateDue:0,nextInvoiceDue:100,remainingAfterNext:0});
@@ -312,19 +372,23 @@ test('supporter UI avoids WebKit URL constructor errors for Stripe redirects',as
 });
 
 test('paid plan configuration contains test catalog IDs and consent storage',async()=>{
- const [configText,migration,terms,policy,specified,billingSource]=await Promise.all([
+ const [configText,migration,creditMigration,terms,policy,specified,billingSource,uiSource]=await Promise.all([
   readFile(new URL('../wrangler.jsonc',import.meta.url),'utf8'),
   readFile(new URL('../migrations/0015_supporter_legal_consent.sql',import.meta.url),'utf8'),
+  readFile(new URL('../migrations/0019_supporter_credit_topups.sql',import.meta.url),'utf8'),
   readFile(new URL('../terms/terms.md',import.meta.url),'utf8'),
   readFile(new URL('../terms/policy.md',import.meta.url),'utf8'),
   readFile(new URL('../terms/spec.md',import.meta.url),'utf8'),
   readFile(new URL('../worker/supporter-billing.js',import.meta.url),'utf8'),
+  readFile(new URL('../site/supporter/app.js',import.meta.url),'utf8'),
  ]);
  const config=JSON.parse(configText);
  assert.equal(config.vars.SUPPORTER_BILLING_MODE,'test');
  for(const key of ['STRIPE_PRICE_SUPPORTER','STRIPE_PRICE_PLUS','STRIPE_PRICE_PRO','STRIPE_PRICE_ADDON','STRIPE_PORTAL_CONFIG','SUPPORTER_CONSENT_VERSION'])assert.ok(config.vars[key]);
  assert.match(migration,/legal_consent_version/);assert.match(migration,/legal_consent_at/);
+ assert.match(creditMigration,/supporter_credit_topups/);assert.match(creditMigration,/supporter_credit_lots/);assert.match(creditMigration,/expires_at/);
  assert.match(billingSource,/dpi_legal_consent_version/);
+ assert.match(billingSource,/dpi_checkout_kind.*credit_topup/);assert.match(uiSource,/Stripeでクレジットをチャージ/);assert.match(uiSource,/購入日から1年間/);
  assert.match(terms,/第 10 条（有料通知プラン）/);assert.match(terms,/故意または重大な過失/);
  assert.match(policy,/Stripe/);assert.match(policy,/安全管理措置/);
  for(const text of ['販売価格','支払時期・請求日','契約期間・自動更新','解約方法・条件','キャンセル・返金'])assert.match(specified,new RegExp(text));
