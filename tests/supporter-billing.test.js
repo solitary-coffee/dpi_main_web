@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHmac} from 'node:crypto';
 import {billingAction,billingWebhook,selection,billingReady,billingSchedule,creditApplication,creditExpiresAt,creditsFromBalance,customerInvoices,dunningSchedule,normalizeCreditTopupAmount,paidCheckoutSubscriptionParams,provisionPaidCheckoutSubscription,prorationBreakdown,reconcilePaidCheckoutSubscription,reconcileStoredRulesForCustomer,scheduledChangeSummary,staleCheckoutAttempt,subscriptionSummary,verifySignature} from '../worker/supporter-billing.js';
-import {supporterAdminAccount,supporterAdminDetails} from '../worker/supporter.js';
+import {supporterAdminAccount,supporterAdminDetails,supporterCreditMetrics} from '../worker/supporter.js';
 import {readFile} from 'node:fs/promises';
 test('plan, channel and server add-ons are server controlled',()=>{
  assert.deepEqual(selection({plan:'supporter',channelPacks:2,serverPacks:1}),{plan:'supporter',packs:2,channelPacks:2,serverPacks:1,baseMonthly:300,monthly:900,channels:8,servers:2,rules:5,complexConditions:false,multiDestination:false});
@@ -178,7 +178,32 @@ test('admin billing operations require confirmation, reason, same-origin and aud
  assert.match(script,/openDetails/);
  assert.match(html,/id="detail-dialog"/);
  assert.match(worker,/supporterAdminDetails/);
+ assert.match(worker,/recordAdminCreditLot/);
+ assert.match(worker,/source_type IN \('admin','purchase'\)/);
+ assert.match(html,/credit-legal-monitor/);
+ assert.match(script,/総合クレジット数/);
+ assert.match(script,/クレジット利用者数/);
+ assert.match(script,/届出基準/);
  assert.doesNotMatch(script,/\.innerHTML\s*=/);
+});
+test('管理者クレジット集計はStripe総残高と有償ロットを分離して1000万円基準を返す',async()=>{
+ const now=Math.floor(Date.now()/1000);
+ const lots=[{id:'lot1',discord_user_id:'100',source_type:'purchase',remaining_amount:800,expires_at:now+90*86400},{id:'lot2',discord_user_id:'200',source_type:'purchase',remaining_amount:500,expires_at:now+10*86400}];
+ const db={prepare(sql){let values=[];return{bind(...input){values=input;return this;},async all(){return{results:lots.map(lot=>({...lot}))};},async run(){
+  if(sql.startsWith('UPDATE supporter_credit_lots')){const lot=lots.find(item=>item.id===values[3]);if(lot&&lot.remaining_amount===values[4]){lot.remaining_amount=values[0];lot.status=values[1];return{meta:{changes:1}};}}
+  return{meta:{changes:0}};
+ },async first(){
+  if(sql.includes('SUM(remaining_amount)')){const active=lots.filter(lot=>lot.status!=='consumed'&&lot.remaining_amount>0);return{balance:active.reduce((sum,lot)=>sum+lot.remaining_amount,0),users:new Set(active.map(lot=>lot.discord_user_id)).size,next_expiry:Math.min(...active.map(lot=>lot.expires_at)),expiring_30d:active.filter(lot=>lot.expires_at<=now+30*86400).reduce((sum,lot)=>sum+lot.remaining_amount,0)};}
+  if(sql.includes('SUM(amount-refunded_amount)'))return{net_purchased:1500,purchasers:2};
+  if(sql.includes("reason='credit_expired'"))return{expired:100};
+  return null;
+ }};}};
+ const rows=[{discord_user_id:'100',customer_id:'cus_1'},{discord_user_id:'200',customer_id:'cus_2'},{discord_user_id:'300',customer_id:'cus_3'}];
+ const result=await supporterCreditMetrics(db,rows,new Map([['cus_1',1000],['cus_2',200],['cus_3',0]]),true);
+ assert.equal(result.totalCredits,1200);assert.equal(result.creditUsers,2);
+ assert.equal(result.purchasedBalance,1000);assert.equal(result.otherCredits,200);assert.equal(result.purchasedUsers,2);
+ assert.equal(result.netPurchased,1500);assert.equal(result.purchasers,2);assert.equal(result.expiredCredits,100);assert.equal(result.expiring30Days,200);
+ assert.equal(result.legalThreshold,10_000_000);assert.equal(result.legalUsageRate,0.0001);
 });
 test('Stripe customer balance converts to non-negative yen credits',()=>{
  assert.equal(creditsFromBalance(-500),500);
@@ -390,6 +415,8 @@ test('paid plan configuration contains test catalog IDs and consent storage',asy
  assert.match(billingSource,/dpi_legal_consent_version/);
  assert.match(billingSource,/dpi_checkout_kind.*credit_topup/);assert.match(uiSource,/Stripeでクレジットをチャージ/);assert.match(uiSource,/購入日から1年間/);
  assert.match(terms,/第 10 条（有料通知プラン）/);assert.match(terms,/故意または重大な過失/);
+ assert.match(terms,/利用者の都合による取消し、払戻しまたは現金への交換には原則として応じません/);
+ assert.match(specified,/購入済みクレジットの払戻し.*原則として応じません/);
  assert.match(policy,/Stripe/);assert.match(policy,/安全管理措置/);
  for(const text of ['販売価格','支払時期・請求日','契約期間・自動更新','解約方法・条件','キャンセル・返金'])assert.match(specified,new RegExp(text));
 });
