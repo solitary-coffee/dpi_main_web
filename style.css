@@ -391,3 +391,73 @@ h3 {
 .warning-box a:visited {
   color: #8ec9ff;
 }
+
+
+/* Top-page survey invitation; entirely independent of weather delivery. */
+.survey-callout {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 24px;
+    padding: 22px 26px;
+    margin: 0 0 30px;
+    background-color: #273d4c;
+    border: 1px solid #4f91b5;
+    border-left: 5px solid #5eb6df;
+    border-radius: 10px;
+}
+.survey-callout-copy {
+    flex: 1;
+    min-width: 0;
+}
+.survey-callout-label {
+    margin: 0 0 8px;
+    color: #bce7ff;
+    font-size: .9rem;
+    font-weight: 700;
+}
+.survey-callout h2 {
+    margin: 0 0 8px;
+    padding: 0;
+    border: 0;
+    color: #fff;
+    text-align: left;
+    font-size: 1.2rem;
+    line-height: 1.5;
+}
+.survey-callout-copy > p:last-child {
+    margin: 0;
+    color: #eff8ff;
+    line-height: 1.65;
+}
+.main-content .survey-callout-action,
+.main-content .survey-callout-action:visited {
+    display: inline-block;
+    flex-shrink: 0;
+    padding: 12px 18px;
+    background-color: #e7f6ff;
+    border-radius: 7px;
+    color: #153a51;
+    font-weight: bold;
+    text-align: center;
+    text-decoration: none;
+}
+.main-content .survey-callout-action:hover,
+.main-content .survey-callout-action:focus-visible {
+    background-color: #fff;
+    color: #153a51;
+    text-decoration: underline;
+}
+@media (max-width: 768px) {
+    .survey-callout {
+        align-items: stretch;
+        flex-direction: column;
+        gap: 16px;
+        padding: 18px;
+    }
+    .main-content .survey-callout-action {
+        display: block;
+        width: 100%;
+        box-sizing: border-box;
+    }
+}
