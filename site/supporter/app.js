@@ -274,6 +274,7 @@ async function load() {
  options = await api('/api/supporter/options');
  const {account,billingEnabled} = await api('/api/supporter/account');
  billingAvailable=billingEnabled===true;
+ topupButton.disabled=!billingAvailable;
  $('billing-email').value = account?.billing_email || '';
  updateCheckoutAvailability();
  if(!billingAvailable)billingActionStatus.textContent='Stripeテスト決済の秘密設定が未登録です。現在は申し込みできません。';
@@ -295,8 +296,10 @@ async function load() {
      const removed=Number(billingState.rulesAdjustment.removedRules||0),destinations=Number(billingState.rulesAdjustment.removedDestinations||0),simplified=Number(billingState.rulesAdjustment.simplifiedRules||0);
      status(`契約上限の変更を反映しました。${removed?`下側の通知ルールを${removed}件削除しました。`:''}${destinations?`上限を超える通知先を${destinations}件解除しました。`:''}${simplified?`下位プラン向けに${simplified}件の条件を調整しました。`:''}`);
     }
-    const credits=Number(billingState.credits||0);
-    credit.textContent=`利用可能クレジット: ${credits.toLocaleString('ja-JP')}クレジット（${credits.toLocaleString('ja-JP')}円）`;
+    renderCreditDetails(billingState.creditDetails||{balance:Number(billingState.credits||0)});
+    const creditResult=new URLSearchParams(location.search).get('credit');
+    if(creditResult==='completed')status('クレジットのお支払いを受け付けました。残高へ反映されない場合は、数秒後に「最新の契約・明細を読み込む」を押してください。');
+    if(creditResult==='canceled')status('クレジットチャージをキャンセルしました。料金は発生していません。');
     if(billingState.recoveredSubscription)status('支払い済みの申込みから契約を復旧し、有料プランを有効化しました。');
    }catch{contract.textContent='契約情報を自動取得できませんでした。「最新の契約・明細を読み込む」を押してください。';setRuleAccess(false);}
   }
@@ -364,7 +367,27 @@ billing.append(title,note,application);
 const credit = document.createElement('p');
 credit.className = 'credit-balance';
 credit.textContent = '利用可能クレジット: 0クレジット（0円）';
-billing.append(credit);
+const creditPanel=document.createElement('div');creditPanel.className='credit-panel';
+const creditTitle=document.createElement('h3');creditTitle.textContent='クレジット残高・チャージ';
+const creditExpiry=document.createElement('p');creditExpiry.className='credit-expiry';creditExpiry.textContent='購入クレジットの有効期限は購入日から1年間です。';
+const topupControls=document.createElement('div');topupControls.className='credit-topup-controls';
+const topupLabel=document.createElement('label');const topupCaption=document.createElement('span');topupCaption.textContent='チャージ金額（1円＝1クレジット）';
+const topupAmount=document.createElement('input');topupAmount.type='number';topupAmount.inputMode='numeric';topupAmount.min='500';topupAmount.max='100000';topupAmount.step='1';topupAmount.value='500';topupAmount.required=true;
+topupLabel.append(topupCaption,topupAmount);
+const topupPresets=document.createElement('div');topupPresets.className='credit-preset-buttons';
+for(const amount of [500,1000,3000,5000]){const button=document.createElement('button');button.type='button';button.className='secondary-btn';button.textContent=`${amount.toLocaleString('ja-JP')}円`;button.onclick=()=>{topupAmount.value=String(amount);};topupPresets.append(button);}
+const creditConsent=document.createElement('label');creditConsent.className='credit-consent';
+const creditConsentInput=document.createElement('input');creditConsentInput.type='checkbox';creditConsentInput.required=true;
+const creditConsentText=document.createElement('span');creditConsentText.textContent='購入額と同数のクレジットが付与され、購入日から1年後に未使用分が失効することを確認しました。';
+creditConsent.append(creditConsentInput,creditConsentText);
+const topupButton=document.createElement('button');topupButton.type='button';topupButton.className='primary-btn';topupButton.textContent='Stripeでクレジットをチャージ';
+topupButton.disabled=true;
+const topupStatus=document.createElement('p');topupStatus.className='billing-action-status';topupStatus.setAttribute('role','status');topupStatus.setAttribute('aria-live','polite');
+topupControls.append(topupLabel,topupPresets,creditConsent,topupButton,topupStatus);
+const creditHistoryTitle=document.createElement('h4');creditHistoryTitle.textContent='チャージ履歴';
+const creditHistory=document.createElement('div');creditHistory.className='credit-history';creditHistory.textContent='チャージ履歴はありません。';
+creditPanel.append(creditTitle,credit,creditExpiry,topupControls,creditHistoryTitle,creditHistory);
+billing.append(creditPanel);
 const invoiceTitle=document.createElement('h3');invoiceTitle.className='invoice-title';invoiceTitle.textContent='支払い明細';
 const invoiceHistory=document.createElement('div');invoiceHistory.className='invoice-history';invoiceHistory.textContent='契約後に請求明細を確認できます。';
 billing.append(invoiceTitle,invoiceHistory);
@@ -392,9 +415,43 @@ for(const [label,href] of [['利用規約','/terms/terms.html'],['プライバ�
 legalConsentLabel.append(legalConsent,legalConsentText);application.append(legalConsentLabel);
 legalConsent.addEventListener('change',updateCheckoutAvailability);
 
+topupButton.onclick=async()=>{
+ topupStatus.textContent='';
+ if(!billingAvailable){topupStatus.textContent='現在はStripeチャージを利用できません。';return;}
+ if(!billingEmail.reportValidity()||!creditConsentInput.reportValidity())return;
+ const amount=Number(topupAmount.value);
+ if(!Number.isInteger(amount)||amount<500||amount>100000){topupStatus.textContent='チャージ金額は500〜100,000円で入力してください。';topupAmount.focus();return;}
+ topupButton.disabled=true;const original=topupButton.textContent;topupButton.textContent='専用支払いリンクを作成中…';
+ try{
+  const result=await api('/api/supporter/billing/topup','POST',{amount,email:billingEmail.value,legalConsent:true,requestId:crypto.randomUUID()});
+  location.href=stripeDestination(result.url);
+ }catch(error){topupStatus.textContent=error.message;status(error.message);}
+ finally{topupButton.disabled=false;topupButton.textContent=original;}
+};
+
 const dateText = seconds => seconds ? new Intl.DateTimeFormat('ja-JP',{dateStyle:'medium',timeStyle:'short',timeZone:'Asia/Tokyo'}).format(new Date(seconds * 1000)) : '—';
 const moneyText = (amount,currency) => new Intl.NumberFormat('ja-JP',{style:'currency',currency:(currency || 'jpy').toUpperCase(),maximumFractionDigits:0}).format(amount || 0);
 const STATUS_LABELS = {active:'有効',trialing:'有効（次回請求待ち）',past_due:'支払い遅延',unpaid:'未払い',paused:'一時停止',incomplete:'手続き未完了',paid:'支払い済み',open:'支払い待ち',draft:'作成中',void:'無効'};
+const TOPUP_STATUS_LABELS={pending:'決済待ち',credited:'付与済み',failed:'未完了',expired:'失効済み',refunded:'返金済み',disputed:'異議申立て'};
+
+function renderCreditDetails(details={}){
+ const balance=Number(details.balance||0),purchased=Number(details.purchasedBalance||0);
+ credit.textContent=`利用可能クレジット: ${balance.toLocaleString('ja-JP')}クレジット（${balance.toLocaleString('ja-JP')}円）`;
+ creditExpiry.textContent=details.nextExpiry
+  ?`購入クレジット残高 ${purchased.toLocaleString('ja-JP')}ポイント／最も近い有効期限: ${dateText(details.nextExpiry)}`
+  :'購入クレジットの有効期限は購入日から1年間です。';
+ creditHistory.replaceChildren();
+ const rows=Array.isArray(details.topups)?details.topups:[];
+ if(!rows.length){creditHistory.textContent='チャージ履歴はありません。';return;}
+ for(const item of rows){
+  const card=document.createElement('article');card.className='credit-history-card';
+  const heading=document.createElement('strong');heading.textContent=`${Number(item.amount||0).toLocaleString('ja-JP')}ポイント・${TOPUP_STATUS_LABELS[item.status]||item.status}`;
+  const dates=document.createElement('p');dates.textContent=item.status==='credited'
+   ?`購入: ${dateText(item.purchasedAt)}／有効期限: ${dateText(item.expiresAt)}`
+   :`作成: ${dateText(item.createdAt)}`;
+  card.append(heading,dates);creditHistory.append(card);
+ }
+}
 
 function stripeDestination(value) {
  const link = document.createElement('a');
@@ -537,7 +594,7 @@ $('billing-preview-confirm').onclick=run(async()=>{
   const result=await api('/api/supporter/billing/update','POST',{...pendingUpdate.requested,prorationDate:pendingUpdate.prorationDate,expectedCreditApplied:pendingUpdate.expectedCreditApplied,useCredits:pendingUpdate.useCredits,requestId:crypto.randomUUID()});
   pendingUpdate=null;previewDialog.close();
   const state=await api('/api/supporter/billing/status');renderContracts(state.subscriptions||[],state.dunning);renderInvoices(state.invoices||[]);
-  const credits=Number(state.credits||result.credits||0);credit.textContent=`利用可能クレジット: ${credits.toLocaleString('ja-JP')}クレジット（${credits.toLocaleString('ja-JP')}円）`;status(result.message||'契約情報を更新しました。');
+  renderCreditDetails(state.creditDetails||{balance:Number(state.credits||result.credits||0)});status(result.message||'契約情報を更新しました。');
  } finally {button.disabled=false;}
 });
 
@@ -581,8 +638,7 @@ for (const [label,action] of [['このプランで申し込む','checkout'],['�
     location.href = stripeDestination(result.url);
    } else {
     renderContracts(result.subscriptions||[],result.dunning);renderInvoices(result.invoices||[]);
-    const credits=Number(result.credits||0);
-    credit.textContent=`利用可能クレジット: ${credits.toLocaleString('ja-JP')}クレジット（${credits.toLocaleString('ja-JP')}円）`;
+    renderCreditDetails(result.creditDetails||{balance:Number(result.credits||0)});
     status(result.message||'契約情報を更新しました。');
    }
   } catch(error) {
