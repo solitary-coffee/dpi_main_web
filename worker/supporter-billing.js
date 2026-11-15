@@ -203,6 +203,7 @@ function billingMailContent(kind,invoice,retryAt,suspendAt){
   final_failed:['【DPI-Bot】月末再決済失敗・利用停止のお知らせ',[`月末の再決済を完了できませんでした。`,`利用停止日時: ${date(suspendAt)}`,`請求額: ${amount}`,`請求書: ${number}`,'翌月以降、有料プランの通知設定は支払い完了まで利用停止となります。']],
   credit_topup_succeeded:['【DPI-Bot】クレジットチャージ完了のお知らせ',[`クレジットチャージが完了しました。`,`購入額: ${amount}`,`付与クレジット: ${Number(invoice.amount_paid||0).toLocaleString('ja-JP')}クレジット`,`有効期限: ${date(invoice.expires_at)}`,'購入クレジットは、有料プラン・プラン変更・追加オプションの支払いに利用できます。']],
   credit_topup_failed:['【DPI-Bot】クレジットチャージ失敗のお知らせ',[`クレジットチャージを完了できませんでした。`,`決済予定額: ${amount}`,'クレジットは付与されていません。支払方法を確認し、必要な場合は改めてチャージしてください。']],
+  credit_plan_payment_succeeded:['【DPI-Bot】クレジット払いによるプラン申込み完了のお知らせ',[`チャージ済みクレジットによる有料プランのお申込みが完了しました。`,`使用クレジット: ${Number(invoice.amount_paid||0).toLocaleString('ja-JP')}クレジット`,`次回更新日: ${date(invoice.next_renewal_at)}`,'今回の申込みではカード情報を入力していません。次回請求時にクレジットが不足する場合は、契約管理画面から支払方法を登録してください。']],
   credit_expired:['【DPI-Bot】クレジット有効期限切れのお知らせ',[`購入クレジットの有効期限が終了しました。`,`失効クレジット: ${Number(invoice.amount_due||0).toLocaleString('ja-JP')}クレジット`,`失効日時: ${date(invoice.expires_at)}`,'有効期限を過ぎた未使用分は利用規約に基づき失効し、原則として払戻しまたは再発行を行いません。']],
  };
  const [subject,lines]=definitions[kind];if(url)lines.push(`請求書・支払方法の確認: ${url}`);
@@ -311,6 +312,17 @@ export function paidCheckoutSubscriptionParams(env,session,paymentIntent,now=Mat
  if(optionPacks){params['items[1][price]']=env.STRIPE_PRICE_ADDON;params['items[1][quantity]']=String(optionPacks);}
  return params;
 }
+export function creditSignupSubscriptionParams(env,customer,uid,choice,schedule,legalConsentVersion,requestId){
+ const params={customer,collection_method:'charge_automatically',billing_cycle_anchor:String(schedule.anchor),proration_behavior:'none',payment_behavior:'error_if_incomplete','billing_mode[type]':'flexible',
+  'items[0][price]':planPrice(env,choice.plan),'items[0][quantity]':'1',
+  'metadata[dpi_user]':String(uid),'metadata[dpi_plan]':choice.plan,
+  'metadata[dpi_legal_consent_version]':String(legalConsentVersion),
+  'metadata[dpi_channel_packs]':String(choice.channelPacks),'metadata[dpi_server_packs]':String(choice.serverPacks),
+  'metadata[dpi_initial_payment_method]':'credit_balance','metadata[dpi_credit_signup_request_id]':String(requestId)};
+ const optionPacks=choice.channelPacks+choice.serverPacks;
+ if(optionPacks){params['items[1][price]']=env.STRIPE_PRICE_ADDON;params['items[1][quantity]']=String(optionPacks);}
+ return params;
+}
 export async function provisionPaidCheckoutSubscription(env,session){
  const metadata=checkoutMetadata(session);
  if(session?.mode!=='payment'||metadata.dpi_checkout_kind!=='initial_subscription'||session.payment_status!=='paid')return null;
@@ -338,6 +350,93 @@ export async function reconcilePaidCheckoutSubscription(env,customer,uid){
  if(!session)return {subscription:null,recovered:false,checkoutId:null};
  const subscription=await provisionPaidCheckoutSubscription(env,session);
  return {subscription,recovered:!!subscription,checkoutId:session.id};
+}
+function sameCreditSignup(attempt,customer,choice,legalConsentVersion){
+ return attempt?.customer_id===customer&&attempt?.plan_id===choice.plan&&Number(attempt?.channel_packs)===choice.channelPacks&&Number(attempt?.server_packs)===choice.serverPacks&&Number(attempt?.amount)>0&&Number(attempt?.billing_anchor)>0&&attempt?.legal_consent_version===legalConsentVersion;
+}
+function creditSignupSubscription(list,requestId){
+ return (list||[]).find(subscription=>String(subscription?.metadata?.dpi_credit_signup_request_id||'')===String(requestId));
+}
+async function completeCreditSignup(db,attempt,subscription,transaction,amount,balanceAfter,now){
+ const statements=[db.prepare(`UPDATE supporter_credit_signups SET balance_transaction_id=COALESCE(balance_transaction_id,?),subscription_id=?,status='provisioned',updated_at=? WHERE request_id=?`).bind(transaction?.id||null,subscription.id,now,attempt.request_id)];
+ if(transaction?.id)statements.push(db.prepare(`INSERT INTO supporter_credit_events
+  (id,discord_user_id,credit_delta,balance_after,stripe_transaction_id,reason,actor,created_at)
+  VALUES(?,?,?,?,?,'initial_plan_payment','user',?) ON CONFLICT DO NOTHING`).bind(`credit-signup:${attempt.request_id}`,attempt.discord_user_id,-amount,balanceAfter,transaction.id,new Date(now*1000).toISOString()));
+ await db.batch(statements);
+}
+export async function provisionCreditFundedSignup(env,db,uid,customer,choice,input={}){
+ const requestedId=clean(input.requestId),legalConsentVersion=clean(input.legalConsentVersion);
+ if(!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestedId))fail('申込み情報が正しくありません。再読み込みしてください。',400);
+ if(!legalConsentVersion)fail('申込み同意を確認できません。画面を再読み込みしてください。',400);
+ let schedule=billingSchedule(),amount=choice.monthly*schedule.initialMonths;const now=Math.floor(Date.now()/1000);
+ let attempt=await db.prepare('SELECT * FROM supporter_credit_signups WHERE request_id=?').bind(requestedId).first();
+ if(attempt&&!sameCreditSignup(attempt,customer,choice,legalConsentVersion))fail('別の条件でクレジット申込みを処理済みです。',409);
+ if(attempt){amount=Number(attempt.amount);schedule={...schedule,anchor:Number(attempt.billing_anchor),initialMonths:Math.max(1,Math.round(amount/choice.monthly)),lateMonth:amount>choice.monthly};}
+ if(attempt?.status==='provisioned'){
+  const list=await subscriptions(env,customer),subscription=creditSignupSubscription(list,attempt.request_id)||list.find(item=>item.id===attempt.subscription_id);
+  if(subscription)return {subscription,amount,balanceAfter:await customerCredits(env,customer),requestId:attempt.request_id,recovered:true};
+ }
+ if(['failed','refunded'].includes(attempt?.status))fail('前回のクレジット申込みは完了しませんでした。残高を確認して、もう一度お申し込みください。',409);
+ if(!attempt){
+  const active=await db.prepare(`SELECT * FROM supporter_credit_signups WHERE discord_user_id=? AND status IN ('pending','debited') ORDER BY created_at DESC LIMIT 1`).bind(uid).first();
+  if(active){
+   if(!sameCreditSignup(active,customer,choice,legalConsentVersion))fail('別のクレジット申込みを処理中です。少し待って契約情報を再読み込みしてください。',409);
+   attempt=active;amount=Number(active.amount);schedule={...schedule,anchor:Number(active.billing_anchor),initialMonths:Math.max(1,Math.round(amount/choice.monthly)),lateMonth:amount>choice.monthly};
+  }else{
+   try{
+    await db.prepare(`INSERT INTO supporter_credit_signups
+     (request_id,discord_user_id,customer_id,plan_id,channel_packs,server_packs,amount,billing_anchor,legal_consent_version,status,created_at,updated_at)
+     VALUES(?,?,?,?,?,?,?,?,?,'pending',?,?)`).bind(requestedId,uid,customer,choice.plan,choice.channelPacks,choice.serverPacks,amount,schedule.anchor,legalConsentVersion,now,now).run();
+    attempt=await db.prepare('SELECT * FROM supporter_credit_signups WHERE request_id=?').bind(requestedId).first();
+   }catch(error){
+    attempt=await db.prepare(`SELECT * FROM supporter_credit_signups WHERE discord_user_id=? AND status IN ('pending','debited') ORDER BY created_at DESC LIMIT 1`).bind(uid).first();
+    if(!attempt||!sameCreditSignup(attempt,customer,choice,legalConsentVersion))throw error;
+    amount=Number(attempt.amount);schedule={...schedule,anchor:Number(attempt.billing_anchor),initialMonths:Math.max(1,Math.round(amount/choice.monthly)),lateMonth:amount>choice.monthly};
+   }
+  }
+ }
+ const before=await subscriptions(env,customer),recoveredBefore=creditSignupSubscription(before,attempt.request_id);
+ if(recoveredBefore){
+  const balanceAfter=await customerCredits(env,customer);
+  await completeCreditSignup(db,attempt,recoveredBefore,attempt.balance_transaction_id?{id:attempt.balance_transaction_id}:null,amount,balanceAfter,now);
+  return {subscription:recoveredBefore,amount,balanceAfter,requestId:attempt.request_id,recovered:true};
+ }
+ if(before.length){await db.prepare(`UPDATE supporter_credit_signups SET status='failed',updated_at=? WHERE request_id=? AND status='pending'`).bind(now,attempt.request_id).run();fail('契約が存在します。「プラン・オプションを更新」をご利用ください。',409);}
+ const credits=await customerCredits(env,customer);
+ if(credits<amount){await db.prepare(`UPDATE supporter_credit_signups SET status='failed',updated_at=? WHERE request_id=? AND status='pending'`).bind(now,attempt.request_id).run();fail(`クレジット残高が不足しています。申込みには${amount.toLocaleString('ja-JP')}クレジット必要です。`,409);}
+ let transaction=null;
+ try{
+  transaction=await stripe(env,`customers/${encodeURIComponent(customer)}/balance_transactions`,{
+   amount:String(amount),currency:'jpy',description:`DPI-Bot initial plan payment: ${attempt.request_id}`,
+   'metadata[dpi_user]':uid,'metadata[dpi_credit_action]':'initial_plan_payment','metadata[dpi_credit_signup_request_id]':attempt.request_id,
+  },`dpi-credit-signup-debit-${attempt.request_id}`);
+  const balanceAfter=creditsFromBalance(transaction.ending_balance);
+  await db.prepare(`UPDATE supporter_credit_signups SET balance_transaction_id=?,status='debited',updated_at=? WHERE request_id=? AND status IN ('pending','debited')`).bind(transaction.id,now,attempt.request_id).run();
+  const params=creditSignupSubscriptionParams(env,customer,uid,choice,schedule,legalConsentVersion,attempt.request_id);
+  const subscription=await stripe(env,'subscriptions',params,`dpi-credit-signup-subscription-${attempt.request_id}`);
+  if(!['active','trialing'].includes(subscription?.status))fail('クレジット払いによる契約を有効化できませんでした。',409);
+  await completeCreditSignup(db,attempt,subscription,transaction,amount,balanceAfter,now);
+  try{await sendBillingNotification(env,db,'credit_plan_payment_succeeded',{id:`credit-signup:${attempt.request_id}`,customer,amount_paid:amount,currency:'jpy',next_renewal_at:schedule.anchor});}
+  catch(error){console.error('Credit signup email failed',{requestId:attempt.request_id,errorName:error?.name||'Error'});}
+  return {subscription,amount,balanceAfter,requestId:attempt.request_id,recovered:false};
+ }catch(error){
+  const recovered=creditSignupSubscription(await subscriptions(env,customer),attempt.request_id);
+  if(recovered){
+   const balanceAfter=await customerCredits(env,customer);
+   const recoveredTransactionId=transaction?.id||attempt.balance_transaction_id;
+   await completeCreditSignup(db,attempt,recovered,recoveredTransactionId?{id:recoveredTransactionId}:null,amount,balanceAfter,now);
+   return {subscription:recovered,amount,balanceAfter,requestId:attempt.request_id,recovered:true};
+  }
+  if(transaction){
+   const reversal=await stripe(env,`customers/${encodeURIComponent(customer)}/balance_transactions`,{
+    amount:String(-amount),currency:'jpy',description:`DPI-Bot initial plan payment reversal: ${attempt.request_id}`,
+    'metadata[dpi_user]':uid,'metadata[dpi_credit_action]':'initial_plan_payment_reversal','metadata[dpi_credit_signup_request_id]':attempt.request_id,
+   },`dpi-credit-signup-reversal-${attempt.request_id}`);
+   await db.prepare(`UPDATE supporter_credit_signups SET balance_transaction_id=?,status='refunded',updated_at=? WHERE request_id=?`).bind(transaction.id,now,attempt.request_id).run();
+   console.warn('Credit signup was reversed',{requestId:attempt.request_id,reversalId:reversal.id});
+  }else await db.prepare(`UPDATE supporter_credit_signups SET status='failed',updated_at=? WHERE request_id=? AND status='pending'`).bind(now,attempt.request_id).run();
+  throw error;
+ }
 }
 const unix = value => Number.isFinite(Number(value)) && Number(value) > 0 ? Number(value) : null;
 function optionPackSummary(metadata={},addonQuantity=0){
@@ -560,6 +659,12 @@ export async function billingAction(request,env,db,uid,input={}){
  const schedule=billingSchedule();
  const legalConsentVersion=String(input.legalConsentVersion||'');
  if(!legalConsentVersion)return json({message:'申込み同意を確認できません。画面を再読み込みしてください。'},400);
+ if(input.useCredits===true){
+  const result=await provisionCreditFundedSignup(env,db,uid,row.customer_id,choice,input);
+  const [summaries,credits]=await Promise.all([customerSubscriptionSummaries(env,row.customer_id),customerCredits(env,row.customer_id)]);
+  const creditDetails=await purchasedCreditStatus(db,uid,credits);
+  return json({message:`${result.amount.toLocaleString('ja-JP')}クレジットでお申し込みが完了しました。カード情報の入力は不要でした。`,paidWithCredits:true,creditApplied:result.amount,balanceAfter:result.balanceAfter,billingDay:26,subscriptions:summaries,credits,creditDetails,deliveryEnabled:false});
+ }
  row=await recoverStaleCheckoutAttempt(db,uid,row);
  // Persist exact parameters and key before network IO. Concurrent clicks share one session.
  const params={mode:'payment',customer:row.customer_id,client_reference_id:uid,

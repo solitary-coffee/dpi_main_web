@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHmac} from 'node:crypto';
-import {billingAction,billingWebhook,selection,billingReady,billingSchedule,creditApplication,creditExpiresAt,creditsFromBalance,customerInvoices,dunningSchedule,normalizeCreditTopupAmount,paidCheckoutSubscriptionParams,provisionPaidCheckoutSubscription,prorationBreakdown,reconcilePaidCheckoutSubscription,reconcileStoredRulesForCustomer,scheduledChangeSummary,staleCheckoutAttempt,subscriptionSummary,verifySignature} from '../worker/supporter-billing.js';
+import {billingAction,billingWebhook,selection,billingReady,billingSchedule,creditApplication,creditExpiresAt,creditSignupSubscriptionParams,creditsFromBalance,customerInvoices,dunningSchedule,normalizeCreditTopupAmount,paidCheckoutSubscriptionParams,provisionCreditFundedSignup,provisionPaidCheckoutSubscription,prorationBreakdown,reconcilePaidCheckoutSubscription,reconcileStoredRulesForCustomer,scheduledChangeSummary,staleCheckoutAttempt,subscriptionSummary,verifySignature} from '../worker/supporter-billing.js';
 import {supporterAdminAccount,supporterAdminDetails,supporterCreditMetrics} from '../worker/supporter.js';
 import {readFile} from 'node:fs/promises';
 test('plan, channel and server add-ons are server controlled',()=>{
@@ -61,6 +61,81 @@ test('paid initial Checkout creates a fixed-26th subscription without trial',()=
  assert.equal(params.customer,'cus_x');assert.equal(params.default_payment_method,'pm_x');assert.equal(params.billing_cycle_anchor,String(anchor));assert.equal(params.proration_behavior,'none');
  assert.equal(params['items[0][price]'],'price_plus');assert.equal(params['items[1][price]'],'price_addon');assert.equal(params['items[1][quantity]'],'2');
  assert.equal(params.trial_end,undefined);assert.equal(params['trial_settings[end_behavior][missing_payment_method]'],undefined);
+});
+test('credit-funded signup creates the fixed-26th subscription without card details or a trial',()=>{
+ const env={STRIPE_PRICE_SUPPORTER:'price_basic',STRIPE_PRICE_PLUS:'price_plus',STRIPE_PRICE_PRO:'price_pro',STRIPE_PRICE_ADDON:'price_addon'};
+ const choice=selection({plan:'plus',channelPacks:1,serverPacks:1}),schedule={anchor:1800000000,initialMonths:1,lateMonth:false};
+ const params=creditSignupSubscriptionParams(env,'cus_credit','637850681666961408',choice,schedule,'2026-11-15','123e4567-e89b-42d3-a456-426614174100');
+ assert.equal(params.customer,'cus_credit');assert.equal(params.billing_cycle_anchor,'1800000000');assert.equal(params.proration_behavior,'none');assert.equal(params.payment_behavior,'error_if_incomplete');
+ assert.equal(params['items[0][price]'],'price_plus');assert.equal(params['items[1][price]'],'price_addon');assert.equal(params['items[1][quantity]'],'2');
+ assert.equal(params['metadata[dpi_initial_payment_method]'],'credit_balance');assert.equal(params.default_payment_method,undefined);assert.equal(params.trial_end,undefined);assert.equal(params.payment_method_types,undefined);
+});
+
+test('sufficient charged credits can activate a plan once without opening card Checkout',async()=>{
+ const uid='637850681666961408',requestId='123e4567-e89b-42d3-a456-426614174101';
+ const env={SUPPORTER_BILLING_MODE:'test',STRIPE_SECRET_KEY:'rk_test_example',STRIPE_WEBHOOK_SECRET:'whsec_x',STRIPE_PRICE_SUPPORTER:'price_basic',STRIPE_PRICE_PLUS:'price_plus',STRIPE_PRICE_PRO:'price_pro',STRIPE_PRICE_ADDON:'price_addon',STRIPE_PORTAL_CONFIG:'bpc_x',NOTICE_EMAIL:{async send(){sent+=1;}},NOTICE_FROM_EMAIL:'notice@dpi-bot.com'};
+ let attempt=null,subscription=null,balance=-1000,noticeStatus=null,sent=0;
+ const db={prepare(sql){let values=[];const statement={sql,values,bind(...input){values=input;this.values=input;return this;},async first(){
+   if(sql.includes('FROM supporter_credit_signups WHERE request_id='))return attempt&&attempt.request_id===values[0]?{...attempt}:null;
+   if(sql.includes("FROM supporter_credit_signups WHERE discord_user_id=")&&sql.includes("status IN ('pending','debited')"))return attempt&&['pending','debited'].includes(attempt.status)?{...attempt}:null;
+   if(sql.includes('JOIN supporter_billing'))return{billing_email:'credit@example.jp'};
+   if(sql.includes('supporter_billing_notifications'))return noticeStatus?{status:noticeStatus}:null;
+   return null;
+  },async run(){
+   if(sql.includes('INSERT INTO supporter_credit_signups'))attempt={request_id:values[0],discord_user_id:values[1],customer_id:values[2],plan_id:values[3],channel_packs:values[4],server_packs:values[5],amount:values[6],billing_anchor:values[7],legal_consent_version:values[8],status:'pending'};
+   if(sql.includes("status='debited'")){attempt.balance_transaction_id=values[0];attempt.status='debited';}
+   if(sql.includes("status='provisioned'")){attempt.balance_transaction_id=attempt.balance_transaction_id||values[0];attempt.subscription_id=values[1];attempt.status='provisioned';}
+   if(sql.includes('INSERT INTO supporter_billing_notifications')&&!noticeStatus)noticeStatus='pending';
+   if(sql.includes("SET status='sending'"))noticeStatus='sending';
+   if(sql.includes("SET status='sent'"))noticeStatus='sent';
+   return{meta:{changes:1}};
+  }};return statement;},async batch(statements){for(const statement of statements)await statement.run();return statements.map(()=>({meta:{changes:1}}));}};
+ const calls=[],originalFetch=globalThis.fetch;
+ globalThis.fetch=async(url,init={})=>{const path=new URL(url).pathname,method=init.method||'GET',params=new URLSearchParams(init.body||'');calls.push({path,method,params});let data={livemode:false};
+  if(path==='/v1/subscriptions'&&method==='GET')data={livemode:false,data:subscription?[subscription]:[]};
+  else if(path==='/v1/customers/cus_credit'&&method==='GET')data={livemode:false,balance};
+  else if(path==='/v1/customers/cus_credit/balance_transactions'){balance+=Number(params.get('amount'));data={livemode:false,id:'cbtxn_signup',ending_balance:balance};}
+  else if(path==='/v1/subscriptions'&&method==='POST'){subscription={livemode:false,id:'sub_credit',status:'active',customer:'cus_credit',metadata:{dpi_credit_signup_request_id:requestId},items:{data:[]}};data=subscription;}
+  return new Response(JSON.stringify(data),{status:200,headers:{'content-type':'application/json'}});
+ };
+ try{
+  const choice=selection({plan:'supporter',channelPacks:0,serverPacks:0});
+  const first=await provisionCreditFundedSignup(env,db,uid,'cus_credit',choice,{requestId,legalConsentVersion:'2026-11-15'});
+  assert.equal(first.amount,300);assert.equal(first.balanceAfter,700);assert.equal(attempt.status,'provisioned');assert.equal(sent,1);
+  const debit=calls.find(call=>call.path.endsWith('/balance_transactions'));assert.equal(debit.params.get('amount'),'300');
+  const create=calls.find(call=>call.path==='/v1/subscriptions'&&call.method==='POST');assert.equal(create.params.get('default_payment_method'),null);assert.equal(create.params.get('trial_end'),null);
+  assert.equal(calls.some(call=>call.path==='/v1/checkout/sessions'),false);
+  const debitCount=calls.filter(call=>call.path.endsWith('/balance_transactions')).length;
+  const second=await provisionCreditFundedSignup(env,db,uid,'cus_credit',choice,{requestId,legalConsentVersion:'2026-11-15'});
+  assert.equal(second.recovered,true);assert.equal(calls.filter(call=>call.path.endsWith('/balance_transactions')).length,debitCount);
+ }finally{globalThis.fetch=originalFetch;}
+});
+
+test('credit-funded signup rejects insufficient balance before consuming credits',async()=>{
+ const uid='637850681666961408',requestId='123e4567-e89b-42d3-a456-426614174102';let attempt=null;
+ const env={SUPPORTER_BILLING_MODE:'test',STRIPE_SECRET_KEY:'rk_test_example',STRIPE_WEBHOOK_SECRET:'whsec_x',STRIPE_PRICE_SUPPORTER:'price_basic',STRIPE_PRICE_PLUS:'price_plus',STRIPE_PRICE_PRO:'price_pro',STRIPE_PRICE_ADDON:'price_addon',STRIPE_PORTAL_CONFIG:'bpc_x'};
+ const db={prepare(sql){let values=[];return{bind(...input){values=input;return this;},async first(){if(sql.includes('request_id='))return attempt;if(sql.includes("status IN ('pending','debited')"))return null;return null;},async run(){if(sql.includes('INSERT INTO supporter_credit_signups'))attempt={request_id:values[0],discord_user_id:values[1],customer_id:values[2],plan_id:values[3],channel_packs:values[4],server_packs:values[5],amount:values[6],billing_anchor:values[7],legal_consent_version:values[8],status:'pending'};if(sql.includes("status='failed'"))attempt.status='failed';return{meta:{changes:1}};}};}};
+ const calls=[],originalFetch=globalThis.fetch;globalThis.fetch=async(url,init={})=>{const path=new URL(url).pathname;calls.push(path);const data=path==='/v1/subscriptions'?{livemode:false,data:[]}:{livemode:false,balance:-100};return new Response(JSON.stringify(data),{status:200,headers:{'content-type':'application/json'}});};
+ try{
+  await assert.rejects(()=>provisionCreditFundedSignup(env,db,uid,'cus_credit',selection({plan:'supporter',channelPacks:0,serverPacks:0}),{requestId,legalConsentVersion:'2026-11-15'}),error=>error.status===409&&/不足/.test(error.message));
+  assert.equal(attempt.status,'failed');assert.equal(calls.some(path=>path.endsWith('/balance_transactions')),false);
+ }finally{globalThis.fetch=originalFetch;}
+});
+test('credit-funded signup restores the consumed balance when subscription creation fails',async()=>{
+ const uid='637850681666961408',requestId='123e4567-e89b-42d3-a456-426614174103';let attempt=null,balance=-1000;
+ const env={SUPPORTER_BILLING_MODE:'test',STRIPE_SECRET_KEY:'rk_test_example',STRIPE_WEBHOOK_SECRET:'whsec_x',STRIPE_PRICE_SUPPORTER:'price_basic',STRIPE_PRICE_PLUS:'price_plus',STRIPE_PRICE_PRO:'price_pro',STRIPE_PRICE_ADDON:'price_addon',STRIPE_PORTAL_CONFIG:'bpc_x'};
+ const db={prepare(sql){let values=[];return{bind(...input){values=input;return this;},async first(){if(sql.includes('request_id='))return attempt;if(sql.includes("status IN ('pending','debited')"))return attempt&&['pending','debited'].includes(attempt.status)?attempt:null;return null;},async run(){if(sql.includes('INSERT INTO supporter_credit_signups'))attempt={request_id:values[0],discord_user_id:values[1],customer_id:values[2],plan_id:values[3],channel_packs:values[4],server_packs:values[5],amount:values[6],billing_anchor:values[7],legal_consent_version:values[8],status:'pending'};if(sql.includes("status='debited'")){attempt.balance_transaction_id=values[0];attempt.status='debited';}if(sql.includes("status='refunded'"))attempt.status='refunded';return{meta:{changes:1}};}};}};
+ const balanceAmounts=[],originalFetch=globalThis.fetch;globalThis.fetch=async(url,init={})=>{const path=new URL(url).pathname,method=init.method||'GET',params=new URLSearchParams(init.body||'');let data={livemode:false};let status=200;
+  if(path==='/v1/subscriptions'&&method==='GET')data={livemode:false,data:[]};
+  else if(path==='/v1/subscriptions'&&method==='POST'){status=500;data={error:{message:'temporary failure'}};}
+  else if(path==='/v1/customers/cus_credit'&&method==='GET')data={livemode:false,balance};
+  else if(path.endsWith('/balance_transactions')){const amount=Number(params.get('amount'));balanceAmounts.push(amount);balance+=amount;data={livemode:false,id:amount>0?'cbtxn_debit':'cbtxn_reversal',ending_balance:balance};}
+  return new Response(JSON.stringify(data),{status,headers:{'content-type':'application/json'}});
+ };
+ try{
+  await assert.rejects(()=>provisionCreditFundedSignup(env,db,uid,'cus_credit',selection({plan:'supporter',channelPacks:0,serverPacks:0}),{requestId,legalConsentVersion:'2026-11-15'}),error=>error.status===502);
+  assert.deepEqual(balanceAmounts,[300,-300]);assert.equal(balance,-1000);assert.equal(attempt.status,'refunded');
+ }finally{globalThis.fetch=originalFetch;}
 });
 test('paid Checkout provisioning is idempotent and uses the saved payment method',async()=>{
  const env={SUPPORTER_BILLING_MODE:'test',STRIPE_SECRET_KEY:'rk_test_example',STRIPE_WEBHOOK_SECRET:'whsec_x',STRIPE_PRICE_SUPPORTER:'price_basic',STRIPE_PRICE_PLUS:'price_plus',STRIPE_PRICE_PRO:'price_pro',STRIPE_PRICE_ADDON:'price_addon',STRIPE_PORTAL_CONFIG:'bpc_x'};
@@ -138,11 +213,12 @@ test('admin rule details expose subscriber, server, channel names and readable c
  assert.deepEqual(account.rules[0].details.map(item=>item.value),['緊急地震速報','緊急地震速報（警報）','関東甲信地方','いずれかを満たす（OR）','震度5弱以上','上昇時のみ','対象警報地方のみ','マグニチュード：M6.5以上']);
 });
 test('paid plans stay separate from secondary-use applications and private in navigation',async()=>{
- const [reuseHtml,reuseScript,basicHtml,billingSource]=await Promise.all([
+ const [reuseHtml,reuseScript,basicHtml,billingSource,billingUi]=await Promise.all([
   readFile(new URL('../site/reuse/index.html',import.meta.url),'utf8'),
   readFile(new URL('../site/reuse/script.js',import.meta.url),'utf8'),
   readFile(new URL('../site/supporter/index.html',import.meta.url),'utf8'),
   readFile(new URL('../worker/supporter-billing.js',import.meta.url),'utf8'),
+  readFile(new URL('../site/supporter/app.js',import.meta.url),'utf8'),
  ]);
  assert.doesNotMatch(reuseHtml,/basic-dashboard-card|BASIC/);
  assert.doesNotMatch(reuseScript,/api\/supporter/);
@@ -160,6 +236,11 @@ test('paid plans stay separate from secondary-use applications and private in na
  assert.match(basicHtml,/追加オプションの変更には日割り計算を適用しません/);
  assert.match(basicHtml,/通知設定は有料プランの契約後/);
  assert.doesNotMatch(basicHtml,/通知ルールの下書き/);
+ assert.match(billingUi,/共通の請求・チャージ用メールアドレス/);
+ assert.match(billingUi,/以前どちらかで登録したアドレスは自動入力/);
+ assert.match(billingUi,/有料プランを申し込む前でもチャージできます/);
+ assert.match(billingUi,/クレジットで全額支払う（カード情報の入力不要/);
+ assert.match(billingUi,/useCredits:creditPaymentInput\.checked/);
 });
 test('admin billing operations require confirmation, reason, same-origin and audit logging',async()=>{
  const [worker,html,script]=await Promise.all([

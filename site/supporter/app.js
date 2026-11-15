@@ -7,6 +7,7 @@ let hasConfigurableContract = false;
 let billingAvailable = false;
 let checkoutButton;
 let hasExistingContract=false;
+let availableCredits=0;
 const channelsByGuild = new Map();
 
 const $ = id => document.getElementById(id);
@@ -347,7 +348,7 @@ applicationTitle.textContent = 'お申し込み内容';
 const emailLabel = document.createElement('label');
 emailLabel.className = 'billing-email-label';
 const emailCaption = document.createElement('span');
-emailCaption.textContent = 'お申し込みメールアドレス';
+emailCaption.textContent = '共通の請求・チャージ用メールアドレス';
 const billingEmail = document.createElement('input');
 billingEmail.id = 'billing-email';
 billingEmail.type = 'email';
@@ -357,7 +358,7 @@ billingEmail.required = true;
 billingEmail.placeholder = 'name@example.com';
 const emailHelp = document.createElement('p');
 emailHelp.className = 'help billing-email-help';
-emailHelp.textContent = 'Stripeの顧客情報、請求、契約に関する連絡に使用します。申し込み時に同時に登録・更新されます。';
+emailHelp.textContent = 'クレジットチャージと有料プラン申込みには同じメールアドレスを使用します。以前どちらかで登録したアドレスは自動入力され、ここで変更すると両方の連絡先が同じ内容に更新されます。';
 emailLabel.append(emailCaption,billingEmail);
 application.append(applicationTitle,emailLabel,emailHelp);
 const contract = document.createElement('div');
@@ -369,6 +370,7 @@ credit.className = 'credit-balance';
 credit.textContent = '利用可能クレジット: 0クレジット（0円）';
 const creditPanel=document.createElement('div');creditPanel.className='credit-panel';
 const creditTitle=document.createElement('h3');creditTitle.textContent='クレジット残高・チャージ';
+const creditIntro=document.createElement('p');creditIntro.className='help';creditIntro.textContent='有料プランを申し込む前でもチャージできます。上の共通メールアドレスへ、チャージと契約に関する通知を送ります。';
 const creditExpiry=document.createElement('p');creditExpiry.className='credit-expiry';creditExpiry.textContent='購入クレジットの有効期限は購入日から1年間です。';
 const topupControls=document.createElement('div');topupControls.className='credit-topup-controls';
 const topupLabel=document.createElement('label');const topupCaption=document.createElement('span');topupCaption.textContent='チャージ金額（1円＝1クレジット）';
@@ -386,7 +388,7 @@ const topupStatus=document.createElement('p');topupStatus.className='billing-act
 topupControls.append(topupLabel,topupPresets,creditConsent,topupButton,topupStatus);
 const creditHistoryTitle=document.createElement('h4');creditHistoryTitle.textContent='チャージ履歴';
 const creditHistory=document.createElement('div');creditHistory.className='credit-history';creditHistory.textContent='チャージ履歴はありません。';
-creditPanel.append(creditTitle,credit,creditExpiry,topupControls,creditHistoryTitle,creditHistory);
+creditPanel.append(creditTitle,creditIntro,credit,creditExpiry,topupControls,creditHistoryTitle,creditHistory);
 billing.append(creditPanel);
 const invoiceTitle=document.createElement('h3');invoiceTitle.className='invoice-title';invoiceTitle.textContent='支払い明細';
 const invoiceHistory=document.createElement('div');invoiceHistory.className='invoice-history';invoiceHistory.textContent='契約後に請求明細を確認できます。';
@@ -404,9 +406,13 @@ const optionGrid=document.createElement('div');optionGrid.className='billing-opt
 for(const [labelText,input] of [['プラン',plan],['チャンネル追加',channelPacks],['サーバー追加',serverPacks]]){const label=document.createElement('label');const span=document.createElement('span');span.textContent=labelText;label.append(span,input);optionGrid.append(label);}
 const pricePreview=document.createElement('p');pricePreview.className='price-preview';
 const checkoutSummary=document.createElement('dl');checkoutSummary.className='checkout-summary';
-const updatePricePreview=()=>{const base={supporter:300,plus:800,pro:1280}[plan.value]||300;const monthly=base+200*(Number(channelPacks.value)+Number(serverPacks.value));const jstDay=Number(new Intl.DateTimeFormat('en-US',{day:'numeric',timeZone:'Asia/Tokyo'}).format(new Date()));const initial=monthly*(jstDay>=26?2:1);pricePreview.textContent=`月額 ${monthly.toLocaleString('ja-JP')}円／新規申込時 ${initial.toLocaleString('ja-JP')}円（${jstDay>=26?'当月分＋翌月分':'当月分'}）`;checkoutSummary.replaceChildren();const rows=[['申込みプラン',{supporter:'BASIC',plus:'Plus',pro:'Pro'}[plan.value]],['初回支払額',`${initial.toLocaleString('ja-JP')}円（Stripeテスト環境）`],['次回以降','毎月26日に翌月分を請求'],['提供開始','決済確認後。ただし先行提供中は通知配信へ未接続'],['解約','契約管理画面から手続きし、期間末で終了。支払済み料金の返金なし']];for(const [term,value] of rows){const dt=document.createElement('dt');dt.textContent=term;const dd=document.createElement('dd');dd.textContent=value;checkoutSummary.append(dt,dd);}};
+const creditPaymentChoice=document.createElement('label');creditPaymentChoice.className='credit-payment-choice';
+const creditPaymentInput=document.createElement('input');creditPaymentInput.type='checkbox';
+const creditPaymentText=document.createElement('span');creditPaymentChoice.append(creditPaymentInput,creditPaymentText);
+const updatePricePreview=()=>{const base={supporter:300,plus:800,pro:1280}[plan.value]||300;const monthly=base+200*(Number(channelPacks.value)+Number(serverPacks.value));const jstDay=Number(new Intl.DateTimeFormat('en-US',{day:'numeric',timeZone:'Asia/Tokyo'}).format(new Date()));const initial=monthly*(jstDay>=26?2:1);const canPayWithCredits=availableCredits>=initial;if(!canPayWithCredits)creditPaymentInput.checked=false;creditPaymentInput.disabled=!canPayWithCredits;creditPaymentText.textContent=canPayWithCredits?`${initial.toLocaleString('ja-JP')}クレジットで全額支払う（カード情報の入力不要／支払い後残高 ${(availableCredits-initial).toLocaleString('ja-JP')}クレジット）`:`クレジット全額払いには${initial.toLocaleString('ja-JP')}クレジット必要です（現在 ${availableCredits.toLocaleString('ja-JP')}クレジット）`;pricePreview.textContent=`月額 ${monthly.toLocaleString('ja-JP')}円／新規申込時 ${initial.toLocaleString('ja-JP')}円（${jstDay>=26?'当月分＋翌月分':'当月分'}）`;checkoutSummary.replaceChildren();const rows=[['申込みプラン',{supporter:'BASIC',plus:'Plus',pro:'Pro'}[plan.value]],['初回支払額',`${initial.toLocaleString('ja-JP')}円（Stripeテスト環境）`],['申込時の支払方法',creditPaymentInput.checked?'チャージ済みクレジットで全額支払い（カード入力なし）':'Stripe Checkoutで支払い'],['次回以降','毎月26日に翌月分を請求'],['提供開始','決済確認後。ただし先行提供中は通知配信へ未接続'],['解約','契約管理画面から手続きし、期間末で終了。支払済み料金の返金なし']];for(const [term,value] of rows){const dt=document.createElement('dt');dt.textContent=term;const dd=document.createElement('dd');dd.textContent=value;checkoutSummary.append(dt,dd);}updateCheckoutAvailability();};
 for(const input of [plan,channelPacks,serverPacks])input.addEventListener('change',updatePricePreview);
-updatePricePreview();application.append(optionGrid,pricePreview,checkoutSummary);
+creditPaymentInput.addEventListener('change',updatePricePreview);
+updatePricePreview();application.append(optionGrid,pricePreview,checkoutSummary,creditPaymentChoice);
 
 const legalConsentLabel=document.createElement('label');legalConsentLabel.className='legal-consent';
 const legalConsent=document.createElement('input');legalConsent.type='checkbox';legalConsent.id='legal-consent';legalConsent.required=true;
@@ -436,10 +442,12 @@ const TOPUP_STATUS_LABELS={pending:'決済待ち',credited:'付与済み',failed
 
 function renderCreditDetails(details={}){
  const balance=Number(details.balance||0),purchased=Number(details.purchasedBalance||0);
+ availableCredits=Math.max(0,balance);
  credit.textContent=`利用可能クレジット: ${balance.toLocaleString('ja-JP')}クレジット（${balance.toLocaleString('ja-JP')}円）`;
  creditExpiry.textContent=details.nextExpiry
   ?`購入クレジット残高 ${purchased.toLocaleString('ja-JP')}ポイント／最も近い有効期限: ${dateText(details.nextExpiry)}`
   :'購入クレジットの有効期限は購入日から1年間です。';
+ updatePricePreview();
  creditHistory.replaceChildren();
  const rows=Array.isArray(details.topups)?details.topups:[];
  if(!rows.length){creditHistory.textContent='チャージ履歴はありません。';return;}
@@ -610,7 +618,7 @@ function updateCheckoutAvailability(){
  if(!checkoutButton)return;
  checkoutButton.disabled=!billingAvailable||!legalConsent.checked||hasExistingContract;
  checkoutButton.title=hasExistingContract?'既に契約済みです。プラン変更をご利用ください。':'';
- checkoutButton.textContent=hasExistingContract?'契約済み（新規申込不可）':'このプランで申し込む';
+ checkoutButton.textContent=hasExistingContract?'契約済み（新規申込不可）':creditPaymentInput.checked?'クレジットで申し込む（カード入力不要）':'このプランで申し込む';
 }
 
 for (const [label,action] of [['このプランで申し込む','checkout'],['プラン・オプションを変更','update'],['支払方法・解約の管理','portal'],['最新の契約・明細を読み込む','status']]) {
@@ -632,7 +640,7 @@ for (const [label,action] of [['このプランで申し込む','checkout'],['�
     const result=await api('/api/supporter/billing/preview-update','POST',selection);
     showBillingPreview(result,selection);return;
    }
-   const body=action==='checkout'?{...selection,email:billingEmail.value,legalConsent:true}:{};
+   const body=action==='checkout'?{...selection,email:billingEmail.value,legalConsent:true,useCredits:creditPaymentInput.checked,requestId:crypto.randomUUID()}:{};
    const result = await api(`/api/supporter/billing/${action}`,action === 'status' ? 'GET' : 'POST',action === 'status' ? undefined : body);
    if (result.url) {
     location.href = stripeDestination(result.url);
