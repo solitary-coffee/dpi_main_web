@@ -128,6 +128,113 @@ async function recordAdminCreditLot(db,uid,action,requestId,amount){
   if(result.meta?.changes)removing-=used;
  }
 }
+
+const COMPENSATION_ACTIVE_STATUSES = new Set(['active','trialing','past_due','unpaid','paused']);
+
+function compensationCampaignView(row){
+ return {
+  id:clean(row.id),targetType:clean(row.target_type),targetValue:clean(row.target_value),amount:Number(row.amount)||0,
+  reason:clean(row.reason),expiresAt:Number(row.expires_at)||null,status:clean(row.status),
+  recipientCount:Number(row.recipient_count)||0,creditedCount:Number(row.credited_count)||0,failedCount:Number(row.failed_count)||0,
+  createdBy:clean(row.created_by),createdAt:Number(row.created_at)||null,completedAt:Number(row.completed_at)||null,
+ };
+}
+
+async function compensationTargets(env,db,targetType,targetValue){
+ const rows=await db.prepare(`SELECT a.discord_user_id,a.billing_email,b.customer_id
+  FROM supporter_accounts a LEFT JOIN supporter_billing b ON b.discord_user_id=a.discord_user_id
+  WHERE b.customer_id IS NOT NULL OR COALESCE(a.billing_email,'')<>''
+  ORDER BY a.discord_user_id`).all();
+ let targets=rows.results||[];
+ if(targetType==='user')targets=targets.filter(row=>row.discord_user_id===targetValue);
+ if(targetType==='plan'){
+  const grouped=await subscriptionSummariesByCustomer(env,targets.map(row=>row.customer_id).filter(Boolean));
+  targets=targets.filter(row=>(grouped.get(row.customer_id)||[]).some(subscription=>subscription.planId===targetValue&&subscription.recognizedPlan!==false&&COMPENSATION_ACTIVE_STATUSES.has(subscription.status)));
+ }
+ return targets;
+}
+
+async function createCompensationCampaign(env,db,admin,input){
+ if(!billingReady(env))throw Object.assign(new Error('決済設定が完了していません。'),{status:503});
+ const campaignId=clean(input.requestId),targetType=clean(input.targetType),targetValue=clean(input.targetValue),amount=Number(input.amount),reason=clean(input.reason),expiresAt=Number(input.expiresAt);
+ if(!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(campaignId))throw Object.assign(new Error('配布リクエストを確認できません。再読み込みしてください。'),{status:400});
+ const existing=await db.prepare('SELECT * FROM supporter_credit_campaigns WHERE id=?').bind(campaignId).first();
+ if(existing)return compensationCampaignView(existing);
+ if(!['all','user','plan'].includes(targetType))throw Object.assign(new Error('配布対象を確認してください。'),{status:400});
+ if(targetType==='user'&&!/^\d{17,20}$/.test(targetValue))throw Object.assign(new Error('対象ユーザーのDiscord IDを確認してください。'),{status:400});
+ if(targetType==='plan'&&!['supporter','plus','pro'].includes(targetValue))throw Object.assign(new Error('対象プランを確認してください。'),{status:400});
+ if(!Number.isInteger(amount)||amount<1||amount>1_000_000)throw Object.assign(new Error('1人あたりのクレジット数を1〜1,000,000で指定してください。'),{status:400});
+ if(reason.length<5||reason.length>500)throw Object.assign(new Error('ユーザーに表示する理由を5〜500文字で入力してください。'),{status:400});
+ const now=Math.floor(Date.now()/1000);
+ if(!Number.isInteger(expiresAt)||expiresAt<now+3600||expiresAt>now+5*366*86400)throw Object.assign(new Error('有効期限は1時間後から5年以内で指定してください。'),{status:400});
+ const targets=await compensationTargets(env,db,targetType,targetValue);
+ if(!targets.length)throw Object.assign(new Error('条件に一致する配布対象者がいません。'),{status:409});
+ const statements=[db.prepare(`INSERT INTO supporter_credit_campaigns
+  (id,target_type,target_value,amount,reason,expires_at,status,recipient_count,created_by,created_at)
+  VALUES(?,?,?,?,?,?,'pending',?,?,?)`).bind(campaignId,targetType,targetType==='all'?null:targetValue,amount,reason,expiresAt,targets.length,admin.email,now)];
+ for(const target of targets){
+  const requestId=crypto.randomUUID(),lotId=`compensation:${campaignId}:${target.discord_user_id}`;
+  statements.push(db.prepare(`INSERT INTO supporter_credit_campaign_recipients
+   (campaign_id,discord_user_id,request_id,lot_id,status) VALUES(?,?,?,?,'pending')`).bind(campaignId,target.discord_user_id,requestId,lotId));
+ }
+ await db.batch(statements);
+ await writeSupporterAudit(db,admin.email,'create_credit_campaign',campaignId,{targetType,targetValue:targetType==='all'?null:targetValue,amount,reason,expiresAt,recipientCount:targets.length});
+ return compensationCampaignView(await db.prepare('SELECT * FROM supporter_credit_campaigns WHERE id=?').bind(campaignId).first());
+}
+
+async function processCompensationCampaign(env,db,admin,campaignId,limit=10){
+ const campaign=await db.prepare('SELECT * FROM supporter_credit_campaigns WHERE id=?').bind(campaignId).first();
+ if(!campaign)throw Object.assign(new Error('補償クレジット配布が見つかりません。'),{status:404});
+ if(['completed','partial','failed'].includes(campaign.status))return compensationCampaignView(campaign);
+ await db.prepare(`UPDATE supporter_credit_campaigns SET status='processing' WHERE id=? AND status='pending'`).bind(campaignId).run();
+ const pending=await db.prepare(`SELECT r.discord_user_id,r.request_id,r.lot_id,r.attempts,a.billing_email,b.customer_id
+  FROM supporter_credit_campaign_recipients r
+  JOIN supporter_accounts a ON a.discord_user_id=r.discord_user_id
+  LEFT JOIN supporter_billing b ON b.discord_user_id=r.discord_user_id
+  WHERE r.campaign_id=? AND r.status='pending' ORDER BY r.discord_user_id LIMIT ?`).bind(campaignId,limit).all();
+ for(const recipient of pending.results||[]){
+  const attempt=Number(recipient.attempts)||0;
+  const claimed=await db.prepare(`UPDATE supporter_credit_campaign_recipients SET attempts=attempts+1,error_message=NULL
+   WHERE campaign_id=? AND discord_user_id=? AND status='pending' AND attempts=?`).bind(campaignId,recipient.discord_user_id,attempt).run();
+  if(!claimed.meta?.changes)continue;
+  try{
+   let customerId=clean(recipient.customer_id);
+   if(!customerId){
+    if(!recipient.billing_email)throw Object.assign(new Error('申込みメールアドレスが登録されていません。'),{status:409});
+    const customer=await createBillingCustomer(env,recipient.discord_user_id,recipient.billing_email,`dpi-compensation-customer-${recipient.discord_user_id}`);
+    await db.prepare(`INSERT INTO supporter_billing(discord_user_id,customer_id) VALUES(?,?)
+     ON CONFLICT(discord_user_id) DO UPDATE SET customer_id=COALESCE(supporter_billing.customer_id,excluded.customer_id)`).bind(recipient.discord_user_id,customer.id).run();
+    customerId=(await db.prepare('SELECT customer_id FROM supporter_billing WHERE discord_user_id=?').bind(recipient.discord_user_id).first())?.customer_id;
+   }
+   const result=await adminBillingAction(env,customerId,recipient.discord_user_id,{action:'grant_credit',amount:Number(campaign.amount),reason:campaign.reason,requestId:recipient.request_id});
+   const credit=result.creditEvent,now=Math.floor(Date.now()/1000);
+   await db.batch([
+    db.prepare(`INSERT INTO supporter_credit_events
+     (id,discord_user_id,credit_delta,balance_after,stripe_transaction_id,reason,actor,created_at)
+     VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING`).bind(recipient.request_id,recipient.discord_user_id,credit.delta,credit.balanceAfter,credit.stripeTransactionId,campaign.reason,admin.email,new Date(now*1000).toISOString()),
+    db.prepare(`INSERT INTO supporter_credit_lots
+     (id,discord_user_id,source_type,source_id,original_amount,remaining_amount,expires_at,status,created_at,updated_at)
+     VALUES(?,?,'admin',?,?,?,?, 'active',?,?) ON CONFLICT(source_type,source_id) DO NOTHING`).bind(recipient.lot_id,recipient.discord_user_id,recipient.lot_id,Number(campaign.amount),Number(campaign.amount),Number(campaign.expires_at),now,now),
+    db.prepare(`UPDATE supporter_credit_campaign_recipients SET status='credited',stripe_transaction_id=?,balance_after=?,credited_at=?,error_message=NULL
+     WHERE campaign_id=? AND discord_user_id=? AND status='pending'`).bind(credit.stripeTransactionId,credit.balanceAfter,now,campaignId,recipient.discord_user_id),
+   ]);
+  }catch(error){
+   const finalAttempt=attempt+1>=3;
+   await db.prepare(`UPDATE supporter_credit_campaign_recipients SET status=?,error_message=?
+    WHERE campaign_id=? AND discord_user_id=? AND status='pending'`).bind(finalAttempt?'failed':'pending',clean(error?.message||'付与処理に失敗しました。').slice(0,500),campaignId,recipient.discord_user_id).run();
+  }
+ }
+ const counts=await db.prepare(`SELECT COUNT(*) AS total,
+  SUM(CASE WHEN status='credited' THEN 1 ELSE 0 END) AS credited,
+  SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS failed,
+  SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END) AS pending
+  FROM supporter_credit_campaign_recipients WHERE campaign_id=?`).bind(campaignId).first();
+ const remaining=Number(counts?.pending)||0,credited=Number(counts?.credited)||0,failed=Number(counts?.failed)||0;
+ const status=remaining?'processing':failed?(credited?'partial':'failed'):'completed',completedAt=remaining?null:Math.floor(Date.now()/1000);
+ await db.prepare(`UPDATE supporter_credit_campaigns SET status=?,recipient_count=?,credited_count=?,failed_count=?,completed_at=? WHERE id=?`).bind(status,Number(counts?.total)||0,credited,failed,completedAt,campaignId).run();
+ if(!remaining)await writeSupporterAudit(db,admin.email,'complete_credit_campaign',campaignId,{status,creditedCount:credited,failedCount:failed});
+ return compensationCampaignView(await db.prepare('SELECT * FROM supporter_credit_campaigns WHERE id=?').bind(campaignId).first());
+}
 export const SUPPORTER_REGIONS = Object.freeze([
  ['all', '全国'],
  ['hokkaido', '北海道地方'],
@@ -442,6 +549,21 @@ export async function handleSupporterRequest(request, env) {
     const redirect = new URL(request.url);redirect.pathname='/site/supporter-admin/';
     return new Response(null,{status:308,headers:{Location:redirect.toString(),'Cache-Control':'no-store'}});
    }
+   if(path==='/site/supporter-admin/api/credit-campaigns'){
+    if(request.method!=='POST')return response({message:'Method not allowed'},405);
+    assertAdminOrigin(request);
+    const input=await readJson(request);
+    if(clean(input.confirmText)!=='配布')return response({message:'確認欄に「配布」と入力してください。'},400);
+    const campaign=await createCompensationCampaign(env,db,admin,input);
+    return response({success:true,message:`${campaign.recipientCount}人への補償クレジット配布を作成しました。`,campaign},201);
+   }
+   const campaignProcessMatch=path.match(/^\/site\/supporter-admin\/api\/credit-campaigns\/([0-9a-f-]{36})\/process$/i);
+   if(campaignProcessMatch){
+    if(request.method!=='POST')return response({message:'Method not allowed'},405);
+    assertAdminOrigin(request);
+    const campaign=await processCompensationCampaign(env,db,admin,campaignProcessMatch[1]);
+    return response({success:true,message:campaign.status==='completed'?'補償クレジットの配布が完了しました。':campaign.status==='partial'?'一部の対象者へ配布できませんでした。':campaign.status==='failed'?'補償クレジットを配布できませんでした。':'補償クレジットを配布中です。',campaign});
+   }
    if (path === '/site/supporter-admin/api/action') {
     if (request.method !== 'POST') return response({message:'Method not allowed'},405);
     assertAdminOrigin(request);
@@ -512,7 +634,10 @@ export async function handleSupporterRequest(request, env) {
     let creditSummary=null,creditSummaryError='';
     try{creditSummary=await supporterCreditMetrics(db,billingRows.results||[],creditBalances,stripeEnabled&&!billingError.includes('クレジット残高'));}
     catch(error){console.error('Paid plan credit summary failed',{errorName:error?.name||'Error'});creditSummaryError='クレジット集計を取得できませんでした。';}
-    return response({billingEnabled:stripeEnabled,accounts,creditSummary,creditSummaryError});
+    let creditCampaigns=[];
+    try{const result=await db.prepare('SELECT * FROM supporter_credit_campaigns ORDER BY created_at DESC LIMIT 20').all();creditCampaigns=(result.results||[]).map(compensationCampaignView);}
+    catch(error){console.error('Paid plan credit campaigns failed',{errorName:error?.name||'Error'});}
+    return response({billingEnabled:stripeEnabled,accounts,creditSummary,creditSummaryError,creditCampaigns});
    }
    const detailMatch=path.match(/^\/site\/supporter-admin\/api\/accounts\/(\d{17,20})$/);
    if(detailMatch){

@@ -1,6 +1,8 @@
 let accounts = [];
 let selectedAccount = null;
 let creditSummary = null;
+let creditCampaigns = [];
+let compensationRequestId = '';
 
 const $ = id => document.getElementById(id);
 const STATUS_LABELS = Object.freeze({active:'有効',trialing:'有効（次回請求待ち）',past_due:'支払い遅延',unpaid:'未払い',paused:'一時停止',incomplete:'手続き未完了'});
@@ -13,6 +15,10 @@ document.addEventListener('DOMContentLoaded', () => {
  $('dialog-close').addEventListener('click', () => $('action-dialog').close());
  $('action-kind').addEventListener('change', updateActionFields);
  $('action-form').addEventListener('submit', submitAction);
+ $('compensation-target-type').addEventListener('change', updateCompensationFields);
+ $('compensation-form').addEventListener('submit', submitCompensation);
+ initializeCompensationExpiry();
+ updateCompensationFields();
  loadAccounts();
 });
 
@@ -37,11 +43,101 @@ async function loadAccounts() {
   if (!response.ok) throw new Error(data.message || `取得に失敗しました（HTTP ${response.status}）。`);
   accounts = data.accounts || [];
   creditSummary = data.creditSummary || null;
+  creditCampaigns = data.creditCampaigns || [];
   $('billing-mode').textContent = data.billingEnabled ? 'Stripeテスト環境 接続中' : 'Stripeテスト環境 未接続';
   renderSummary();
   renderAccounts();
+  renderCompensationCampaigns();
   setStatus(data.creditSummaryError||'',data.creditSummaryError?'error':'');
  } catch (error) { setStatus(error.message,'error'); }
+}
+
+function initializeCompensationExpiry(){
+ const input=$('compensation-expiry'),now=new Date(),expiry=new Date(now);
+ expiry.setFullYear(expiry.getFullYear()+1);
+ input.min=localDateTimeValue(new Date(now.getTime()+60*60*1000));
+ input.value=localDateTimeValue(expiry);
+}
+
+function localDateTimeValue(date){
+ const local=new Date(date.getTime()-date.getTimezoneOffset()*60000);
+ return local.toISOString().slice(0,16);
+}
+
+function updateCompensationFields(){
+ const type=$('compensation-target-type').value;
+ $('compensation-user-wrap').classList.toggle('hidden',type!=='user');
+ $('compensation-plan-wrap').classList.toggle('hidden',type!=='plan');
+ $('compensation-user').required=type==='user';
+ $('compensation-plan').required=type==='plan';
+}
+
+function compensationTargetLabel(campaign){
+ if(campaign.targetType==='all')return '全登録者';
+ if(campaign.targetType==='user')return `Discord ID ${campaign.targetValue}`;
+ return `${{supporter:'BASIC',plus:'Plus',pro:'Pro'}[campaign.targetValue]||campaign.targetValue} 契約者`;
+}
+
+function campaignStatusLabel(status){return {pending:'配布待ち',processing:'配布中',completed:'完了',partial:'一部失敗',failed:'失敗'}[status]||status;}
+
+function renderCompensationCampaigns(){
+ const container=$('compensation-campaigns');container.replaceChildren();
+ if(!creditCampaigns.length){container.append(element('p','empty-list','補償クレジットの配布履歴はありません。'));return;}
+ for(const campaign of creditCampaigns){
+  const card=element('article',`campaign-card ${campaign.status}`);
+  card.append(element('h4','',`${Number(campaign.amount||0).toLocaleString('ja-JP')}クレジット／${compensationTargetLabel(campaign)}`));
+  card.append(element('p','',campaign.reason||'理由未登録'));
+  card.append(element('p','campaign-meta',`${campaignStatusLabel(campaign.status)}・成功 ${Number(campaign.creditedCount||0).toLocaleString('ja-JP')} / 対象 ${Number(campaign.recipientCount||0).toLocaleString('ja-JP')}人・失敗 ${Number(campaign.failedCount||0).toLocaleString('ja-JP')}人`));
+  card.append(element('p','campaign-meta',`有効期限 ${unixDate(campaign.expiresAt)}／作成 ${unixDate(campaign.createdAt)}`));
+  if(['pending','processing'].includes(campaign.status)){
+   const resume=element('button','','配布処理を再開');resume.type='button';resume.addEventListener('click',()=>processCompensation(campaign.id,resume));card.append(resume);
+  }
+  container.append(card);
+ }
+}
+
+async function submitCompensation(event){
+ event.preventDefault();
+ const type=$('compensation-target-type').value;
+ const amount=Number($('compensation-amount').value),reason=$('compensation-reason').value.trim();
+ const targetValue=type==='user'?$('compensation-user').value.trim():type==='plan'?$('compensation-plan').value:'';
+ const expiryMs=new Date($('compensation-expiry').value).getTime();
+ if(!Number.isFinite(expiryMs)){$('compensation-result').textContent='有効期限を確認してください。';return;}
+ const targetLabel=type==='all'?'全登録者':type==='user'?`Discord ID ${targetValue}`:`${{supporter:'BASIC',plus:'Plus',pro:'Pro'}[targetValue]}契約者`;
+ if(!window.confirm(`${targetLabel}へ1人あたり${amount.toLocaleString('ja-JP')}クレジットを配布します。理由と有効期限は利用者に表示されます。続行しますか？`))return;
+ const button=$('compensation-submit');button.disabled=true;$('compensation-result').textContent='配布対象を確定しています…';
+ try{
+  if(!compensationRequestId)compensationRequestId=crypto.randomUUID();
+  const response=await fetch('/site/supporter-admin/api/credit-campaigns',{method:'POST',credentials:'same-origin',headers:{Accept:'application/json','Content-Type':'application/json'},body:JSON.stringify({requestId:compensationRequestId,targetType:type,targetValue,amount,reason,expiresAt:Math.floor(expiryMs/1000),confirmText:$('compensation-confirm').value.trim()})});
+  const data=await response.json().catch(()=>({}));
+  if(!response.ok||data.success!==true)throw new Error(data.message||`配布の作成に失敗しました（HTTP ${response.status}）。`);
+  compensationRequestId='';
+  creditCampaigns.unshift(data.campaign);renderCompensationCampaigns();
+  $('compensation-result').textContent=`${data.campaign.recipientCount.toLocaleString('ja-JP')}人への配布を開始しました。`;
+  await processCompensation(data.campaign.id);
+  $('compensation-confirm').value='';$('compensation-reason').value='';
+ }catch(error){$('compensation-result').textContent=error.message;setStatus(error.message,'error');}
+ finally{button.disabled=false;}
+}
+
+async function processCompensation(campaignId,triggerButton=null){
+ if(triggerButton)triggerButton.disabled=true;
+ try{
+  for(let batch=0;batch<100;batch++){
+   const response=await fetch(`/site/supporter-admin/api/credit-campaigns/${encodeURIComponent(campaignId)}/process`,{method:'POST',credentials:'same-origin',headers:{Accept:'application/json'}});
+   const data=await response.json().catch(()=>({}));
+   if(!response.ok||data.success!==true)throw new Error(data.message||`配布処理に失敗しました（HTTP ${response.status}）。`);
+   const index=creditCampaigns.findIndex(item=>item.id===campaignId);if(index>=0)creditCampaigns[index]=data.campaign;
+   renderCompensationCampaigns();
+   $('compensation-result').textContent=`配布中: ${data.campaign.creditedCount.toLocaleString('ja-JP')} / ${data.campaign.recipientCount.toLocaleString('ja-JP')}人`;
+   if(!['pending','processing'].includes(data.campaign.status)){
+    const message=data.campaign.status==='completed'?'補償クレジットの配布が完了しました。':`${data.campaign.creditedCount}人へ配布し、${data.campaign.failedCount}人は失敗しました。`;
+    $('compensation-result').textContent=message;setStatus(message,data.campaign.status==='completed'?'success':'error');await loadAccounts();return;
+   }
+  }
+  $('compensation-result').textContent='配布対象が多いため処理を一時停止しました。「配布処理を再開」から続行できます。';
+ }catch(error){$('compensation-result').textContent=`配布処理を中断しました: ${error.message}。「配布処理を再開」から続行できます。`;setStatus(error.message,'error');await loadAccounts();}
+ finally{if(triggerButton)triggerButton.disabled=false;}
 }
 
 function renderSummary() {
