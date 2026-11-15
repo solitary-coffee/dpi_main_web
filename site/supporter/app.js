@@ -348,8 +348,8 @@ const title = document.createElement('h2');
 title.textContent = 'お支払い・契約情報';
 const modeGuide=document.createElement('div');modeGuide.className='billing-mode-guide';
 const modeSwitch=document.createElement('div');modeSwitch.className='billing-mode-switch';modeSwitch.setAttribute('role','group');modeSwitch.setAttribute('aria-label','クレジット操作の切り替え');
-const topupModeButton=document.createElement('button');topupModeButton.type='button';topupModeButton.textContent='チャージ';topupModeButton.className='billing-mode-button';topupModeButton.dataset.mode='topup';
-const paymentModeButton=document.createElement('button');paymentModeButton.type='button';paymentModeButton.textContent='プラン・オプション';paymentModeButton.className='billing-mode-button';paymentModeButton.dataset.mode='payment';
+const topupModeButton=document.createElement('button');topupModeButton.type='button';topupModeButton.textContent='クレジットチャージ式';topupModeButton.className='billing-mode-button';topupModeButton.dataset.mode='topup';
+const paymentModeButton=document.createElement('button');paymentModeButton.type='button';paymentModeButton.textContent='クレジット支払い式';paymentModeButton.className='billing-mode-button';paymentModeButton.dataset.mode='payment';
 modeSwitch.append(topupModeButton,paymentModeButton);modeGuide.append(modeSwitch);
 const application = document.createElement('div');
 application.className = 'billing-application billing-mode-panel';
@@ -464,6 +464,20 @@ const selectedInitialCharge=(selectedPlan,selectedChannelPacks,selectedServerPac
 function updateTopupSignupAvailability(){
  if(!topupSignupButton)return;
  const price=selectedInitialCharge(topupPlan.value,topupChannelPacks.value,topupServerPacks.value);
+ if(hasExistingContract){
+  topupSignupTitle.textContent='残クレジットでプラン・オプションを変更';
+  topupSignupPreview.textContent=`変更後の月額 ${price.monthly.toLocaleString('ja-JP')}円`;
+  topupSignupWarning.classList.remove('is-shortage');
+  topupSignupWarning.classList.add('is-sufficient');
+  topupSignupWarning.textContent=`現在の残高は${availableCredits.toLocaleString('ja-JP')}クレジットです。アップグレード差額と次回26日の請求に利用できます。`;
+  topupSignupConsent.hidden=true;
+  topupSignupButton.disabled=!billingAvailable;
+  topupSignupButton.title='';
+  topupSignupButton.textContent='プラン・オプションの料金を確認';
+  return;
+ }
+ topupSignupTitle.textContent='クレジットでプランを申し込む';
+ topupSignupConsent.hidden=false;
  const shortage=Math.max(0,price.initial-availableCredits);
  topupSignupPreview.textContent=`月額 ${price.monthly.toLocaleString('ja-JP')}円／申込時 ${price.initial.toLocaleString('ja-JP')}クレジット（${price.lateMonth?'当月分＋翌月分':'当月分'}）`;
  topupSignupWarning.classList.toggle('is-shortage',shortage>0);
@@ -515,12 +529,22 @@ topupReloadButton.onclick=async()=>{
 
 topupSignupButton.onclick=async()=>{
  topupSignupStatus.textContent='';
+ const selection={plan:topupPlan.value,channelPacks:Number(topupChannelPacks.value),serverPacks:Number(topupServerPacks.value)};
+ if(hasExistingContract){
+  topupSignupButton.disabled=true;const original=topupSignupButton.textContent;topupSignupButton.textContent='料金を計算中…';
+  try{
+   const result=await api('/api/supporter/billing/preview-update','POST',selection);
+   showBillingPreview(result,selection);
+  }catch(error){topupSignupStatus.textContent=error.message;status(error.message);}
+  finally{topupSignupButton.textContent=original;updateTopupSignupAvailability();}
+  return;
+ }
  if(!topupEmail.reportValidity()||!topupSignupConsentInput.reportValidity())return;
  const price=selectedInitialCharge(topupPlan.value,topupChannelPacks.value,topupServerPacks.value);
  if(availableCredits<price.initial){updateTopupSignupAvailability();topupSignupStatus.textContent=`クレジットが ${(price.initial-availableCredits).toLocaleString('ja-JP')} 不足しています。先にチャージしてください。`;return;}
  topupSignupButton.disabled=true;const original=topupSignupButton.textContent;topupSignupButton.textContent='申込み処理中…';
  try{
-  const result=await api('/api/supporter/billing/checkout','POST',{plan:topupPlan.value,channelPacks:Number(topupChannelPacks.value),serverPacks:Number(topupServerPacks.value),email:topupEmail.value,legalConsent:true,useCredits:true,requestId:crypto.randomUUID()});
+  const result=await api('/api/supporter/billing/checkout','POST',{...selection,email:topupEmail.value,legalConsent:true,useCredits:true,requestId:crypto.randomUUID()});
   if(result.url)location.href=stripeDestination(result.url);
   else{renderContracts(result.subscriptions||[],result.dunning);renderInvoices(result.invoices||[]);renderCreditDetails(result.creditDetails||{balance:Number(result.credits||0)});status(result.message||'クレジットでプランを申し込みました。');topupSignupStatus.textContent=result.message||'申込みが完了しました。';}
  }catch(error){topupSignupStatus.textContent=error.message;status(error.message);}
@@ -605,7 +629,11 @@ function renderContracts(subscriptions,dunning={}) {
  entitlements=active.reduce((limits,item)=>({servers:Math.max(limits.servers,Number(item.servers)||1),channels:Math.max(limits.channels,Number(item.channels)||2),rules:Math.max(limits.rules,Number(item.rules)||5),complexConditions:limits.complexConditions||item.complexConditions===true,multiDestination:limits.multiDestination||item.multiDestination===true}),{servers:1,channels:2,rules:5,complexConditions:false,multiDestination:false});
  const current=active[0]||subscriptions[0];
  if(dunning?.usageSuspended){const warning=document.createElement('p');warning.className='billing-suspension';warning.textContent='月末再決済を確認できなかったため、有料プランの通知設定は利用停止中です。契約管理画面からお支払いを完了してください。';contract.append(warning);}
- if(current){plan.value=current.planId||'supporter';channelPacks.value=String(current.channelPacks||0);serverPacks.value=String(current.serverPacks||0);updatePricePreview();}
+ if(current){
+  plan.value=current.planId||'supporter';channelPacks.value=String(current.channelPacks||0);serverPacks.value=String(current.serverPacks||0);
+  topupPlan.value=current.planId||'supporter';topupChannelPacks.value=String(current.channelPacks||0);topupServerPacks.value=String(current.serverPacks||0);
+  updatePricePreview();updateTopupSignupAvailability();
+ }
  for (const subscription of subscriptions) {
   const card = document.createElement('article');
   card.className = 'contract-card';
