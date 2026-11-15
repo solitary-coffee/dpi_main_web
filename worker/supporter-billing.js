@@ -758,6 +758,7 @@ export function creditApplication(credits,immediateCharge,nextInvoiceSubtotal){
 }
 async function previewSubscriptionUpdate(env,customer,current,choice,requestedProrationDate){
  const currentSummary=subscriptionSummary(current,env);
+ if(currentSummary.planId===choice.plan&&currentSummary.channelPacks===choice.channelPacks&&currentSummary.serverPacks===choice.serverPacks)fail('プラン・オプションの変更内容がありません。',409);
  const base=current.items?.data?.find(item=>item.price?.id!==env.STRIPE_PRICE_ADDON);
  if(!base?.id)fail('契約項目を確認できませんでした。',409);
  const prorationDate=Number.isInteger(requestedProrationDate)?requestedProrationDate:Math.floor(Date.now()/1000);
