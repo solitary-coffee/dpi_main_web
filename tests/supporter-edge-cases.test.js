@@ -136,3 +136,113 @@ test('長いメールアドレスでもStripe冪等キーを上限内に固定�
   await assert.rejects(()=>billingAction(new Request('https://dpi-bot.com/api/supporter/billing/portal'),env,db,'123',{}),error=>error.status===502&&/正しい応答/.test(error.message));
  }finally{globalThis.fetch=originalFetch;}
 });
+
+function contractDb(uid='123'){
+ return{prepare(sql){return{bind(){return this;},async first(){
+  if(sql.includes('supporter_accounts'))return{discord_user_id:uid,billing_email:'user@example.jp'};
+  if(sql.includes('supporter_billing'))return{discord_user_id:uid,customer_id:'cus_x'};
+  return null;
+ },async run(){return{meta:{changes:1}};}};}};
+}
+
+function basicSubscription(){
+ const renewal=Math.floor(Date.now()/1000)+86400;
+ return{id:'sub_basic',status:'active',customer:'cus_x',start_date:1700000000,metadata:{dpi_channel_packs:'0',dpi_server_packs:'0'},items:{data:[{id:'si_base',quantity:1,current_period_start:1700000000,current_period_end:renewal,price:{id:'price_basic',unit_amount:300,currency:'jpy'}}]}};
+}
+
+test('同じプランとオプションの再送はStripe契約を更新しない',async()=>{
+ const current=basicSubscription(),calls=[],originalFetch=globalThis.fetch;
+ globalThis.fetch=async(url,init={})=>{const path=new URL(url).pathname;calls.push({path,method:init.method||'GET'});let data={livemode:false};
+  if(path==='/v1/subscriptions')data={livemode:false,data:[current]};
+  else if(path==='/v1/customers/cus_x')data={livemode:false,balance:0};
+  return new Response(JSON.stringify(data),{status:200,headers:{'content-type':'application/json'}});
+ };
+ try{
+  await assert.rejects(()=>billingAction(new Request('https://dpi-bot.com/api/supporter/billing/preview-update'),envBase(),contractDb(),'123',{plan:'supporter',channelPacks:0,serverPacks:0}),error=>error.status===409&&/変更内容がありません/.test(error.message));
+  assert.equal(calls.some(call=>call.path==='/v1/invoices/create_preview'),false);
+  assert.equal(calls.some(call=>call.path==='/v1/subscriptions/sub_basic'&&call.method==='POST'),false);
+ }finally{globalThis.fetch=originalFetch;}
+});
+
+test('料金プレビューの期限切れとクレジット残高変動は契約更新前に再確認させる',async()=>{
+ const current=basicSubscription(),calls=[];let credits=400;const originalFetch=globalThis.fetch;
+ globalThis.fetch=async(url,init={})=>{const path=new URL(url).pathname,method=init.method||'GET';calls.push({path,method});let data={livemode:false};
+  if(path==='/v1/subscriptions'&&method==='GET')data={livemode:false,data:[current]};
+  else if(path==='/v1/customers/cus_x'&&method==='GET')data={livemode:false,balance:-credits};
+  else if(path==='/v1/subscriptions/sub_basic')data={...current,livemode:false};
+  return new Response(JSON.stringify(data),{status:200,headers:{'content-type':'application/json'}});
+ };
+ try{
+  const expired=await billingAction(new Request('https://dpi-bot.com/api/supporter/billing/update'),envBase(),contractDb(),'123',{plan:'supporter',channelPacks:1,serverPacks:0,prorationDate:Math.floor(Date.now()/1000)-601,expectedCreditApplied:400,useCredits:true,requestId:'123e4567-e89b-42d3-a456-426614174201'});
+  assert.equal(expired.status,409);assert.match((await expired.json()).message,/有効期限/);
+
+  const previewResponse=await billingAction(new Request('https://dpi-bot.com/api/supporter/billing/preview-update'),envBase(),contractDb(),'123',{plan:'supporter',channelPacks:1,serverPacks:0});
+  const preview=await previewResponse.json();assert.equal(preview.creditApplied,400);
+  credits=300;calls.length=0;
+  const changed=await billingAction(new Request('https://dpi-bot.com/api/supporter/billing/update'),envBase(),contractDb(),'123',{plan:'supporter',channelPacks:1,serverPacks:0,prorationDate:preview.prorationDate,expectedCreditApplied:400,useCredits:true,requestId:'123e4567-e89b-42d3-a456-426614174202'});
+  assert.equal(changed.status,409);assert.match((await changed.json()).message,/クレジットが変更/);
+  assert.equal(calls.some(call=>call.path==='/v1/subscriptions/sub_basic'&&call.method==='POST'),false);
+ }finally{globalThis.fetch=originalFetch;}
+});
+
+test('遅延決済はCheckout完了時に未払いなら付与せず、非同期成功後に1度だけ契約を作る',async()=>{
+ const uid='637850681666961408',events=new Set(),notices=new Map(),emails=[];let subscription=null;
+ const db={prepare(sql){let values=[];return{bind(...input){values=input;return this;},async first(){
+  if(sql.includes('supporter_stripe_events'))return events.has(values[0])?{id:values[0]}:null;
+  if(sql.includes('JOIN supporter_billing'))return{billing_email:'async@example.jp'};
+  if(sql.startsWith('SELECT status FROM supporter_billing_notifications'))return notices.has(`${values[0]}:${values[1]}`)?{status:notices.get(`${values[0]}:${values[1]}`)}:null;
+  return null;
+ },async run(){
+  if(sql.startsWith('INSERT INTO supporter_stripe_events'))events.add(values[0]);
+  if(sql.startsWith('INSERT INTO supporter_billing_notifications')){const key=`${values[0]}:${values[1]}`;if(!notices.has(key))notices.set(key,'pending');}
+  if(sql.includes("SET status='sending'")){const key=`${values[1]}:${values[2]}`;if(['pending','failed'].includes(notices.get(key))){notices.set(key,'sending');return{meta:{changes:1}};}return{meta:{changes:0}};}
+  if(sql.includes("SET status='sent'"))notices.set(`${values[2]}:${values[3]}`,'sent');
+  return{meta:{changes:1}};
+ }};},async batch(statements){for(const statement of statements)await statement.run();}};
+ const env={...envBase(),REUSE_DB:db,NOTICE_EMAIL:{async send(message){emails.push(message);}}};
+ const session={id:'cs_async',mode:'payment',status:'complete',customer:'cus_async',payment_intent:'pi_async',client_reference_id:uid,amount_total:300,currency:'jpy',metadata:{dpi_checkout_kind:'initial_subscription',dpi_user:uid,dpi_plan:'supporter',dpi_channel_packs:'0',dpi_server_packs:'0',dpi_billing_anchor:String(Math.floor(Date.now()/1000)+86400),dpi_legal_consent_version:'2026-11-15'}};
+ const originalFetch=globalThis.fetch,calls=[];
+ globalThis.fetch=async(url,init={})=>{const path=new URL(url).pathname,method=init.method||'GET';calls.push({path,method});let data={livemode:false};
+  if(path==='/v1/subscriptions'&&method==='GET')data={livemode:false,data:subscription?[subscription]:[]};
+  else if(path==='/v1/payment_intents/pi_async')data={livemode:false,id:'pi_async',payment_method:'pm_async'};
+  else if(path==='/v1/subscriptions'&&method==='POST'){subscription={livemode:false,id:'sub_async',status:'active',customer:'cus_async',items:{data:[]}};data=subscription;}
+  return new Response(JSON.stringify(data),{status:200,headers:{'content-type':'application/json'}});
+ };
+ try{
+  let response=await billingWebhook(webhookRequest({id:'evt_async_pending',livemode:false,type:'checkout.session.completed',data:{object:{...session,payment_status:'unpaid'}}}),env);
+  assert.equal(response.status,200);assert.equal(subscription,null);assert.equal(emails.length,0);
+  response=await billingWebhook(webhookRequest({id:'evt_async_paid',livemode:false,type:'checkout.session.async_payment_succeeded',data:{object:{...session,payment_status:'paid'}}}),env);
+  assert.equal(response.status,200);assert.equal(subscription.id,'sub_async');assert.equal(emails.length,1);
+  response=await billingWebhook(webhookRequest({id:'evt_async_paid',livemode:false,type:'checkout.session.async_payment_succeeded',data:{object:{...session,payment_status:'paid'}}}),env);
+  assert.equal(response.status,200);assert.equal(calls.filter(call=>call.path==='/v1/subscriptions'&&call.method==='POST').length,1);assert.equal(emails.length,1);
+ }finally{globalThis.fetch=originalFetch;}
+});
+
+test('クレジットチャージの一部返金と全額返金は未使用残高だけを1度ずつ取り消す',async()=>{
+ const events=new Set(),topup={request_id:'req_topup',discord_user_id:'637850681666961408',customer_id:'cus_x',checkout_session_id:'cs_topup',amount:1000,refunded_amount:0,status:'credited'},lot={id:'lot_topup',remaining_amount:1000,status:'active'};
+ const db={prepare(sql){let values=[];return{bind(...input){values=input;return this;},async first(){
+  if(sql.includes('supporter_stripe_events'))return events.has(values[0])?{id:values[0]}:null;
+  if(sql.includes('FROM supporter_credit_topups'))return{...topup};
+  if(sql.includes('FROM supporter_credit_lots'))return{...lot};
+  return null;
+ },async run(){
+  if(sql.startsWith('INSERT INTO supporter_stripe_events'))events.add(values[0]);
+  if(sql.startsWith('UPDATE supporter_credit_topups SET refunded_amount=')){assert.equal(topup.refunded_amount,values[4]);topup.refunded_amount=values[0];topup.status=values[1];}
+  if(sql.startsWith('UPDATE supporter_credit_lots SET remaining_amount=')){assert.equal(lot.remaining_amount,values[4]);lot.remaining_amount=values[0];lot.status=values[1];}
+  return{meta:{changes:1}};
+ }};},async batch(statements){for(const statement of statements)await statement.run();}};
+ const env={...envBase(),REUSE_DB:db};let balance=-1000;const reversals=[],originalFetch=globalThis.fetch;
+ globalThis.fetch=async(url,init={})=>{const path=new URL(url).pathname,method=init.method||'GET',params=new URLSearchParams(init.body||'');let data={livemode:false};
+  if(path==='/v1/customers/cus_x'&&method==='GET')data={livemode:false,balance};
+  else if(path==='/v1/customers/cus_x/balance_transactions'){const amount=Number(params.get('amount'));reversals.push(amount);balance+=amount;data={livemode:false,id:`cbtxn_${reversals.length}`,ending_balance:balance};}
+  return new Response(JSON.stringify(data),{status:200,headers:{'content-type':'application/json'}});
+ };
+ try{
+  const partial={id:'ch_refund',payment_intent:'pi_topup',customer:'cus_x',amount_refunded:300};
+  let response=await billingWebhook(webhookRequest({id:'evt_refund_300',livemode:false,type:'charge.refunded',data:{object:partial}}),env);assert.equal(response.status,200);
+  assert.deepEqual(reversals,[300]);assert.equal(topup.refunded_amount,300);assert.equal(topup.status,'credited');assert.equal(lot.remaining_amount,700);
+  response=await billingWebhook(webhookRequest({id:'evt_refund_300',livemode:false,type:'charge.refunded',data:{object:partial}}),env);assert.equal(response.status,200);assert.deepEqual(reversals,[300]);
+  response=await billingWebhook(webhookRequest({id:'evt_refund_1000',livemode:false,type:'charge.refunded',data:{object:{...partial,amount_refunded:1000}}}),env);assert.equal(response.status,200);
+  assert.deepEqual(reversals,[300,700]);assert.equal(topup.refunded_amount,1000);assert.equal(topup.status,'refunded');assert.equal(lot.remaining_amount,0);assert.equal(lot.status,'revoked');
+ }finally{globalThis.fetch=originalFetch;}
+});
