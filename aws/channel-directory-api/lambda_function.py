@@ -362,6 +362,10 @@ def _publish_supporter_snapshot(body, actor, request_id):
             ConditionExpression=(
                 Attr("routeSetId").not_exists()
                 | Attr("publishedAt").lt(snapshot["generatedAt"])
+                | (
+                    Attr("publishedAt").eq(snapshot["generatedAt"])
+                    & Attr("version").lt(snapshot["version"])
+                )
             ),
         )
         published = True
