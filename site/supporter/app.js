@@ -245,7 +245,7 @@ function render() {
   field(conditionFields, rule, 'region', '対象地方', options.regions);
   if (rule.type === 'rain-radar') {
    field(conditionFields, rule, 'radarCondition', '配信条件', options.rainRadarConditions);
-   if(rule.radarCondition==='rainfall-threshold')field(conditionFields, rule, 'rainfallThresholdMmPerHour', '1時間降水量の閾値（mm/h）', null, {inputmode:'decimal',min:'0.1',max:'500',step:'0.1'});
+   if(rule.radarCondition==='rainfall-threshold')field(conditionFields, rule, 'rainfallThresholdMmPerHour', '1時間降水量の閾値（mm/h・最大20）', null, {inputmode:'decimal',min:'0.1',max:'20',step:'0.1'});
    field(conditionFields, rule, 'deliveryIntervalHours', '配信頻度', options.rainRadarIntervals);
   } else if (rule.type === 'weather') {
    if (WEATHER_ALERT_DETAILS.has(rule.detail)) field(conditionFields, rule, 'weatherLevel', '警戒レベル', options.weatherLevels);

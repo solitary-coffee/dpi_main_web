@@ -48,6 +48,8 @@ AUTO_MONITOR_FUNCTION = os.environ.get("AUTO_MONITOR_FUNCTION", "dpi-backup-auto
 INGEST_ENDPOINTS = [url.strip() for url in os.environ.get("INGEST_ENDPOINTS", "").split(",") if url.strip()]
 INGEST_HMAC_PARAMETER = os.environ.get("INGEST_HMAC_PARAMETER", "").strip()
 DMDATA_API_KEY_PARAMETER = os.environ.get("DMDATA_API_KEY_PARAMETER", "/dpi-bot/dmdata/api-key").strip()
+SUPPORTER_ROUTE_TABLE_NAME = os.environ.get("SUPPORTER_ROUTE_TABLE_NAME", "").strip()
+SUPPORTER_ROUTE_BUCKET_NAME = os.environ.get("SUPPORTER_ROUTE_BUCKET_NAME", "").strip()
 MAX_LIMITED_RESULTS = 1000
 MAX_XML_BYTES = 1_500_000
 MAX_DMDATA_RESPONSE_BYTES = 4_000_000
@@ -73,6 +75,14 @@ _dynamodb = boto3.resource(
     ),
 )
 _table = _dynamodb.Table(TABLE_NAME)
+_s3 = boto3.client(
+    "s3",
+    config=Config(
+        connect_timeout=2,
+        read_timeout=8,
+        retries={"total_max_attempts": 3, "mode": "adaptive"},
+    ),
+)
 _cache = {"expires_at": 0.0, "items": []}
 _system_cache = {"expires_at": 0.0, "value": None}
 _flow_system_cache = {"expires_at": 0.0, "value": None}
@@ -246,6 +256,8 @@ def _handle_action(body):
         result = _discord_announcement_preview(body)
     elif action == "discord-announcement":
         result = _discord_announcement(body, actor, request_id)
+    elif action == "supporter-snapshot":
+        result = _publish_supporter_snapshot(body, actor, request_id)
     else:
         raise ValueError("指定された管理操作はありません。")
 
@@ -253,6 +265,115 @@ def _handle_action(body):
     _flow_system_cache["expires_at"] = 0.0
     _delivery_flow_cache["expires_at"] = 0.0
     return _response(200, {"success": True, "requestId": request_id, **result})
+
+
+def _validate_supporter_snapshot(value, now=None):
+    if not isinstance(value, dict) or int(value.get("schemaVersion", 0)) != 1:
+        raise ValueError("有料プラン配信設定の形式を確認してください。")
+    version = _clean(value.get("version"), 128)
+    generated_at = _integer(value.get("generatedAt"), 0)
+    expires_at = _integer(value.get("expiresAt"), 0)
+    current = int(time.time() if now is None else now)
+    if not version or generated_at <= 0 or expires_at <= current + 60 or expires_at > current + 172_800:
+        raise ValueError("有料プラン配信設定の有効期限を確認してください。")
+    rules = value.get("rules")
+    if not isinstance(rules, list) or len(rules) > 10_000:
+        raise ValueError("有料プラン配信ルール数を確認してください。")
+    allowed_types = {"earthquake", "eew", "weather", "rain-radar"}
+    normalized_rules = []
+    for raw in rules:
+        if not isinstance(raw, dict):
+            raise ValueError("有料プラン配信ルールの形式を確認してください。")
+        rule = dict(raw)
+        rule_id = _clean(rule.get("id"), 80)
+        guild_id = _clean(rule.get("guildId"), 25)
+        channels = rule.get("channelIds")
+        if (
+            not rule_id
+            or _clean(rule.get("type"), 30) not in allowed_types
+            or not guild_id.isdigit()
+            or not 15 <= len(guild_id) <= 25
+            or not isinstance(channels, list)
+            or not channels
+            or len(channels) > 20
+        ):
+            raise ValueError("有料プラン配信ルールの識別情報を確認してください。")
+        normalized_channels = []
+        for channel in channels:
+            channel_id = _clean(channel, 25)
+            if not channel_id.isdigit() or not 15 <= len(channel_id) <= 25:
+                raise ValueError("有料プラン配信先チャンネルを確認してください。")
+            if channel_id not in normalized_channels:
+                normalized_channels.append(channel_id)
+        rule["id"] = rule_id
+        rule["guildId"] = guild_id
+        rule["channelId"] = normalized_channels[0]
+        rule["channelIds"] = normalized_channels
+        normalized_rules.append(rule)
+    routing = value.get("routing") if isinstance(value.get("routing"), dict) else {}
+    dedicated_min = _integer(routing.get("dedicatedMinDestinations"), 100)
+    urls_per_worker = _integer(routing.get("urlsPerWorker"), 25)
+    max_workers = _integer(routing.get("maxDedicatedWorkers"), 10)
+    if dedicated_min < 1 or urls_per_worker < 1 or not 1 <= max_workers <= 10:
+        raise ValueError("有料プラン配信の分散設定を確認してください。")
+    return {
+        "schemaVersion": 1,
+        "version": version,
+        "generatedAt": generated_at,
+        "expiresAt": expires_at,
+        "routing": {
+            "dedicatedMinDestinations": dedicated_min,
+            "urlsPerWorker": urls_per_worker,
+            "maxDedicatedWorkers": max_workers,
+        },
+        "rules": normalized_rules,
+    }
+
+
+def _publish_supporter_snapshot(body, actor, request_id):
+    if not SUPPORTER_ROUTE_TABLE_NAME or not SUPPORTER_ROUTE_BUCKET_NAME:
+        raise ValueError("有料プラン配信設定の保存先が未設定です。")
+    snapshot = _validate_supporter_snapshot(body.get("snapshot"))
+    raw = json.dumps(snapshot, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    if len(raw) > 2_000_000:
+        raise ValueError("有料プラン配信設定が大きすぎます。")
+    digest = hashlib.sha256(raw).hexdigest()
+    object_key = f"snapshots/{snapshot['version']}-{digest[:16]}.json"
+    _s3.put_object(
+        Bucket=SUPPORTER_ROUTE_BUCKET_NAME,
+        Key=object_key,
+        Body=raw,
+        ContentType="application/json",
+        ServerSideEncryption="AES256",
+    )
+    table = _dynamodb.Table(SUPPORTER_ROUTE_TABLE_NAME)
+    try:
+        table.put_item(
+            Item={
+                "routeSetId": "ACTIVE",
+                "version": snapshot["version"],
+                "payloadBucket": SUPPORTER_ROUTE_BUCKET_NAME,
+                "payloadKey": object_key,
+                "payloadBytes": len(raw),
+                "payloadSha256": digest,
+                "publishedAt": snapshot["generatedAt"],
+                "expiresAt": snapshot["expiresAt"],
+            },
+            ConditionExpression=(
+                Attr("routeSetId").not_exists()
+                | Attr("publishedAt").lt(snapshot["generatedAt"])
+            ),
+        )
+        published = True
+    except table.meta.client.exceptions.ConditionalCheckFailedException:
+        published = False
+    _audit_operation(actor, "supporter.snapshot.publish", request_id, {
+        "version": snapshot["version"],
+        "rules": len(snapshot["rules"]),
+        "bytes": len(raw),
+        "published": published,
+    })
+    return {"published": published, "version": snapshot["version"], "rules": len(snapshot["rules"])}
 
 
 def _authorized(event):

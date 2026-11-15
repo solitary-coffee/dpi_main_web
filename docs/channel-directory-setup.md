@@ -20,7 +20,11 @@ sam deploy \
   --region ap-northeast-1 \
   --capabilities CAPABILITY_IAM \
   --resolve-s3 \
-  --parameter-overrides "DirectoryApiToken=$TOKEN" "TableName=EarthquakeData"
+  --parameter-overrides \
+    "DirectoryApiToken=$TOKEN" \
+    "TableName=EarthquakeData" \
+    "SupporterRouteTableName=DPI-SupporterRouteSnapshot-ap-northeast-1" \
+    "SupporterRouteBucketName=dpi-supporter-delivery-supporterroutesnapshotbucke-1kg0cw6aw6lh"
 aws cloudformation describe-stacks \
   --stack-name dpi-channel-directory-api \
   --region ap-northeast-1 \
@@ -38,6 +42,19 @@ npx wrangler secret put AWS_CHANNEL_DIRECTORY_TOKEN
 ```
 
 設定後にWorkerを再デプロイします。AWS連携が未設定または一時的に失敗している場合も、二次利用申請の保存データだけで検索画面を利用できます。
+
+## 有料プラン配信設定の同期
+
+同じFunction URLとBearer tokenは、有料プランの配信設定スナップショットの公開にも使用します。Workerは次のタイミングで、契約が有効な利用者のルールだけを個人情報とStripe識別子を除いて公開します。
+
+- ルール保存後
+- Stripeの契約状態変更後
+- 管理者による契約解除・アカウント停止後
+- 定期請求処理の実行後
+
+Lambdaは暗号化したJSONを `SupporterRouteBucketName` の `snapshots/` に保存し、`SupporterRouteTableName` の `ACTIVE` ポインタを新しい版にだけ更新します。自宅側受信プログラムはこのポインタを読み、ローカルの `data/supporter_delivery_rules.json` を原子的に更新します。Webhook URLはAWSへ送らず、従来どおり自宅側の `disco/info.data.json` からチャンネルIDで解決します。
+
+`SupporterRouteTableName` と `SupporterRouteBucketName` は `dpi-supporter-delivery` スタックの実リソース名と一致させてください。スタック再作成で物理名が変わった場合は、上記の固定値をそのまま使用せず、CloudFormation Outputs/Resourcesで確認した値へ更新します。
 
 ## 現在取得できる項目
 

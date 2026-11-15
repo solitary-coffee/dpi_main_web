@@ -1,3 +1,5 @@
+import { refreshSupporterSnapshotSafely } from './supporter-snapshot.js';
+
 // Test-only integration. Live keys are deliberately rejected until delivery is ready.
 const json = (data,status=200)=>Response.json(data,{status,headers:{'Cache-Control':'no-store'}});
 const fail=(message,status=400)=>{throw Object.assign(new Error(message),{status});};
@@ -1085,7 +1087,7 @@ async function expirePurchasedCredits(env,db,limit=100){
  }
  return expired;
 }
-export async function billingWebhook(request,env){
+export async function billingWebhook(request,env,ctx){
  if(request.method!=='POST')return json({message:'Method not allowed'},405);
  if(!billingReady(env))return json({message:'Unavailable'},503);
  const reader=request.body?.getReader();if(!reader)return json({},400);const chunks=[];let size=0;while(true){const {done,value}=await reader.read();if(done)break;size+=value.length;if(size>262144){await reader.cancel();return json({},413);}chunks.push(value);}const bytes=new Uint8Array(size);let at=0;for(const c of chunks){bytes.set(c,at);at+=c.length;}const raw=new TextDecoder().decode(bytes);
@@ -1130,6 +1132,8 @@ export async function billingWebhook(request,env){
  }
  // Events invalidate a cache only; status always comes from Stripe, never from stale event payloads.
  await db.batch([db.prepare('INSERT INTO supporter_stripe_events(id,received_at) VALUES(?,?) ON CONFLICT DO NOTHING').bind(event.id,Date.now()),db.prepare('UPDATE supporter_billing SET dirty=1 WHERE customer_id=?').bind(eventCustomerId(event))]);
+ const snapshotTask=refreshSupporterSnapshotSafely(env,db,subscriptionSummariesByCustomer,`stripe_${event.type}`);
+ if(ctx?.waitUntil)ctx.waitUntil(snapshotTask);else await snapshotTask;
  return json({received:true});
 }
 export async function runSupporterBillingSchedule(env,nowMs=Date.now()){
@@ -1167,5 +1171,6 @@ export async function runSupporterBillingSchedule(env,nowMs=Date.now()){
   catch(error){console.error('Supporter disciplinary email retry failed',{requestId:row.request_id,errorName:error?.name||'Error'});}
  }
  const expiredCredits=await expirePurchasedCredits(env,db);
+ await refreshSupporterSnapshotSafely(env,db,subscriptionSummariesByCustomer,'billing_schedule');
  return {retried,paid,failed,suspended,expiredCredits};
 }

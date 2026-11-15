@@ -46,7 +46,7 @@ class ContactError extends Error {
 const application = {
     async fetch(request, env, ctx) {
         if (new URL(request.url).pathname === '/api/supporter/stripe/webhook') {
-            try { return await billingWebhook(request, env); }
+            try { return await billingWebhook(request, env, ctx); }
             catch { return new Response('Webhook temporarily unavailable', {status:503}); }
         }
         const accessLogResponse = await handleAccessLogRequest(request, env);
@@ -78,7 +78,7 @@ const application = {
         const newsletterResponse = await handleNewsletterRequest(request, env, ctx);
         if (newsletterResponse) return newsletterResponse;
 
-        const supporterResponse = await handleSupporterRequest(request, env);
+        const supporterResponse = await handleSupporterRequest(request, env, ctx);
         if (supporterResponse) return supporterResponse;
         const reuseResponse = await handleReuseRequest(request, env);
         if (reuseResponse) return reuseResponse;

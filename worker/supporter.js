@@ -1,6 +1,7 @@
 import { requireSession, assertCsrf, assertSameOrigin, readJson, fetchGuildChannels } from './reuse.js';
 import { authenticateNewsletterAdmin } from './access.js';
 import { adminBillingAction, adminDisciplinaryBillingAction, billingAction, billingReady, createBillingCustomer, creditsByCustomer, customerSubscriptionSummaries, expireSupporterPendingCheckouts, publicPlans, reconcilePaidCheckoutSubscription, sendSupporterDisciplinaryNotification, subscriptionSummariesByCustomer } from './supporter-billing.js';
+import { refreshSupporterSnapshotSafely } from './supporter-snapshot.js';
 
 const response = (data, status = 200) => Response.json(data, {status, headers: {'Cache-Control':'no-store'}});
 const notFound = () => new Response('Not Found', {
@@ -472,7 +473,7 @@ function optionalMagnitude(value) {
 function optionalRainfallThreshold(value) {
  if (value === '' || value === undefined || value === null) return null;
  const number = Number(value);
- if (!Number.isFinite(number) || number < 0.1 || number > 500) throw Object.assign(new Error('1時間降水量の閾値は0.1から500mm/hの範囲で指定してください。'),{status:400});
+ if (!Number.isFinite(number) || number < 0.1 || number > 20) throw Object.assign(new Error('現在の雨雲レーダーで判定できる閾値は0.1から20mm/hです。'),{status:400});
  return Math.round(number * 10) / 10;
 }
 
@@ -625,7 +626,7 @@ async function supporterSite(request, env, db) {
  return new Response(asset.body, {status: asset.status, statusText: asset.statusText, headers});
 }
 
-export async function handleSupporterRequest(request, env) {
+export async function handleSupporterRequest(request, env, ctx) {
  const path = new URL(request.url).pathname;
  const isSupporterSite = path === '/site/supporter' || path.startsWith('/site/supporter/');
  const isSupporterAdmin = path === '/site/supporter-admin' || path.startsWith('/site/supporter-admin/');
@@ -703,6 +704,8 @@ export async function handleSupporterRequest(request, env) {
        .bind(canceled,confiscated,accountStatus,completedAt,completedAt,requestId).run();
       const auditRecorded=await writeSupporterAudit(db,admin.email,action,uid,{reason,requestId,canceledSubscriptions:canceled,confiscatedCredits:confiscated,accountStatus,refund:false});
       const emailStatus=await sendDisciplinaryEmail(env,db,account,input,{canceledSubscriptions:canceled,confiscatedCredits:confiscated});
+      const snapshotTask=refreshSupporterSnapshotSafely(env,db,subscriptionSummariesByCustomer,'disciplinary_action');
+      if(ctx?.waitUntil)ctx.waitUntil(snapshotTask);else await snapshotTask;
       return response({success:true,message:disciplinaryResultMessage(action,canceled,confiscated),canceledSubscriptions:canceled,confiscatedCredits:confiscated,accountStatus,emailStatus,auditRecorded,creditRecorded,idempotent:false});
      }catch(error){
       await db.prepare(`UPDATE supporter_disciplinary_actions SET status='failed',last_error=?,updated_at=? WHERE request_id=? AND status<>'completed'`).bind(clean(error?.message||error?.name||'unknown').slice(0,500),Math.floor(Date.now()/1000),requestId).run();
@@ -861,6 +864,8 @@ export async function handleSupporterRequest(request, env) {
    await assertRuleChannels(rules, env);
    const result = await db.prepare('UPDATE supporter_accounts SET settings_json=?, revision=revision+1, updated_at=? WHERE discord_user_id=? AND revision=?').bind(JSON.stringify({rules}),new Date().toISOString(),uid,input.revision).run();
    if (!result.meta.changes) return response({message:'未登録、または別画面で更新されています。再読み込みしてください。'},409);
+   const snapshotTask=refreshSupporterSnapshotSafely(env,db,subscriptionSummariesByCustomer,'settings_saved');
+   if(ctx?.waitUntil)ctx.waitUntil(snapshotTask);else await snapshotTask;
    return response({success:true,revision:input.revision+1});
   }
   return response({message:'この操作は利用できません。'},404);
