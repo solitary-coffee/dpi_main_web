@@ -789,7 +789,7 @@ async function previewSubscriptionUpdate(env,customer,current,choice,requestedPr
   creditGenerated:changeTiming==='next_period'?0:Math.max(0,-planProration),
   optionChange:{currentChannelPacks:currentSummary.channelPacks,nextChannelPacks:choice.channelPacks,currentServerPacks:currentSummary.serverPacks,nextServerPacks:choice.serverPacks,prorated:false,effectiveAt:currentSummary.nextRenewalAt},
   nextRenewalAt:currentSummary.nextRenewalAt,
-  notice:changeTiming==='next_period'?'ダウングレードでは返金・日割り精算を行いません。現在の契約内容は今期末まで利用でき、新しいプランと利用枠は次回26日から適用します。クレジットは次回26日の請求書に自動適用されます。':'アップグレード時は基本プランの未使用分を返金相当額として新プランの残期間分へ充当し、差額を精算します。追加オプションは日割り請求を行わず、次回26日の請求から月額へ反映し、利用可能なクレジットを自動適用します。',
+  notice:changeTiming==='next_period'?'変更は次回26日から適用され、返金はありません。利用するクレジットは次回の請求に反映します。':'基本プランの差額は日割りで精算します。追加オプションは日割りせず、次回26日分から反映します。利用するクレジットは今回の差額、次回の請求の順に充当します。',
  };
 }
 function phaseItems(params,index,items){

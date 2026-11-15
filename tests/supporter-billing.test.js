@@ -236,20 +236,22 @@ test('paid plans stay separate from secondary-use applications and private in na
  assert.match(basicHtml,/追加オプションの変更には日割り計算を適用しません/);
  assert.match(basicHtml,/通知設定は有料プランの契約後/);
  assert.doesNotMatch(basicHtml,/通知ルールの下書き/);
- assert.match(billingUi,/クレジットチャージ用メールアドレス/);
- assert.match(billingUi,/クレジット支払い・プラン申込み用メールアドレス/);
- assert.match(billingUi,/前回チャージまたは申込みで使用したメールアドレスを自動入力/);
+ assert.match(billingUi,/連絡先メールアドレス/);
+ assert.match(billingUi,/契約・請求に関するお知らせに使用します/);
+ assert.match(billingUi,/チャージ結果のお知らせに使用します/);
+ assert.doesNotMatch(billingUi,/利用する操作を選択|ページを移動せず/);
  assert.match(billingUi,/setBillingMode/);
  assert.match(billingUi,/topupEmail\.value/);
- assert.match(billingUi,/有料プランを申し込む前でもチャージできます/);
- assert.match(billingUi,/チャージ済みクレジットでプランを申し込む/);
+ assert.match(billingUi,/クレジットでプランを申し込む/);
  assert.match(billingUi,/残高・履歴を再読み込み/);
  assert.match(billingUi,/creditTopupRecovery/);
  assert.match(billingUi,/クレジットが.*不足しています/);
  assert.match(billingUi,/selectedInitialCharge/);
  assert.match(billingUi,/email:topupEmail\.value[\s\S]*useCredits:true/);
- assert.match(billingUi,/クレジットで全額支払う（カード情報の入力不要/);
+ assert.match(billingUi,/クレジットで全額支払う/);
  assert.match(billingUi,/useCredits:creditPaymentInput\.checked/);
+ assert.match(billingUi,/クレジット＋登録済みのお支払い方法/);
+ assert.match(billingUi,/クレジットを使って変更を確定/);
 });
 test('admin billing operations require confirmation, reason, same-origin and audit logging',async()=>{
  const [worker,html,script]=await Promise.all([
@@ -492,7 +494,7 @@ test('supporter UI avoids WebKit URL constructor errors for Stripe redirects',as
  assert.match(source,/pay\.stripe\.com/);
  assert.match(source,/このプランで申し込む/);
  assert.match(source,/hasExistingContract/);
- assert.match(source,/契約済み（新規申込不可）/);
+ assert.match(source,/契約中/);
  assert.match(source,/email:billingEmail\.value/);
  assert.match(source,/legalConsent:true/);
  assert.match(source,/\/terms\/terms\.html/);
@@ -520,7 +522,7 @@ test('paid plan configuration contains test catalog IDs and consent storage',asy
  assert.match(migration,/legal_consent_version/);assert.match(migration,/legal_consent_at/);
  assert.match(creditMigration,/supporter_credit_topups/);assert.match(creditMigration,/supporter_credit_lots/);assert.match(creditMigration,/expires_at/);
  assert.match(billingSource,/dpi_legal_consent_version/);
- assert.match(billingSource,/dpi_checkout_kind.*credit_topup/);assert.match(uiSource,/Stripeでクレジットをチャージ/);assert.match(uiSource,/購入日から1年間/);
+ assert.match(billingSource,/dpi_checkout_kind.*credit_topup/);assert.match(uiSource,/チャージ手続きへ/);assert.match(uiSource,/購入日から1年間/);
  assert.match(terms,/第 10 条（有料通知プラン）/);assert.match(terms,/故意または重大な過失/);
  assert.match(terms,/利用者の都合による取消し、払戻しまたは現金への交換には原則として応じません/);
  assert.match(specified,/購入済みクレジットの払戻し.*原則として応じません/);
@@ -542,7 +544,7 @@ test('補償クレジットは対象・理由・有効期限を保存し利用�
  assert.match(supporterSource,/ORDER BY discord_user_id,CASE WHEN expires_at IS NULL THEN 1 ELSE 0 END,expires_at,id/);
  assert.match(billingSource,/supporter_credit_campaign_recipients/);assert.match(billingSource,/source_id LIKE 'compensation:%'/);assert.match(billingSource,/reason:clean\(row\.reason\)/);
  for(const text of ['全登録者','特定ユーザー','特定プランの契約者','利用者に表示する理由','有効期限'])assert.match(adminHtml,new RegExp(text));
- assert.match(adminSource,/credit-campaigns/);assert.match(adminSource,/compensationRequestId=crypto\.randomUUID/);assert.match(adminSource,/配布処理を再開/);assert.match(userSource,/補償 .*ポイント/);assert.match(userSource,/理由:/);
+ assert.match(adminSource,/credit-campaigns/);assert.match(adminSource,/compensationRequestId=crypto\.randomUUID/);assert.match(adminSource,/配布処理を再開/);assert.match(userSource,/補償 .*クレジット/);assert.match(userSource,/理由:/);
  assert.doesNotMatch(`${userHtml}\n${userSource}`,/先行提供|Stripeテスト環境|月・予定|実際の請求は発生しません/);
 });
 test('billing dunning sends success and failure mail and blocks access after month-end failure',async()=>{
@@ -568,7 +570,7 @@ test('supporter rule creation is resilient to WebKit input and channel errors',a
  assert.match(source,/billing-preview-dialog/);
  assert.match(source,/expectedCreditApplied/);
  assert.match(source,/credit-consent/);
- assert.match(source,/クレジットを.*使用し、今回/);
+ assert.match(source,/のクレジットを使用します。残額は今回/);
  assert.match(source,/次回26日のお支払い見込み/);
  assert.doesNotMatch(source,/window\.confirm\('契約内容を更新/);
  assert.match(source,/rules\.push\(normalizeRule[\s\S]+render\(\);[\s\S]+await loadChannels/);
