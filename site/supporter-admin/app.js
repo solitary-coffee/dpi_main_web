@@ -1,5 +1,6 @@
 let accounts = [];
 let selectedAccount = null;
+let creditSummary = null;
 
 const $ = id => document.getElementById(id);
 const STATUS_LABELS = Object.freeze({active:'有効',trialing:'有効（次回請求待ち）',past_due:'支払い遅延',unpaid:'未払い',paused:'一時停止',incomplete:'手続き未完了'});
@@ -35,10 +36,11 @@ async function loadAccounts() {
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data.message || `取得に失敗しました（HTTP ${response.status}）。`);
   accounts = data.accounts || [];
+  creditSummary = data.creditSummary || null;
   $('billing-mode').textContent = data.billingEnabled ? 'Stripeテスト環境 接続中' : 'Stripeテスト環境 未接続';
   renderSummary();
   renderAccounts();
-  setStatus('','');
+  setStatus(data.creditSummaryError||'',data.creditSummaryError?'error':'');
  } catch (error) { setStatus(error.message,'error'); }
 }
 
@@ -50,12 +52,31 @@ function renderSummary() {
   ['有効・対応中の契約',active.length],
   ['月額合計',money(active.reduce((sum,item)=>sum+Number(item.amount||0),0),'jpy')],
   ['期間末解約予定',active.filter(item=>item.cancelAtPeriodEnd).length],
-  ['利用可能クレジット',`${accounts.reduce((sum,item)=>sum+Number(item.credits||0),0).toLocaleString('ja-JP')}円分`],
+  ['総合クレジット数',creditMetric(creditSummary?.totalCredits)],
+  ['クレジット利用者数',creditSummary?.creditUsers==null?'取得不可':`${Number(creditSummary.creditUsers).toLocaleString('ja-JP')}人`],
+  ['購入クレジット残高',creditMetric(creditSummary?.purchasedBalance)],
+  ['管理者付与等の残高',creditMetric(creditSummary?.otherCredits)],
+  ['クレジット購入者数',`${Number(creditSummary?.purchasers||0).toLocaleString('ja-JP')}人`],
+  ['累計チャージ額',money(creditSummary?.netPurchased||0,'jpy')],
+  ['30日以内の失効予定',creditMetric(creditSummary?.expiring30Days)],
+  ['累計失効クレジット',creditMetric(creditSummary?.expiredCredits)],
  ];
  $('summary-cards').replaceChildren(...items.map(([label,value]) => {
   const card=element('article','metric-card');card.append(element('span','',label),element('strong','',String(value)));return card;
  }));
+ const legal=$('credit-legal-monitor');legal.replaceChildren();
+ if(!creditSummary){legal.append(element('p','credit-monitor-error','有償クレジット残高の監視情報を取得できませんでした。'));return;}
+ const balance=Number(creditSummary.purchasedBalance||0),threshold=Number(creditSummary.legalThreshold||10000000),rate=Math.min(1,balance/threshold);
+ const heading=element('div','credit-monitor-heading');heading.append(element('strong','',`有償未使用残高 ${balance.toLocaleString('ja-JP')}円`),element('span','',`届出基準 ${threshold.toLocaleString('ja-JP')}円の ${(rate*100).toFixed(2)}%`));
+ const progress=document.createElement('progress');progress.max=threshold;progress.value=Math.min(balance,threshold);progress.setAttribute('aria-label','有償未使用残高の届出基準に対する割合');
+ const level=rate>=1?'danger':rate>=.95?'danger':rate>=.9?'warning':rate>=.8?'notice':'safe';
+ const message=rate>=1?'基準額に到達しています。新規チャージを停止し、財務局への届出要否を直ちに確認してください。':rate>=.95?'基準額の95%を超えています。チャージ停止準備と専門家確認が必要です。':rate>=.9?'基準額の90%を超えています。届出準備を開始してください。':rate>=.8?'基準額の80%を超えています。残高推移を重点監視してください。':'現在は届出基準未満です。毎年3月31日・9月30日の残高を記録してください。';
+ const details=element('p',`credit-monitor-message ${level}`,message);
+ const expiry=element('p','credit-monitor-meta',`購入残高保有者 ${Number(creditSummary.purchasedUsers||0).toLocaleString('ja-JP')}人／次回失効 ${creditSummary.nextExpiry?unixDate(creditSummary.nextExpiry):'予定なし'}`);
+ legal.append(heading,progress,details,expiry);
 }
+
+function creditMetric(value){return value==null?'取得不可':`${Number(value||0).toLocaleString('ja-JP')}クレジット（${Number(value||0).toLocaleString('ja-JP')}円分）`;}
 
 function renderAccounts() {
  const query=$('account-search').value.trim().toLowerCase();

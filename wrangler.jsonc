@@ -85,7 +85,7 @@
     "REUSE_PUBLIC_ORIGIN": "https://dpi-bot.com",
     "SUPPORTER_PUBLIC_ORIGIN": "https://dpi-bot.com",
     "SUPPORTER_BILLING_MODE": "test",
-    "SUPPORTER_CONSENT_VERSION": "2026-11-05",
+    "SUPPORTER_CONSENT_VERSION": "2026-11-13",
     "STRIPE_PRICE_SUPPORTER": "price_1UXuIp07fNOOHc1qzo05hC0m",
     "STRIPE_PRICE_PLUS": "price_1UXuIh07fNOOHc1qaRqFDfEo",
     "STRIPE_PRICE_PRO": "price_1UXzlp07fNOOHc1qtsrSdmP8",

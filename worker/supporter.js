@@ -33,6 +33,50 @@ export function supporterAdminAccount(row, subscriptions = [], billingError = ''
   billingError,
  };
 }
+export async function supporterCreditMetrics(db,billingRows=[],creditBalances=new Map(),stripeAvailable=true){
+ const now=Math.floor(Date.now()/1000),balancesByUser=new Map();
+ for(const row of billingRows||[])balancesByUser.set(row.discord_user_id,Math.max(0,Number(creditBalances.get(row.customer_id)||0)));
+ const lots=await db.prepare(`SELECT id,discord_user_id,source_type,remaining_amount,expires_at FROM supporter_credit_lots
+  WHERE source_type IN ('purchase','admin') AND status='active' AND remaining_amount>0
+  ORDER BY discord_user_id,CASE source_type WHEN 'purchase' THEN 0 ELSE 1 END,expires_at,id`).all();
+ const grouped=new Map();
+ for(const lot of lots.results||[]){const group=grouped.get(lot.discord_user_id)||[];group.push(lot);grouped.set(lot.discord_user_id,group);}
+ if(stripeAvailable){
+  for(const [uid,userLots] of grouped){
+   let tracked=userLots.reduce((sum,lot)=>sum+Math.max(0,Number(lot.remaining_amount)||0),0);
+   let consumed=Math.max(0,tracked-(balancesByUser.get(uid)||0));
+   for(const lot of userLots){
+    if(consumed<=0)break;
+    const current=Math.max(0,Number(lot.remaining_amount)||0),used=Math.min(current,consumed),remaining=current-used;
+    const result=await db.prepare(`UPDATE supporter_credit_lots SET remaining_amount=?,status=?,updated_at=?
+     WHERE id=? AND remaining_amount=? AND status='active'`).bind(remaining,remaining?'active':'consumed',now,lot.id,current).run();
+    if(result.meta?.changes)consumed-=used;
+   }
+  }
+ }
+ const [active,topups,expired]=await Promise.all([
+  db.prepare(`SELECT COALESCE(SUM(remaining_amount),0) AS balance,COUNT(DISTINCT discord_user_id) AS users,
+   MIN(expires_at) AS next_expiry,COALESCE(SUM(CASE WHEN expires_at<=? THEN remaining_amount ELSE 0 END),0) AS expiring_30d
+   FROM supporter_credit_lots WHERE source_type='purchase' AND status='active' AND remaining_amount>0`).bind(now+30*86400).first(),
+  db.prepare(`SELECT COALESCE(SUM(amount-refunded_amount),0) AS net_purchased,
+   COUNT(DISTINCT CASE WHEN status NOT IN ('pending','failed') THEN discord_user_id END) AS purchasers
+   FROM supporter_credit_topups WHERE status NOT IN ('pending','failed')`).first(),
+  db.prepare(`SELECT COALESCE(-SUM(credit_delta),0) AS expired
+   FROM supporter_credit_events WHERE reason='credit_expired' AND credit_delta<0`).first(),
+ ]);
+ const totalCredits=stripeAvailable?[...balancesByUser.values()].reduce((sum,value)=>sum+value,0):null;
+ const creditUsers=stripeAvailable?[...balancesByUser.values()].filter(value=>value>0).length:null;
+ const purchasedBalance=Math.max(0,Number(active?.balance)||0);
+ return {
+  totalCredits,creditUsers,purchasedBalance,purchasedUsers:Math.max(0,Number(active?.users)||0),
+  otherCredits:totalCredits===null?null:Math.max(0,totalCredits-purchasedBalance),
+  netPurchased:Math.max(0,Number(topups?.net_purchased)||0),purchasers:Math.max(0,Number(topups?.purchasers)||0),
+  expiredCredits:Math.max(0,Number(expired?.expired)||0),expiring30Days:Math.max(0,Number(active?.expiring_30d)||0),
+  nextExpiry:active?.next_expiry?Number(active.next_expiry):null,
+  legalThreshold:10_000_000,legalUsageRate:purchasedBalance/10_000_000,
+  stripeAvailable,
+ };
+}
 function normalizeBillingEmail(value) {
  const email = clean(value).toLowerCase();
  if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw Object.assign(new Error('有効なメールアドレスを入力してください。'),{status:400});
@@ -60,6 +104,28 @@ async function writeSupporterAudit(db, actor, action, uid, details) {
  } catch (error) {
   console.error('Paid plan billing audit write failed',{action,errorName:error?.name||'Error'});
   return false;
+ }
+}
+async function recordAdminCreditLot(db,uid,action,requestId,amount){
+ const now=Math.floor(Date.now()/1000);
+ if(action==='grant_credit'){
+  await db.prepare(`INSERT INTO supporter_credit_lots
+   (id,discord_user_id,source_type,source_id,original_amount,remaining_amount,expires_at,status,created_at,updated_at)
+   VALUES(?,?,'admin',?,?,?,NULL,'active',?,?) ON CONFLICT(source_type,source_id) DO NOTHING`)
+   .bind(`admin:${requestId}`,uid,requestId,amount,amount,now,now).run();
+  return;
+ }
+ if(action!=='remove_credit')return;
+ const lots=await db.prepare(`SELECT id,remaining_amount FROM supporter_credit_lots
+  WHERE discord_user_id=? AND source_type IN ('admin','purchase') AND status='active' AND remaining_amount>0
+  ORDER BY CASE source_type WHEN 'admin' THEN 0 ELSE 1 END,expires_at,id`).bind(uid).all();
+ let removing=amount;
+ for(const lot of lots.results||[]){
+  if(removing<=0)break;
+  const current=Math.max(0,Number(lot.remaining_amount)||0),used=Math.min(current,removing),remaining=current-used;
+  const result=await db.prepare(`UPDATE supporter_credit_lots SET remaining_amount=?,status=?,updated_at=?
+   WHERE id=? AND remaining_amount=? AND status='active'`).bind(remaining,remaining?'active':'revoked',now,lot.id,current).run();
+  if(result.meta?.changes)removing-=used;
  }
 }
 export const SUPPORTER_REGIONS = Object.freeze([
@@ -411,6 +477,7 @@ export async function handleSupporterRequest(request, env) {
       await db.prepare(`INSERT INTO supporter_credit_events
        (id,discord_user_id,credit_delta,balance_after,stripe_transaction_id,reason,actor,created_at)
        VALUES(?,?,?,?,?,?,?,?)`).bind(clean(input.requestId),uid,result.creditEvent.delta,result.creditEvent.balanceAfter,result.creditEvent.stripeTransactionId,clean(input.reason),admin.email,new Date().toISOString()).run();
+      await recordAdminCreditLot(db,uid,input.action,clean(input.requestId),Math.abs(Number(result.creditEvent.delta)||0));
      } catch (error) { console.error('Paid plan credit event write failed',{errorName:error?.name||'Error'}); creditRecorded = false; }
     }
     const auditRecorded = await writeSupporterAudit(db,admin.email,input.action,uid,{reason:clean(input.reason),amount:Number(input.amount)||null,plan:clean(input.plan)||null,channelPacks:Number.isInteger(Number(input.channelPacks??input.packs))?Number(input.channelPacks??input.packs):null,serverPacks:Number.isInteger(Number(input.serverPacks))?Number(input.serverPacks):null,requestId:clean(input.requestId),resultMessage:result.message});
@@ -418,7 +485,7 @@ export async function handleSupporterRequest(request, env) {
    }
    if (request.method !== 'GET') return response({message:'Method not allowed'},405);
    if (path === '/site/supporter-admin/api/accounts') {
-    const rows = await db.prepare(`SELECT a.discord_user_id, a.billing_email, a.registered_at, a.updated_at,
+    const [rows,billingRows] = await Promise.all([db.prepare(`SELECT a.discord_user_id, a.billing_email, a.registered_at, a.updated_at,
      a.revision, a.settings_json, b.customer_id,
      COALESCE(NULLIF(a.discord_name,''),
       (SELECT s.discord_username FROM reuse_sessions s WHERE s.discord_user_id=a.discord_user_id ORDER BY s.expires_at DESC LIMIT 1),
@@ -427,21 +494,25 @@ export async function handleSupporterRequest(request, env) {
      ) AS discord_name
      FROM supporter_accounts a
      LEFT JOIN supporter_billing b ON b.discord_user_id = a.discord_user_id
-     ORDER BY a.updated_at DESC LIMIT 100`).all();
+     ORDER BY a.updated_at DESC LIMIT 100`).all(),db.prepare(`SELECT discord_user_id,customer_id FROM supporter_billing WHERE customer_id IS NOT NULL`).all()]);
     const stripeEnabled = billingReady(env);
     let grouped = new Map();
     let creditBalances = new Map();
     let billingError = '';
     if (stripeEnabled) {
-     const customers=(rows.results||[]).map(row=>row.customer_id);
-     const [subscriptionResult,creditResult] = await Promise.allSettled([subscriptionSummariesByCustomer(env,customers),creditsByCustomer(env,customers)]);
+     const subscriptionCustomers=(rows.results||[]).map(row=>row.customer_id);
+     const creditCustomers=(billingRows.results||[]).map(row=>row.customer_id);
+     const [subscriptionResult,creditResult] = await Promise.allSettled([subscriptionSummariesByCustomer(env,subscriptionCustomers),creditsByCustomer(env,creditCustomers)]);
      if (subscriptionResult.status === 'fulfilled') grouped = subscriptionResult.value;
      else billingError = 'Stripeから契約情報を取得できませんでした。';
      if (creditResult.status === 'fulfilled') creditBalances = creditResult.value;
      else billingError = `${billingError}${billingError ? ' ' : ''}クレジット残高を取得できませんでした。`;
     }
     const accounts = (rows.results||[]).map(row=>supporterAdminAccount(row,grouped.get(row.customer_id)||[],row.customer_id?billingError:'',creditBalances.get(row.customer_id)||0));
-    return response({billingEnabled:stripeEnabled,accounts});
+    let creditSummary=null,creditSummaryError='';
+    try{creditSummary=await supporterCreditMetrics(db,billingRows.results||[],creditBalances,stripeEnabled&&!billingError.includes('クレジット残高'));}
+    catch(error){console.error('Paid plan credit summary failed',{errorName:error?.name||'Error'});creditSummaryError='クレジット集計を取得できませんでした。';}
+    return response({billingEnabled:stripeEnabled,accounts,creditSummary,creditSummaryError});
    }
    const detailMatch=path.match(/^\/site\/supporter-admin\/api\/accounts\/(\d{17,20})$/);
    if(detailMatch){
@@ -488,11 +559,11 @@ export async function handleSupporterRequest(request, env) {
    return response({regions:SUPPORTER_REGIONS,weatherLevels:WEATHER_LEVELS,warningLevels:WARNING_LEVELS,earthquakeDetails:EARTHQUAKE_DETAILS,eewDetails:EEW_DETAILS,eewWarningAreaModes:EEW_WARNING_AREA_MODES,weatherDetails:WEATHER_DETAILS,thresholdModes:THRESHOLD_MODES});
   }
   if (request.method !== 'GET') { assertSameOrigin(request); assertCsrf(request,session); }
-  if (/^\/api\/supporter\/billing\/(checkout|preview-update|update|portal|status)$/.test(path)) {
+  if (/^\/api\/supporter\/billing\/(checkout|topup|preview-update|update|portal|status)$/.test(path)) {
    const expected=path.endsWith('/status')?'GET':'POST';
    if(request.method!==expected)return response({message:'Method not allowed'},405);
    const input=request.method==='POST'?await readJson(request):{};
-   if(path.endsWith('/checkout')){
+   if(path.endsWith('/checkout')||path.endsWith('/topup')){
     const email=normalizeBillingEmail(input.email);
     const consentVersion=supporterConsentVersion(input,env);
     const discordName=clean(session.discord_username).slice(0,100);
