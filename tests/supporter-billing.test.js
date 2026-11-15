@@ -242,6 +242,10 @@ test('paid plans stay separate from secondary-use applications and private in na
  assert.match(billingUi,/setBillingMode/);
  assert.match(billingUi,/topupEmail\.value/);
  assert.match(billingUi,/有料プランを申し込む前でもチャージできます/);
+ assert.match(billingUi,/チャージ済みクレジットでプランを申し込む/);
+ assert.match(billingUi,/クレジットが.*不足しています/);
+ assert.match(billingUi,/selectedInitialCharge/);
+ assert.match(billingUi,/email:topupEmail\.value[\s\S]*useCredits:true/);
  assert.match(billingUi,/クレジットで全額支払う（カード情報の入力不要/);
  assert.match(billingUi,/useCredits:creditPaymentInput\.checked/);
 });
