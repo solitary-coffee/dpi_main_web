@@ -106,12 +106,24 @@ async function purchasedCreditStatus(db,uid,stripeCredits){
    ORDER BY COALESCE(r.credited_at,c.created_at) DESC LIMIT 20`).bind(uid).all();
   compensations=(result.results||[]).map(row=>({id:clean(row.id),amount:Number(row.amount)||0,reason:clean(row.reason),expiresAt:unix(row.expires_at),creditedAt:unix(row.credited_at),status:clean(row.status),remainingAmount:Math.max(0,Number(row.remaining_amount)||0)}));
  }catch(error){console.warn('Supporter compensation history is unavailable',{errorName:error?.name||'Error'});}
+ let adminConfiscations=[];
+ try{
+  const result=await db.prepare(`SELECT id,credit_delta,balance_after,reason,actor,created_at
+   FROM supporter_credit_events
+   WHERE discord_user_id=? AND credit_delta<0 AND actor NOT IN ('user','system')
+   ORDER BY created_at DESC LIMIT 20`).bind(uid).all();
+  adminConfiscations=(result.results||[]).map(row=>{
+   const parsed=Date.parse(clean(row.created_at));
+   return {id:clean(row.id),amount:Math.abs(Number(row.credit_delta)||0),balanceAfter:Math.max(0,Number(row.balance_after)||0),reason:clean(row.reason),processedAt:Number.isFinite(parsed)?Math.floor(parsed/1000):null};
+  });
+ }catch(error){console.warn('Supporter administrator confiscation history is unavailable',{errorName:error?.name||'Error'});}
  return {
   balance:Math.max(0,Number(stripeCredits)||0),
   purchasedBalance:Math.max(0,Number(active?.purchased_balance)||0),
   nextExpiry:unix(active?.next_expiry),
   topups:(history.results||[]).map(row=>({id:clean(row.request_id),amount:Number(row.amount)||0,status:clean(row.status),purchasedAt:unix(row.purchased_at),expiresAt:unix(row.expires_at),createdAt:unix(row.created_at)})),
   compensations,
+  adminConfiscations,
  };
 }
 async function creditPurchaseTimestamp(env,session,paidAt){

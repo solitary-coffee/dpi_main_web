@@ -422,7 +422,7 @@ const topupPresets=document.createElement('div');topupPresets.className='credit-
 for(const amount of [500,1000,3000,5000]){const button=document.createElement('button');button.type='button';button.className='secondary-btn';button.textContent=`${amount.toLocaleString('ja-JP')}円`;button.onclick=()=>{topupAmount.value=String(amount);};topupPresets.append(button);}
 const creditConsent=document.createElement('label');creditConsent.className='credit-consent';
 const creditConsentInput=document.createElement('input');creditConsentInput.type='checkbox';creditConsentInput.required=true;
-const creditConsentText=document.createElement('span');creditConsentText.textContent='購入額と同数のクレジットが付与され、購入日から1年後に未使用分が失効することを確認しました。';
+const creditConsentText=document.createElement('span');creditConsentText.textContent='購入額と同数のクレジットがチャージされ、購入日から1年後に未使用分が失効することを確認しました。';
 creditConsent.append(creditConsentInput,creditConsentText);
 const topupButton=document.createElement('button');topupButton.type='button';topupButton.className='primary-btn';topupButton.textContent='チャージ手続きへ';
 topupButton.disabled=true;
@@ -579,7 +579,7 @@ topupSignupButton.onclick=async()=>{
 const dateText = seconds => seconds ? new Intl.DateTimeFormat('ja-JP',{dateStyle:'medium',timeStyle:'short',timeZone:'Asia/Tokyo'}).format(new Date(seconds * 1000)) : '—';
 const moneyText = (amount,currency) => new Intl.NumberFormat('ja-JP',{style:'currency',currency:(currency || 'jpy').toUpperCase(),maximumFractionDigits:0}).format(amount || 0);
 const STATUS_LABELS = {active:'有効',trialing:'有効（次回請求待ち）',past_due:'支払い遅延',unpaid:'未払い',paused:'一時停止',incomplete:'手続き未完了',paid:'支払い済み',open:'支払い待ち',draft:'作成中',void:'無効'};
-const TOPUP_STATUS_LABELS={pending:'決済待ち',credited:'付与済み',failed:'未完了',expired:'失効済み',refunded:'返金済み',disputed:'異議申立て'};
+const TOPUP_STATUS_LABELS={pending:'決済待ち',credited:'チャージ済み',failed:'未完了',expired:'失効済み',refunded:'返金済み',disputed:'異議申立て'};
 
 function renderCreditDetails(details={}){
  const balance=Number(details.balance||0),purchased=Number(details.purchasedBalance||0);
@@ -593,12 +593,20 @@ function renderCreditDetails(details={}){
  creditHistory.replaceChildren();
  const rows=Array.isArray(details.topups)?details.topups:[];
  const compensations=Array.isArray(details.compensations)?details.compensations:[];
- if(!rows.length&&!compensations.length){creditHistory.textContent='クレジット履歴はありません。';return;}
+ const confiscations=Array.isArray(details.adminConfiscations)?details.adminConfiscations:[];
+ if(!rows.length&&!compensations.length&&!confiscations.length){creditHistory.textContent='クレジット履歴はありません。';return;}
  for(const item of compensations){
   const card=document.createElement('article');card.className='credit-history-card compensation-credit-card';
   const heading=document.createElement('strong');heading.textContent=`補償 ${Number(item.amount||0).toLocaleString('ja-JP')}クレジット・${item.status==='expired'?'失効済み':'付与済み'}`;
   const reason=document.createElement('p');reason.textContent=`理由: ${item.reason||'—'}`;
   const dates=document.createElement('p');dates.textContent=`付与: ${dateText(item.creditedAt)}／有効期限: ${dateText(item.expiresAt)}／残高: ${Number(item.remainingAmount||0).toLocaleString('ja-JP')}クレジット`;
+  card.append(heading,reason,dates);creditHistory.append(card);
+ }
+ for(const item of confiscations){
+  const card=document.createElement('article');card.className='credit-history-card confiscated-credit-card';
+  const heading=document.createElement('strong');heading.textContent=`${Number(item.amount||0).toLocaleString('ja-JP')}クレジット・管理者による没収`;
+  const reason=document.createElement('p');reason.textContent=`理由: ${item.reason||'—'}`;
+  const dates=document.createElement('p');dates.textContent=`処理: ${dateText(item.processedAt)}／処理後残高: ${Number(item.balanceAfter||0).toLocaleString('ja-JP')}クレジット`;
   card.append(heading,reason,dates);creditHistory.append(card);
  }
  for(const item of rows){

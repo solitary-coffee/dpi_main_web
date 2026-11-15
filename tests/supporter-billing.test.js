@@ -785,3 +785,13 @@ test('利用者画面は契約同期で削除されたルールと改訂番号�
  const source=await readFile(new URL('../site/supporter/app.js',import.meta.url),'utf8');
  assert.match(source,/billingState\.rulesAdjustment\?\.changed/);assert.match(source,/rulesAdjustment\.revision/);assert.match(source,/下側の通知ルール/);assert.match(source,/function savedRules\(account\)/);
 });
+
+test('利用者のクレジット履歴はチャージと管理者没収を区別する',async()=>{
+ const userSource=await readFile(new URL('../site/supporter/app.js',import.meta.url),'utf8');
+ const billingSource=await readFile(new URL('../worker/supporter-billing.js',import.meta.url),'utf8');
+ assert.match(userSource,/credited:'チャージ済み'/);
+ assert.match(userSource,/管理者による没収/);
+ assert.match(userSource,/details\.adminConfiscations/);
+ assert.match(billingSource,/credit_delta<0 AND actor NOT IN \('user','system'\)/);
+ assert.match(billingSource,/adminConfiscations/);
+});
