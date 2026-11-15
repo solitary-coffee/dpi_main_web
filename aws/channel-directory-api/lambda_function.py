@@ -2648,9 +2648,10 @@ def _test_delivery_targets():
         *_string_list(item.get("url"), 100),
         *_string_list(item.get("URL"), 100),
     ]
-    return list(dict.fromkeys(
+    legacy_targets = list(dict.fromkeys(
         value for value in candidates if _valid_discord_webhook_url(value)
     ))
+    return legacy_targets[:1]
 
 
 def _public_test_run(item):

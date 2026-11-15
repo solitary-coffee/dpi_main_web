@@ -99,6 +99,7 @@ class TestDeliveryPayloadTests(unittest.TestCase):
         template = (ROOT / "aws/channel-directory-api/template.yaml").read_text(encoding="utf-8")
         self.assertIn('Key={"id": "配信テスト用"}', source)
         self.assertIn("if targets or not LEGACY_TEST_WEBHOOK_TABLE_NAME", source)
+        self.assertIn("return legacy_targets[:1]", source)
         self.assertIn("ReadDedicatedLegacyTestWebhook", template)
         self.assertIn("dynamodb:GetItem", template)
 
