@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHmac} from 'node:crypto';
-import {billingAction,billingWebhook,selection,billingReady,billingSchedule,creditApplication,creditExpiresAt,creditSignupSubscriptionParams,creditsFromBalance,customerInvoices,dunningSchedule,normalizeCreditTopupAmount,paidCheckoutSubscriptionParams,provisionCreditFundedSignup,provisionPaidCheckoutSubscription,prorationBreakdown,reconcilePaidCheckoutSubscription,reconcilePendingCreditTopups,reconcileStoredRulesForCustomer,scheduledChangeSummary,staleCheckoutAttempt,subscriptionSummary,verifySignature} from '../worker/supporter-billing.js';
-import {supporterAdminAccount,supporterAdminDetails,supporterCreditMetrics} from '../worker/supporter.js';
+import {adminBillingAction,billingAction,billingWebhook,selection,billingReady,billingSchedule,creditApplication,creditExpiresAt,creditSignupSubscriptionParams,creditsFromBalance,customerInvoices,dunningSchedule,normalizeCreditTopupAmount,paidCheckoutSubscriptionParams,provisionCreditFundedSignup,provisionPaidCheckoutSubscription,prorationBreakdown,reconcilePaidCheckoutSubscription,reconcilePendingCreditTopups,reconcileStoredRulesForCustomer,scheduledChangeSummary,staleCheckoutAttempt,subscriptionSummary,verifySignature} from '../worker/supporter-billing.js';
+import {assertSupporterAccountActive,changeSupporterAccountStatus,supporterAccountEnforcement,supporterAdminAccount,supporterAdminDetails,supporterCreditMetrics} from '../worker/supporter.js';
 import {readFile} from 'node:fs/promises';
 test('plan, channel and server add-ons are server controlled',()=>{
  assert.deepEqual(selection({plan:'supporter',channelPacks:2,serverPacks:1}),{plan:'supporter',packs:2,channelPacks:2,serverPacks:1,baseMonthly:300,monthly:900,channels:8,servers:2,rules:5,complexConditions:false,multiDestination:false});
@@ -266,7 +266,7 @@ test('admin billing operations require confirmation, reason, same-origin and aud
  assert.match(worker,/assertAdminOrigin\(request\)/);
  assert.match(worker,/input\.confirmDiscordUserId !== uid/);
  assert.match(worker,/writeSupporterAudit/);
- for(const action of ['change_subscription','grant_credit','remove_credit','create_payment_link','refund_latest','cancel_at_period_end','cancel_immediately','reset_checkout_state'])assert.match(html,new RegExp(`value="${action}"`));
+ for(const action of ['change_subscription','grant_credit','remove_credit','confiscate_credit','suspend_account','resume_account','create_payment_link','refund_latest','cancel_at_period_end','cancel_immediately','reset_checkout_state'])assert.match(html,new RegExp(`value="${action}"`));
  assert.match(worker,/input\.action === 'reset_checkout_state'[\s\S]*SUPPORTER_BILLING_MODE !== 'test'/);
  assert.match(worker,/SET checkout_key=NULL, checkout_id=NULL, checkout_params=NULL/);
  assert.match(script,/Stripe Customerと契約情報は保持されます/);
@@ -276,11 +276,54 @@ test('admin billing operations require confirmation, reason, same-origin and aud
  assert.match(worker,/supporterAdminDetails/);
  assert.match(worker,/recordAdminCreditLot/);
  assert.match(worker,/source_type IN \('admin','purchase'\)/);
+ assert.match(worker,/changeSupporterAccountStatus/);
+ assert.match(worker,/assertSupporterAccountActive/);
+ assert.match(script,/全クレジットを没収/);
+ assert.match(script,/Stripeの継続請求は自動停止しません/);
  assert.match(html,/credit-legal-monitor/);
  assert.match(script,/総合クレジット数/);
  assert.match(script,/クレジット利用者数/);
  assert.match(script,/届出基準/);
  assert.doesNotMatch(script,/\.innerHTML\s*=/);
+});
+test('停止状態は理由付きで返り、停止中の有料機能操作を拒否する',async()=>{
+ const active=supporterAccountEnforcement({account_status:'active'});assert.deepEqual(active,{suspended:false,status:'active',reason:'',updatedAt:null});
+ const stopped={account_status:'suspended',status_reason:'不正利用の調査中',status_updated_at:'2026-11-15T01:00:00.000Z'};
+ assert.deepEqual(supporterAccountEnforcement(stopped),{suspended:true,status:'suspended',reason:'不正利用の調査中',updatedAt:'2026-11-15T01:00:00.000Z'});
+ assert.throws(()=>assertSupporterAccountActive(stopped),error=>error.status===403&&/不正利用の調査中/.test(error.message));
+ let networkCalls=0;const originalFetch=globalThis.fetch;globalThis.fetch=async()=>{networkCalls+=1;throw new Error('Stripeへ到達してはいけません');};
+ const db={prepare(){return{bind(){return this;},async first(){return{discord_user_id:'123',billing_email:'user@example.jp',...stopped};},async run(){return{meta:{changes:1}};}};}};
+ try{
+  const response=await billingAction(new Request('https://dpi-bot.com/api/supporter/billing/topup'),{SUPPORTER_BILLING_MODE:'test',STRIPE_SECRET_KEY:'rk_test_example',STRIPE_WEBHOOK_SECRET:'whsec_x',STRIPE_PRICE_SUPPORTER:'price_basic',STRIPE_PRICE_PLUS:'price_plus',STRIPE_PRICE_PRO:'price_pro',STRIPE_PRICE_ADDON:'price_addon',STRIPE_PORTAL_CONFIG:'bpc_x'},db,'123',{amount:500});
+  assert.equal(response.status,403);assert.match((await response.json()).message,/停止/);assert.equal(networkCalls,0);
+ }finally{globalThis.fetch=originalFetch;}
+});
+test('管理者の停止・解除は状態を競合防止付きで更新し同じリクエストを二重適用しない',async()=>{
+ let account={account_status:'active',status_request_id:null,status_reason:'',status_updated_at:null,status_updated_by:null},updates=0;
+ const db={prepare(sql){let values=[];return{bind(...input){values=input;return this;},async first(){return{...account};},async run(){
+  if(sql.startsWith('UPDATE supporter_accounts')){
+   if((account.account_status||'active')!==values[7])return{meta:{changes:0}};
+   account={...account,account_status:values[0],status_reason:values[1],status_updated_at:values[2],status_updated_by:values[3],status_request_id:values[4]};updates+=1;return{meta:{changes:1}};
+  }
+  return{meta:{changes:1}};
+ }};}};
+ const suspendId='123e4567-e89b-42d3-a456-426614174301',resumeId='123e4567-e89b-42d3-a456-426614174302',admin={email:'admin@example.jp'};
+ let result=await changeSupporterAccountStatus(db,'637850681666961408',admin,{action:'suspend_account',requestId:suspendId,reason:'不正利用の調査を行うため'});
+ assert.equal(result.accountStatus,'suspended');assert.equal(account.status_reason,'不正利用の調査を行うため');assert.equal(account.status_updated_by,'admin@example.jp');assert.equal(updates,1);
+ result=await changeSupporterAccountStatus(db,'637850681666961408',admin,{action:'suspend_account',requestId:suspendId,reason:'不正利用の調査を行うため'});
+ assert.equal(result.idempotent,true);assert.equal(updates,1);
+ result=await changeSupporterAccountStatus(db,'637850681666961408',admin,{action:'resume_account',requestId:resumeId,reason:'調査完了により利用を再開'});
+ assert.equal(result.accountStatus,'active');assert.equal(updates,2);
+});
+test('全クレジット没収は指定額ではなく実行時点のStripe残高を一度に0へする',async()=>{
+ const env={SUPPORTER_BILLING_MODE:'test',STRIPE_SECRET_KEY:'rk_test_example',STRIPE_WEBHOOK_SECRET:'whsec_x',STRIPE_PRICE_SUPPORTER:'price_basic',STRIPE_PRICE_PLUS:'price_plus',STRIPE_PRICE_PRO:'price_pro',STRIPE_PRICE_ADDON:'price_addon',STRIPE_PORTAL_CONFIG:'bpc_x'};
+ const calls=[],originalFetch=globalThis.fetch;
+ globalThis.fetch=async(url,init={})=>{const path=new URL(url).pathname,params=new URLSearchParams(init.body||'');calls.push({path,params});const data=path.endsWith('/balance_transactions')?{livemode:false,id:'cbtxn_confiscated',ending_balance:0}:{livemode:false,balance:-1250};return new Response(JSON.stringify(data),{status:200,headers:{'content-type':'application/json'}});};
+ try{
+  const result=await adminBillingAction(env,'cus_x','637850681666961408',{action:'confiscate_credit',requestId:'123e4567-e89b-42d3-a456-426614174303',reason:'規約違反に伴うクレジット没収'});
+  assert.equal(result.credits,0);assert.equal(result.creditEvent.delta,-1250);assert.match(result.message,/1,250クレジットを没収/);
+  const transaction=calls.find(call=>call.path.endsWith('/balance_transactions'));assert.equal(transaction.params.get('amount'),'1250');assert.equal(transaction.params.get('metadata[dpi_credit_action]'),'confiscate_credit');
+ }finally{globalThis.fetch=originalFetch;}
 });
 test('管理者クレジット集計はStripe総残高と有償ロットを分離して1000万円基準を返す',async()=>{
  const now=Math.floor(Date.now()/1000);

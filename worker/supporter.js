@@ -30,8 +30,20 @@ export function supporterAdminAccount(row, subscriptions = [], billingError = ''
   ruleCount: ruleCount(row.settings_json),
   subscriptions,
   credits: Number(credits || 0),
+  accountStatus: row.account_status || 'active',
+  statusReason: row.status_reason || '',
+  statusUpdatedAt: row.status_updated_at || null,
+  statusUpdatedBy: row.status_updated_by || '',
   billingError,
  };
+}
+export function supporterAccountEnforcement(row){
+ return {suspended:row?.account_status==='suspended',status:row?.account_status||'active',reason:clean(row?.status_reason),updatedAt:row?.status_updated_at||null};
+}
+export function assertSupporterAccountActive(row){
+ const state=supporterAccountEnforcement(row);
+ if(state.suspended)throw Object.assign(new Error(`有料プラン機能は管理者により停止されています。${state.reason?` 理由: ${state.reason}`:''}`),{status:403,accountEnforcement:state});
+ return state;
 }
 export async function supporterCreditMetrics(db,billingRows=[],creditBalances=new Map(),stripeAvailable=true){
  const now=Math.floor(Date.now()/1000),balancesByUser=new Map();
@@ -115,7 +127,7 @@ async function recordAdminCreditLot(db,uid,action,requestId,amount){
    .bind(`admin:${requestId}`,uid,requestId,amount,amount,now,now).run();
   return;
  }
- if(action!=='remove_credit')return;
+ if(!['remove_credit','confiscate_credit'].includes(action))return;
  const lots=await db.prepare(`SELECT id,remaining_amount FROM supporter_credit_lots
   WHERE discord_user_id=? AND source_type IN ('admin','purchase') AND status='active' AND remaining_amount>0
   ORDER BY CASE source_type WHEN 'admin' THEN 0 ELSE 1 END,expires_at,id`).bind(uid).all();
@@ -127,6 +139,22 @@ async function recordAdminCreditLot(db,uid,action,requestId,amount){
    WHERE id=? AND remaining_amount=? AND status='active'`).bind(remaining,remaining?'active':'revoked',now,lot.id,current).run();
   if(result.meta?.changes)removing-=used;
  }
+}
+
+export async function changeSupporterAccountStatus(db,uid,admin,input){
+ const action=clean(input.action),requestId=clean(input.requestId),reason=clean(input.reason);
+ if(!['suspend_account','resume_account'].includes(action))throw Object.assign(new Error('アカウント操作を確認してください。'),{status:400});
+ if(!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestId)||reason.length<5||reason.length>500)throw Object.assign(new Error('操作理由を5〜500文字で入力してください。'),{status:400});
+ const current=await db.prepare('SELECT account_status,status_request_id FROM supporter_accounts WHERE discord_user_id=?').bind(uid).first();
+ if(!current)throw Object.assign(new Error('対象の有料プラン登録者が見つかりません。'),{status:404});
+ const next=action==='suspend_account'?'suspended':'active',previous=next==='suspended'?'active':'suspended';
+ if(current.status_request_id===requestId)return{message:next==='suspended'?'有料プラン機能は停止済みです。':'有料プラン機能は再開済みです。',accountStatus:next,idempotent:true};
+ if((current.account_status||'active')===next)throw Object.assign(new Error(next==='suspended'?'このアカウントは既に停止されています。':'このアカウントは停止されていません。'),{status:409});
+ const now=new Date().toISOString();
+ const result=await db.prepare(`UPDATE supporter_accounts SET account_status=?,status_reason=?,status_updated_at=?,status_updated_by=?,status_request_id=?,updated_at=?
+  WHERE discord_user_id=? AND COALESCE(account_status,'active')=?`).bind(next,reason,now,admin.email,requestId,now,uid,previous).run();
+ if(!result.meta?.changes)throw Object.assign(new Error('別の管理操作で状態が変更されました。最新情報を読み込んでください。'),{status:409});
+ return{message:next==='suspended'?'有料プラン機能を停止しました。契約の請求・解約状態は変更していません。':'有料プラン機能を再開しました。',accountStatus:next,idempotent:false};
 }
 
 const COMPENSATION_ACTIVE_STATUSES = new Set(['active','trialing','past_due','unpaid','paused']);
@@ -360,6 +388,10 @@ export function supporterAdminDetails(row, channelsByGuild = {}) {
  return {
   discordUserId:row.discord_user_id,
   discordName:row.discord_name||'',
+  accountStatus:row.account_status||'active',
+  statusReason:row.status_reason||'',
+  statusUpdatedAt:row.status_updated_at||null,
+  statusUpdatedBy:row.status_updated_by||'',
   rules:rules.map((rule,index)=>{
    const type=clean(rule?.type);const guildId=clean(rule?.guildId);
    const requested=Array.isArray(rule?.channelIds)?rule.channelIds.map(clean).filter(Boolean):[];
@@ -477,6 +509,8 @@ export function normalizeSupporterRules(input, guilds, limits = {servers:1,chann
 async function supporterLimits(env, db, uid) {
  const fallback = {servers:1,channels:2,rules:5,complexConditions:false,multiDestination:false};
  if (!billingReady(env)) throw Object.assign(new Error('決済設定を確認できないため、通知設定を保存できません。'),{status:503});
+ const account=await db.prepare('SELECT account_status,status_reason,status_updated_at FROM supporter_accounts WHERE discord_user_id=?').bind(uid).first();
+ assertSupporterAccountActive(account);
  const row = await db.prepare('SELECT customer_id FROM supporter_billing WHERE discord_user_id=?').bind(uid).first();
  if (!row?.customer_id) throw Object.assign(new Error('通知設定は有料プランの契約後に利用できます。'),{status:409});
  try {
@@ -570,10 +604,15 @@ export async function handleSupporterRequest(request, env) {
     const input = await readJson(request);
     const uid = clean(input.discordUserId);
     if (!/^\d{17,20}$/.test(uid) || input.confirmDiscordUserId !== uid) return response({message:'対象Discord IDの確認入力が一致しません。'},400);
-    const account = await db.prepare(`SELECT a.discord_user_id, a.billing_email, b.customer_id
+    const account = await db.prepare(`SELECT a.discord_user_id, a.billing_email, a.account_status, a.status_reason, a.status_updated_at, a.status_updated_by, a.status_request_id, b.customer_id
      FROM supporter_accounts a LEFT JOIN supporter_billing b ON b.discord_user_id=a.discord_user_id
      WHERE a.discord_user_id=?`).bind(uid).first();
     if (!account) return response({message:'対象の有料プラン登録者が見つかりません。'},404);
+    if (['suspend_account','resume_account'].includes(input.action)) {
+     const result=await changeSupporterAccountStatus(db,uid,admin,input);
+     const auditRecorded=await writeSupporterAudit(db,admin.email,input.action,uid,{reason:clean(input.reason),requestId:clean(input.requestId),accountStatus:result.accountStatus,idempotent:result.idempotent});
+     return response({success:true,...result,auditRecorded,creditRecorded:true});
+    }
     if (input.action === 'reset_checkout_state') {
      if (env.SUPPORTER_BILLING_MODE !== 'test') return response({message:'この操作はStripeテスト環境でのみ利用できます。'},403);
      const reason = clean(input.reason);
@@ -608,7 +647,7 @@ export async function handleSupporterRequest(request, env) {
    if (request.method !== 'GET') return response({message:'Method not allowed'},405);
    if (path === '/site/supporter-admin/api/accounts') {
     const [rows,billingRows] = await Promise.all([db.prepare(`SELECT a.discord_user_id, a.billing_email, a.registered_at, a.updated_at,
-     a.revision, a.settings_json, b.customer_id,
+     a.revision, a.settings_json, a.account_status, a.status_reason, a.status_updated_at, a.status_updated_by, b.customer_id,
      COALESCE(NULLIF(a.discord_name,''),
       (SELECT s.discord_username FROM reuse_sessions s WHERE s.discord_user_id=a.discord_user_id ORDER BY s.expires_at DESC LIMIT 1),
       (SELECT r.discord_username FROM reuse_applications r WHERE r.discord_user_id=a.discord_user_id ORDER BY r.updated_at DESC LIMIT 1),
@@ -642,7 +681,7 @@ export async function handleSupporterRequest(request, env) {
    const detailMatch=path.match(/^\/site\/supporter-admin\/api\/accounts\/(\d{17,20})$/);
    if(detailMatch){
     const uid=detailMatch[1];
-    const row=await db.prepare(`SELECT a.discord_user_id, a.settings_json,
+    const row=await db.prepare(`SELECT a.discord_user_id, a.settings_json, a.account_status, a.status_reason, a.status_updated_at, a.status_updated_by,
      COALESCE(NULLIF(a.discord_name,''),
       (SELECT s.discord_username FROM reuse_sessions s WHERE s.discord_user_id=a.discord_user_id ORDER BY s.expires_at DESC LIMIT 1),
       (SELECT r.discord_username FROM reuse_applications r WHERE r.discord_user_id=a.discord_user_id ORDER BY r.updated_at DESC LIMIT 1),
@@ -689,6 +728,8 @@ export async function handleSupporterRequest(request, env) {
    if(request.method!==expected)return response({message:'Method not allowed'},405);
    const input=request.method==='POST'?await readJson(request):{};
    if(path.endsWith('/checkout')||path.endsWith('/topup')){
+    const currentAccount=await db.prepare('SELECT account_status,status_reason,status_updated_at FROM supporter_accounts WHERE discord_user_id=?').bind(uid).first();
+    if(currentAccount)assertSupporterAccountActive(currentAccount);
     const email=normalizeBillingEmail(input.email);
     const consentVersion=supporterConsentVersion(input,env);
     const discordName=clean(session.discord_username).slice(0,100);

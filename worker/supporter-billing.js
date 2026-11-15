@@ -608,8 +608,10 @@ export async function subscriptionSummariesByCustomer(env,customers){
 export async function billingAction(request,env,db,uid,input={}){
  const action=new URL(request.url).pathname.split('/').pop();
  if(!billingReady(env))return json({message:'決済設定が完了していません。'},503);
- const account=await db.prepare('SELECT discord_user_id,billing_email FROM supporter_accounts WHERE discord_user_id=?').bind(uid).first();
+ const account=await db.prepare('SELECT discord_user_id,billing_email,account_status,status_reason,status_updated_at FROM supporter_accounts WHERE discord_user_id=?').bind(uid).first();
  if(!account)return json({message:'先に登録してください。'},409);
+ const accountEnforcement={suspended:account.account_status==='suspended',status:account.account_status||'active',reason:clean(account.status_reason),updatedAt:account.status_updated_at||null};
+ if(accountEnforcement.suspended&&!['status','portal'].includes(action))return json({message:`有料プラン機能は管理者により停止されています。${accountEnforcement.reason?` 理由: ${accountEnforcement.reason}`:''}`,accountEnforcement},403);
  await db.prepare('INSERT INTO supporter_billing(discord_user_id) VALUES(?) ON CONFLICT DO NOTHING').bind(uid).run();
  let row=await db.prepare('SELECT * FROM supporter_billing WHERE discord_user_id=?').bind(uid).first();
  if(action==='status'){
@@ -620,7 +622,7 @@ export async function billingAction(request,env,db,uid,input={}){
   const creditDetails=await purchasedCreditStatus(db,uid,credits);
   const active=summaries.filter(item=>item.recognizedPlan!==false&&['active','trialing','past_due','unpaid','paused'].includes(item.status));
   const rulesAdjustment=active.length?await reconcileStoredRulesForCustomer(db,row.customer_id,combinedLimits(active)):{changed:false,removedRules:0,removedDestinations:0,simplifiedRules:0};
-  return json({mode:'test',billingDay:26,subscriptions:summaries,invoices,credits,creditDetails,dunning,rulesAdjustment,recoveredSubscription:recovery.recovered,creditTopupRecovery,deliveryEnabled:false});
+  return json({mode:'test',billingDay:26,subscriptions:summaries,invoices,credits,creditDetails,dunning,accountEnforcement,rulesAdjustment,recoveredSubscription:recovery.recovered,creditTopupRecovery,deliveryEnabled:false});
  }
  if(!row.customer_id){const customer=await createBillingCustomer(env,uid,account.billing_email,`dpi-customer-${uid}`);await db.prepare('UPDATE supporter_billing SET customer_id=? WHERE discord_user_id=? AND customer_id IS NULL').bind(customer.id,uid).run();row=await db.prepare('SELECT * FROM supporter_billing WHERE discord_user_id=?').bind(uid).first();}
  else if(account.billing_email)await stripe(env,`customers/${encodeURIComponent(row.customer_id)}`,{email:account.billing_email},await idempotencyKey(`dpi-customer-email-${uid}-`,account.billing_email));
@@ -865,18 +867,20 @@ export async function adminBillingAction(env,customer,uid,input){
  const reason=String(input?.reason||'').trim();
  if(!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestId)||reason.length<5||reason.length>500)fail('操作理由を5〜500文字で入力してください。',400);
  const key=`dpi-admin-${action}-${requestId}`;
- if(action==='grant_credit'||action==='remove_credit'){
-  const amount=Number(input.amount);
-  if(!Number.isInteger(amount)||amount<1||amount>1_000_000)fail('クレジット数を1〜1,000,000で指定してください。',400);
+ if(['grant_credit','remove_credit','confiscate_credit'].includes(action)){
   const current=await customerCredits(env,customer);
+  const amount=action==='confiscate_credit'?current:Number(input.amount);
+  if(action==='confiscate_credit'&&(!Number.isSafeInteger(amount)||amount<1))fail('没収できるクレジット残高がありません。',409);
+  if(action!=='confiscate_credit'&&(!Number.isInteger(amount)||amount<1||amount>1_000_000))fail('クレジット数を1〜1,000,000で指定してください。',400);
   if(action==='remove_credit'&&amount>current)fail('利用可能クレジットを超えて削除できません。',409);
   const delta=action==='grant_credit'?amount:-amount;
   const transaction=await stripe(env,`customers/${encodeURIComponent(customer)}/balance_transactions`,{
-   amount:String(-delta),currency:'jpy',description:`DPI-Bot ${action==='grant_credit'?'credit grant':'credit removal'}: ${reason}`.slice(0,500),
+   amount:String(-delta),currency:'jpy',description:`DPI-Bot ${action==='grant_credit'?'credit grant':action==='confiscate_credit'?'credit confiscation':'credit removal'}: ${reason}`.slice(0,500),
    'metadata[dpi_user]':uid,'metadata[dpi_credit_action]':action,'metadata[dpi_admin_reason]':reason,
   },key);
   const balanceAfter=creditsFromBalance(transaction.ending_balance);
-  return {message:`${amount.toLocaleString('ja-JP')}クレジットを${action==='grant_credit'?'付与':'削除'}しました。`,credits:balanceAfter,creditEvent:{delta,balanceAfter,stripeTransactionId:transaction.id}};
+  const operation=action==='grant_credit'?'付与':action==='confiscate_credit'?'没収':'削除';
+  return {message:`${amount.toLocaleString('ja-JP')}クレジットを${operation}しました。`,credits:balanceAfter,creditEvent:{delta,balanceAfter,stripeTransactionId:transaction.id}};
  }
  const list=await subscriptions(env,customer);
  const current=activeSubscription(list);
