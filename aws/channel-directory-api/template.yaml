@@ -25,6 +25,10 @@ Parameters:
     Type: String
     Default: DPI-DeliveryMonitor-v1
     Description: Read-only delivery aggregation source used by the administrator dashboard.
+  LegacyTestWebhookTableName:
+    Type: String
+    Default: WebhookData
+    Description: Legacy table containing only the dedicated 配信テスト用 destination row.
   OperatingRegions:
     Type: String
     Default: ap-northeast-1,ap-northeast-3
@@ -79,6 +83,7 @@ Resources:
           DMDATA_API_KEY_PARAMETER: !Ref DmdataApiKeyParameter
           SUPPORTER_ROUTE_TABLE_NAME: !Ref SupporterRouteTableName
           SUPPORTER_ROUTE_BUCKET_NAME: !Ref SupporterRouteBucketName
+          LEGACY_TEST_WEBHOOK_TABLE_NAME: !Ref LegacyTestWebhookTableName
       Policies:
         - DynamoDBReadPolicy:
             TableName: !Ref TableName
@@ -121,6 +126,11 @@ Resources:
                 - dynamodb:Scan
                 - dynamodb:DescribeTable
               Resource: !Sub arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${DeliveryMonitorTableName}
+            - Sid: ReadDedicatedLegacyTestWebhook
+              Effect: Allow
+              Action:
+                - dynamodb:GetItem
+              Resource: !Sub arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${LegacyTestWebhookTableName}
             - Sid: PublishSupporterRoutePointer
               Effect: Allow
               Action:

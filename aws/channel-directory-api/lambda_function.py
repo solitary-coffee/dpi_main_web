@@ -50,6 +50,7 @@ INGEST_HMAC_PARAMETER = os.environ.get("INGEST_HMAC_PARAMETER", "").strip()
 DMDATA_API_KEY_PARAMETER = os.environ.get("DMDATA_API_KEY_PARAMETER", "/dpi-bot/dmdata/api-key").strip()
 SUPPORTER_ROUTE_TABLE_NAME = os.environ.get("SUPPORTER_ROUTE_TABLE_NAME", "").strip()
 SUPPORTER_ROUTE_BUCKET_NAME = os.environ.get("SUPPORTER_ROUTE_BUCKET_NAME", "").strip()
+LEGACY_TEST_WEBHOOK_TABLE_NAME = os.environ.get("LEGACY_TEST_WEBHOOK_TABLE_NAME", "WebhookData").strip()
 MAX_LIMITED_RESULTS = 1000
 MAX_XML_BYTES = 1_500_000
 MAX_DMDATA_RESPONSE_BYTES = 4_000_000
@@ -2633,8 +2634,23 @@ def _test_delivery_inventory():
 
 
 def _test_delivery_targets():
-    return [value for value in _load_dispatch_targets(TEST_SLOT)
-            if _valid_discord_webhook_url(value)]
+    targets = [value for value in _load_dispatch_targets(TEST_SLOT)
+               if _valid_discord_webhook_url(value)]
+    if targets or not LEGACY_TEST_WEBHOOK_TABLE_NAME:
+        return targets
+    # The home delivery configuration historically stores this dedicated slot
+    # as one row in WebhookData.  It is the only permitted compatibility
+    # fallback; never select a normal disaster-delivery row.
+    item = _dynamodb.Table(LEGACY_TEST_WEBHOOK_TABLE_NAME).get_item(
+        Key={"id": "配信テスト用"}, ConsistentRead=True,
+    ).get("Item", {})
+    candidates = [
+        *_string_list(item.get("url"), 100),
+        *_string_list(item.get("URL"), 100),
+    ]
+    return list(dict.fromkeys(
+        value for value in candidates if _valid_discord_webhook_url(value)
+    ))
 
 
 def _public_test_run(item):

@@ -94,6 +94,14 @@ class TestDeliveryPayloadTests(unittest.TestCase):
             validate_request({"sources": ["admin"], "routes": ["fast"],
                               "functions": [{"region": "ap-northeast-1", "name": "unrelated"}]}, self.inventory)
 
+    def test_legacy_test_slot_fallback_is_dedicated_and_read_only(self):
+        source = (ROOT / "aws/channel-directory-api/lambda_function.py").read_text(encoding="utf-8")
+        template = (ROOT / "aws/channel-directory-api/template.yaml").read_text(encoding="utf-8")
+        self.assertIn('Key={"id": "配信テスト用"}', source)
+        self.assertIn("if targets or not LEGACY_TEST_WEBHOOK_TABLE_NAME", source)
+        self.assertIn("ReadDedicatedLegacyTestWebhook", template)
+        self.assertIn("dynamodb:GetItem", template)
+
     def test_embed_identifies_origin_route_and_disables_mentions(self):
         message = build_message("run", title="delivery test", source="home", route="sqs", requested_by="admin")
         self.assertEqual(message["allowed_mentions"], {"parse": []})
