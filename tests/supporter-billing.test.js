@@ -240,6 +240,8 @@ test('paid plans stay separate from secondary-use applications and private in na
  assert.match(billingUi,/契約・請求に関するお知らせに使用します/);
  assert.match(billingUi,/チャージ結果のお知らせに使用します/);
  assert.doesNotMatch(billingUi,/利用する操作を選択|ページを移動せず/);
+ assert.match(billingUi,/クレジットチャージ式/);
+ assert.match(billingUi,/クレジット支払い式/);
  assert.match(billingUi,/setBillingMode/);
  assert.match(billingUi,/topupEmail\.value/);
  assert.match(billingUi,/クレジットでプランを申し込む/);
@@ -252,6 +254,8 @@ test('paid plans stay separate from secondary-use applications and private in na
  assert.match(billingUi,/useCredits:creditPaymentInput\.checked/);
  assert.match(billingUi,/クレジット＋登録済みのお支払い方法/);
  assert.match(billingUi,/クレジットを使って変更を確定/);
+ assert.match(billingUi,/hasExistingContract[\s\S]*残クレジットでプラン・オプションを変更[\s\S]*preview-update/);
+ assert.match(billingUi,/アップグレード差額と次回26日の請求に利用できます/);
 });
 test('admin billing operations require confirmation, reason, same-origin and audit logging',async()=>{
  const [worker,html,script]=await Promise.all([
