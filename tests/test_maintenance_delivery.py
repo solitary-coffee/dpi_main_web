@@ -100,6 +100,8 @@ class TestDeliveryPayloadTests(unittest.TestCase):
         self.assertIn('Key={"id": "配信テスト用"}', source)
         self.assertIn("if targets or not LEGACY_TEST_WEBHOOK_TABLE_NAME", source)
         self.assertIn("return legacy_targets[:1]", source)
+        self.assertIn('InvocationType="RequestResponse" if supporter_worker else "Event"', source)
+        self.assertIn('"detail": "Discord送信成功" if succeeded else "Discord送信失敗"', source)
         self.assertIn("ReadDedicatedLegacyTestWebhook", template)
         self.assertIn("dynamodb:GetItem", template)
 
