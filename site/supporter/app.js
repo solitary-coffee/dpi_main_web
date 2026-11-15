@@ -287,7 +287,7 @@ async function load() {
  topupEmail.value=savedBillingEmail;
  updateCheckoutAvailability();
  updateTopupSignupAvailability();
- if(!billingAvailable)billingActionStatus.textContent=accountSuspended?'有料プラン機能が停止されているため、申込み・チャージ・契約変更は利用できません。':'決済設定が完了していないため、現在は申し込みできません。';
+ if(!billingAvailable)billingActionStatus.textContent=accountSuspended?'有料プランアカウントがBANされているため、申込み・チャージ・契約変更は利用できません。':'決済設定が完了していないため、現在は申し込みできません。';
  $('add').disabled = $('save').disabled = true;
  if (account) {
   revision = account.revision;
@@ -322,7 +322,7 @@ function applyAccountEnforcement(state={}){
  billingAvailable=stripeBillingEnabled&&!accountSuspended;
  const panel=$('account-enforcement');
  panel.classList.toggle('hidden',!accountSuspended);
- panel.textContent=accountSuspended?`有料プラン機能は管理者により停止されています。${state.reason?` 理由: ${state.reason}`:''} 契約明細の確認、支払い方法の変更、解約は引き続き利用できます。`:'';
+ panel.textContent=accountSuspended?`有料プランアカウントは管理者によりBANされています。${state.reason?` 理由: ${state.reason}`:''} BAN解除まで、プラン申込み、クレジットチャージ、契約変更および通知設定は利用できません。`:'';
  if(accountSuspended)setRuleAccess(false);
  if(typeof updateCheckoutAvailability==='function')updateCheckoutAvailability();
  if(typeof updateTopupSignupAvailability==='function')updateTopupSignupAvailability();
@@ -767,7 +767,7 @@ application.append(billingActions,billingActionStatus);
 function updateCheckoutAvailability(){
  if(!checkoutButton)return;
  checkoutButton.disabled=!billingAvailable||!legalConsent.checked||hasExistingContract;
- checkoutButton.title=accountSuspended?'有料プラン機能が停止されています。':hasExistingContract?'既に契約済みです。プラン変更をご利用ください。':'';
+ checkoutButton.title=accountSuspended?'有料プランアカウントがBANされています。':hasExistingContract?'既に契約済みです。プラン変更をご利用ください。':'';
  checkoutButton.textContent=hasExistingContract?'契約中':creditPaymentInput.checked?'クレジットで申し込む':'このプランで申し込む';
 }
 
@@ -779,7 +779,7 @@ for (const [label,action] of [['このプランで申し込む','checkout'],['�
  if(action==='checkout'){checkoutButton=button;updateCheckoutAvailability();}
  button.onclick = async () => {
   billingActionStatus.textContent='';
-  if(accountSuspended&&['checkout','update'].includes(action)){billingActionStatus.textContent='有料プラン機能が停止されているため、この操作は利用できません。';return;}
+  if(accountSuspended&&['checkout','update'].includes(action)){billingActionStatus.textContent='有料プランアカウントがBANされているため、この操作は利用できません。';return;}
   if(action==='checkout'&&!billingEmail.reportValidity())return;
   if(action==='checkout'&&!legalConsent.reportValidity())return;
   button.disabled = true;

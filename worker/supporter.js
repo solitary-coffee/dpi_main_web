@@ -1,6 +1,6 @@
 import { requireSession, assertCsrf, assertSameOrigin, readJson, fetchGuildChannels } from './reuse.js';
 import { authenticateNewsletterAdmin } from './access.js';
-import { adminBillingAction, billingAction, billingReady, createBillingCustomer, creditsByCustomer, customerSubscriptionSummaries, publicPlans, reconcilePaidCheckoutSubscription, subscriptionSummariesByCustomer } from './supporter-billing.js';
+import { adminBillingAction, adminDisciplinaryBillingAction, billingAction, billingReady, createBillingCustomer, creditsByCustomer, customerSubscriptionSummaries, expireSupporterPendingCheckouts, publicPlans, reconcilePaidCheckoutSubscription, sendSupporterDisciplinaryNotification, subscriptionSummariesByCustomer } from './supporter-billing.js';
 
 const response = (data, status = 200) => Response.json(data, {status, headers: {'Cache-Control':'no-store'}});
 const notFound = () => new Response('Not Found', {
@@ -42,7 +42,7 @@ export function supporterAccountEnforcement(row){
 }
 export function assertSupporterAccountActive(row){
  const state=supporterAccountEnforcement(row);
- if(state.suspended)throw Object.assign(new Error(`有料プラン機能は管理者により停止されています。${state.reason?` 理由: ${state.reason}`:''}`),{status:403,accountEnforcement:state});
+ if(state.suspended)throw Object.assign(new Error(`有料プランアカウントは管理者によりBANされています。${state.reason?` 理由: ${state.reason}`:''}`),{status:403,accountEnforcement:state});
  return state;
 }
 export async function supporterCreditMetrics(db,billingRows=[],creditBalances=new Map(),stripeAvailable=true){
@@ -127,7 +127,7 @@ async function recordAdminCreditLot(db,uid,action,requestId,amount){
    .bind(`admin:${requestId}`,uid,requestId,amount,amount,now,now).run();
   return;
  }
- if(!['remove_credit','confiscate_credit'].includes(action))return;
+ if(!['remove_credit','confiscate_credit','disciplinary_cancel','ban_account'].includes(action))return;
  const lots=await db.prepare(`SELECT id,remaining_amount FROM supporter_credit_lots
   WHERE discord_user_id=? AND source_type IN ('admin','purchase') AND status='active' AND remaining_amount>0
   ORDER BY CASE source_type WHEN 'admin' THEN 0 ELSE 1 END,expires_at,id`).bind(uid).all();
@@ -143,18 +143,34 @@ async function recordAdminCreditLot(db,uid,action,requestId,amount){
 
 export async function changeSupporterAccountStatus(db,uid,admin,input){
  const action=clean(input.action),requestId=clean(input.requestId),reason=clean(input.reason);
- if(!['suspend_account','resume_account'].includes(action))throw Object.assign(new Error('アカウント操作を確認してください。'),{status:400});
+ if(!['ban_account','unban_account'].includes(action))throw Object.assign(new Error('アカウント操作を確認してください。'),{status:400});
  if(!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestId)||reason.length<5||reason.length>500)throw Object.assign(new Error('操作理由を5〜500文字で入力してください。'),{status:400});
  const current=await db.prepare('SELECT account_status,status_request_id FROM supporter_accounts WHERE discord_user_id=?').bind(uid).first();
  if(!current)throw Object.assign(new Error('対象の有料プラン登録者が見つかりません。'),{status:404});
- const next=action==='suspend_account'?'suspended':'active',previous=next==='suspended'?'active':'suspended';
- if(current.status_request_id===requestId)return{message:next==='suspended'?'有料プラン機能は停止済みです。':'有料プラン機能は再開済みです。',accountStatus:next,idempotent:true};
- if((current.account_status||'active')===next)throw Object.assign(new Error(next==='suspended'?'このアカウントは既に停止されています。':'このアカウントは停止されていません。'),{status:409});
+ const next=action==='ban_account'?'suspended':'active',previous=next==='suspended'?'active':'suspended';
+ if(current.status_request_id===requestId)return{message:next==='suspended'?'アカウントはBAN済みです。':'アカウントのBANは解除済みです。',accountStatus:next,idempotent:true};
+ if((current.account_status||'active')===next)throw Object.assign(new Error(next==='suspended'?'このアカウントは既にBANされています。':'このアカウントはBANされていません。'),{status:409});
  const now=new Date().toISOString();
  const result=await db.prepare(`UPDATE supporter_accounts SET account_status=?,status_reason=?,status_updated_at=?,status_updated_by=?,status_request_id=?,updated_at=?
   WHERE discord_user_id=? AND COALESCE(account_status,'active')=?`).bind(next,reason,now,admin.email,requestId,now,uid,previous).run();
  if(!result.meta?.changes)throw Object.assign(new Error('別の管理操作で状態が変更されました。最新情報を読み込んでください。'),{status:409});
- return{message:next==='suspended'?'有料プラン機能を停止しました。契約の請求・解約状態は変更していません。':'有料プラン機能を再開しました。',accountStatus:next,idempotent:false};
+ return{message:next==='suspended'?'アカウントをBANしました。':'アカウントのBANを解除しました。再利用にはプランへの申込みが必要です。',accountStatus:next,idempotent:false};
+}
+
+function disciplinaryResultMessage(action,canceled,credits){
+ if(action==='ban_account')return`契約${canceled}件を即時解除し、${credits.toLocaleString('ja-JP')}クレジットを没収してアカウントをBANしました。`;
+ if(action==='unban_account')return'アカウントのBANを解除しました。再利用にはプランへの申込みが必要です。';
+ return`契約${canceled}件を即時解除し、${credits.toLocaleString('ja-JP')}クレジットを没収しました。再度のお支払いで申込みできます。`;
+}
+
+async function sendDisciplinaryEmail(env,db,account,input,result){
+ let emailStatus='skipped',lastError=null;
+ try{
+  const sent=await sendSupporterDisciplinaryNotification(env,db,input.action,{requestId:clean(input.requestId),uid:account.discord_user_id,email:account.billing_email,reason:clean(input.reason),canceledSubscriptions:Number(result.canceledSubscriptions)||0,confiscatedCredits:Number(result.confiscatedCredits)||0});
+  emailStatus=sent?'sent':'skipped';
+ }catch(error){emailStatus='failed';lastError=clean(error?.code||error?.name||'unknown').slice(0,80);console.error('Supporter disciplinary email failed',{requestId:clean(input.requestId),errorName:error?.name||'Error'});}
+ await db.prepare(`UPDATE supporter_disciplinary_actions SET email_status=?,last_error=?,updated_at=? WHERE request_id=?`).bind(emailStatus,lastError,Math.floor(Date.now()/1000),clean(input.requestId)).run();
+ return emailStatus;
 }
 
 const COMPENSATION_ACTIVE_STATUSES = new Set(['active','trialing','past_due','unpaid','paused']);
@@ -608,10 +624,50 @@ export async function handleSupporterRequest(request, env) {
      FROM supporter_accounts a LEFT JOIN supporter_billing b ON b.discord_user_id=a.discord_user_id
      WHERE a.discord_user_id=?`).bind(uid).first();
     if (!account) return response({message:'対象の有料プラン登録者が見つかりません。'},404);
-    if (['suspend_account','resume_account'].includes(input.action)) {
-     const result=await changeSupporterAccountStatus(db,uid,admin,input);
-     const auditRecorded=await writeSupporterAudit(db,admin.email,input.action,uid,{reason:clean(input.reason),requestId:clean(input.requestId),accountStatus:result.accountStatus,idempotent:result.idempotent});
-     return response({success:true,...result,auditRecorded,creditRecorded:true});
+    if (['disciplinary_cancel','ban_account','unban_account'].includes(input.action)) {
+     const requestId=clean(input.requestId),reason=clean(input.reason),action=clean(input.action),now=Math.floor(Date.now()/1000);
+     if(!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestId)||reason.length<5||reason.length>500)return response({message:'操作理由を5〜500文字で入力してください。'},400);
+     if(action==='ban_account'&&account.account_status==='suspended'&&account.status_request_id!==requestId)return response({message:'このアカウントは既にBANされています。'},409);
+     if(action==='unban_account'&&account.account_status!=='suspended'&&account.status_request_id!==requestId)return response({message:'このアカウントはBANされていません。'},409);
+     await db.prepare(`INSERT INTO supporter_disciplinary_actions
+      (request_id,discord_user_id,action,reason,status,account_status_after,email_status,actor,created_at,updated_at)
+      VALUES(?,?,?,?,? ,?,'pending',?,?,?) ON CONFLICT(request_id) DO NOTHING`)
+      .bind(requestId,uid,action,reason,'processing',action==='ban_account'?'suspended':'active',admin.email,now,now).run();
+     const operation=await db.prepare('SELECT * FROM supporter_disciplinary_actions WHERE request_id=?').bind(requestId).first();
+     if(!operation||operation.discord_user_id!==uid||operation.action!==action)return response({message:'同じ処分IDが別の操作で使用されています。画面を開き直してください。'},409);
+     const savedResult={canceledSubscriptions:Number(operation.canceled_subscriptions)||0,confiscatedCredits:Number(operation.confiscated_credits)||0};
+     if(operation.status==='completed'){
+      let emailStatus=operation.email_status;
+      if(emailStatus==='failed')emailStatus=await sendDisciplinaryEmail(env,db,account,{...input,reason:operation.reason},savedResult);
+      return response({success:true,message:disciplinaryResultMessage(action,savedResult.canceledSubscriptions,savedResult.confiscatedCredits),...savedResult,accountStatus:operation.account_status_after,emailStatus,auditRecorded:true,creditRecorded:true,idempotent:true});
+     }
+     let result={canceledSubscriptions:0,confiscatedCredits:0,creditEvent:null},creditRecorded=true,accountStatus=account.account_status||'active';
+     try{
+      if(action==='unban_account'){
+       const statusResult=await changeSupporterAccountStatus(db,uid,admin,input);accountStatus=statusResult.accountStatus;
+      }else{
+       await expireSupporterPendingCheckouts(env,db,uid,requestId);
+       result=await adminDisciplinaryBillingAction(env,account.customer_id,uid,input);
+       if(result.creditEvent){
+        try{
+         await db.prepare(`INSERT INTO supporter_credit_events
+          (id,discord_user_id,credit_delta,balance_after,stripe_transaction_id,reason,actor,created_at)
+          VALUES(?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING`).bind(`discipline:${requestId}`,uid,result.creditEvent.delta,result.creditEvent.balanceAfter,result.creditEvent.stripeTransactionId,reason,admin.email,new Date().toISOString()).run();
+         await recordAdminCreditLot(db,uid,action,requestId,Math.abs(Number(result.creditEvent.delta)||0));
+        }catch(error){creditRecorded=false;console.error('Paid plan disciplinary credit write failed',{requestId,errorName:error?.name||'Error'});}
+       }
+       if(action==='ban_account'){const statusResult=await changeSupporterAccountStatus(db,uid,admin,input);accountStatus=statusResult.accountStatus;}
+      }
+      const canceled=Number(result.canceledSubscriptions)||0,confiscated=Number(result.confiscatedCredits)||0,completedAt=Math.floor(Date.now()/1000);
+      await db.prepare(`UPDATE supporter_disciplinary_actions SET status='completed',canceled_subscriptions=?,confiscated_credits=?,account_status_after=?,last_error=NULL,completed_at=?,updated_at=? WHERE request_id=?`)
+       .bind(canceled,confiscated,accountStatus,completedAt,completedAt,requestId).run();
+      const auditRecorded=await writeSupporterAudit(db,admin.email,action,uid,{reason,requestId,canceledSubscriptions:canceled,confiscatedCredits:confiscated,accountStatus,refund:false});
+      const emailStatus=await sendDisciplinaryEmail(env,db,account,input,{canceledSubscriptions:canceled,confiscatedCredits:confiscated});
+      return response({success:true,message:disciplinaryResultMessage(action,canceled,confiscated),canceledSubscriptions:canceled,confiscatedCredits:confiscated,accountStatus,emailStatus,auditRecorded,creditRecorded,idempotent:false});
+     }catch(error){
+      await db.prepare(`UPDATE supporter_disciplinary_actions SET status='failed',last_error=?,updated_at=? WHERE request_id=? AND status<>'completed'`).bind(clean(error?.message||error?.name||'unknown').slice(0,500),Math.floor(Date.now()/1000),requestId).run();
+      throw error;
+     }
     }
     if (input.action === 'reset_checkout_state') {
      if (env.SUPPORTER_BILLING_MODE !== 'test') return response({message:'この操作はStripeテスト環境でのみ利用できます。'},403);
