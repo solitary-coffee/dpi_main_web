@@ -5,6 +5,8 @@ let options;
 let entitlements = {servers:1,channels:2,rules:5,complexConditions:false,multiDestination:false};
 let hasConfigurableContract = false;
 let billingAvailable = false;
+let accountSuspended = false;
+let stripeBillingEnabled = false;
 let checkoutButton;
 let hasExistingContract=false;
 let availableCredits=0;
@@ -277,14 +279,15 @@ async function load() {
  $('user').textContent = session.user.username;
  options = await api('/api/supporter/options');
  const {account,billingEnabled} = await api('/api/supporter/account');
- billingAvailable=billingEnabled===true;
+ stripeBillingEnabled=billingEnabled===true;
+ applyAccountEnforcement({suspended:account?.account_status==='suspended',status:account?.account_status||'active',reason:account?.status_reason||'',updatedAt:account?.status_updated_at||null});
  topupButton.disabled=!billingAvailable;
  const savedBillingEmail=account?.billing_email || '';
  billingEmail.value=savedBillingEmail;
  topupEmail.value=savedBillingEmail;
  updateCheckoutAvailability();
  updateTopupSignupAvailability();
- if(!billingAvailable)billingActionStatus.textContent='決済設定が完了していないため、現在は申し込みできません。';
+ if(!billingAvailable)billingActionStatus.textContent=accountSuspended?'有料プラン機能が停止されているため、申込み・チャージ・契約変更は利用できません。':'決済設定が完了していないため、現在は申し込みできません。';
  $('add').disabled = $('save').disabled = true;
  if (account) {
   revision = account.revision;
@@ -293,7 +296,7 @@ async function load() {
   render();
   if(billingEnabled){
    try{
-    const billingState=await api('/api/supporter/billing/status');
+    const billingState=await api('/api/supporter/billing/status');applyAccountEnforcement(billingState.accountEnforcement);
     renderContracts(billingState.subscriptions||[],billingState.dunning);renderInvoices(billingState.invoices||[]);
     if(billingState.rulesAdjustment?.changed){
      revision=Number(billingState.rulesAdjustment.revision)||revision;
@@ -312,6 +315,18 @@ async function load() {
    }catch{contract.textContent='契約情報を自動取得できませんでした。「最新の契約・明細を読み込む」を押してください。';setRuleAccess(false);}
   }
  }
+}
+
+function applyAccountEnforcement(state={}){
+ accountSuspended=state?.suspended===true||state?.status==='suspended';
+ billingAvailable=stripeBillingEnabled&&!accountSuspended;
+ const panel=$('account-enforcement');
+ panel.classList.toggle('hidden',!accountSuspended);
+ panel.textContent=accountSuspended?`有料プラン機能は管理者により停止されています。${state.reason?` 理由: ${state.reason}`:''} 契約明細の確認、支払い方法の変更、解約は引き続き利用できます。`:'';
+ if(accountSuspended)setRuleAccess(false);
+ if(typeof updateCheckoutAvailability==='function')updateCheckoutAvailability();
+ if(typeof updateTopupSignupAvailability==='function')updateTopupSignupAvailability();
+ if(topupButton)topupButton.disabled=!billingAvailable;
 }
 
 function run(fn) {
@@ -517,7 +532,7 @@ topupButton.onclick=async()=>{
 topupReloadButton.onclick=async()=>{
  topupReloadStatus.textContent='';topupReloadButton.disabled=true;const original=topupReloadButton.textContent;topupReloadButton.textContent='再読み込み中…';
  try{
-  const state=await api('/api/supporter/billing/status');
+  const state=await api('/api/supporter/billing/status');applyAccountEnforcement(state.accountEnforcement);
   renderContracts(state.subscriptions||[],state.dunning);renderInvoices(state.invoices||[]);renderCreditDetails(state.creditDetails||{balance:Number(state.credits||0)});
   const recovery=state.creditTopupRecovery||{};
   if(recovery.recovered>0){topupReloadStatus.textContent=`支払い済みのチャージ${recovery.recovered}件を反映しました。`;status(topupReloadStatus.textContent);}
@@ -668,7 +683,7 @@ function renderContracts(subscriptions,dunning={}) {
   }
   contract.append(card);
  }
- if(options)setRuleAccess(active.length>0&&!dunning?.usageSuspended);
+ if(options)setRuleAccess(active.length>0&&!dunning?.usageSuspended&&!accountSuspended);
 }
 
 let pendingUpdate=null;
@@ -736,7 +751,7 @@ $('billing-preview-confirm').onclick=run(async()=>{
  try{
   const result=await api('/api/supporter/billing/update','POST',{...pendingUpdate.requested,prorationDate:pendingUpdate.prorationDate,expectedCreditApplied:pendingUpdate.expectedCreditApplied,useCredits:pendingUpdate.useCredits,requestId:crypto.randomUUID()});
   pendingUpdate=null;previewDialog.close();
-  const state=await api('/api/supporter/billing/status');renderContracts(state.subscriptions||[],state.dunning);renderInvoices(state.invoices||[]);
+  const state=await api('/api/supporter/billing/status');applyAccountEnforcement(state.accountEnforcement);renderContracts(state.subscriptions||[],state.dunning);renderInvoices(state.invoices||[]);
   renderCreditDetails(state.creditDetails||{balance:Number(state.credits||result.credits||0)});status(result.message||'契約情報を更新しました。');
  } finally {button.disabled=false;}
 });
@@ -752,7 +767,7 @@ application.append(billingActions,billingActionStatus);
 function updateCheckoutAvailability(){
  if(!checkoutButton)return;
  checkoutButton.disabled=!billingAvailable||!legalConsent.checked||hasExistingContract;
- checkoutButton.title=hasExistingContract?'既に契約済みです。プラン変更をご利用ください。':'';
+ checkoutButton.title=accountSuspended?'有料プラン機能が停止されています。':hasExistingContract?'既に契約済みです。プラン変更をご利用ください。':'';
  checkoutButton.textContent=hasExistingContract?'契約中':creditPaymentInput.checked?'クレジットで申し込む':'このプランで申し込む';
 }
 
@@ -764,6 +779,7 @@ for (const [label,action] of [['このプランで申し込む','checkout'],['�
  if(action==='checkout'){checkoutButton=button;updateCheckoutAvailability();}
  button.onclick = async () => {
   billingActionStatus.textContent='';
+  if(accountSuspended&&['checkout','update'].includes(action)){billingActionStatus.textContent='有料プラン機能が停止されているため、この操作は利用できません。';return;}
   if(action==='checkout'&&!billingEmail.reportValidity())return;
   if(action==='checkout'&&!legalConsent.reportValidity())return;
   button.disabled = true;
@@ -780,6 +796,7 @@ for (const [label,action] of [['このプランで申し込む','checkout'],['�
    if (result.url) {
     location.href = stripeDestination(result.url);
    } else {
+    applyAccountEnforcement(result.accountEnforcement||{});
     renderContracts(result.subscriptions||[],result.dunning);renderInvoices(result.invoices||[]);
     renderCreditDetails(result.creditDetails||{balance:Number(result.credits||0)});
     status(result.message||'契約情報を更新しました。');
