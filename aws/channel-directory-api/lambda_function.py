@@ -2808,8 +2808,37 @@ def _test_invoke_worker(run_id, actor, source, target, url, title, note):
             connect_timeout=2, read_timeout=5,
             retries={"total_max_attempts": 1, "mode": "standard"},
         ))
-        response = client.invoke(FunctionName=name, InvocationType="Event",
-                                 Payload=json.dumps(event, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+        supporter_worker = name.startswith("dpi-supporter-delivery-")
+        response = client.invoke(
+            FunctionName=name,
+            InvocationType="RequestResponse" if supporter_worker else "Event",
+            Payload=json.dumps(event, ensure_ascii=False, separators=(",", ":")).encode("utf-8"),
+        )
+        if supporter_worker:
+            raw = response.get("Payload")
+            if hasattr(raw, "read"):
+                raw = raw.read()
+            if isinstance(raw, bytes):
+                raw = raw.decode("utf-8", "replace")
+            result = json.loads(raw) if isinstance(raw, str) and raw else raw
+            if isinstance(result, str):
+                result = json.loads(result)
+            result = result if isinstance(result, dict) else {}
+            succeeded = (
+                _integer(response.get("StatusCode"), 0) == 200
+                and not response.get("FunctionError")
+                and _integer(result.get("statusCode"), 0) == 200
+                and _clean(result.get("body"), 20) == "ok"
+                and _integer(result.get("ok_count"), 0) == 1
+                and _integer(result.get("err_count"), 0) == 0
+            )
+            return {
+                "kind": "lambda", "region": region, "name": name,
+                "deliveryId": event["delivery_id"],
+                "status": "success" if succeeded else "failure",
+                "elapsedMs": round((time.monotonic() - started) * 1000),
+                "detail": "Discord送信成功" if succeeded else "Discord送信失敗",
+            }
         accepted = _integer(response.get("StatusCode"), 0) == 202
         return {"kind": "lambda", "region": region, "name": name,
                 "deliveryId": event["delivery_id"],
