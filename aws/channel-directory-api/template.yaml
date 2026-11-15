@@ -42,6 +42,14 @@ Parameters:
     Type: String
     Default: /dpi-bot/dmdata/api-key
     Description: SecureString parameter containing the DMDATA API key used for administrator history lookup.
+  SupporterRouteTableName:
+    Type: String
+    Default: DPI-SupporterRouteSnapshot-ap-northeast-1
+    Description: DynamoDB pointer table created by the paid-plan delivery stack.
+  SupporterRouteBucketName:
+    Type: String
+    Default: dpi-supporter-delivery-supporterroutesnapshotbucke-1kg0cw6aw6lh
+    Description: Private S3 bucket created by the paid-plan delivery stack.
 
 Resources:
   ChannelDirectoryFunction:
@@ -69,6 +77,8 @@ Resources:
           INGEST_ENDPOINTS: !Ref IngestEndpoints
           INGEST_HMAC_PARAMETER: !Ref IngestHmacParameter
           DMDATA_API_KEY_PARAMETER: !Ref DmdataApiKeyParameter
+          SUPPORTER_ROUTE_TABLE_NAME: !Ref SupporterRouteTableName
+          SUPPORTER_ROUTE_BUCKET_NAME: !Ref SupporterRouteBucketName
       Policies:
         - DynamoDBReadPolicy:
             TableName: !Ref TableName
@@ -111,6 +121,16 @@ Resources:
                 - dynamodb:Scan
                 - dynamodb:DescribeTable
               Resource: !Sub arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${DeliveryMonitorTableName}
+            - Sid: PublishSupporterRoutePointer
+              Effect: Allow
+              Action:
+                - dynamodb:PutItem
+              Resource: !Sub arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${SupporterRouteTableName}
+            - Sid: PublishSupporterRouteSnapshot
+              Effect: Allow
+              Action:
+                - s3:PutObject
+              Resource: !Sub arn:${AWS::Partition}:s3:::${SupporterRouteBucketName}/snapshots/*
             - Sid: WriteDeliveryMetadata
               Effect: Allow
               Action:
