@@ -156,6 +156,7 @@ export async function reconcilePendingCreditTopups(env,db,uid,customer){
   try{
    const session=await stripe(env,`checkout/sessions/${encodeURIComponent(row.checkout_session_id)}`);
    if(session.status==='complete'&&session.payment_status==='paid'){
+    if(await rejectDisciplinedCheckout(env,db,session)){failed+=1;continue;}
     const fulfilled=await fulfillCreditTopup(env,db,session);
     if(fulfilled){
      recovered+=1;
@@ -262,6 +263,46 @@ export async function sendBillingNotification(env,db,kind,invoice,retryAt=null,s
   await db.prepare(`UPDATE supporter_billing_notifications SET status='sent',sent_at=?,updated_at=? WHERE invoice_id=? AND kind=?`).bind(now,now,invoiceId,kind).run();
  }catch(error){await db.prepare(`UPDATE supporter_billing_notifications SET status='failed',last_error=?,updated_at=? WHERE invoice_id=? AND kind=?`).bind(clean(error?.code||error?.name||'unknown').slice(0,80),now,invoiceId,kind).run();throw error;}
 }
+function disciplinaryMailContent(kind,details){
+ const reason=clean(details.reason)||'管理上の措置';
+ const credits=Math.max(0,Number(details.confiscatedCredits)||0).toLocaleString('ja-JP');
+ const canceled=Math.max(0,Number(details.canceledSubscriptions)||0).toLocaleString('ja-JP');
+ const definitions={
+  disciplinary_cancel:['【DPI-Bot】有料プラン契約解除のお知らせ',[
+   '管理上の措置として、有料プランの契約を即時解除しました。',
+   `解除した契約: ${canceled}件`,`没収クレジット: ${credits}クレジット`,`理由: ${reason}`,
+   '返金は行われません。再度お支払いいただくことで、有料プランへお申込みいただけます。',
+  ]],
+  ban_account:['【DPI-Bot】有料プランアカウント停止のお知らせ',[
+   '管理上の措置として、有料プランアカウントを停止しました。',
+   `解除した契約: ${canceled}件`,`没収クレジット: ${credits}クレジット`,`理由: ${reason}`,
+   '返金は行われません。アカウント停止中は、すべての有料プランへの申込み、クレジットチャージ、契約変更および通知設定を利用できません。',
+  ]],
+  unban_account:['【DPI-Bot】有料プランアカウント停止解除のお知らせ',[
+   '有料プランアカウントの停止を解除しました。',`理由: ${reason}`,
+   '有料プランを利用する場合は、改めてプランを選択してお申込みください。',
+  ]],
+ };
+ const [subject,lines]=definitions[kind]||[];if(!subject)fail('通知メール種別を確認できません。',500);
+ lines.push('','----------------------------------------','DPI-Bot 運営','公式サイト: https://dpi-bot.com/','公式サポートサーバー: https://discord.gg/qFuZcGUb4K');
+ return{subject,text:lines.join('\n')};
+}
+export async function sendSupporterDisciplinaryNotification(env,db,kind,details){
+ const requestId=clean(details.requestId),uid=clean(details.uid),email=clean(details.email);
+ if(!requestId||!uid||!email||!env.NOTICE_EMAIL||!clean(env.NOTICE_FROM_EMAIL))return false;
+ const noticeId=`discipline:${requestId}`,now=Math.floor(Date.now()/1000);
+ await db.prepare(`INSERT INTO supporter_billing_notifications(invoice_id,kind,status,updated_at) VALUES(?,?,'pending',?) ON CONFLICT DO NOTHING`).bind(noticeId,kind,now).run();
+ const notice=await db.prepare('SELECT status FROM supporter_billing_notifications WHERE invoice_id=? AND kind=?').bind(noticeId,kind).first();if(notice?.status==='sent')return true;
+ const claim=await db.prepare(`UPDATE supporter_billing_notifications SET status='sending',attempts=attempts+1,last_error=NULL,updated_at=?
+  WHERE invoice_id=? AND kind=? AND (status IN ('pending','failed') OR (status='sending' AND updated_at<=?))`).bind(now,noticeId,kind,now-300).run();
+ if(!claim.meta?.changes)return notice?.status==='sent';
+ const content=disciplinaryMailContent(kind,details);
+ try{
+  await env.NOTICE_EMAIL.send({to:email,from:{email:clean(env.NOTICE_FROM_EMAIL),name:'DPI-Bot'},subject:content.subject,text:content.text,...(clean(env.NOTICE_REPLY_TO_EMAIL)?{replyTo:clean(env.NOTICE_REPLY_TO_EMAIL)}:{}),headers:{'Auto-Submitted':'auto-generated','Content-Language':'ja','X-DPI-Mail-Type':`supporter-${kind}`}});
+  await db.prepare(`UPDATE supporter_billing_notifications SET status='sent',sent_at=?,updated_at=? WHERE invoice_id=? AND kind=?`).bind(now,now,noticeId,kind).run();
+  return true;
+ }catch(error){await db.prepare(`UPDATE supporter_billing_notifications SET status='failed',last_error=?,updated_at=? WHERE invoice_id=? AND kind=?`).bind(clean(error?.code||error?.name||'unknown').slice(0,80),now,noticeId,kind).run();throw error;}
+}
 async function recordInvoicePaid(env,db,invoice){
  const customer=typeof invoice.customer==='string'?invoice.customer:invoice.customer?.id,invoiceId=clean(invoice.id);if(!customer||!invoiceId||!invoiceSubscriptionId(invoice))return;
  const previous=await db.prepare('SELECT status,retry_at,suspend_at FROM supporter_dunning WHERE invoice_id=?').bind(invoiceId).first();const now=Math.floor(Date.now()/1000);
@@ -329,6 +370,41 @@ async function recoverStaleCheckoutAttempt(db,uid,row){
  return await db.prepare('SELECT * FROM supporter_billing WHERE discord_user_id=?').bind(uid).first();
 }
 async function subscriptions(env,customer){return (await stripe(env,`subscriptions?customer=${encodeURIComponent(customer)}&status=all&limit=100`)).data.filter(s=>!['canceled','incomplete_expired'].includes(s.status));}
+async function checkoutDiscipline(db,uid,session){
+ if(!db||!uid)return null;
+ const account=await db.prepare('SELECT account_status FROM supporter_accounts WHERE discord_user_id=?').bind(uid).first();
+ if(account?.account_status==='suspended')return{action:'ban_account',completed_at:Math.floor(Date.now()/1000)};
+ const latest=await db.prepare(`SELECT action,completed_at FROM supporter_disciplinary_actions
+  WHERE discord_user_id=? AND status='completed' AND action IN ('disciplinary_cancel','ban_account')
+  ORDER BY completed_at DESC LIMIT 1`).bind(uid).first();
+ return latest&&Number(session?.created||0)<=Number(latest.completed_at||0)?latest:null;
+}
+export async function rejectDisciplinedCheckout(env,db,session){
+ const metadata=checkoutMetadata(session),uid=clean(metadata.dpi_user||session?.client_reference_id);
+ if(!await checkoutDiscipline(db,uid,session))return false;
+ const sessionId=clean(session?.id),paymentIntent=clean(stripeId(session?.payment_intent)),now=Math.floor(Date.now()/1000);
+ if(session?.payment_status==='paid'&&paymentIntent)await stripe(env,'refunds',{payment_intent:paymentIntent,reason:'requested_by_customer','metadata[dpi_user]':uid,'metadata[dpi_reason]':'disciplinary_checkout_rejection'},`dpi-discipline-checkout-refund-${sessionId}`);
+ await db.batch([
+  db.prepare('UPDATE supporter_billing SET checkout_key=NULL,checkout_id=NULL,checkout_params=NULL,dirty=1 WHERE checkout_id=?').bind(sessionId),
+  db.prepare(`UPDATE supporter_credit_topups SET status='failed',updated_at=? WHERE checkout_session_id=? AND status='pending'`).bind(now,sessionId),
+ ]);
+ return true;
+}
+export async function expireSupporterPendingCheckouts(env,db,uid,requestId){
+ const billing=await db.prepare('SELECT checkout_id FROM supporter_billing WHERE discord_user_id=?').bind(uid).first();
+ const topups=await db.prepare(`SELECT checkout_session_id FROM supporter_credit_topups WHERE discord_user_id=? AND status='pending' AND checkout_session_id IS NOT NULL LIMIT 20`).bind(uid).all();
+ const ids=[...new Set([clean(billing?.checkout_id),...(topups.results||[]).map(row=>clean(row.checkout_session_id))].filter(Boolean))];let expired=0;
+ for(const id of ids){
+  const session=await stripe(env,`checkout/sessions/${encodeURIComponent(id)}`);
+  if(session.status==='open'){await stripe(env,`checkout/sessions/${encodeURIComponent(id)}/expire`,{},`dpi-discipline-expire-${requestId}-${id}`);expired+=1;}
+ }
+ const now=Math.floor(Date.now()/1000);
+ await db.batch([
+  db.prepare('UPDATE supporter_billing SET checkout_key=NULL,checkout_id=NULL,checkout_params=NULL,dirty=1 WHERE discord_user_id=?').bind(uid),
+  db.prepare(`UPDATE supporter_credit_topups SET status='failed',updated_at=? WHERE discord_user_id=? AND status='pending'`).bind(now,uid),
+ ]);
+ return expired;
+}
 function checkoutMetadata(session){return session?.metadata&&typeof session.metadata==='object'?session.metadata:{};}
 export function paidCheckoutSubscriptionParams(env,session,paymentIntent,now=Math.floor(Date.now()/1000)){
  const metadata=checkoutMetadata(session);
@@ -377,12 +453,13 @@ function recoverablePaidCheckout(session,customer,uid){
  const sessionCustomer=typeof session?.customer==='string'?session.customer:session?.customer?.id;
  return session?.mode==='payment'&&session?.status==='complete'&&session?.payment_status==='paid'&&metadata.dpi_checkout_kind==='initial_subscription'&&sessionCustomer===customer&&String(metadata.dpi_user||session.client_reference_id||'')===String(uid);
 }
-export async function reconcilePaidCheckoutSubscription(env,customer,uid){
+export async function reconcilePaidCheckoutSubscription(env,customer,uid,db=null){
  if(!customer||!uid||!billingReady(env))return {subscription:null,recovered:false,checkoutId:null};
  const existing=await subscriptions(env,customer);
  if(existing.length)return {subscription:existing[0],recovered:false,checkoutId:null};
  const result=await stripe(env,`checkout/sessions?customer=${encodeURIComponent(customer)}&limit=20`);
- const session=(result.data||[]).filter(item=>recoverablePaidCheckout(item,customer,uid)).sort((a,b)=>Number(b.created||0)-Number(a.created||0))[0];
+ const candidates=(result.data||[]).filter(item=>recoverablePaidCheckout(item,customer,uid)).sort((a,b)=>Number(b.created||0)-Number(a.created||0));
+ let session=null;for(const candidate of candidates){if(db&&await rejectDisciplinedCheckout(env,db,candidate))continue;session=candidate;break;}
  if(!session)return {subscription:null,recovered:false,checkoutId:null};
  const subscription=await provisionPaidCheckoutSubscription(env,session);
  return {subscription,recovered:!!subscription,checkoutId:session.id};
@@ -611,12 +688,12 @@ export async function billingAction(request,env,db,uid,input={}){
  const account=await db.prepare('SELECT discord_user_id,billing_email,account_status,status_reason,status_updated_at FROM supporter_accounts WHERE discord_user_id=?').bind(uid).first();
  if(!account)return json({message:'先に登録してください。'},409);
  const accountEnforcement={suspended:account.account_status==='suspended',status:account.account_status||'active',reason:clean(account.status_reason),updatedAt:account.status_updated_at||null};
- if(accountEnforcement.suspended&&!['status','portal'].includes(action))return json({message:`有料プラン機能は管理者により停止されています。${accountEnforcement.reason?` 理由: ${accountEnforcement.reason}`:''}`,accountEnforcement},403);
+ if(accountEnforcement.suspended&&!['status','portal'].includes(action))return json({message:`有料プランアカウントは管理者によりBANされています。${accountEnforcement.reason?` 理由: ${accountEnforcement.reason}`:''}`,accountEnforcement},403);
  await db.prepare('INSERT INTO supporter_billing(discord_user_id) VALUES(?) ON CONFLICT DO NOTHING').bind(uid).run();
  let row=await db.prepare('SELECT * FROM supporter_billing WHERE discord_user_id=?').bind(uid).first();
  if(action==='status'){
   const creditTopupRecovery=await reconcilePendingCreditTopups(env,db,uid,row.customer_id);
-  const recovery=await reconcilePaidCheckoutSubscription(env,row.customer_id,uid);
+  const recovery=await reconcilePaidCheckoutSubscription(env,row.customer_id,uid,db);
   if(recovery.recovered&&recovery.checkoutId)await db.prepare('UPDATE supporter_billing SET checkout_id=?,dirty=1 WHERE discord_user_id=?').bind(recovery.checkoutId,uid).run();
   const [summaries,invoices,credits,dunning]=await Promise.all([customerSubscriptionSummaries(env,row.customer_id),customerInvoices(env,row.customer_id),customerCredits(env,row.customer_id),dunningState(db,row.customer_id)]);
   const creditDetails=await purchasedCreditStatus(db,uid,credits);
@@ -624,6 +701,7 @@ export async function billingAction(request,env,db,uid,input={}){
   const rulesAdjustment=active.length?await reconcileStoredRulesForCustomer(db,row.customer_id,combinedLimits(active)):{changed:false,removedRules:0,removedDestinations:0,simplifiedRules:0};
   return json({mode:'test',billingDay:26,subscriptions:summaries,invoices,credits,creditDetails,dunning,accountEnforcement,rulesAdjustment,recoveredSubscription:recovery.recovered,creditTopupRecovery,deliveryEnabled:false});
  }
+ if(action==='portal'&&accountEnforcement.suspended&&!row.customer_id)return json({message:'BAN中のため契約管理画面を作成できません。',accountEnforcement},403);
  if(!row.customer_id){const customer=await createBillingCustomer(env,uid,account.billing_email,`dpi-customer-${uid}`);await db.prepare('UPDATE supporter_billing SET customer_id=? WHERE discord_user_id=? AND customer_id IS NULL').bind(customer.id,uid).run();row=await db.prepare('SELECT * FROM supporter_billing WHERE discord_user_id=?').bind(uid).first();}
  else if(account.billing_email)await stripe(env,`customers/${encodeURIComponent(row.customer_id)}`,{email:account.billing_email},await idempotencyKey(`dpi-customer-email-${uid}-`,account.billing_email));
  const origin=env.SUPPORTER_PUBLIC_ORIGIN;
@@ -926,6 +1004,33 @@ export async function adminBillingAction(env,customer,uid,input){
  }
  fail('管理操作を確認してください。',400);
 }
+export async function adminDisciplinaryBillingAction(env,customer,uid,input){
+ if(!billingReady(env))fail('決済設定が完了していません。',503);
+ const action=clean(input?.action),requestId=clean(input?.requestId),reason=clean(input?.reason);
+ if(!['disciplinary_cancel','ban_account'].includes(action))fail('処分内容を確認してください。',400);
+ if(!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestId)||reason.length<5||reason.length>500)fail('操作理由を5〜500文字で入力してください。',400);
+ if(!customer){
+  if(action==='disciplinary_cancel')fail('解除できる契約またはクレジット情報がありません。',409);
+  return{message:'契約・クレジット情報はありません。アカウントをBANします。',canceledSubscriptions:0,confiscatedCredits:0,credits:0,creditEvent:null,subscriptions:[]};
+ }
+ const key=`dpi-admin-${action}-${requestId}`;
+ const list=await subscriptions(env,customer);let canceledSubscriptions=0;
+ for(const subscription of list){
+  const attachedSchedule=scheduleId(subscription);
+  if(attachedSchedule)await stripe(env,`subscription_schedules/${encodeURIComponent(attachedSchedule)}/release`,{},`${key}-release-${attachedSchedule}`);
+  await stripe(env,`subscriptions/${encodeURIComponent(subscription.id)}`,{invoice_now:'false',prorate:'false'},`${key}-cancel-${subscription.id}`,'DELETE');
+  canceledSubscriptions+=1;
+ }
+ const current=await customerCredits(env,customer);let creditEvent=null;
+ if(current>0){
+  const transaction=await stripe(env,`customers/${encodeURIComponent(customer)}/balance_transactions`,{
+   amount:String(current),currency:'jpy',description:`DPI-Bot disciplinary credit confiscation: ${reason}`.slice(0,500),
+   'metadata[dpi_user]':uid,'metadata[dpi_credit_action]':'disciplinary_confiscation','metadata[dpi_disciplinary_action]':action,'metadata[dpi_admin_reason]':reason,
+  },`${key}-confiscate`);
+  creditEvent={delta:-current,balanceAfter:creditsFromBalance(transaction.ending_balance),stripeTransactionId:transaction.id};
+ }
+ return{message:action==='ban_account'?'全契約を即時解除し、残クレジットを没収しました。アカウントをBANします。':'全契約を即時解除し、残クレジットを没収しました。再度のお支払いで申込みできます。',canceledSubscriptions,confiscatedCredits:current,credits:creditEvent?.balanceAfter??0,creditEvent,subscriptions:[]};
+}
 export async function verifySignature(raw,header,secret,now=Date.now()){
  const parts=(header||'').split(',').map(p=>p.trim().split('='));const ts=parts.find(p=>p[0]==='t')?.[1];
  if(!secret||!/^\d+$/.test(ts||'')||Math.abs(now/1000-Number(ts))>300)return false;
@@ -994,7 +1099,9 @@ export async function billingWebhook(request,env){
  if(alreadyProcessed)return json({received:true});
  if(['checkout.session.completed','checkout.session.async_payment_succeeded'].includes(event.type)){
   const session=event.data?.object;
-  if(checkoutMetadata(session).dpi_checkout_kind==='credit_topup'){
+  if(await rejectDisciplinedCheckout(env,db,session)){
+   console.warn('Checkout completed after disciplinary action and was rejected',{sessionId:clean(session?.id),uid:clean(checkoutMetadata(session).dpi_user||session?.client_reference_id)});
+  }else if(checkoutMetadata(session).dpi_checkout_kind==='credit_topup'){
    const fulfilled=await fulfillCreditTopup(env,db,session);
    if(fulfilled)await sendBillingNotification(env,db,'credit_topup_succeeded',{id:session.id,customer:session.customer,amount_paid:fulfilled.amount,currency:session.currency||'jpy',expires_at:fulfilled.expiresAt});
   }
@@ -1052,6 +1159,13 @@ export async function runSupporterBillingSchedule(env,nowMs=Date.now()){
   FROM supporter_billing_notifications n JOIN supporter_dunning d ON d.invoice_id=n.invoice_id
   WHERE n.status='failed' AND n.kind IN ('retry_succeeded','final_failed') ORDER BY n.updated_at LIMIT 25`).all();
  for(const row of failedNotices.results||[]){const invoice={id:row.invoice_id,customer:row.customer_id,subscription:row.subscription_id,amount_due:row.amount_due,amount_paid:row.kind==='retry_succeeded'?row.amount_due:0,currency:row.currency};try{await sendBillingNotification(env,db,row.kind,invoice,row.retry_at,row.suspend_at);}catch(error){console.error('Supporter billing email retry failed',{invoiceId:row.invoice_id,kind:row.kind,errorName:error?.name||'Error'});}}
+ const disciplinaryNotices=await db.prepare(`SELECT d.request_id,d.discord_user_id,d.action,d.reason,d.canceled_subscriptions,d.confiscated_credits,a.billing_email
+  FROM supporter_disciplinary_actions d JOIN supporter_accounts a ON a.discord_user_id=d.discord_user_id
+  WHERE d.status='completed' AND d.email_status IN ('pending','failed') ORDER BY d.updated_at LIMIT 25`).all();
+ for(const row of disciplinaryNotices.results||[]){
+  try{const sent=await sendSupporterDisciplinaryNotification(env,db,row.action,{requestId:row.request_id,uid:row.discord_user_id,email:row.billing_email,reason:row.reason,canceledSubscriptions:row.canceled_subscriptions,confiscatedCredits:row.confiscated_credits});await db.prepare(`UPDATE supporter_disciplinary_actions SET email_status=?,last_error=NULL,updated_at=? WHERE request_id=?`).bind(sent?'sent':'skipped',now,row.request_id).run();}
+  catch(error){console.error('Supporter disciplinary email retry failed',{requestId:row.request_id,errorName:error?.name||'Error'});}
+ }
  const expiredCredits=await expirePurchasedCredits(env,db);
  return {retried,paid,failed,suspended,expiredCredits};
 }

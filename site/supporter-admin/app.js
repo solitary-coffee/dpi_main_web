@@ -3,6 +3,7 @@ let selectedAccount = null;
 let creditSummary = null;
 let creditCampaigns = [];
 let compensationRequestId = '';
+let actionRequestId = '';
 
 const $ = id => document.getElementById(id);
 const STATUS_LABELS = Object.freeze({active:'有効',trialing:'有効（次回請求待ち）',past_due:'支払い遅延',unpaid:'未払い',paused:'一時停止',incomplete:'手続き未完了'});
@@ -148,7 +149,7 @@ function renderSummary() {
   ['有効・対応中の契約',active.length],
   ['月額合計',money(active.reduce((sum,item)=>sum+Number(item.amount||0),0),'jpy')],
   ['期間末解約予定',active.filter(item=>item.cancelAtPeriodEnd).length],
-  ['有料機能停止中',`${accounts.filter(account=>account.accountStatus==='suspended').length.toLocaleString('ja-JP')}人`],
+  ['BAN中',`${accounts.filter(account=>account.accountStatus==='suspended').length.toLocaleString('ja-JP')}人`],
   ['総合クレジット数',creditMetric(creditSummary?.totalCredits)],
   ['クレジット利用者数',creditSummary?.creditUsers==null?'取得不可':`${Number(creditSummary.creditUsers).toLocaleString('ja-JP')}人`],
   ['購入クレジット残高',creditMetric(creditSummary?.purchasedBalance)],
@@ -177,7 +178,7 @@ function creditMetric(value){return value==null?'取得不可':`${Number(value||
 
 function renderAccounts() {
  const query=$('account-search').value.trim().toLowerCase();
- const filtered=accounts.filter(account=>`${account.discordName||''} ${account.discordUserId} ${account.billingEmail||''} ${account.accountStatus==='suspended'?'停止中':''} ${(account.subscriptions||[]).map(item=>item.plan).join(' ')}`.toLowerCase().includes(query));
+ const filtered=accounts.filter(account=>`${account.discordName||''} ${account.discordUserId} ${account.billingEmail||''} ${account.accountStatus==='suspended'?'BAN アカウント停止':''} ${(account.subscriptions||[]).map(item=>item.plan).join(' ')}`.toLowerCase().includes(query));
  const container=$('accounts');container.replaceChildren();
  if(!filtered.length){container.append(element('p','empty-list',query?'条件に一致する登録者はいません。':'有料プラン登録者はいません。'));return;}
  for(const account of filtered)container.append(accountCard(account));
@@ -193,9 +194,9 @@ function accountCard(account) {
  const manage=element('button','manage-btn','契約を管理');manage.type='button';manage.addEventListener('click',()=>openAction(account));
  actions.append(details,manage);heading.append(title,actions);
  const meta=element('div','account-meta');
- meta.append(element('span','',`Discord ID ${account.discordUserId}`),element('span','',`メール ${account.billingEmail||'未登録'}`),element('span','',`クレジット ${Number(account.credits||0).toLocaleString('ja-JP')}（${Number(account.credits||0).toLocaleString('ja-JP')}円分）`),element('span',account.accountStatus==='suspended'?'account-status-badge suspended':'account-status-badge',account.accountStatus==='suspended'?'有料機能停止中':'利用可能'),element('span','',`登録 ${dateText(account.registeredAt)}`),element('span','',`更新 ${dateText(account.updatedAt)}`),element('span','',`通知ルール ${account.ruleCount}件`),element('span','',`設定revision ${account.revision}`));
+ meta.append(element('span','',`Discord ID ${account.discordUserId}`),element('span','',`メール ${account.billingEmail||'未登録'}`),element('span','',`クレジット ${Number(account.credits||0).toLocaleString('ja-JP')}（${Number(account.credits||0).toLocaleString('ja-JP')}円分）`),element('span',account.accountStatus==='suspended'?'account-status-badge suspended':'account-status-badge',account.accountStatus==='suspended'?'BAN中':'利用可能'),element('span','',`登録 ${dateText(account.registeredAt)}`),element('span','',`更新 ${dateText(account.updatedAt)}`),element('span','',`通知ルール ${account.ruleCount}件`),element('span','',`設定revision ${account.revision}`));
  card.append(heading,meta);
- if(account.accountStatus==='suspended')card.append(element('p','account-enforcement-reason',`停止理由: ${account.statusReason||'理由未登録'}${account.statusUpdatedAt?`／${dateText(account.statusUpdatedAt)}`:''}`));
+ if(account.accountStatus==='suspended')card.append(element('p','account-enforcement-reason',`BAN理由: ${account.statusReason||'理由未登録'}${account.statusUpdatedAt?`／${dateText(account.statusUpdatedAt)}`:''}`));
  if(account.billingError)card.append(element('p','billing-error',account.billingError));
  const subscriptions=account.subscriptions||[];
  if(!subscriptions.length){card.append(element('p','empty-contract','現在表示できる契約はありません。'));return card;}
@@ -219,7 +220,7 @@ async function openDetails(account) {
 function renderDetails(account, failedGuildIds) {
  const content=$('detail-content');content.replaceChildren();
  const identity=element('div','detail-identity');
- identity.append(element('h3','',account.discordName||'契約者名を取得できません'),element('p','',`Discord ID: ${account.discordUserId}`),element('p',account.accountStatus==='suspended'?'billing-error':'',account.accountStatus==='suspended'?`有料機能停止中: ${account.statusReason||'理由未登録'}`:'有料機能は利用可能です。'));
+ identity.append(element('h3','',account.discordName||'契約者名を取得できません'),element('p','',`Discord ID: ${account.discordUserId}`),element('p',account.accountStatus==='suspended'?'billing-error':'',account.accountStatus==='suspended'?`アカウントBAN中: ${account.statusReason||'理由未登録'}`:'有料機能は利用可能です。'));
  content.append(identity);
  if(failedGuildIds.length)content.append(element('p','detail-warning','一部サーバーのチャンネル名をDiscordから取得できませんでした。IDは確認できます。'));
  const rules=Array.isArray(account.rules)?account.rules:[];
@@ -263,7 +264,8 @@ function openAction(account) {
  selectedAccount=account;
  const current=(account.subscriptions||[]).find(subscription=>ACTIVE_STATUSES.has(subscription.status))||(account.subscriptions||[])[0];
  $('action-target').textContent=`${account.discordName||'契約者名を取得できません'}（${account.discordUserId}）`;
- $('action-kind').value=account.accountStatus==='suspended'?'resume_account':'change_subscription';
+ actionRequestId=crypto.randomUUID();
+ $('action-kind').value=account.accountStatus==='suspended'?'unban_account':'change_subscription';
  $('action-reason').value='';$('confirm-discord-id').value='';$('action-amount').value='';$('payment-description').value='';
  $('change-plan').value=current?.planId||'supporter';$('change-packs').value=String(current?.channelPacks||0);$('change-server-packs').value=String(current?.serverPacks||0);
  $('action-result').replaceChildren();updateActionFields();$('action-dialog').showModal();
@@ -283,10 +285,12 @@ function updateActionFields() {
   ?'テスト環境専用です。D1のcheckout_key・checkout_id・checkout_paramsだけを削除します。Stripe Customer、メール、クレジット、契約、請求は削除しません。'
   :action==='confiscate_credit'
    ?'実行時点の全クレジットを取り消します。没収は元に戻せません。理由と実行者を監査ログへ記録します。'
-   :action==='suspend_account'
-    ?'新規申込み、チャージ、プラン変更、通知設定の保存を直ちに停止します。Stripe契約と継続請求は自動解約されません。必要に応じて契約終了も別途実行してください。'
-    :action==='resume_account'
-     ?'停止していた有料プラン機能を再開します。契約が有効な場合、通知設定を再び利用できます。'
+   :action==='disciplinary_cancel'
+    ?'処分①：全契約を即時解除し、残クレジットをすべて没収します。返金は行いません。処分後は、再度支払うことで申込みできます。ユーザーへ理由をメールで通知します。'
+    :action==='ban_account'
+     ?'処分②：処分①を実行したうえでアカウントをBANします。BAN解除まで、すべてのプラン申込み・チャージ・契約変更・通知設定を禁止します。ユーザーへ理由をメールで通知します。'
+     :action==='unban_account'
+      ?'アカウントのBANを解除します。契約と没収済みクレジットは復元されません。再利用には、ユーザーによる新しいプラン申込みが必要です。'
      :'1クレジットは1円です。付与したクレジットはStripeの次回請求へ自動的に充当されます。すべての操作は監査ログに記録されます。';
 }
 
@@ -294,9 +298,9 @@ async function submitAction(event) {
  event.preventDefault();
  if(!selectedAccount)return;
  const action=$('action-kind').value;
- const destructive=['refund_latest','cancel_immediately','remove_credit','confiscate_credit','suspend_account','reset_checkout_state'].includes(action);
- if(destructive&&!window.confirm(action==='refund_latest'?'返金は取り消せません。指定額を返金しますか？':action==='remove_credit'?'指定したクレジットを削除しますか？':action==='confiscate_credit'?'実行時点の全クレジットを没収します。元に戻せません。実行しますか？':action==='suspend_account'?'有料プラン機能を停止します。Stripeの継続請求は自動停止しません。実行しますか？':action==='reset_checkout_state'?'決済途中データをD1から削除します。Stripe Customerと契約情報は保持されます。実行しますか？':'契約は直ちに終了します。本当に実行しますか？'))return;
- const payload={discordUserId:selectedAccount.discordUserId,confirmDiscordUserId:$('confirm-discord-id').value.trim(),action,reason:$('action-reason').value.trim(),requestId:crypto.randomUUID()};
+ const destructive=['refund_latest','cancel_immediately','remove_credit','confiscate_credit','disciplinary_cancel','ban_account','reset_checkout_state'].includes(action);
+ if(destructive&&!window.confirm(action==='refund_latest'?'返金は取り消せません。指定額を返金しますか？':action==='remove_credit'?'指定したクレジットを削除しますか？':action==='confiscate_credit'?'実行時点の全クレジットを没収します。元に戻せません。実行しますか？':action==='disciplinary_cancel'?'処分①を実行します。全契約の即時解除・残クレジット全没収・返金なしで、ユーザーへ通知メールを送信します。実行しますか？':action==='ban_account'?'処分②を実行します。全契約の即時解除・残クレジット全没収後、再申込み不可のBAN状態にします。実行しますか？':action==='reset_checkout_state'?'決済途中データをD1から削除します。Stripe Customerと契約情報は保持されます。実行しますか？':'契約は直ちに終了します。本当に実行しますか？'))return;
+ const payload={discordUserId:selectedAccount.discordUserId,confirmDiscordUserId:$('confirm-discord-id').value.trim(),action,reason:$('action-reason').value.trim(),requestId:actionRequestId||crypto.randomUUID()};
  if(action==='change_subscription'){payload.plan=$('change-plan').value;payload.channelPacks=Number($('change-packs').value);payload.serverPacks=Number($('change-server-packs').value);}
  if(['refund_latest','create_payment_link','grant_credit','remove_credit'].includes(action))payload.amount=Number($('action-amount').value);
  if(action==='create_payment_link')payload.description=$('payment-description').value.trim();
@@ -308,8 +312,11 @@ async function submitAction(event) {
   const result=$('action-result');result.replaceChildren(element('strong','',data.message));
   if(data.auditRecorded===false)result.append(document.createElement('br'),element('span','billing-error','注意: 管理操作は完了しましたが、監査ログの保存に失敗しました。'));
   if(data.creditRecorded===false)result.append(document.createElement('br'),element('span','billing-error','注意: Stripe操作は完了しましたが、クレジット履歴の保存に失敗しました。'));
+  if(data.emailStatus==='failed')result.append(document.createElement('br'),element('span','billing-error','処分は完了しましたが、通知メールの送信に失敗しました。定期処理で再送します。'));
+  if(data.emailStatus==='skipped')result.append(document.createElement('br'),element('span','billing-error','処分は完了しましたが、送信可能なメールアドレスまたはメール設定がありません。'));
   if(data.url){const link=paymentLink(data.url);result.append(document.createElement('br'),link);}
   setStatus(data.message,'success');
+  actionRequestId='';
   await loadAccounts();
  } catch(error){$('action-result').textContent=error.message;setStatus(error.message,'error');}
  finally{button.disabled=false;}
