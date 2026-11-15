@@ -79,7 +79,7 @@ class MaintenanceModeTests(unittest.TestCase):
 class TestDeliveryPayloadTests(unittest.TestCase):
     def setUp(self):
         self.inventory = discover_functions({
-            "ap-northeast-1": [{"FunctionName": "new_EEW_1"}, {"FunctionName": "unrelated"}],
+            "ap-northeast-1": [{"FunctionName": "new_EEW_1"}, {"FunctionName": "dpi-supporter-delivery-01"}, {"FunctionName": "unrelated"}],
             "ap-northeast-3": [{"FunctionName": "new_kisyo_1"}],
         })
 
@@ -88,6 +88,8 @@ class TestDeliveryPayloadTests(unittest.TestCase):
         request = validate_request({"sources": ["admin"], "routes": ["fast"],
                                     "functions": [self.inventory[0]], "title": "test"}, self.inventory)
         self.assertEqual(request["routes"], ["fast"])
+        supporter = next(item for item in self.inventory if item["name"] == "dpi-supporter-delivery-01")
+        self.assertEqual(supporter["group"], "supporter")
         with self.assertRaises(ValueError):
             validate_request({"sources": ["admin"], "routes": ["fast"],
                               "functions": [{"region": "ap-northeast-1", "name": "unrelated"}]}, self.inventory)

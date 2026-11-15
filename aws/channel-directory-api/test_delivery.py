@@ -16,6 +16,7 @@ SOURCES = ("admin", "home", "tokyo-eew", "tokyo-weather", "osaka-eew", "osaka-we
 REGIONS = ("ap-northeast-1", "ap-northeast-3")
 DELIVERY_FUNCTION = re.compile(
     r"^(?:dpi-delivery-(?:primary|backup)-(?:TOKYO|OSAKA)|"
+    r"dpi-supporter-delivery-(?:0[1-9]|10)|"
     r"new_(?:EEW|EEW_SIND|ZISIN|TUNAMI|KEIHO|TOKYO_SUB|kisyo|kisyo2|KAZAN|OSAKA_SUB)_\d+)$"
 )
 
@@ -62,6 +63,8 @@ def discover_functions(region_rows):
 
 
 def function_group(name):
+    if name.startswith("dpi-supporter-delivery-"):
+        return "supporter"
     if name.startswith("dpi-delivery-primary-"):
         return "primary"
     if name.startswith("dpi-delivery-backup-"):
