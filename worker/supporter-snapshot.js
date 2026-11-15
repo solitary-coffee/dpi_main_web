@@ -64,13 +64,14 @@ export async function buildSupporterSnapshot(db, env, loadSubscriptions, nowMs =
         }
     }
     if (rules.length > MAX_RULES) throw new Error('Supporter snapshot rule limit exceeded');
-    const generatedAt = Math.max(1, Math.floor(Number(nowMs)));
+    const generatedAtMs = Math.max(1_000, Math.floor(Number(nowMs)));
+    const generatedAt = Math.floor(generatedAtMs / 1000);
     const canonicalRules = JSON.stringify(rules);
     return {
         schemaVersion: 1,
-        version: `supporter-${generatedAt}-${await digestPrefix(canonicalRules)}`,
+        version: `supporter-${generatedAtMs}-${await digestPrefix(canonicalRules)}`,
         generatedAt,
-        expiresAt: Math.floor(generatedAt / 1000) + SNAPSHOT_TTL_SECONDS,
+        expiresAt: generatedAt + SNAPSHOT_TTL_SECONDS,
         routing: {
             dedicatedMinDestinations: 100,
             urlsPerWorker: 25,

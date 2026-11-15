@@ -50,7 +50,7 @@ test('有効な契約のルールだけを個人情報なしでスナップシ�
     assert.equal(snapshot.rules.length, 1);
     assert.equal(snapshot.rules[0].type, 'rain-radar');
     assert.match(snapshot.rules[0].id, /^rule-[0-9a-f]{16}$/u);
-    assert.equal(snapshot.generatedAt, 1_800_000_000_123);
+    assert.equal(snapshot.generatedAt, 1_800_000_000);
     assert.equal(snapshot.expiresAt, 1_800_108_000);
     assert.doesNotMatch(JSON.stringify(snapshot), new RegExp(ACCOUNT_ID, 'u'));
     assert.doesNotMatch(JSON.stringify(snapshot), /cus_active/u);
