@@ -450,7 +450,7 @@ test('利用者ごとのStripeチャージURLへ任意金額と同意情報を�
 
 test('チャージ完了Webhookはクレジットを1度だけ付与して有効期限ロットを保存する',async()=>{
  const uid='637850681666961408',secret='whsec_example',timestamp=Math.floor(Date.now()/1000),executed=[],events=new Set();
- const event={id:'evt_credit_topup',livemode:false,type:'checkout.session.completed',data:{object:{id:'cs_credit_paid',mode:'payment',status:'complete',payment_status:'paid',customer:'cus_credit',payment_intent:'pi_credit',client_reference_id:uid,amount_total:1000,currency:'jpy',created:timestamp,metadata:{dpi_checkout_kind:'credit_topup',dpi_user:uid,dpi_credit_amount:'1000',dpi_topup_request_id:'6fb5b84e-03f7-44c0-bf04-4ee3ad22db20'}}}};
+ const event={id:'evt_credit_topup',created:timestamp,livemode:false,type:'checkout.session.completed',data:{object:{id:'cs_credit_paid',mode:'payment',status:'complete',payment_status:'paid',customer:'cus_credit',payment_intent:'pi_credit',client_reference_id:uid,amount_total:1000,currency:'jpy',created:timestamp-86400,metadata:{dpi_checkout_kind:'credit_topup',dpi_user:uid,dpi_credit_amount:'1000',dpi_topup_request_id:'6fb5b84e-03f7-44c0-bf04-4ee3ad22db20'}}}};
  const raw=JSON.stringify(event),signature=createHmac('sha256',secret).update(`${timestamp}.${raw}`).digest('hex');
  const env={SUPPORTER_BILLING_MODE:'test',STRIPE_SECRET_KEY:'rk_test_example',STRIPE_WEBHOOK_SECRET:secret,STRIPE_PRICE_SUPPORTER:'price_basic',STRIPE_PRICE_PLUS:'price_plus',STRIPE_PRICE_PRO:'price_pro',STRIPE_PRICE_ADDON:'price_addon',STRIPE_PORTAL_CONFIG:'bpc_x'};
  const db={prepare(sql){let values=[];const statement={sql,values,bind(...input){values=input;this.values=input;return this;},async first(){

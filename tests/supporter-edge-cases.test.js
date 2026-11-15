@@ -218,17 +218,28 @@ test('遅延決済はCheckout完了時に未払いなら付与せず、非同期
  }finally{globalThis.fetch=originalFetch;}
 });
 
-test('クレジットチャージの一部返金と全額返金は未使用残高だけを1度ずつ取り消す',async()=>{
+test('同時に届く一部返金と全額返金は競合を再試行して過剰に取り消さない',async()=>{
  const events=new Set(),topup={request_id:'req_topup',discord_user_id:'637850681666961408',customer_id:'cus_x',checkout_session_id:'cs_topup',amount:1000,refunded_amount:0,status:'credited'},lot={id:'lot_topup',remaining_amount:1000,status:'active'};
+ let initialTopupReads=0,releaseInitialReads;const initialReadGate=new Promise(resolve=>{releaseInitialReads=resolve;});
  const db={prepare(sql){let values=[];return{bind(...input){values=input;return this;},async first(){
   if(sql.includes('supporter_stripe_events'))return events.has(values[0])?{id:values[0]}:null;
-  if(sql.includes('FROM supporter_credit_topups'))return{...topup};
+  if(sql.includes('FROM supporter_credit_topups')){
+   const snapshot={...topup};
+   if(initialTopupReads<2){initialTopupReads+=1;if(initialTopupReads===2)releaseInitialReads();await initialReadGate;}
+   return snapshot;
+  }
   if(sql.includes('FROM supporter_credit_lots'))return{...lot};
   return null;
  },async run(){
   if(sql.startsWith('INSERT INTO supporter_stripe_events'))events.add(values[0]);
-  if(sql.startsWith('UPDATE supporter_credit_topups SET refunded_amount=')){assert.equal(topup.refunded_amount,values[4]);topup.refunded_amount=values[0];topup.status=values[1];}
-  if(sql.startsWith('UPDATE supporter_credit_lots SET remaining_amount=')){assert.equal(lot.remaining_amount,values[4]);lot.remaining_amount=values[0];lot.status=values[1];}
+  if(sql.startsWith('UPDATE supporter_credit_topups SET refunded_amount=')){
+   if(topup.refunded_amount!==values[4])return{meta:{changes:0}};
+   topup.refunded_amount=values[0];topup.status=values[1];return{meta:{changes:1}};
+  }
+  if(sql.startsWith('UPDATE supporter_credit_lots SET remaining_amount=')){
+   if(lot.remaining_amount!==values[4])return{meta:{changes:0}};
+   lot.remaining_amount=values[0];lot.status=values[1];return{meta:{changes:1}};
+  }
   return{meta:{changes:1}};
  }};},async batch(statements){for(const statement of statements)await statement.run();}};
  const env={...envBase(),REUSE_DB:db};let balance=-1000;const reversals=[],originalFetch=globalThis.fetch;
@@ -239,10 +250,16 @@ test('クレジットチャージの一部返金と全額返金は未使用残�
  };
  try{
   const partial={id:'ch_refund',payment_intent:'pi_topup',customer:'cus_x',amount_refunded:300};
-  let response=await billingWebhook(webhookRequest({id:'evt_refund_300',livemode:false,type:'charge.refunded',data:{object:partial}}),env);assert.equal(response.status,200);
+  const full={...partial,amount_refunded:1000};
+  const concurrent=await Promise.allSettled([
+   billingWebhook(webhookRequest({id:'evt_refund_300',livemode:false,type:'charge.refunded',data:{object:partial}}),env),
+   billingWebhook(webhookRequest({id:'evt_refund_1000',livemode:false,type:'charge.refunded',data:{object:full}}),env),
+  ]);
+  assert.equal(concurrent.filter(result=>result.status==='fulfilled').length,1);
+  assert.equal(concurrent.filter(result=>result.status==='rejected').length,1);
   assert.deepEqual(reversals,[300]);assert.equal(topup.refunded_amount,300);assert.equal(topup.status,'credited');assert.equal(lot.remaining_amount,700);
-  response=await billingWebhook(webhookRequest({id:'evt_refund_300',livemode:false,type:'charge.refunded',data:{object:partial}}),env);assert.equal(response.status,200);assert.deepEqual(reversals,[300]);
-  response=await billingWebhook(webhookRequest({id:'evt_refund_1000',livemode:false,type:'charge.refunded',data:{object:{...partial,amount_refunded:1000}}}),env);assert.equal(response.status,200);
+  const duplicate=await billingWebhook(webhookRequest({id:'evt_refund_300',livemode:false,type:'charge.refunded',data:{object:partial}}),env);assert.equal(duplicate.status,200);assert.deepEqual(reversals,[300]);
+  const response=await billingWebhook(webhookRequest({id:'evt_refund_1000',livemode:false,type:'charge.refunded',data:{object:full}}),env);assert.equal(response.status,200);
   assert.deepEqual(reversals,[300,700]);assert.equal(topup.refunded_amount,1000);assert.equal(topup.status,'refunded');assert.equal(lot.remaining_amount,0);assert.equal(lot.status,'revoked');
  }finally{globalThis.fetch=originalFetch;}
 });
