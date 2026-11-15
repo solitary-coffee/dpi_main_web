@@ -38,7 +38,7 @@ export async function supporterCreditMetrics(db,billingRows=[],creditBalances=ne
  for(const row of billingRows||[])balancesByUser.set(row.discord_user_id,Math.max(0,Number(creditBalances.get(row.customer_id)||0)));
  const lots=await db.prepare(`SELECT id,discord_user_id,source_type,remaining_amount,expires_at FROM supporter_credit_lots
   WHERE source_type IN ('purchase','admin') AND status='active' AND remaining_amount>0
-  ORDER BY discord_user_id,CASE source_type WHEN 'purchase' THEN 0 ELSE 1 END,expires_at,id`).all();
+  ORDER BY discord_user_id,CASE WHEN expires_at IS NULL THEN 1 ELSE 0 END,expires_at,id`).all();
  const grouped=new Map();
  for(const lot of lots.results||[]){const group=grouped.get(lot.discord_user_id)||[];group.push(lot);grouped.set(lot.discord_user_id,group);}
  if(stripeAvailable){

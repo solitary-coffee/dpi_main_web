@@ -539,6 +539,7 @@ test('補償クレジットは対象・理由・有効期限を保存し利用�
  ]);
  assert.match(migration,/supporter_credit_campaigns/);assert.match(migration,/supporter_credit_campaign_recipients/);assert.match(migration,/target_type/);assert.match(migration,/reason TEXT NOT NULL/);assert.match(migration,/expires_at INTEGER NOT NULL/);
  assert.match(supporterSource,/targetType==='plan'/);assert.match(supporterSource,/COMPENSATION_ACTIVE_STATUSES/);assert.match(supporterSource,/SELECT \* FROM supporter_credit_campaigns WHERE id=\?/);assert.match(supporterSource,/LIMIT \?/);assert.match(supporterSource,/attempts=attempts\+1/);assert.match(supporterSource,/dpi-compensation-customer/);assert.match(supporterSource,/complete_credit_campaign/);
+ assert.match(supporterSource,/ORDER BY discord_user_id,CASE WHEN expires_at IS NULL THEN 1 ELSE 0 END,expires_at,id/);
  assert.match(billingSource,/supporter_credit_campaign_recipients/);assert.match(billingSource,/source_id LIKE 'compensation:%'/);assert.match(billingSource,/reason:clean\(row\.reason\)/);
  for(const text of ['全登録者','特定ユーザー','特定プランの契約者','利用者に表示する理由','有効期限'])assert.match(adminHtml,new RegExp(text));
  assert.match(adminSource,/credit-campaigns/);assert.match(adminSource,/compensationRequestId=crypto\.randomUUID/);assert.match(adminSource,/配布処理を再開/);assert.match(userSource,/補償 .*ポイント/);assert.match(userSource,/理由:/);
