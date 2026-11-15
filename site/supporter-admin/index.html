@@ -30,6 +30,23 @@
    <header class="topbar"><div><p class="eyebrow">BILLING OPERATIONS</p><h1>有料プラン管理</h1></div><div class="admin-bar"><button id="refresh-btn" type="button">最新情報に更新</button></div></header>
    <div id="global-status" class="status" role="alert" aria-live="assertive"></div>
    <section class="admin-section" aria-labelledby="summary-title"><div class="section-heading"><div><p class="eyebrow">OVERVIEW</p><h2 id="summary-title">契約・クレジット状況</h2></div><span id="billing-mode"></span></div><div id="summary-cards" class="metric-grid"></div><div id="credit-legal-monitor" class="credit-legal-monitor" aria-live="polite"></div></section>
+   <section class="admin-section" aria-labelledby="compensation-title">
+    <div class="section-heading"><div><p class="eyebrow">COMPENSATION CREDITS</p><h2 id="compensation-title">補償クレジット配布</h2></div></div>
+    <p class="section-description">インシデントなどの補償クレジットを、全登録者・特定ユーザー・特定プランの契約者へ配布します。理由と有効期限は利用者の画面にも表示されます。</p>
+    <form id="compensation-form" class="compensation-form">
+     <label>配布対象<select id="compensation-target-type" required><option value="all">全登録者</option><option value="user">特定ユーザー</option><option value="plan">特定プランの契約者</option></select></label>
+     <label id="compensation-user-wrap" class="hidden">Discord ID<input id="compensation-user" type="text" inputmode="numeric" pattern="[0-9]{17,20}" autocomplete="off" placeholder="123456789012345678"></label>
+     <label id="compensation-plan-wrap" class="hidden">対象プラン<select id="compensation-plan"><option value="supporter">BASIC</option><option value="plus">Plus</option><option value="pro">Pro</option></select></label>
+     <label>1人あたりのクレジット数<input id="compensation-amount" type="number" min="1" max="1000000" step="1" value="500" required></label>
+     <label>有効期限<input id="compensation-expiry" type="datetime-local" required></label>
+     <label class="compensation-reason">利用者に表示する理由<textarea id="compensation-reason" rows="3" minlength="5" maxlength="500" required placeholder="例：○月○日に発生した通知遅延への補償"></textarea></label>
+     <label>実行確認<input id="compensation-confirm" type="text" required autocomplete="off" placeholder="「配布」と入力"></label>
+     <button id="compensation-submit" class="danger-btn" type="submit">配布内容を確認して実行</button>
+    </form>
+    <div id="compensation-result" class="action-result" role="status" aria-live="polite"></div>
+    <h3 class="campaign-history-title">最近の配布</h3>
+    <div id="compensation-campaigns" class="campaign-list" aria-live="polite"></div>
+   </section>
    <section class="admin-section" aria-labelledby="accounts-title">
     <div class="section-heading"><div><p class="eyebrow">ACCOUNTS</p><h2 id="accounts-title">登録者・契約一覧</h2></div></div>
     <label class="search-label">契約者名・Discord ID・メール・プランで絞り込み<input id="account-search" type="search" autocomplete="off" placeholder="契約者名 / Discord ID / メール / BASIC / Plus / Pro"></label>

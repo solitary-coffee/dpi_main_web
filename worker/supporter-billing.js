@@ -76,7 +76,7 @@ async function purchasedCreditStatus(db,uid,stripeCredits){
  let lots;
  try{lots=await db.prepare(`SELECT id,source_type,remaining_amount,expires_at,status FROM supporter_credit_lots
   WHERE discord_user_id=? AND source_type IN ('purchase','admin') AND status='active' AND remaining_amount>0
-  ORDER BY CASE source_type WHEN 'purchase' THEN 0 ELSE 1 END,expires_at,id`).bind(uid).all();}
+  ORDER BY CASE WHEN expires_at IS NULL THEN 1 ELSE 0 END,expires_at,id`).bind(uid).all();}
  catch(error){
   console.warn('Supporter credit history is unavailable',{errorName:error?.name||'Error'});
   return {balance:Math.max(0,Number(stripeCredits)||0),purchasedBalance:0,nextExpiry:null,topups:[]};
@@ -90,15 +90,26 @@ async function purchasedCreditStatus(db,uid,stripeCredits){
    WHERE id=? AND remaining_amount=? AND status='active'`).bind(remaining,remaining?'active':'consumed',now,lot.id,current).run();
   if(result.meta?.changes)consumed-=used;
  }
- const active=await db.prepare(`SELECT COALESCE(SUM(remaining_amount),0) AS purchased_balance,MIN(expires_at) AS next_expiry
-  FROM supporter_credit_lots WHERE discord_user_id=? AND source_type='purchase' AND status='active' AND remaining_amount>0`).bind(uid).first();
+ const active=await db.prepare(`SELECT COALESCE(SUM(CASE WHEN source_type='purchase' THEN remaining_amount ELSE 0 END),0) AS purchased_balance,MIN(expires_at) AS next_expiry
+  FROM supporter_credit_lots WHERE discord_user_id=? AND (source_type='purchase' OR (source_type='admin' AND source_id LIKE 'compensation:%')) AND status='active' AND remaining_amount>0`).bind(uid).first();
  const history=await db.prepare(`SELECT request_id,amount,status,purchased_at,expires_at,created_at
   FROM supporter_credit_topups WHERE discord_user_id=? ORDER BY created_at DESC LIMIT 20`).bind(uid).all();
+ let compensations=[];
+ try{
+  const result=await db.prepare(`SELECT c.id,c.amount,c.reason,c.expires_at,c.created_at,r.status,r.credited_at,l.remaining_amount
+   FROM supporter_credit_campaign_recipients r
+   JOIN supporter_credit_campaigns c ON c.id=r.campaign_id
+   LEFT JOIN supporter_credit_lots l ON l.id=r.lot_id
+   WHERE r.discord_user_id=? AND r.status IN ('credited','expired')
+   ORDER BY COALESCE(r.credited_at,c.created_at) DESC LIMIT 20`).bind(uid).all();
+  compensations=(result.results||[]).map(row=>({id:clean(row.id),amount:Number(row.amount)||0,reason:clean(row.reason),expiresAt:unix(row.expires_at),creditedAt:unix(row.credited_at),status:clean(row.status),remainingAmount:Math.max(0,Number(row.remaining_amount)||0)}));
+ }catch(error){console.warn('Supporter compensation history is unavailable',{errorName:error?.name||'Error'});}
  return {
   balance:Math.max(0,Number(stripeCredits)||0),
   purchasedBalance:Math.max(0,Number(active?.purchased_balance)||0),
   nextExpiry:unix(active?.next_expiry),
   topups:(history.results||[]).map(row=>({id:clean(row.request_id),amount:Number(row.amount)||0,status:clean(row.status),purchasedAt:unix(row.purchased_at),expiresAt:unix(row.expires_at),createdAt:unix(row.created_at)})),
+  compensations,
  };
 }
 async function fulfillCreditTopup(env,db,session){
@@ -860,7 +871,7 @@ export async function adminBillingAction(env,customer,uid,input){
   if(action==='remove_credit'&&amount>current)fail('利用可能クレジットを超えて削除できません。',409);
   const delta=action==='grant_credit'?amount:-amount;
   const transaction=await stripe(env,`customers/${encodeURIComponent(customer)}/balance_transactions`,{
-   amount:String(-delta),currency:'jpy',description:`DPI-Bot ${action==='grant_credit'?'credit grant':'credit removal'}: ${reason}`,
+   amount:String(-delta),currency:'jpy',description:`DPI-Bot ${action==='grant_credit'?'credit grant':'credit removal'}: ${reason}`.slice(0,500),
    'metadata[dpi_user]':uid,'metadata[dpi_credit_action]':action,'metadata[dpi_admin_reason]':reason,
   },key);
   const balanceAfter=creditsFromBalance(transaction.ending_balance);
@@ -930,9 +941,10 @@ async function syncCustomerEmail(db,customer){
 }
 async function expirePurchasedCredits(env,db,limit=100){
  const now=Math.floor(Date.now()/1000);
- const due=await db.prepare(`SELECT l.id,l.discord_user_id,l.remaining_amount,l.source_id,l.expires_at,b.customer_id
+ const due=await db.prepare(`SELECT l.id,l.discord_user_id,l.source_type,l.remaining_amount,l.source_id,l.expires_at,b.customer_id
   FROM supporter_credit_lots l JOIN supporter_billing b ON b.discord_user_id=l.discord_user_id
-  WHERE l.source_type='purchase' AND l.status='active' AND l.remaining_amount>0 AND l.expires_at<=?
+  WHERE (l.source_type='purchase' OR (l.source_type='admin' AND l.source_id LIKE 'compensation:%'))
+   AND l.status='active' AND l.remaining_amount>0 AND l.expires_at<=?
   ORDER BY l.expires_at,l.id LIMIT ?`).bind(now,limit).all();
  let expired=0;
  for(const candidate of due.results||[]){
@@ -955,7 +967,8 @@ async function expirePurchasedCredits(env,db,limit=100){
   await db.prepare(`INSERT INTO supporter_credit_events
    (id,discord_user_id,credit_delta,balance_after,stripe_transaction_id,reason,actor,created_at)
    VALUES(?,?,?,?,?,'credit_expired','system',?) ON CONFLICT DO NOTHING`).bind(`expiry:${candidate.id}`,candidate.discord_user_id,-remove,balanceAfter,transactionId,new Date(now*1000).toISOString()).run();
-  await db.prepare(`UPDATE supporter_credit_topups SET status='expired',updated_at=? WHERE checkout_session_id=? AND status='credited'`).bind(now,candidate.source_id).run();
+  if(candidate.source_type==='purchase')await db.prepare(`UPDATE supporter_credit_topups SET status='expired',updated_at=? WHERE checkout_session_id=? AND status='credited'`).bind(now,candidate.source_id).run();
+  else await db.prepare(`UPDATE supporter_credit_campaign_recipients SET status='expired' WHERE lot_id=? AND status='credited'`).bind(candidate.id).run();
   try{await sendBillingNotification(env,db,'credit_expired',{id:`expiry:${candidate.id}`,customer:candidate.customer_id,amount_due:remaining,currency:'jpy',expires_at:candidate.expires_at});}
   catch(error){console.error('Supporter credit expiry email failed',{creditLotId:candidate.id,errorName:error?.name||'Error'});}
   expired+=1;

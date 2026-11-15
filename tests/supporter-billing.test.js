@@ -527,6 +527,23 @@ test('paid plan configuration contains test catalog IDs and consent storage',asy
  assert.match(policy,/Stripe/);assert.match(policy,/安全管理措置/);
  for(const text of ['販売価格','支払時期・請求日','契約期間・自動更新','解約方法・条件','キャンセル・返金'])assert.match(specified,new RegExp(text));
 });
+test('補償クレジットは対象・理由・有効期限を保存し利用者画面へ表示する',async()=>{
+ const [migration,supporterSource,billingSource,adminHtml,adminSource,userHtml,userSource]=await Promise.all([
+  readFile(new URL('../migrations/0021_supporter_compensation_credits.sql',import.meta.url),'utf8'),
+  readFile(new URL('../worker/supporter.js',import.meta.url),'utf8'),
+  readFile(new URL('../worker/supporter-billing.js',import.meta.url),'utf8'),
+  readFile(new URL('../site/supporter-admin/index.html',import.meta.url),'utf8'),
+  readFile(new URL('../site/supporter-admin/app.js',import.meta.url),'utf8'),
+  readFile(new URL('../site/supporter/index.html',import.meta.url),'utf8'),
+  readFile(new URL('../site/supporter/app.js',import.meta.url),'utf8'),
+ ]);
+ assert.match(migration,/supporter_credit_campaigns/);assert.match(migration,/supporter_credit_campaign_recipients/);assert.match(migration,/target_type/);assert.match(migration,/reason TEXT NOT NULL/);assert.match(migration,/expires_at INTEGER NOT NULL/);
+ assert.match(supporterSource,/targetType==='plan'/);assert.match(supporterSource,/COMPENSATION_ACTIVE_STATUSES/);assert.match(supporterSource,/SELECT \* FROM supporter_credit_campaigns WHERE id=\?/);assert.match(supporterSource,/LIMIT \?/);assert.match(supporterSource,/attempts=attempts\+1/);assert.match(supporterSource,/dpi-compensation-customer/);assert.match(supporterSource,/complete_credit_campaign/);
+ assert.match(billingSource,/supporter_credit_campaign_recipients/);assert.match(billingSource,/source_id LIKE 'compensation:%'/);assert.match(billingSource,/reason:clean\(row\.reason\)/);
+ for(const text of ['全登録者','特定ユーザー','特定プランの契約者','利用者に表示する理由','有効期限'])assert.match(adminHtml,new RegExp(text));
+ assert.match(adminSource,/credit-campaigns/);assert.match(adminSource,/compensationRequestId=crypto\.randomUUID/);assert.match(adminSource,/配布処理を再開/);assert.match(userSource,/補償 .*ポイント/);assert.match(userSource,/理由:/);
+ assert.doesNotMatch(`${userHtml}\n${userSource}`,/先行提供|Stripeテスト環境|月・予定|実際の請求は発生しません/);
+});
 test('billing dunning sends success and failure mail and blocks access after month-end failure',async()=>{
  const [billingSource,supporterSource,uiSource,migration,configText,indexSource]=await Promise.all([
   readFile(new URL('../worker/supporter-billing.js',import.meta.url),'utf8'),readFile(new URL('../worker/supporter.js',import.meta.url),'utf8'),readFile(new URL('../site/supporter/app.js',import.meta.url),'utf8'),readFile(new URL('../migrations/0017_supporter_dunning.sql',import.meta.url),'utf8'),readFile(new URL('../wrangler.jsonc',import.meta.url),'utf8'),readFile(new URL('../worker/index.js',import.meta.url),'utf8'),
