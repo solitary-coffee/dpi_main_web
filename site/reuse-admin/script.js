@@ -99,6 +99,7 @@ function renderDetail(app, events) {
         ['サーバー公開範囲', choiceLabels[app.serverPublic] || app.serverPublic],
         ['チャンネル公開範囲', choiceLabels[app.channelVisibility] || app.channelVisibility],
         ['利用方法', `${choiceLabels[app.reuseMethod] || app.reuseMethod}${app.reuseMethodOther ? `: ${app.reuseMethodOther}` : ''}`],
+        ['有料プランの配信を二次利用', app.usesPaidPlanContent ? 'する' : 'しない'],
         ['結果通知先', app.contactEmail], ['利用目的', app.purpose],
         ['サーバー案内・公開先', app.destinationUrl || '未入力'], ['補足事項', app.notes || '未入力'],
         ['作成日時', formatDate(app.createdAt)], ['前回審査者', app.reviewedBy || '未審査'],

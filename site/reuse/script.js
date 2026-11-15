@@ -385,6 +385,7 @@ function reviewSubmission(payload, mode) {
     const email = payload.email.trim().toLowerCase();
     const emailConfirm = payload.emailConfirm.trim().toLowerCase();
     if (email !== emailConfirm) errors.push('メールアドレスと確認用メールアドレスが一致していません。');
+    if (!payload.reusePolicyConsent) errors.push('二次利用の申請・承認条件と規約違反時の対応を確認してください。');
     const mappingDetails = payload.channelMappings.map((mapping, index) => {
         const source = currentChannels.find((item) => item.id === mapping.channelId);
         const destination = mapping.publishChannelId
@@ -430,6 +431,7 @@ function reviewSubmission(payload, mode) {
             ['サーバー公開範囲', choiceLabels[payload.serverPublic] || payload.serverPublic],
             ['チャンネル公開範囲', choiceLabels[payload.channelVisibility] || payload.channelVisibility],
             ['利用方法', choiceLabels[payload.reuseMethod] || payload.reuseMethod],
+            ['有料プランの配信を二次利用', payload.usesPaidPlanContent ? 'する' : 'しない'],
             ['利用目的', payload.purpose],
         ],
     };
@@ -471,9 +473,11 @@ function applicationPayload() {
         channelMappings: collectChannelMappings(),
         serverPublic: checkedValue('server-public'), channelVisibility: checkedValue('channel-visibility'),
         reuseMethod: checkedValue('reuse-method'), reuseMethodOther: value('reuse-other'),
+        usesPaidPlanContent: document.getElementById('uses-paid-plan-content').checked,
         email: value('email'), emailConfirm: value('email-confirm'), purpose: value('purpose'),
         destinationUrl: value('destination-url'), notes: value('notes'),
         authorized: document.getElementById('authorized').checked, consent: document.getElementById('consent').checked,
+        reusePolicyConsent: document.getElementById('reuse-policy-consent').checked,
     };
 }
 
@@ -496,7 +500,7 @@ async function renderManagedApplication() {
     const details = [
         ['Discord', app.discordUsername], ['サーバー', `${app.guildName} (${app.guildId})`], ['チャンネル別利用設定', mappingText],
         ['サーバー公開範囲', choiceLabels[app.serverPublic] || app.serverPublic], ['チャンネル公開範囲', choiceLabels[app.channelVisibility] || app.channelVisibility],
-        ['利用方法', choiceLabels[app.reuseMethod] || app.reuseMethod], ['連絡先', app.contactEmail], ['利用目的', app.purpose],
+        ['利用方法', choiceLabels[app.reuseMethod] || app.reuseMethod], ['有料プランの配信を二次利用', app.usesPaidPlanContent ? 'する' : 'しない'], ['連絡先', app.contactEmail], ['利用目的', app.purpose],
         ['公開先URL', app.destinationUrl || '未入力'], ['補足', app.notes || '未入力'], ['更新日時', formatDate(app.updatedAt)],
     ];
     for (const [label, text] of details) list.append(element('dt', '', label), element('dd', '', text));
@@ -549,6 +553,9 @@ async function renderResubmitForm(app) {
         document.getElementById('resubmit-btn').disabled = true;
     }
     const operationField = document.createElement('fieldset');
+    const paidPlanReuseLabel = document.createElement('label'); paidPlanReuseLabel.className = 'consent';
+    const paidPlanReuseInput = document.createElement('input'); paidPlanReuseInput.type = 'checkbox'; paidPlanReuseInput.id = 'resubmit-uses-paid-plan-content'; paidPlanReuseInput.checked = app.usesPaidPlanContent === true;
+    paidPlanReuseLabel.append(paidPlanReuseInput, document.createTextNode(' 有料プランで受信・設定した配信内容を二次利用する'));
     operationField.append(
         element('legend', '', '公開範囲と運用方法'),
         radioGroup('サーバーは誰でも参加できますか？', 'resubmit-server-public', {
@@ -563,6 +570,8 @@ async function renderResubmitForm(app) {
             unchanged: '内容をそのまま転載する', edited: '一部を編集・加工して利用する', other: 'その他',
         }, app.reuseMethod),
         textAreaField('その他の利用方法', 'resubmit-method-other', app.reuseMethodOther, 500),
+        paidPlanReuseLabel,
+        element('p', 'help', '有料プランの契約と二次利用の承認は別です。該当する場合はチェックして再申請してください。'),
     );
     const contactField = document.createElement('fieldset');
     contactField.append(
@@ -598,9 +607,11 @@ function resubmitApplication(event) {
         openConfirmation({
             channelMappings, serverPublic: checkedValue('resubmit-server-public'), channelVisibility: checkedValue('resubmit-channel-visibility'),
             reuseMethod: checkedValue('resubmit-method'), reuseMethodOther: value('resubmit-method-other'),
+            usesPaidPlanContent: document.getElementById('resubmit-uses-paid-plan-content').checked,
             email: value('resubmit-email'), emailConfirm: value('resubmit-email-confirm'), purpose: value('resubmit-purpose'),
             destinationUrl: value('resubmit-url'), notes: value('resubmit-notes'),
             authorized: document.getElementById('resubmit-authorized').checked, consent: document.getElementById('resubmit-consent').checked,
+            reusePolicyConsent: document.getElementById('resubmit-reuse-policy-consent').checked,
         }, 'resubmit');
     } catch (error) { setStatus(error.message, 'error'); }
 }

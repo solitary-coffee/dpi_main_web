@@ -354,9 +354,9 @@ async function createApplication(request, env) {
                 guild_id, guild_name, channel_id, channel_name, channel_type, delivery_types,
                 channel_mappings,
                 server_public, channel_visibility, announcement_automated, reuse_method,
-                reuse_method_other, contact_email, purpose, destination_url, notes,
+                reuse_method_other, uses_paid_plan_content, contact_email, purpose, destination_url, notes,
                 created_at, updated_at, manage_token_hash
-             ) VALUES (?, ?, 'pending', 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             ) VALUES (?, ?, 'pending', 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         ).bind(
             id, reference, session.discord_user_id, session.discord_username,
             normalized.guild.id, normalized.guild.name,
@@ -364,7 +364,7 @@ async function createApplication(request, env) {
             JSON.stringify(normalized.deliveryTypes), JSON.stringify(normalized.channelMappings),
             normalized.serverPublic,
             normalized.channelVisibility, normalized.announcementAutomated,
-            normalized.reuseMethod, normalized.reuseMethodOther, normalized.email,
+            normalized.reuseMethod, normalized.reuseMethodOther, normalized.usesPaidPlanContent ? 1 : 0, normalized.email,
             normalized.purpose, normalized.destinationUrl, normalized.notes,
             now, now, await sha256(manageToken),
         ),
@@ -449,7 +449,7 @@ async function resubmitApplication(request, env, applicationId = '') {
                 status = 'resubmitted', revision = ?, channel_id = ?, channel_name = ?, channel_type = ?,
                 delivery_types = ?, channel_mappings = ?, server_public = ?,
                 channel_visibility = ?, announcement_automated = ?, reuse_method = ?,
-                reuse_method_other = ?, contact_email = ?, purpose = ?, destination_url = ?,
+                reuse_method_other = ?, uses_paid_plan_content = ?, contact_email = ?, purpose = ?, destination_url = ?,
                 notes = ?, admin_message = NULL, reviewed_by = NULL, reviewed_at = NULL,
                 resubmitted_at = ?, updated_at = ?
              WHERE id = ? AND status = ?`,
@@ -458,7 +458,7 @@ async function resubmitApplication(request, env, applicationId = '') {
             JSON.stringify(normalized.deliveryTypes), JSON.stringify(channelMappings),
             normalized.serverPublic,
             normalized.channelVisibility, normalized.announcementAutomated,
-            normalized.reuseMethod, normalized.reuseMethodOther, normalized.email,
+            normalized.reuseMethod, normalized.reuseMethodOther, normalized.usesPaidPlanContent ? 1 : 0, normalized.email,
             normalized.purpose, normalized.destinationUrl, normalized.notes,
             now, now, existing.id, existing.status,
         ),
@@ -790,6 +790,10 @@ function validateEditableApplicationInput(input, existing = null) {
     const reuseMethodOther = reuseMethod === 'other'
         ? boundedText(input.reuseMethodOther, 2, 500, 'その他の二次利用方法')
         : '';
+    if (typeof input.usesPaidPlanContent !== 'boolean') {
+        throw new ReuseError(400, '有料プランの配信内容を二次利用するか選択してください。', 'paid_plan_reuse_required');
+    }
+    const usesPaidPlanContent = input.usesPaidPlanContent;
     const email = validateEmail(input.email);
     const emailConfirm = validateEmail(input.emailConfirm);
     if (email !== emailConfirm) {
@@ -804,9 +808,12 @@ function validateEditableApplicationInput(input, existing = null) {
     if (input.authorized !== true) {
         throw new ReuseError(400, '申請先を管理する権限の確認が必要です。', 'authorization_required');
     }
+    if (input.reusePolicyConsent !== true) {
+        throw new ReuseError(400, '二次利用の申請・承認条件と規約違反時の対応を確認してください。', 'reuse_policy_consent_required');
+    }
     return {
         deliveryTypes, serverPublic, channelVisibility, announcementAutomated,
-        reuseMethod, reuseMethodOther, email, purpose, destinationUrl, notes,
+        reuseMethod, reuseMethodOther, usesPaidPlanContent, email, purpose, destinationUrl, notes,
     };
 }
 
@@ -898,6 +905,7 @@ function serializeApplication(item, includePrivate) {
         announcementAutomated: item.announcement_automated,
         reuseMethod: item.reuse_method,
         reuseMethodOther: item.reuse_method_other || '',
+        usesPaidPlanContent: Number(item.uses_paid_plan_content || 0) === 1,
         purpose: item.purpose,
         destinationUrl: item.destination_url || '',
         notes: item.notes || '',

@@ -40,6 +40,7 @@
             <section class="section intro">
                 <h2>申請について</h2>
                 <p>DPI-Botの配信を別のDiscordサーバーやアナウンスチャンネルで利用する場合は、事前に申請してください。</p>
+                <div class="restriction-box"><strong>二次利用には別途の申請と承認が必要です</strong><p>有料プランの契約だけでは、配信内容の転載・再配信・加工配信は許可されません。申請・承認なしの二次利用は、契約解除、クレジット没収、アカウント停止等の対象となる場合があります。</p></div>
                 <div class="notice-box">申請先のサーバーを確認するため、Discordアカウントでのログインが必要です。管理権限を確認できるサーバーのみ選択できます。</div>
                 <div class="restriction-box"><strong>緊急地震速報は二次利用できません</strong><p>緊急地震速報の全種類（警報、地震動予報、震度変化を含みます）は、提供APIの利用規約および迅速性・即時性を確保する観点から二次利用をお断りしています。申請対象外のため、配信の選択肢にも表示されません。</p></div>
             </section>
@@ -85,6 +86,8 @@
                             <label><input type="radio" name="server-public" value="public" required> 公開サーバー（宣伝サイトなどに招待リンクを公開している場合はこちら）</label>
                             <label><input type="radio" name="server-public" value="private"> 非公開・招待制サーバー（完全内部利用やDMなどで招待する場合はこちら）</label>
                         </div>
+                        <label class="consent"><input id="uses-paid-plan-content" type="checkbox"> 有料プランで受信・設定した配信内容を二次利用する</label>
+                        <p class="help">該当する場合はチェックしてください。未チェックは「利用しない」として申請されます。契約中の有料プランの配信でも、二次利用にはこの申請と承認が必要です。</p>
                         <div class="choice-group">
                             <span class="field-label">利用チャンネルは誰でも閲覧できますか？</span>
                             <label><input type="radio" name="channel-visibility" value="public" required> サーバー参加者なら誰でも閲覧可能（メンバーロール付与後に閲覧できる場合を含みます）</label>
@@ -125,6 +128,7 @@
                         <legend>確認と同意</legend>
                         <label class="consent"><input id="authorized" type="checkbox" required> 私は申請先サーバー・チャンネルを管理する権限を持っています。</label>
                         <label class="consent"><input id="consent" type="checkbox" required> Discordユーザー情報、サーバー名・ID、チャンネル名・ID、メールアドレス、申請内容を審査と連絡のために収集・保存することに同意します。</label>
+                        <label class="consent"><input id="reuse-policy-consent" type="checkbox" required> 許可された範囲でのみ二次利用し、未申請・未承認の利用が処分の対象となることを確認しました。</label>
                     </fieldset>
 
                     <button id="submit-btn" type="submit" class="primary-btn">入力内容を確認する</button>
@@ -163,6 +167,7 @@
                         <legend>確認と同意</legend>
                         <label class="consent"><input id="resubmit-authorized" type="checkbox" required> 管理権限と入力内容を再確認しました。</label>
                         <label class="consent"><input id="resubmit-consent" type="checkbox" required> 情報の収集・保存に同意します。</label>
+                        <label class="consent"><input id="resubmit-reuse-policy-consent" type="checkbox" required> 許可された範囲でのみ二次利用し、未申請・未承認の利用が処分の対象となることを確認しました。</label>
                     </fieldset>
                     <button id="resubmit-btn" type="submit" class="primary-btn">再申請する</button>
                 </form>

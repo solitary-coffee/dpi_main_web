@@ -347,6 +347,19 @@ export const WEATHER_DETAILS = Object.freeze([
  ['weather-commentary', '気象解説情報'],
  ['tide-commentary', '気象解説情報（潮位）'],
 ]);
+export const RAIN_RADAR_CONDITIONS = Object.freeze([
+ ['all', '定時更新'],
+ ['rain-detected', '対象地方で降雨を検出'],
+ ['rainfall-threshold', '1時間降水量が閾値以上'],
+]);
+export const RAIN_RADAR_INTERVALS = Object.freeze([
+ ['1', '1時間ごと'],
+ ['2', '2時間ごと'],
+ ['3', '3時間ごと'],
+ ['6', '6時間ごと'],
+ ['12', '12時間ごと'],
+ ['24', '24時間ごと'],
+]);
 export const CHANGE_DIRECTIONS = Object.freeze([
  ['all', '変化を問わない'],
  ['increase', '上昇時'],
@@ -364,14 +377,17 @@ const WEATHER_LEVEL_IDS = new Set(WEATHER_LEVELS.map(([id]) => id));
 const WARNING_LEVEL_IDS = new Set(WARNING_LEVELS.map(([id]) => id));
 const THRESHOLD_MODE_IDS = new Set(THRESHOLD_MODES.map(([id]) => id));
 const EEW_WARNING_AREA_MODE_IDS = new Set(EEW_WARNING_AREA_MODES.map(([id]) => id));
+const RAIN_RADAR_CONDITION_IDS = new Set(RAIN_RADAR_CONDITIONS.map(([id]) => id));
+const RAIN_RADAR_INTERVAL_IDS = new Set(RAIN_RADAR_INTERVALS.map(([id]) => id));
 const DETAILS = {
  earthquake: new Set(EARTHQUAKE_DETAILS.map(([id]) => id)),
  eew: new Set(EEW_DETAILS.map(([id]) => id)),
  weather: new Set(WEATHER_DETAILS.map(([id]) => id)),
+ 'rain-radar': new Set(['all']),
 };
 const WEATHER_ALERT_DETAILS = new Set(['heavy-rain-level','landslide-level','storm-surge-level']);
 const WEATHER_WARNING_DETAILS = new Set(['storm-blizzard-warning','wave-warning','heavy-snow-warning','other-advisory']);
-const SUPPORTER_TYPE_LABELS = Object.freeze({earthquake:'地震情報',eew:'緊急地震速報',weather:'気象情報'});
+const SUPPORTER_TYPE_LABELS = Object.freeze({earthquake:'地震情報',eew:'緊急地震速報',weather:'気象情報','rain-radar':'雨雲レーダー'});
 const INTENSITY_LABELS = Object.freeze({'1':'震度1','2':'震度2','3':'震度3','4':'震度4','5-':'震度5弱','5+':'震度5強','6-':'震度6弱','6+':'震度6強','7':'震度7'});
 
 function optionLabel(options, value, fallback = '未設定') {
@@ -386,6 +402,8 @@ function adminConditionLabel(condition, type) {
  if(kind==='magnitude')return `マグニチュード：M${Number(value)}以上`;
  if(kind==='weatherLevel')return `警戒レベル：${optionLabel(WEATHER_LEVELS,clean(value))}`;
  if(kind==='warningLevel')return `警報・注意報：${optionLabel(WARNING_LEVELS,clean(value))}`;
+ if(kind==='radarCondition')return `雨雲条件：${optionLabel(RAIN_RADAR_CONDITIONS,clean(value))}`;
+ if(kind==='rainfallThreshold')return `1時間降水量：${Number(value)}mm/h以上`;
  return `不明な条件：${clean(value)||'未設定'}`;
 }
 
@@ -415,11 +433,15 @@ export function supporterAdminDetails(row, channelsByGuild = {}) {
    const channels=Array.isArray(channelsByGuild[guildId])?channelsByGuild[guildId]:[];
    const details=[
     {label:'情報種別',value:SUPPORTER_TYPE_LABELS[type]||type||'未設定'},
-    {label:'詳細種別',value:optionLabel(type==='earthquake'?EARTHQUAKE_DETAILS:type==='eew'?EEW_DETAILS:WEATHER_DETAILS,clean(rule?.detail)||'all')},
+    {label:'詳細種別',value:type==='rain-radar'?'雨雲レーダー':optionLabel(type==='earthquake'?EARTHQUAKE_DETAILS:type==='eew'?EEW_DETAILS:WEATHER_DETAILS,clean(rule?.detail)||'all')},
     {label:'対象地方',value:optionLabel(SUPPORTER_REGIONS,clean(rule?.region)||'all')},
     {label:'条件の組み合わせ',value:clean(rule?.conditionLogic)==='or'?'いずれかを満たす（OR）':'すべて満たす（AND）'},
    ];
-   if(type==='weather'){
+   if(type==='rain-radar'){
+    details.push({label:'配信条件',value:optionLabel(RAIN_RADAR_CONDITIONS,clean(rule?.radarCondition)||'all')});
+    if(clean(rule?.radarCondition)==='rainfall-threshold')details.push({label:'1時間降水量',value:`${Number(rule?.rainfallThresholdMmPerHour)}mm/h以上`});
+    details.push({label:'配信頻度',value:optionLabel(RAIN_RADAR_INTERVALS,String(rule?.deliveryIntervalHours||1))});
+   }else if(type==='weather'){
     if(clean(rule?.weatherLevel))details.push({label:'警戒レベル',value:optionLabel(WEATHER_LEVELS,clean(rule.weatherLevel))});
     if(clean(rule?.warningLevel))details.push({label:'警報・注意報',value:optionLabel(WARNING_LEVELS,clean(rule.warningLevel))});
    }else{
@@ -447,6 +469,13 @@ function optionalMagnitude(value) {
  return Math.round(number * 10) / 10;
 }
 
+function optionalRainfallThreshold(value) {
+ if (value === '' || value === undefined || value === null) return null;
+ const number = Number(value);
+ if (!Number.isFinite(number) || number < 0.1 || number > 500) throw Object.assign(new Error('1時間降水量の閾値は0.1から500mm/hの範囲で指定してください。'),{status:400});
+ return Math.round(number * 10) / 10;
+}
+
 function thresholdMode(rule, key, legacyKey, thresholdValue) {
  const requested = clean(rule?.[key]);
  if (THRESHOLD_MODE_IDS.has(requested)) return requested;
@@ -461,11 +490,13 @@ function normalizeAdditionalConditions(input,type,complexConditions){
  const normalized=requested.map(condition=>{
   const kind=clean(condition?.kind);const raw=condition?.value;const value=clean(raw);
   if(kind==='region'&&REGION_IDS.has(value))return{kind,operator:'equals',value};
-  if(kind==='detail'&&DETAILS[type].has(value))return{kind,operator:'equals',value};
-  if(kind==='intensity'&&type!=='weather'&&INTENSITIES.has(value))return{kind,operator:'at_least',value};
-  if(kind==='magnitude'&&type!=='weather'){const magnitude=optionalMagnitude(raw);if(magnitude!==null)return{kind,operator:'at_least',value:magnitude};}
+  if(kind==='detail'&&type!=='rain-radar'&&DETAILS[type].has(value))return{kind,operator:'equals',value};
+  if(kind==='intensity'&&['earthquake','eew'].includes(type)&&INTENSITIES.has(value))return{kind,operator:'at_least',value};
+  if(kind==='magnitude'&&['earthquake','eew'].includes(type)){const magnitude=optionalMagnitude(raw);if(magnitude!==null)return{kind,operator:'at_least',value:magnitude};}
   if(kind==='weatherLevel'&&type==='weather'&&WEATHER_LEVEL_IDS.has(value))return{kind,operator:'equals',value};
   if(kind==='warningLevel'&&type==='weather'&&WARNING_LEVEL_IDS.has(value))return{kind,operator:'equals',value};
+  if(kind==='radarCondition'&&type==='rain-radar'&&RAIN_RADAR_CONDITION_IDS.has(value))return{kind,operator:'equals',value};
+  if(kind==='rainfallThreshold'&&type==='rain-radar'){const rainfall=optionalRainfallThreshold(raw);if(rainfall!==null)return{kind,operator:'at_least',value:rainfall};}
   throw Object.assign(new Error('追加条件の種類または値を確認してください。'),{status:400});
  });
  const unique=[];const seen=new Set();
@@ -486,7 +517,7 @@ export function normalizeSupporterRules(input, guilds, limits = {servers:1,chann
   const region = clean(rule?.region) || 'all';
   const conditionLogic=clean(rule?.conditionLogic)||'and';
   if (!name || name.length > 80 || !guilds.some(g=>g.id===guildId) || !channelIds.length || channelIds.some(id=>!/^\d{17,20}$/.test(id))
-      || !['earthquake','eew','weather'].includes(type) || !REGION_IDS.has(region)) {
+      || !['earthquake','eew','weather','rain-radar'].includes(type) || !REGION_IDS.has(region)) {
    throw Object.assign(new Error('入力内容とサーバー管理権限を確認してください。'),{status:400});
   }
   if(!['and','or'].includes(conditionLogic))throw Object.assign(new Error('条件の組み合わせ方法を確認してください。'),{status:400});
@@ -496,12 +527,21 @@ export function normalizeSupporterRules(input, guilds, limits = {servers:1,chann
   const detail = type === 'eew' && requestedDetail === 'intensity-change' ? 'forecast' : requestedDetail;
   if (!DETAILS[type].has(detail)) throw Object.assign(new Error('情報の詳細種別を確認してください。'),{status:400});
   const conditions=normalizeAdditionalConditions(rule?.conditions,type,limits.complexConditions===true);
+  if (type === 'rain-radar') {
+   const radarCondition=clean(rule?.radarCondition)||'all';
+   const deliveryIntervalHours=clean(rule?.deliveryIntervalHours)||'1';
+   if(!RAIN_RADAR_CONDITION_IDS.has(radarCondition))throw Object.assign(new Error('雨雲レーダーの配信条件を確認してください。'),{status:400});
+   if(!RAIN_RADAR_INTERVAL_IDS.has(deliveryIntervalHours))throw Object.assign(new Error('雨雲レーダーの配信頻度を確認してください。'),{status:400});
+   const rainfallThresholdMmPerHour=radarCondition==='rainfall-threshold'?optionalRainfallThreshold(rule?.rainfallThresholdMmPerHour):null;
+   if(radarCondition==='rainfall-threshold'&&rainfallThresholdMmPerHour===null)throw Object.assign(new Error('1時間降水量の閾値を入力してください。'),{status:400});
+   return {name,guildId,channelId,channelIds,type,detail:'all',region,conditionLogic,conditions,intensityMode:'',intensity:'',magnitudeMode:'',magnitudeMin:null,weatherLevel:'',warningLevel:'',eewWarningAreaMode:'',radarCondition,rainfallThresholdMmPerHour,deliveryIntervalHours:Number(deliveryIntervalHours)};
+  }
   if (type === 'weather') {
    const weatherLevel = WEATHER_ALERT_DETAILS.has(detail) ? (clean(rule?.weatherLevel) || 'all') : '';
    const warningLevel = WEATHER_WARNING_DETAILS.has(detail) ? (clean(rule?.warningLevel) || 'all') : '';
    if (weatherLevel && !WEATHER_LEVEL_IDS.has(weatherLevel)) throw Object.assign(new Error('気象情報の警戒レベルを確認してください。'),{status:400});
    if (warningLevel && !WARNING_LEVEL_IDS.has(warningLevel)) throw Object.assign(new Error('警報・注意報の条件を確認してください。'),{status:400});
-   return {name,guildId,channelId,channelIds,type,detail,region,conditionLogic,conditions,intensityMode:'',intensity:'',magnitudeMode:'',magnitudeMin:null,weatherLevel,warningLevel,eewWarningAreaMode:''};
+   return {name,guildId,channelId,channelIds,type,detail,region,conditionLogic,conditions,intensityMode:'',intensity:'',magnitudeMode:'',magnitudeMin:null,weatherLevel,warningLevel,eewWarningAreaMode:'',radarCondition:'',rainfallThresholdMmPerHour:null,deliveryIntervalHours:null};
   }
   const intensityMode = thresholdMode(rule,'intensityMode','intensityChange',rule?.intensity);
   const magnitudeMode = thresholdMode(rule,'magnitudeMode','magnitudeChange',rule?.magnitudeMin);
@@ -511,7 +551,7 @@ export function normalizeSupporterRules(input, guilds, limits = {servers:1,chann
   if (magnitudeMode === 'threshold' && magnitudeMin === null) throw Object.assign(new Error('閾値以上で通知するマグニチュードを入力してください。'),{status:400});
   const eewWarningAreaMode = type === 'eew' && detail === 'warning' ? (clean(rule?.eewWarningAreaMode) || 'all') : '';
   if (eewWarningAreaMode && !EEW_WARNING_AREA_MODE_IDS.has(eewWarningAreaMode)) throw Object.assign(new Error('緊急地震速報（警報）の対象地方条件を確認してください。'),{status:400});
-  return {name,guildId,channelId,channelIds,type,detail,region,conditionLogic,conditions,intensityMode,intensity,magnitudeMode,magnitudeMin,weatherLevel:'',warningLevel:'',eewWarningAreaMode};
+  return {name,guildId,channelId,channelIds,type,detail,region,conditionLogic,conditions,intensityMode,intensity,magnitudeMode,magnitudeMin,weatherLevel:'',warningLevel:'',eewWarningAreaMode,radarCondition:'',rainfallThresholdMmPerHour:null,deliveryIntervalHours:null};
  });
  const serverCount = new Set(rules.map(rule => rule.guildId)).size;
  const channelCount = new Set(rules.flatMap(rule => rule.channelIds.map(channelId=>`${rule.guildId}:${channelId}`))).size;
@@ -776,7 +816,7 @@ export async function handleSupporterRequest(request, env) {
    return response({billingEnabled:false, deliveryEnabled:false, plans:publicPlans(), addons:{channel:{yen:200,channels:3},server:{yen:200,servers:1},prorated:false},billingDay:26});
   }
   if (path === '/api/supporter/options' && request.method === 'GET') {
-   return response({regions:SUPPORTER_REGIONS,weatherLevels:WEATHER_LEVELS,warningLevels:WARNING_LEVELS,earthquakeDetails:EARTHQUAKE_DETAILS,eewDetails:EEW_DETAILS,eewWarningAreaModes:EEW_WARNING_AREA_MODES,weatherDetails:WEATHER_DETAILS,thresholdModes:THRESHOLD_MODES});
+   return response({regions:SUPPORTER_REGIONS,weatherLevels:WEATHER_LEVELS,warningLevels:WARNING_LEVELS,earthquakeDetails:EARTHQUAKE_DETAILS,eewDetails:EEW_DETAILS,eewWarningAreaModes:EEW_WARNING_AREA_MODES,weatherDetails:WEATHER_DETAILS,thresholdModes:THRESHOLD_MODES,rainRadarConditions:RAIN_RADAR_CONDITIONS,rainRadarIntervals:RAIN_RADAR_INTERVALS});
   }
   if (request.method !== 'GET') { assertSameOrigin(request); assertCsrf(request,session); }
   if (/^\/api\/supporter\/billing\/(checkout|topup|preview-update|update|portal|status)$/.test(path)) {
