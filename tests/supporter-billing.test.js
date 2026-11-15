@@ -425,6 +425,8 @@ test('billing dunning sends success and failure mail and blocks access after mon
   readFile(new URL('../worker/supporter-billing.js',import.meta.url),'utf8'),readFile(new URL('../worker/supporter.js',import.meta.url),'utf8'),readFile(new URL('../site/supporter/app.js',import.meta.url),'utf8'),readFile(new URL('../migrations/0017_supporter_dunning.sql',import.meta.url),'utf8'),readFile(new URL('../wrangler.jsonc',import.meta.url),'utf8'),readFile(new URL('../worker/index.js',import.meta.url),'utf8'),
  ]);
  assert.match(billingSource,/invoice\.payment_failed/);assert.match(billingSource,/invoice\.paid/);assert.match(billingSource,/auto_advance:'false'/);assert.match(billingSource,/月末再決済/);assert.match(billingSource,/payment_succeeded/);assert.match(billingSource,/status='suspended'/);
+ assert.match(billingSource,/credit_topup_succeeded/);assert.match(billingSource,/credit_topup_failed/);assert.match(billingSource,/credit_expired/);
+ assert.match(billingSource,/クレジットチャージ完了のお知らせ/);assert.match(billingSource,/クレジット有効期限切れのお知らせ/);
  assert.match(supporterSource,/supporter_dunning[\s\S]*status='suspended'/);assert.match(uiSource,/usageSuspended/);
  assert.match(migration,/CREATE TABLE IF NOT EXISTS supporter_dunning/);assert.match(migration,/supporter_billing_notifications/);
  assert.deepEqual(JSON.parse(configText).triggers.crons,['0 3 * * *','5 15 * * *']);assert.match(indexSource,/runSupporterBillingSchedule/);
