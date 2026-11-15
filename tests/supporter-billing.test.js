@@ -236,8 +236,11 @@ test('paid plans stay separate from secondary-use applications and private in na
  assert.match(basicHtml,/追加オプションの変更には日割り計算を適用しません/);
  assert.match(basicHtml,/通知設定は有料プランの契約後/);
  assert.doesNotMatch(basicHtml,/通知ルールの下書き/);
- assert.match(billingUi,/共通の請求・チャージ用メールアドレス/);
- assert.match(billingUi,/以前どちらかで登録したアドレスは自動入力/);
+ assert.match(billingUi,/クレジットチャージ用メールアドレス/);
+ assert.match(billingUi,/クレジット支払い・プラン申込み用メールアドレス/);
+ assert.match(billingUi,/前回チャージまたは申込みで使用したメールアドレスを自動入力/);
+ assert.match(billingUi,/setBillingMode/);
+ assert.match(billingUi,/topupEmail\.value/);
  assert.match(billingUi,/有料プランを申し込む前でもチャージできます/);
  assert.match(billingUi,/クレジットで全額支払う（カード情報の入力不要/);
  assert.match(billingUi,/useCredits:creditPaymentInput\.checked/);
