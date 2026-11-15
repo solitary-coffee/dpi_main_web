@@ -19,6 +19,7 @@ test('二次利用申請の選択肢・同意・入力長を検証する', () =>
         announcementAutomated: 'yes',
         reuseMethod: 'edited',
         reuseMethodOther: '',
+        usesPaidPlanContent: true,
         email: 'USER@example.com',
         emailConfirm: 'user@example.com',
         purpose: '防災情報を参加者へ迅速に共有するためです。',
@@ -26,9 +27,11 @@ test('二次利用申請の選択肢・同意・入力長を検証する', () =>
         notes: '出典を明記します。',
         consent: true,
         authorized: true,
+        reusePolicyConsent: true,
     });
     assert.equal(valid.email, 'user@example.com');
     assert.deepEqual(valid.deliveryTypes, ['地震情報', '津波情報']);
+    assert.equal(valid.usesPaidPlanContent, true);
 
     assert.throws(
         () => reuseTest.validateEditableApplicationInput({
@@ -37,8 +40,8 @@ test('二次利用申請の選択肢・同意・入力長を検証する', () =>
             serverPublic: 'public',
             channelVisibility: 'public',
             announcementAutomated: 'yes',
-            reuseMethod: 'unchanged', email: 'user@example.com', emailConfirm: 'user@example.com',
-            purpose: '十分な長さの利用目的を記載します。', consent: true, authorized: true,
+            reuseMethod: 'unchanged', usesPaidPlanContent: false, email: 'user@example.com', emailConfirm: 'user@example.com',
+            purpose: '十分な長さの利用目的を記載します。', consent: true, authorized: true, reusePolicyConsent: true,
         }),
         (error) => error?.code === 'invalid_announcement_setting',
     );
@@ -46,9 +49,9 @@ test('二次利用申請の選択肢・同意・入力長を検証する', () =>
     assert.throws(
         () => reuseTest.validateEditableApplicationInput({
             channelType: 0, deliveryTypes: ['地震情報'], serverPublic: 'private',
-            channelVisibility: 'public', announcementAutomated: 'not_applicable', reuseMethod: 'unchanged',
+            channelVisibility: 'public', announcementAutomated: 'not_applicable', reuseMethod: 'unchanged', usesPaidPlanContent: false,
             email: 'user@example.com', emailConfirm: 'different@example.com',
-            purpose: '十分な長さの利用目的を記載します。', consent: true, authorized: true,
+            purpose: '十分な長さの利用目的を記載します。', consent: true, authorized: true, reusePolicyConsent: true,
         }),
         (error) => error?.code === 'email_mismatch',
     );
@@ -107,12 +110,14 @@ test('公開用の申請情報ではメールアドレスをマスクする', ()
         server_public: 'public',
         channel_visibility: 'public', announcement_automated: 'yes',
         reuse_method: 'unchanged', contact_email: 'person@example.com',
+        uses_paid_plan_content: 1,
         purpose: 'purpose', created_at: '2026-10-14T00:00:00Z', updated_at: '2026-10-14T00:00:00Z',
     }, false);
     assert.equal(serialized.contactEmail, 'p***@example.com');
     assert.equal(serialized.channelMappings[0].publishChannelName, 'public-news');
     assert.equal(Object.hasOwn(serialized, 'discordUserId'), false);
     assert.equal(serialized.editable, false);
+    assert.equal(serialized.usesPaidPlanContent, true);
 });
 
 test('審査中以外の確定済み申請を編集でき、再申請・停止状態と署名を定義する', () => {
@@ -150,6 +155,10 @@ test('申請画面と管理画面は安全なDOM APIで表示し、審査操作�
     assert.match(publicScript, /reviewSubmission/u);
     assert.match(publicHtml, /id="confirmation-dialog"/u);
     assert.match(publicHtml, /緊急地震速報は二次利用できません/u);
+    assert.match(publicHtml, /id="uses-paid-plan-content"/u);
+    assert.match(publicHtml, /契約解除、クレジット没収、アカウント停止/u);
+    assert.match(publicScript, /usesPaidPlanContent/u);
+    assert.match(adminScript, /有料プランの配信を二次利用/u);
     assert.match(publicHtml, /id="channel-mappings"/u);
     assert.match(publicHtml, /id="email-confirm"/u);
     assert.match(publicHtml, /notice@dpi-bot\.com/u);
@@ -216,10 +225,12 @@ test('未ログインのセッション確認は通常応答として扱う', as
 test('二次利用申請のD1 migrationとDiscord OAuth設定を同梱する', async () => {
     const migration = await readFile(new URL('../migrations/0004_reuse_applications.sql', import.meta.url), 'utf8');
     const mappingMigration = await readFile(new URL('../migrations/0005_reuse_channel_mappings.sql', import.meta.url), 'utf8');
+    const paidPlanMigration = await readFile(new URL('../migrations/0024_reuse_paid_plan_content.sql', import.meta.url), 'utf8');
     const config = JSON.parse(await readFile(new URL('../wrangler.jsonc', import.meta.url), 'utf8'));
     assert.match(migration, /CREATE TABLE IF NOT EXISTS reuse_applications/u);
     assert.match(migration, /CREATE TABLE IF NOT EXISTS reuse_application_events/u);
     assert.match(mappingMigration, /ADD COLUMN channel_mappings/u);
+    assert.match(paidPlanMigration, /ADD COLUMN uses_paid_plan_content/u);
     assert.equal(config.d1_databases.find((item) => item.binding === 'REUSE_DB').database_name, 'dpi-newsletter');
     assert.equal(config.vars.DISCORD_CLIENT_ID, '943752169029505114');
     for (const secret of ['DISCORD_CLIENT_SECRET', 'DISCORD_BOT_TOKEN', 'REUSE_SESSION_SECRET']) {

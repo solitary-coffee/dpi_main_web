@@ -18,7 +18,7 @@ const SERVER_PACK_OPTIONS=[[0,'サーバー追加なし'],[1,'＋1サーバー /
 const $ = id => document.getElementById(id);
 const status = text => { $('status').textContent = text; };
 const INTENSITIES = [['1','1'],['2','2'],['3','3'],['4','4'],['5-','5弱'],['5+','5強'],['6-','6弱'],['6+','6強'],['7','7']];
-const TYPES = [['earthquake','地震情報'],['eew','緊急地震速報'],['weather','気象情報']];
+const TYPES = [['earthquake','地震情報'],['eew','緊急地震速報'],['weather','気象情報'],['rain-radar','雨雲レーダー']];
 const WEATHER_ALERT_DETAILS = new Set(['heavy-rain-level','landslide-level','storm-surge-level']);
 const WEATHER_WARNING_DETAILS = new Set(['storm-blizzard-warning','wave-warning','heavy-snow-warning','other-advisory']);
 
@@ -93,7 +93,7 @@ function field(article, rule, key, label, values, attributes = {}) {
    status(different?'別のサーバーが選択されています。契約中のサーバー数上限を確認してください。':'チャンネルを取得しています…');
    try { await loadChannels(rule.guildId, true); if(!different)status(''); } catch (error) { status(error.message); }
    render();
-  } else if (key === 'type' || key === 'detail' || key === 'intensityMode' || key === 'magnitudeMode' || key === 'conditionLogic') {
+  } else if (key === 'type' || key === 'detail' || key === 'intensityMode' || key === 'magnitudeMode' || key === 'conditionLogic' || key === 'radarCondition') {
    if (key === 'type') {rule.detail = 'all';rule.conditions=[];}
    render();
   }
@@ -147,11 +147,13 @@ function channelField(article, rule) {
 function detailOptions(type) {
  if (type === 'earthquake') return options.earthquakeDetails;
  if (type === 'eew') return options.eewDetails;
+ if (type === 'rain-radar') return [];
  return options.weatherDetails;
 }
 
 function conditionKinds(rule){
  const common=[['region','対象地方'],['detail','詳細種別']];
+ if(rule.type==='rain-radar')return [['region','対象地方'],['radarCondition','雨雲レーダーの配信条件'],['rainfallThreshold','1時間降水量の下限']];
  return rule.type==='weather'?[...common,['weatherLevel','警戒レベル'],['warningLevel','警報・注意報']]:[...common,['intensity','震度の下限'],['magnitude','マグニチュードの下限']];
 }
 function conditionValues(rule,kind){
@@ -160,9 +162,10 @@ function conditionValues(rule,kind){
  if(kind==='intensity')return INTENSITIES;
  if(kind==='weatherLevel')return options.weatherLevels;
  if(kind==='warningLevel')return options.warningLevels;
+ if(kind==='radarCondition')return options.rainRadarConditions;
  return null;
 }
-function defaultConditionValue(rule,kind){return kind==='magnitude'?'4.0':String(conditionValues(rule,kind)?.[0]?.[0]||'');}
+function defaultConditionValue(rule,kind){return kind==='magnitude'?'4.0':kind==='rainfallThreshold'?'10':String(conditionValues(rule,kind)?.[0]?.[0]||'');}
 function additionalConditionsField(article,rule){
  const wrapper=document.createElement('fieldset');wrapper.className='condition-builder';
  const legend=document.createElement('legend');legend.textContent='追加条件（Pro・最大8件）';wrapper.append(legend);
@@ -173,7 +176,7 @@ function additionalConditionsField(article,rule){
   const kind=document.createElement('select');kind.setAttribute('aria-label',`追加条件${index+1}の種類`);selectOptions(kind,conditionKinds(rule),condition.kind);
   const values=conditionValues(rule,condition.kind);
   const value=document.createElement(values?'select':'input');value.setAttribute('aria-label',`追加条件${index+1}の値`);
-  if(values)selectOptions(value,values,String(condition.value??''));else{value.value=String(condition.value??'');value.inputMode='decimal';value.placeholder='0〜10';}
+  if(values)selectOptions(value,values,String(condition.value??''));else{value.value=String(condition.value??'');value.inputMode='decimal';value.placeholder=condition.kind==='rainfallThreshold'?'0.1〜500 mm/h':'0〜10';}
   kind.onchange=()=>{condition.kind=kind.value;condition.value=defaultConditionValue(rule,condition.kind);render();};
   value.onchange=()=>{condition.value=value.value;};
   const remove=document.createElement('button');remove.type='button';remove.className='condition-remove';remove.textContent='条件を削除';remove.onclick=()=>{rule.conditions.splice(index,1);render();};
@@ -200,6 +203,9 @@ function normalizeRule(rule) {
   weatherLevel: rule.weatherLevel || 'all',
   warningLevel: rule.warningLevel || 'all',
   eewWarningAreaMode: rule.eewWarningAreaMode || 'all',
+  radarCondition: rule.radarCondition || 'all',
+  rainfallThresholdMmPerHour: rule.rainfallThresholdMmPerHour ?? '',
+  deliveryIntervalHours: String(rule.deliveryIntervalHours || '1'),
   channelIds: Array.isArray(rule.channelIds)&&rule.channelIds.length?rule.channelIds:[rule.channelId].filter(Boolean),
   conditionLogic: rule.conditionLogic || 'and',
   conditions: Array.isArray(rule.conditions)?rule.conditions.slice(0,8).map(condition=>({kind:String(condition.kind||'region'),operator:String(condition.operator||'equals'),value:condition.value??'all'})):[],
@@ -232,12 +238,16 @@ function render() {
   }
   channelField(article, rule);
   field(article, rule, 'type', '情報種別', TYPES);
-  field(article, rule, 'detail', '詳細', detailOptions(rule.type));
+  if(rule.type!=='rain-radar')field(article, rule, 'detail', '詳細', detailOptions(rule.type));
   if(entitlements.complexConditions)field(article, rule, 'conditionLogic', '条件の組み合わせ', [['and','すべて満たす（AND）'],['or','いずれかを満たす（OR）']]);
   if (rule.type === 'eew' && rule.detail === 'warning') field(article, rule, 'eewWarningAreaMode', '警報地方の条件', options.eewWarningAreaModes);
   const conditionFields=document.createElement('div');conditionFields.className='rule-condition-fields';
   field(conditionFields, rule, 'region', '対象地方', options.regions);
-  if (rule.type === 'weather') {
+  if (rule.type === 'rain-radar') {
+   field(conditionFields, rule, 'radarCondition', '配信条件', options.rainRadarConditions);
+   if(rule.radarCondition==='rainfall-threshold')field(conditionFields, rule, 'rainfallThresholdMmPerHour', '1時間降水量の閾値（mm/h）', null, {inputmode:'decimal',min:'0.1',max:'500',step:'0.1'});
+   field(conditionFields, rule, 'deliveryIntervalHours', '配信頻度', options.rainRadarIntervals);
+  } else if (rule.type === 'weather') {
    if (WEATHER_ALERT_DETAILS.has(rule.detail)) field(conditionFields, rule, 'weatherLevel', '警戒レベル', options.weatherLevels);
    if (WEATHER_WARNING_DETAILS.has(rule.detail)) field(conditionFields, rule, 'warningLevel', '警報・注意報', options.warningLevels);
   } else {
