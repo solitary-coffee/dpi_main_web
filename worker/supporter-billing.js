@@ -134,6 +134,31 @@ async function fulfillCreditTopup(env,db,session){
  ]);
  return {uid,amount,balanceAfter,expiresAt};
 }
+export async function reconcilePendingCreditTopups(env,db,uid,customer){
+ if(!customer)return {checked:0,recovered:0,failed:0};
+ const pending=await db.prepare(`SELECT request_id,checkout_session_id FROM supporter_credit_topups
+  WHERE discord_user_id=? AND customer_id=? AND status='pending' AND checkout_session_id IS NOT NULL
+  ORDER BY created_at DESC LIMIT 20`).bind(uid,customer).all();
+ let checked=0,recovered=0,failed=0;
+ for(const row of pending.results||[]){
+  checked+=1;
+  try{
+   const session=await stripe(env,`checkout/sessions/${encodeURIComponent(row.checkout_session_id)}`);
+   if(session.status==='complete'&&session.payment_status==='paid'){
+    const fulfilled=await fulfillCreditTopup(env,db,session);
+    if(fulfilled){
+     recovered+=1;
+     try{await sendBillingNotification(env,db,'credit_topup_succeeded',{id:session.id,customer:session.customer,amount_paid:fulfilled.amount,currency:session.currency||'jpy',expires_at:fulfilled.expiresAt});}
+     catch(error){console.error('Recovered credit top-up email failed',{sessionId:session.id,errorName:error?.name||'Error'});}
+    }
+   }else if(session.status==='expired'){
+    await db.prepare(`UPDATE supporter_credit_topups SET status='failed',updated_at=?
+     WHERE request_id=? AND status='pending'`).bind(Math.floor(Date.now()/1000),row.request_id).run();
+   }
+  }catch(error){failed+=1;console.error('Pending credit top-up reconciliation failed',{sessionId:row.checkout_session_id,errorName:error?.name||'Error',stripeStatus:error?.stripeStatus||0});}
+ }
+ return {checked,recovered,failed};
+}
 async function revokeCreditTopup(env,db,object,reason){
  let paymentIntent=clean(stripeId(object?.payment_intent));
  if(!paymentIntent&&reason==='disputed'&&stripeId(object?.charge)){
@@ -577,13 +602,14 @@ export async function billingAction(request,env,db,uid,input={}){
  await db.prepare('INSERT INTO supporter_billing(discord_user_id) VALUES(?) ON CONFLICT DO NOTHING').bind(uid).run();
  let row=await db.prepare('SELECT * FROM supporter_billing WHERE discord_user_id=?').bind(uid).first();
  if(action==='status'){
+  const creditTopupRecovery=await reconcilePendingCreditTopups(env,db,uid,row.customer_id);
   const recovery=await reconcilePaidCheckoutSubscription(env,row.customer_id,uid);
   if(recovery.recovered&&recovery.checkoutId)await db.prepare('UPDATE supporter_billing SET checkout_id=?,dirty=1 WHERE discord_user_id=?').bind(recovery.checkoutId,uid).run();
   const [summaries,invoices,credits,dunning]=await Promise.all([customerSubscriptionSummaries(env,row.customer_id),customerInvoices(env,row.customer_id),customerCredits(env,row.customer_id),dunningState(db,row.customer_id)]);
   const creditDetails=await purchasedCreditStatus(db,uid,credits);
   const active=summaries.filter(item=>item.recognizedPlan!==false&&['active','trialing','past_due','unpaid','paused'].includes(item.status));
   const rulesAdjustment=active.length?await reconcileStoredRulesForCustomer(db,row.customer_id,combinedLimits(active)):{changed:false,removedRules:0,removedDestinations:0,simplifiedRules:0};
-  return json({mode:'test',billingDay:26,subscriptions:summaries,invoices,credits,creditDetails,dunning,rulesAdjustment,recoveredSubscription:recovery.recovered,deliveryEnabled:false});
+  return json({mode:'test',billingDay:26,subscriptions:summaries,invoices,credits,creditDetails,dunning,rulesAdjustment,recoveredSubscription:recovery.recovered,creditTopupRecovery,deliveryEnabled:false});
  }
  if(!row.customer_id){const customer=await createBillingCustomer(env,uid,account.billing_email,`dpi-customer-${uid}`);await db.prepare('UPDATE supporter_billing SET customer_id=? WHERE discord_user_id=? AND customer_id IS NULL').bind(customer.id,uid).run();row=await db.prepare('SELECT * FROM supporter_billing WHERE discord_user_id=?').bind(uid).first();}
  else if(account.billing_email)await stripe(env,`customers/${encodeURIComponent(row.customer_id)}`,{email:account.billing_email},await idempotencyKey(`dpi-customer-email-${uid}-`,account.billing_email));

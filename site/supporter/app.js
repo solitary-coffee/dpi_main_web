@@ -305,7 +305,8 @@ async function load() {
     }
     renderCreditDetails(billingState.creditDetails||{balance:Number(billingState.credits||0)});
     const creditResult=new URLSearchParams(location.search).get('credit');
-    if(creditResult==='completed')status('クレジットのお支払いを受け付けました。残高へ反映されない場合は、数秒後に「最新の契約・明細を読み込む」を押してください。');
+    if(creditResult==='completed')status(billingState.creditTopupRecovery?.recovered>0?'支払い済みのクレジットチャージを残高へ反映しました。':'クレジットのお支払いを受け付けました。反映されていない場合は「残高・履歴を再読み込み」を押してください。');
+    if(creditResult==='completed'&&billingState.creditTopupRecovery?.failed>0)status('支払いは確認できましたが、クレジットの反映処理に失敗しました。時間をおいて「残高・履歴を再読み込み」を押してください。');
     if(creditResult==='canceled')status('クレジットチャージをキャンセルしました。料金は発生していません。');
     if(billingState.recoveredSubscription)status('支払い済みの申込みから契約を復旧し、有料プランを有効化しました。');
    }catch{contract.textContent='契約情報を自動取得できませんでした。「最新の契約・明細を読み込む」を押してください。';setRuleAccess(false);}
@@ -385,6 +386,9 @@ credit.textContent = '利用可能クレジット: 0クレジット（0円）';
 const creditPanel=document.createElement('div');creditPanel.className='credit-panel billing-mode-panel';creditPanel.id='credit-topup-panel';
 const creditTitle=document.createElement('h3');creditTitle.textContent='クレジットチャージ';
 const creditIntro=document.createElement('p');creditIntro.className='help';creditIntro.textContent='有料プランを申し込む前でもチャージできます。チャージする金額と連絡先メールアドレスを入力してください。';
+const topupReloadButton=document.createElement('button');topupReloadButton.type='button';topupReloadButton.className='secondary-btn credit-reload-button';topupReloadButton.textContent='残高・履歴を再読み込み';
+const topupReloadStatus=document.createElement('p');topupReloadStatus.className='billing-action-status';topupReloadStatus.setAttribute('role','status');topupReloadStatus.setAttribute('aria-live','polite');
+const topupReloadActions=document.createElement('div');topupReloadActions.className='credit-reload-actions';topupReloadActions.append(topupReloadButton,topupReloadStatus);
 const creditExpiry=document.createElement('p');creditExpiry.className='credit-expiry';creditExpiry.textContent='購入クレジットの有効期限は購入日から1年間です。';
 const topupControls=document.createElement('div');topupControls.className='credit-topup-controls';
 const topupEmailLabel=document.createElement('label');topupEmailLabel.className='billing-email-label';
@@ -425,7 +429,7 @@ const topupSignupStatus=document.createElement('p');topupSignupStatus.className=
 topupSignup.append(topupSignupTitle,topupSignupHelp,topupSignupOptions,topupSignupPreview,topupSignupWarning,topupSignupConsent,topupSignupButton,topupSignupStatus);
 const creditHistoryTitle=document.createElement('h4');creditHistoryTitle.textContent='チャージ履歴';
 const creditHistory=document.createElement('div');creditHistory.className='credit-history';creditHistory.textContent='チャージ履歴はありません。';
-creditPanel.append(creditTitle,creditIntro,creditExpiry,topupControls,topupSignup,creditHistoryTitle,creditHistory);
+creditPanel.append(creditTitle,creditIntro,topupReloadActions,creditExpiry,topupControls,topupSignup,creditHistoryTitle,creditHistory);
 const setBillingMode=mode=>{
  const selected=mode==='topup'?'topup':'payment';
  creditPanel.hidden=selected!=='topup';application.hidden=selected!=='payment';
@@ -501,6 +505,19 @@ topupButton.onclick=async()=>{
   location.href=stripeDestination(result.url);
  }catch(error){topupStatus.textContent=error.message;status(error.message);}
  finally{topupButton.disabled=false;topupButton.textContent=original;}
+};
+
+topupReloadButton.onclick=async()=>{
+ topupReloadStatus.textContent='';topupReloadButton.disabled=true;const original=topupReloadButton.textContent;topupReloadButton.textContent='再読み込み中…';
+ try{
+  const state=await api('/api/supporter/billing/status');
+  renderContracts(state.subscriptions||[],state.dunning);renderInvoices(state.invoices||[]);renderCreditDetails(state.creditDetails||{balance:Number(state.credits||0)});
+  const recovery=state.creditTopupRecovery||{};
+  if(recovery.recovered>0){topupReloadStatus.textContent=`支払い済みのチャージ${recovery.recovered}件を反映しました。`;status(topupReloadStatus.textContent);}
+  else if(recovery.failed>0){topupReloadStatus.textContent='支払い状況を取得できませんでした。時間をおいて再度お試しください。';status(topupReloadStatus.textContent);}
+  else topupReloadStatus.textContent='クレジット残高とチャージ履歴を更新しました。';
+ }catch(error){topupReloadStatus.textContent=error.message;status(error.message);}
+ finally{topupReloadButton.disabled=false;topupReloadButton.textContent=original;}
 };
 
 topupSignupButton.onclick=async()=>{

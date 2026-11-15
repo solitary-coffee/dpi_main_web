@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHmac} from 'node:crypto';
-import {billingAction,billingWebhook,selection,billingReady,billingSchedule,creditApplication,creditExpiresAt,creditSignupSubscriptionParams,creditsFromBalance,customerInvoices,dunningSchedule,normalizeCreditTopupAmount,paidCheckoutSubscriptionParams,provisionCreditFundedSignup,provisionPaidCheckoutSubscription,prorationBreakdown,reconcilePaidCheckoutSubscription,reconcileStoredRulesForCustomer,scheduledChangeSummary,staleCheckoutAttempt,subscriptionSummary,verifySignature} from '../worker/supporter-billing.js';
+import {billingAction,billingWebhook,selection,billingReady,billingSchedule,creditApplication,creditExpiresAt,creditSignupSubscriptionParams,creditsFromBalance,customerInvoices,dunningSchedule,normalizeCreditTopupAmount,paidCheckoutSubscriptionParams,provisionCreditFundedSignup,provisionPaidCheckoutSubscription,prorationBreakdown,reconcilePaidCheckoutSubscription,reconcilePendingCreditTopups,reconcileStoredRulesForCustomer,scheduledChangeSummary,staleCheckoutAttempt,subscriptionSummary,verifySignature} from '../worker/supporter-billing.js';
 import {supporterAdminAccount,supporterAdminDetails,supporterCreditMetrics} from '../worker/supporter.js';
 import {readFile} from 'node:fs/promises';
 test('plan, channel and server add-ons are server controlled',()=>{
@@ -243,6 +243,8 @@ test('paid plans stay separate from secondary-use applications and private in na
  assert.match(billingUi,/topupEmail\.value/);
  assert.match(billingUi,/有料プランを申し込む前でもチャージできます/);
  assert.match(billingUi,/チャージ済みクレジットでプランを申し込む/);
+ assert.match(billingUi,/残高・履歴を再読み込み/);
+ assert.match(billingUi,/creditTopupRecovery/);
  assert.match(billingUi,/クレジットが.*不足しています/);
  assert.match(billingUi,/selectedInitialCharge/);
  assert.match(billingUi,/email:topupEmail\.value[\s\S]*useCredits:true/);
@@ -311,7 +313,7 @@ test('利用者ごとのStripeチャージURLへ任意金額と同意情報を�
  const uid='637850681666961408',requestId='6fb5b84e-03f7-44c0-bf04-4ee3ad22db20';
  const env={SUPPORTER_BILLING_MODE:'test',STRIPE_SECRET_KEY:'rk_test_example',STRIPE_WEBHOOK_SECRET:'whsec_x',STRIPE_PRICE_SUPPORTER:'price_basic',STRIPE_PRICE_PLUS:'price_plus',STRIPE_PRICE_PRO:'price_pro',STRIPE_PRICE_ADDON:'price_addon',STRIPE_PORTAL_CONFIG:'bpc_x',SUPPORTER_PUBLIC_ORIGIN:'https://dpi-bot.com'};
  const topup={request_id:requestId,discord_user_id:uid,customer_id:'cus_credit',amount:1234,checkout_session_id:null,status:'pending'};
- const db={prepare(sql){let values=[];return{bind(...input){values=input;return this;},async first(){
+ const db={prepare(sql){let values=[];return{bind(...input){values=input;return this;},async all(){return{results:[]};},async first(){
   if(sql.includes('FROM supporter_accounts'))return{discord_user_id:uid,billing_email:'credit@example.jp'};
   if(sql.includes('FROM supporter_billing'))return{discord_user_id:uid,customer_id:'cus_credit'};
   if(sql.includes('FROM supporter_credit_topups'))return topup;
@@ -356,6 +358,23 @@ test('チャージ完了Webhookはクレジットを1度だけ付与して有効
   assert.ok(executed.some(item=>item.sql.includes('INSERT INTO supporter_credit_events')));
   const topup=executed.find(item=>item.sql.includes('INSERT INTO supporter_credit_topups'));
   assert.equal(topup.values[6],1000);assert.equal(topup.values[8],creditExpiresAt(timestamp));
+ }finally{globalThis.fetch=originalFetch;}
+});
+test('残高再読み込みはWebhook未反映の支払い済みチャージをStripeから復旧する',async()=>{
+ const uid='637850681666961408',requestId='02624b1e-5b20-4c14-8ad9-efc8830cb540',sessionId='cs_credit_recovery',timestamp=Math.floor(Date.now()/1000),executed=[];
+ const session={id:sessionId,livemode:false,mode:'payment',status:'complete',payment_status:'paid',customer:'cus_credit',payment_intent:'pi_credit_recovery',client_reference_id:uid,amount_total:1000,currency:'jpy',created:timestamp,metadata:{dpi_checkout_kind:'credit_topup',dpi_user:uid,dpi_credit_amount:'1000',dpi_topup_request_id:requestId}};
+ const env={SUPPORTER_BILLING_MODE:'test',STRIPE_SECRET_KEY:'rk_test_example',STRIPE_WEBHOOK_SECRET:'whsec_x',STRIPE_PRICE_SUPPORTER:'price_basic',STRIPE_PRICE_PLUS:'price_plus',STRIPE_PRICE_PRO:'price_pro',STRIPE_PRICE_ADDON:'price_addon',STRIPE_PORTAL_CONFIG:'bpc_x'};
+ const db={prepare(sql){let values=[];const statement={sql,values,bind(...input){values=input;this.values=input;return this;},async all(){return sql.includes("status='pending'")?{results:[{request_id:requestId,checkout_session_id:sessionId}]}:{results:[]};},async first(){
+  if(sql.includes('SELECT customer_id FROM supporter_billing'))return{customer_id:'cus_credit'};
+  return null;
+ },async run(){executed.push({sql,values});return{meta:{changes:1}};}};return statement;},async batch(statements){for(const statement of statements)await statement.run();return statements.map(()=>({meta:{changes:1}}));}};
+ const originalFetch=globalThis.fetch;let balanceCalls=0;
+ globalThis.fetch=async(url)=>{const path=new URL(url).pathname;if(path.includes('/balance_transactions')){balanceCalls+=1;return new Response(JSON.stringify({livemode:false,id:'cbtxn_recovered',ending_balance:-1000}),{status:200,headers:{'content-type':'application/json'}});}return new Response(JSON.stringify(session),{status:200,headers:{'content-type':'application/json'}});};
+ try{
+  const result=await reconcilePendingCreditTopups(env,db,uid,'cus_credit');
+  assert.deepEqual(result,{checked:1,recovered:1,failed:0});assert.equal(balanceCalls,1);
+  assert.ok(executed.some(item=>item.sql.includes('supporter_credit_topups')&&item.sql.includes("status='credited'")));
+  assert.ok(executed.some(item=>item.sql.includes('INSERT INTO supporter_credit_lots')));
  }finally{globalThis.fetch=originalFetch;}
 });
 test('credits pay the immediate plan difference first and the next option invoice second',()=>{
@@ -571,7 +590,7 @@ test('発効済みダウングレードだけが保存ルールを改訂し、�
 test('契約状態の再取得はWebhookを補完して発効済み上限をDBと画面へ返す',async()=>{
  const env={SUPPORTER_BILLING_MODE:'test',STRIPE_SECRET_KEY:'rk_test_example',STRIPE_WEBHOOK_SECRET:'whsec_x',STRIPE_PRICE_SUPPORTER:'price_basic',STRIPE_PRICE_PLUS:'price_plus',STRIPE_PRICE_PRO:'price_pro',STRIPE_PRICE_ADDON:'price_addon',STRIPE_PORTAL_CONFIG:'bpc_x',SUPPORTER_PUBLIC_ORIGIN:'https://dpi-bot.com'};
  let account={discord_user_id:'123',billing_email:'user@example.jp',settings_json:JSON.stringify({rules:Array.from({length:7},(_,index)=>({name:`R${index+1}`,guildId:'12345678901234567',channelId:'98765432109876543',channelIds:['98765432109876543']}))}),revision:1};
- const db={prepare(sql){let values=[];return{bind(...input){values=input;return this;},async first(){
+ const db={prepare(sql){let values=[];return{bind(...input){values=input;return this;},async all(){return{results:[]};},async first(){
   if(sql.includes('FROM supporter_accounts WHERE'))return account;
   if(sql.includes('FROM supporter_billing WHERE'))return{discord_user_id:'123',customer_id:'cus_x'};
   if(sql.includes('FROM supporter_dunning'))return null;
