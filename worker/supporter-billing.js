@@ -201,6 +201,9 @@ function billingMailContent(kind,invoice,retryAt,suspendAt){
   retry_succeeded:['【DPI-Bot】再決済完了のお知らせ',[`月末の再決済が完了しました。引き続き有料プランをご利用いただけます。`,`請求額: ${amount}`,`請求書: ${number}`]],
   payment_failed:['【DPI-Bot】お支払い失敗と月末再決済のお知らせ',[`26日のお支払いを完了できませんでした。`,`月末再決済日時: ${date(retryAt)}`,`請求額: ${amount}`,`請求書: ${number}`,'月末までに契約管理画面から支払方法をご確認ください。']],
   final_failed:['【DPI-Bot】月末再決済失敗・利用停止のお知らせ',[`月末の再決済を完了できませんでした。`,`利用停止日時: ${date(suspendAt)}`,`請求額: ${amount}`,`請求書: ${number}`,'翌月以降、有料プランの通知設定は支払い完了まで利用停止となります。']],
+  credit_topup_succeeded:['【DPI-Bot】クレジットチャージ完了のお知らせ',[`クレジットチャージが完了しました。`,`購入額: ${amount}`,`付与クレジット: ${Number(invoice.amount_paid||0).toLocaleString('ja-JP')}クレジット`,`有効期限: ${date(invoice.expires_at)}`,'購入クレジットは、有料プラン・プラン変更・追加オプションの支払いに利用できます。']],
+  credit_topup_failed:['【DPI-Bot】クレジットチャージ失敗のお知らせ',[`クレジットチャージを完了できませんでした。`,`決済予定額: ${amount}`,'クレジットは付与されていません。支払方法を確認し、必要な場合は改めてチャージしてください。']],
+  credit_expired:['【DPI-Bot】クレジット有効期限切れのお知らせ',[`購入クレジットの有効期限が終了しました。`,`失効クレジット: ${Number(invoice.amount_due||0).toLocaleString('ja-JP')}クレジット`,`失効日時: ${date(invoice.expires_at)}`,'有効期限を過ぎた未使用分は利用規約に基づき失効し、原則として払戻しまたは再発行を行いません。']],
  };
  const [subject,lines]=definitions[kind];if(url)lines.push(`請求書・支払方法の確認: ${url}`);
  lines.push('','----------------------------------------','DPI-Bot 運営','公式サイト: https://dpi-bot.com/','公式サポートサーバー: https://discord.gg/qFuZcGUb4K');
@@ -822,6 +825,8 @@ async function expirePurchasedCredits(env,db,limit=100){
    (id,discord_user_id,credit_delta,balance_after,stripe_transaction_id,reason,actor,created_at)
    VALUES(?,?,?,?,?,'credit_expired','system',?) ON CONFLICT DO NOTHING`).bind(`expiry:${candidate.id}`,candidate.discord_user_id,-remove,balanceAfter,transactionId,new Date(now*1000).toISOString()).run();
   await db.prepare(`UPDATE supporter_credit_topups SET status='expired',updated_at=? WHERE checkout_session_id=? AND status='credited'`).bind(now,candidate.source_id).run();
+  try{await sendBillingNotification(env,db,'credit_expired',{id:`expiry:${candidate.id}`,customer:candidate.customer_id,amount_due:remaining,currency:'jpy',expires_at:candidate.expires_at});}
+  catch(error){console.error('Supporter credit expiry email failed',{creditLotId:candidate.id,errorName:error?.name||'Error'});}
   expired+=1;
  }
  return expired;
@@ -840,7 +845,10 @@ export async function billingWebhook(request,env){
  if(alreadyProcessed)return json({received:true});
  if(['checkout.session.completed','checkout.session.async_payment_succeeded'].includes(event.type)){
   const session=event.data?.object;
-  if(checkoutMetadata(session).dpi_checkout_kind==='credit_topup')await fulfillCreditTopup(env,db,session);
+  if(checkoutMetadata(session).dpi_checkout_kind==='credit_topup'){
+   const fulfilled=await fulfillCreditTopup(env,db,session);
+   if(fulfilled)await sendBillingNotification(env,db,'credit_topup_succeeded',{id:session.id,customer:session.customer,amount_paid:fulfilled.amount,currency:session.currency||'jpy',expires_at:fulfilled.expiresAt});
+  }
   else{
    const provisioned=await provisionPaidCheckoutSubscription(env,session);
    if(provisioned&&session?.payment_status==='paid')await sendBillingNotification(env,db,'payment_succeeded',{id:session.id,customer:session.customer,amount_paid:Number(session.amount_total||0),currency:session.currency||'jpy'});
@@ -851,11 +859,12 @@ export async function billingWebhook(request,env){
  if(event.type==='charge.refunded')await revokeCreditTopup(env,db,event.data?.object,'refunded');
  if(event.type==='charge.dispute.created')await revokeCreditTopup(env,db,event.data?.object,'disputed');
  if(['checkout.session.async_payment_failed','checkout.session.expired'].includes(event.type)){
-  const sessionId=clean(event.data?.object?.id);
+  const session=event.data?.object,sessionId=clean(session?.id);
   await db.batch([
    db.prepare('UPDATE supporter_billing SET checkout_key=NULL,checkout_id=NULL,checkout_params=NULL,dirty=1 WHERE checkout_id=?').bind(sessionId),
    db.prepare(`UPDATE supporter_credit_topups SET status='failed',updated_at=? WHERE checkout_session_id=? AND status='pending'`).bind(Math.floor(Date.now()/1000),sessionId),
   ]);
+  if(event.type==='checkout.session.async_payment_failed'&&checkoutMetadata(session).dpi_checkout_kind==='credit_topup')await sendBillingNotification(env,db,'credit_topup_failed',{id:sessionId,customer:session.customer,amount_due:Number(session.amount_total||0),currency:session.currency||'jpy'});
  }
  if(event.type==='customer.updated')await syncCustomerEmail(db,event.data?.object);
  if(['customer.subscription.created','customer.subscription.updated'].includes(event.type)){
