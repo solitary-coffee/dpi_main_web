@@ -114,7 +114,27 @@ async function purchasedCreditStatus(db,uid,stripeCredits){
   compensations,
  };
 }
-async function fulfillCreditTopup(env,db,session){
+async function creditPurchaseTimestamp(env,session,paidAt){
+ const explicit=Number(paidAt);
+ if(Number.isInteger(explicit)&&explicit>0)return explicit;
+ const paymentIntentId=clean(stripeId(session?.payment_intent));
+ if(paymentIntentId){
+  try{
+   const intent=await stripe(env,`payment_intents/${encodeURIComponent(paymentIntentId)}`);
+   const chargeId=clean(stripeId(intent?.latest_charge));
+   if(chargeId){
+    const charge=await stripe(env,`charges/${encodeURIComponent(chargeId)}`);
+    const chargedAt=Number(charge?.created);
+    if(Number.isInteger(chargedAt)&&chargedAt>0)return chargedAt;
+   }
+   const intentCreated=Number(intent?.created);
+   if(Number.isInteger(intentCreated)&&intentCreated>0)return intentCreated;
+  }catch(error){console.warn('Credit top-up payment timestamp lookup failed',{sessionId:clean(session?.id),errorName:error?.name||'Error'});}
+ }
+ // Never shorten the purchased validity period because reconciliation ran late.
+ return Math.floor(Date.now()/1000);
+}
+async function fulfillCreditTopup(env,db,session,paidAt=null){
  const metadata=checkoutMetadata(session);
  if(session?.mode!=='payment'||metadata.dpi_checkout_kind!=='credit_topup'||session.payment_status!=='paid')return null;
  const uid=clean(metadata.dpi_user||session.client_reference_id),requestId=clean(metadata.dpi_topup_request_id);
@@ -123,7 +143,7 @@ async function fulfillCreditTopup(env,db,session){
  if(!/^\d{17,20}$/.test(uid)||!/^[0-9a-f-]{36}$/i.test(requestId)||!customer||!paymentIntent||clean(session.currency).toLowerCase()!=='jpy'||Number(session.amount_total)!==amount)fail('クレジット決済情報を確認できませんでした。',409);
  const billing=await db.prepare('SELECT customer_id FROM supporter_billing WHERE discord_user_id=?').bind(uid).first();
  if(!billing?.customer_id||billing.customer_id!==customer)fail('クレジット決済の利用者を確認できませんでした。',409);
- const purchasedAt=Number(session.created)||Math.floor(Date.now()/1000),expiresAt=creditExpiresAt(purchasedAt),now=Math.floor(Date.now()/1000);
+ const purchasedAt=await creditPurchaseTimestamp(env,session,paidAt),expiresAt=creditExpiresAt(purchasedAt),now=Math.floor(Date.now()/1000);
  const transaction=await stripe(env,`customers/${encodeURIComponent(customer)}/balance_transactions`,{
   amount:String(-amount),currency:'jpy',description:`DPI-Bot credit top-up: ${session.id}`,
   'metadata[dpi_user]':uid,'metadata[dpi_credit_action]':'user_topup','metadata[dpi_checkout_session]':session.id,
@@ -190,18 +210,30 @@ async function revokeCreditTopup(env,db,object,reason){
   WHERE source_type='purchase' AND source_id=?`).bind(topup.checkout_session_id).first();
  const remaining=lot?.status==='active'?Math.max(0,Number(lot.remaining_amount)||0):0;
  const lotReduction=Math.min(delta,remaining),available=await customerCredits(env,topup.customer_id),remove=Math.min(lotReduction,available);
- let transactionId=`${reason}:${object?.id||paymentIntent}:${target}`,balanceAfter=available;
- if(remove>0){
-  const transaction=await stripe(env,`customers/${encodeURIComponent(topup.customer_id)}/balance_transactions`,{
-   amount:String(remove),currency:'jpy',description:`DPI-Bot credit ${reason}: ${topup.checkout_session_id}`,
-   'metadata[dpi_user]':topup.discord_user_id,'metadata[dpi_credit_action]':reason,'metadata[dpi_payment_intent]':paymentIntent,
-  },await idempotencyKey('dpi-credit-reversal-',`${object?.id||paymentIntent}:${reason}:${target}`));
-  transactionId=transaction.id;balanceAfter=creditsFromBalance(transaction.ending_balance);
+ const topupStatus=target>=Number(topup.amount)?reason:'credited';
+ const claim=await db.prepare(`UPDATE supporter_credit_topups SET refunded_amount=?,status=?,updated_at=?
+  WHERE request_id=? AND refunded_amount=?`).bind(target,topupStatus,now,topup.request_id,previous).run();
+ if(!claim.meta?.changes){
+  const current=await db.prepare('SELECT refunded_amount FROM supporter_credit_topups WHERE request_id=?').bind(topup.request_id).first();
+  if(Number(current?.refunded_amount||0)>=target)return null;
+  fail('返金クレジットの同時更新を検出しました。再処理します。',503);
  }
- const nextRemaining=Math.max(0,remaining-lotReduction),topupStatus=target>=Number(topup.amount)?reason:'credited';
+ let transactionId=`${reason}:${object?.id||paymentIntent}:${target}`,balanceAfter=available;
+ try{
+  if(remove>0){
+   const transaction=await stripe(env,`customers/${encodeURIComponent(topup.customer_id)}/balance_transactions`,{
+    amount:String(remove),currency:'jpy',description:`DPI-Bot credit ${reason}: ${topup.checkout_session_id}`,
+    'metadata[dpi_user]':topup.discord_user_id,'metadata[dpi_credit_action]':reason,'metadata[dpi_payment_intent]':paymentIntent,
+   },await idempotencyKey('dpi-credit-reversal-',`${object?.id||paymentIntent}:${reason}:${target}`));
+   transactionId=transaction.id;balanceAfter=creditsFromBalance(transaction.ending_balance);
+  }
+ }catch(error){
+  await db.prepare(`UPDATE supporter_credit_topups SET refunded_amount=?,status=?,updated_at=?
+   WHERE request_id=? AND refunded_amount=?`).bind(previous,topup.status,Math.floor(Date.now()/1000),topup.request_id,target).run();
+  throw error;
+ }
+ const nextRemaining=Math.max(0,remaining-lotReduction);
  const statements=[
-  db.prepare(`UPDATE supporter_credit_topups SET refunded_amount=?,status=?,updated_at=?
-   WHERE request_id=? AND refunded_amount=?`).bind(target,topupStatus,now,topup.request_id,previous),
   db.prepare(`INSERT INTO supporter_credit_events
    (id,discord_user_id,credit_delta,balance_after,stripe_transaction_id,reason,actor,created_at)
    VALUES(?,?,?,?,?,?, 'system',?) ON CONFLICT DO NOTHING`).bind(`${reason}:${object?.id||paymentIntent}:${target}`,topup.discord_user_id,-remove,balanceAfter,transactionId,`credit_${reason}`,new Date(now*1000).toISOString()),
@@ -1104,7 +1136,7 @@ export async function billingWebhook(request,env,ctx){
   if(await rejectDisciplinedCheckout(env,db,session)){
    console.warn('Checkout completed after disciplinary action and was rejected',{sessionId:clean(session?.id),uid:clean(checkoutMetadata(session).dpi_user||session?.client_reference_id)});
   }else if(checkoutMetadata(session).dpi_checkout_kind==='credit_topup'){
-   const fulfilled=await fulfillCreditTopup(env,db,session);
+   const fulfilled=await fulfillCreditTopup(env,db,session,event.created);
    if(fulfilled)await sendBillingNotification(env,db,'credit_topup_succeeded',{id:session.id,customer:session.customer,amount_paid:fulfilled.amount,currency:session.currency||'jpy',expires_at:fulfilled.expiresAt});
   }
   else{
