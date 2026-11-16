@@ -85,10 +85,14 @@ function stubStripe(t,state){
     state.monthly=Number(params.get('items[0][price_data][unit_amount]'));
     state.revision=Number(params.get('metadata[dpi_custom_revision]'));
    }
-   return Response.json({id:subscriptionId,livemode:false,customer,status:'active',collection_method:'charge_automatically',
+   return Response.json({id:subscriptionId,livemode:false,customer,status:'active',latest_invoice:'in_custom_paid',collection_method:'charge_automatically',
     metadata:{dpi_user:uid,dpi_custom_id:customId,dpi_custom_revision:String(state.revision)},
     items:{data:[{id:'si_custom',quantity:1,price:{currency:'jpy',unit_amount:state.monthly,
      product:'prod_custom',recurring:{interval:'month',interval_count:1}}}]}});
+  }
+  if(path==='/v1/invoices/in_custom_paid'){
+   return Response.json({id:'in_custom_paid',livemode:false,status:'paid',subscription:subscriptionId,
+    customer,currency:'jpy',amount_remaining:0,amount_paid:1000});
   }
   if(path==='/v1/checkout/sessions/cs_difference'){
    return Response.json({id:'cs_difference',livemode:false,mode:'payment',status:state.paid?'complete':'open',
