@@ -10,7 +10,30 @@
  <link rel="stylesheet" href="plans.css">
 </head>
 <body>
- <main class="comparison-page">
+ <button id="menu-toggle-btn" type="button" aria-label="メニューを開く"><span></span><span></span><span></span></button>
+ <div class="overlay"></div>
+ <div class="page-container">
+  <nav class="sidebar" aria-label="サイトメニュー">
+   <div class="sidebar-header"><h2>メニュー</h2></div>
+   <ul>
+          <li><a href="/index.html">トップページ</a></li>
+          <li><a href="/site/status/index.html">お知らせ</a></li>
+          <li><a href="/site/info/index.html">配信内容</a></li>
+          <li><a href="/site/about/index.html">コマンド</a></li>
+          <li><a href="/site/dever/index.html">開発者紹介</a></li>
+          <li class="menu-spacer" aria-hidden="true" style="height:10px"></li>
+          <li><a href="/site/mail/index.html">メール配信</a></li>
+          <li><a href="/site/survey/">利用者アンケート</a></li>
+          <li><a href="/site/reuse/">二次利用申請</a></li>
+          <li class="menu-spacer" aria-hidden="true" style="height:10px"></li>
+          <li><a href="/site/invi/index.html">BOTを招待</a></li>
+          <li><a href="/site/buy/index.html">ご支援のお願い</a></li>
+          <li><a href="/terms/index.html">利用規約等</a></li>
+          <li><a href="/site/supp/index.html">お問い合わせ</a></li>
+      </ul>
+  </nav>
+  <main class="main-content comparison-main">
+   <div class="comparison-page">
   <nav aria-label="パンくずリスト"><a href="/">ホーム</a><span aria-hidden="true"> / </span><a href="/site/supporter/">有料プラン管理</a><span aria-hidden="true"> / </span><strong>機能比較</strong></nav>
   <header class="comparison-hero">
    <p class="comparison-eyebrow">DPI-BOT SUPPORTER PLANS</p>
@@ -20,46 +43,107 @@
   </header>
   <section aria-labelledby="comparison-title">
    <h2 id="comparison-title">プラン別の利用できる機能</h2>
-   <p id="comparison-help">表は横にスクロールして確認できます。○は利用可能、—は利用不可です。カスタムは管理者が明示的に付与した機能のみ利用できます。</p>
+   <p id="comparison-help">表は横スクロールに対応しています。○は選択可能、—は対象外です。カスタムの詳細権限は管理者が設定した範囲に限ります。</p>
    <div class="comparison-table-scroll" role="region" tabindex="0" aria-labelledby="comparison-title" aria-describedby="comparison-help">
     <table class="comparison-table">
      <thead>
       <tr><th scope="col">比較項目</th><th scope="col">Basic</th><th scope="col">Plus</th><th scope="col" class="featured">Pro</th><th scope="col">カスタム</th></tr>
      </thead>
      <tbody>
+      <tr class="comparison-group"><th scope="row" colspan="5">プラン料金・配信枠</th></tr>
       <tr><th scope="row">月額（税込）</th><td>300円</td><td>800円</td><td>1,280円</td><td>個別見積もり</td></tr>
       <tr><th scope="row">登録サーバー上限</th><td>1</td><td>3</td><td>5</td><td>契約内容による</td></tr>
       <tr><th scope="row">通知チャンネル上限</th><td>2</td><td>10</td><td>20</td><td>契約内容による</td></tr>
       <tr><th scope="row">通知ルール上限</th><td>5</td><td>15</td><td>30</td><td>契約内容による</td></tr>
+      <tr><th scope="row">追加チャンネル（3件）／追加サーバー（1件）</th><td>各＋200円／月</td><td>各＋200円／月</td><td>各＋200円／月</td><td>個別条件</td></tr>
+      <tr class="comparison-group"><th scope="row" colspan="5">対応する通知情報</th></tr>
+      <tr><th scope="row">地震情報（震度速報・震源・震度・長周期地震動など）</th><td>○</td><td>○</td><td>○</td><td>○</td></tr>
+      <tr><th scope="row">緊急地震速報（地震動予報・警報）</th><td>○</td><td>○</td><td>○</td><td>○</td></tr>
+      <tr><th scope="row">気象情報（警報・注意報・台風・大雨・洪水など）</th><td>○</td><td>○</td><td>○</td><td>○</td></tr>
+      <tr><th scope="row">雨雲レーダー（地方単位）</th><td>○</td><td>○</td><td>○</td><td>○</td></tr>
+      <tr class="comparison-group"><th scope="row" colspan="5">対象地域・通知条件</th></tr>
       <tr><th scope="row">地方単位の指定</th><td>○</td><td>○</td><td>○</td><td>○</td></tr>
-      <tr><th scope="row">都道府県単位の指定</th><td>—</td><td>○</td><td>○</td><td>許可時のみ</td></tr>
-      <tr><th scope="row">北海道内の地方区分</th><td>—</td><td>○</td><td>○</td><td>許可時のみ</td></tr>
+      <tr><th scope="row">都道府県単位の指定（北海道は振興局相当の地方区分も選択可能）</th><td>—</td><td>○</td><td>○</td><td>許可時のみ</td></tr>
       <tr><th scope="row">市区町村単位の指定</th><td>—</td><td>—</td><td>○</td><td>許可時のみ</td></tr>
-      <tr><th scope="row">市区町村の本文抽出</th><td>—</td><td>—</td><td>○</td><td>許可時のみ</td></tr>
-      <tr><th scope="row">AND・ORなど複数条件</th><td>—</td><td>—</td><td>○</td><td>許可時のみ</td></tr>
-      <tr><th scope="row">1ルールから複数チャンネル配信</th><td>—</td><td>—</td><td>○</td><td>許可時のみ</td></tr>
-      <tr><th scope="row">EEW最終報の送信切替</th><td>○</td><td>○</td><td>○</td><td>○</td></tr>
-      <tr><th scope="row">雨雲レーダーの地方別設定</th><td>○</td><td>○</td><td>○</td><td>○</td></tr>
-      <tr><th scope="row">追加オプション</th><td>対象</td><td>対象</td><td>対象</td><td>個別条件</td></tr>
-      <tr class="compare-cta-row">
-       <th scope="row">お申込み</th>
-       <td><a href="/site/supporter/?plan=supporter#billing">Basicを契約する</a></td>
-       <td><a href="/site/supporter/?plan=plus#billing">Plusを契約する</a></td>
-       <td><a href="/site/supporter/?plan=pro#billing">Proを契約する</a></td>
-       <td><a href="/site/supp/index.html">カスタムを相談する</a></td>
-      </tr>
+      <tr><th scope="row">指定市区町村だけの本文抽出</th><td>—</td><td>—</td><td>○</td><td>許可時のみ</td></tr>
+      <tr><th scope="row">震度・マグニチュード条件（すべて／上昇時のみ／閾値以上）</th><td>○</td><td>○</td><td>○</td><td>○</td></tr>
+      <tr><th scope="row">緊急地震速報の最終報ON/OFF</th><td>○</td><td>○</td><td>○</td><td>○</td></tr>
+      <tr><th scope="row">緊急地震速報・警報の対象地方による絞り込み</th><td>○</td><td>○</td><td>○</td><td>○</td></tr>
+      <tr><th scope="row">気象警戒レベル・注意報／警報種別の指定</th><td>○</td><td>○</td><td>○</td><td>○</td></tr>
+      <tr><th scope="row">AND・ORや追加条件（1ルール最大8件）</th><td>—</td><td>—</td><td>○</td><td>許可時のみ</td></tr>
+      <tr><th scope="row">1ルールから複数チャンネルへ配信</th><td>—</td><td>—</td><td>○</td><td>許可時のみ</td></tr>
+      <tr class="comparison-group"><th scope="row" colspan="5">雨雲レーダーの配信設定</th></tr>
+      <tr><th scope="row">配信頻度（1・2・3・6・12・24時間ごと）</th><td>○</td><td>○</td><td>○</td><td>○</td></tr>
+      <tr><th scope="row">配信条件（定時更新／降雨検知／降水量の閾値以上）</th><td>○</td><td>○</td><td>○</td><td>○</td></tr>
+      <tr><th scope="row">1時間降水量の閾値指定（0.1～20 mm/h）</th><td>○</td><td>○</td><td>○</td><td>○</td></tr>
+      <tr class="compare-cta-row"><th scope="row">お申込み</th><td><a href="/site/supporter/?plan=supporter#billing">Basicを契約する</a></td><td><a href="/site/supporter/?plan=plus#billing">Plusを契約する</a></td><td><a href="/site/supporter/?plan=pro#billing">Proを契約する</a></td><td><a href="/site/supp/index.html">カスタムを相談する</a></td></tr>
      </tbody>
     </table>
+   </div>
+  </section>
+
+  <section class="comparison-catalog" aria-labelledby="catalog-title">
+   <h2 id="catalog-title">選択できる配信情報の詳細</h2>
+   <p>通知ルールの情報種別・詳細として現在選択できる項目です。各情報の受信・提供状況によって実際の配信は異なります。</p>
+   <div class="delivery-grid">
+    <details class="delivery-category">
+     <summary>地震情報 <span class="delivery-count">7種類の選択肢</span></summary>
+     <ul>
+      <li>すべての地震情報</li>
+      <li>震度速報</li>
+      <li>震源に関する情報</li>
+      <li>震源・震度に関する情報</li>
+      <li>長周期地震動に関する観測情報</li>
+      <li>遠地地震に関する情報</li>
+      <li>顕著な地震の震源要素更新のお知らせ</li>
+     </ul>
+    </details>
+    <details class="delivery-category">
+     <summary>緊急地震速報（EEW） <span class="delivery-count">予報・警報</span></summary>
+     <ul>
+      <li>地震動予報</li>
+      <li>警報</li>
+      <li>警報の対象地方による絞り込み</li>
+      <li>震度・マグニチュードの条件</li>
+      <li>最終報を送る／送らないの切り替え</li>
+     </ul>
+     <p>EEWの市区町村単位の指定には対応していません。</p>
+    </details>
+    <details class="delivery-category">
+     <summary>気象情報 <span class="delivery-count">警報・注意報など</span></summary>
+     <ul>
+      <li>大雨・土砂災害・洪水・高潮に関する警戒レベル情報</li>
+      <li>暴風・暴風雪、波浪、大雪の警報・注意報</li>
+      <li>その他の気象注意報、竜巻注意情報</li>
+      <li>記録的短時間大雨情報、指定河川洪水予報</li>
+      <li>熱中症警戒アラート、早期天候情報</li>
+      <li>全般気象情報、台風情報、気象防災速報</li>
+      <li>線状降水帯に関する情報、顕著な大雪情報</li>
+      <li>気象解説情報、気象解説情報（潮位）</li>
+     </ul>
+    </details>
+    <details class="delivery-category">
+     <summary>雨雲レーダー <span class="delivery-count">配信頻度・降水条件</span></summary>
+     <ul>
+      <li>対象地方の選択（都道府県・市区町村指定には非対応）</li>
+      <li>配信頻度：1・2・3・6・12・24時間ごと</li>
+      <li>定時更新、降雨を検知したとき、降水量が閾値以上のとき</li>
+      <li>1時間降水量の下限：0.1～20 mm/h</li>
+     </ul>
+    </details>
    </div>
   </section>
   <section class="comparison-notices" aria-labelledby="comparison-notes-heading">
    <h2 id="comparison-notes-heading">選択前にご確認ください</h2>
    <p>追加オプションは、チャンネル3件あたり月額200円、サーバー1件あたり月額200円です。請求日は毎月26日です。詳細な金額はお申込み画面で必ず確認してください。</p>
-   <p>市区町村単位の設定はPro以上で、気象庁の地域コードなどで正確に判定できる情報に限ります。EEWは市区町村指定に対応せず、雨雲レーダーの画像配信は地方単位です。</p>
+   <p>市区町村単位の設定はProまたは許可済みカスタムプランで、気象庁の地域コードなどで判定できる情報に限ります。北海道の「振興局相当」は気象庁の地方区分を指し、行政上の振興局区分との完全一致を保証するものではありません。EEWは市区町村指定に対応せず、雨雲レーダーは地方単位です。</p>
    <p>有料プラン契約だけでは二次利用は許可されません。転載・再配信・加工配信には、別途<a href="/site/reuse/">二次利用申請</a>と承認が必要です。</p>
    <p>契約画面は現在テスト運用中のため、許可されたユーザーのみ表示されます。契約画面にアクセスできない場合は<a href="/site/supp/index.html">お問い合わせ</a>をご利用ください。</p>
    <a class="comparison-main-link" href="/site/supporter/#billing">契約・プラン変更はこちら</a>
   </section>
- </main>
+   </div>
+  </main>
+ </div>
+ <script src="../../script.js"></script>
 </body>
 </html>
