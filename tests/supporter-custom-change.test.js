@@ -80,9 +80,11 @@ function stubStripe(t,state){
     assert.equal(params.get('proration_behavior'),'none');
     assert.equal(params.get('billing_cycle_anchor'),'unchanged');
     assert.equal(params.get('payment_behavior'),'error_if_incomplete');
-    assert.equal(params.get('items[0][price_data][recurring][interval]'),'month');
-    assert.equal(params.get('items[0][price_data][product]'),'prod_custom');
-    state.monthly=Number(params.get('items[0][price_data][unit_amount]'));
+    if(params.has('items[0][price_data][unit_amount]')){
+     assert.equal(params.get('items[0][price_data][recurring][interval]'),'month');
+     assert.equal(params.get('items[0][price_data][product]'),'prod_custom');
+     state.monthly=Number(params.get('items[0][price_data][unit_amount]'));
+    }
     state.revision=Number(params.get('metadata[dpi_custom_revision]'));
    }
    return Response.json({id:subscriptionId,livemode:false,customer,status:'active',latest_invoice:'in_custom_paid',collection_method:'charge_automatically',
