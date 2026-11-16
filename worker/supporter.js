@@ -333,6 +333,7 @@ export const WEATHER_DETAILS = Object.freeze([
  ['all', 'すべての気象情報'],
  ['heavy-rain-level', '大雨に関する警戒レベル情報'],
  ['landslide-level', '土砂災害に関する警戒レベル情報'],
+ ['flood-level', '洪水警報・洪水注意報'],
  ['storm-surge-level', '高潮に関する警戒レベル情報'],
  ['storm-blizzard-warning', '暴風・暴風雪に関する警報・注意報'],
  ['wave-warning', '波浪に関する警報・注意報'],
@@ -389,7 +390,7 @@ const DETAILS = {
  weather: new Set(WEATHER_DETAILS.map(([id]) => id)),
  'rain-radar': new Set(['all']),
 };
-const WEATHER_ALERT_DETAILS = new Set(['heavy-rain-level','landslide-level','storm-surge-level']);
+const WEATHER_ALERT_DETAILS = new Set(['heavy-rain-level','landslide-level','flood-level','storm-surge-level']);
 const WEATHER_WARNING_DETAILS = new Set(['storm-blizzard-warning','wave-warning','heavy-snow-warning','other-advisory']);
 const SUPPORTER_TYPE_LABELS = Object.freeze({earthquake:'地震情報',eew:'緊急地震速報',weather:'気象情報','rain-radar':'雨雲レーダー'});
 const INTENSITY_LABELS = Object.freeze({'1':'震度1','2':'震度2','3':'震度3','4':'震度4','5-':'震度5弱','5+':'震度5強','6-':'震度6弱','6+':'震度6強','7':'震度7'});
