@@ -269,7 +269,7 @@ def _handle_action(body):
 
 
 def _validate_supporter_snapshot(value, now=None):
-    if not isinstance(value, dict) or int(value.get("schemaVersion", 0)) not in (1, 2):
+    if not isinstance(value, dict) or int(value.get("schemaVersion", 0)) not in (1, 2, 3):
         raise ValueError("有料プラン配信設定の形式を確認してください。")
     version = _clean(value.get("version"), 128)
     generated_at = _integer(value.get("generatedAt"), 0)
