@@ -506,6 +506,21 @@ export async function reconcilePaidCheckoutSubscription(env,customer,uid,db=null
  const existing=await subscriptions(env,customer);
  if(existing.length)return {subscription:existing[0],recovered:false,checkoutId:null};
  const result=await stripe(env,`checkout/sessions?customer=${encodeURIComponent(customer)}&limit=20`);
+ if(db){
+  const custom=(result.data||[]).filter(item=>
+   item.mode==='payment'&&item.status==='complete'&&item.payment_status==='paid'
+   &&checkoutMetadata(item).dpi_checkout_kind==='custom_subscription_initial'
+   &&stripeId(item.customer)===customer&&checkoutMetadata(item).dpi_user===uid)
+   .sort((a,b)=>Number(b.created||0)-Number(a.created||0));
+  for(const item of custom){
+   if(await rejectDisciplinedCheckout(env,db,item))continue;
+   const sub=await provisionCustomPaidCheckoutSubscription(env,db,item);
+   if(sub){
+    await syncCustomWithStripe(db,uid,customer,await customerSubscriptionSummaries(env,customer));
+    return {subscription:sub,recovered:true,checkoutId:item.id};
+   }
+  }
+ }
  const candidates=(result.data||[]).filter(item=>recoverablePaidCheckout(item,customer,uid)).sort((a,b)=>Number(b.created||0)-Number(a.created||0));
  let session=null;for(const candidate of candidates){if(db&&await rejectDisciplinedCheckout(env,db,candidate))continue;session=candidate;break;}
  if(!session)return {subscription:null,recovered:false,checkoutId:null};
@@ -1179,16 +1194,12 @@ export async function billingWebhook(request,env,ctx){
    const metadata=checkoutMetadata(session),uid=clean(metadata.dpi_user),changeId=clean(metadata.dpi_change_request);
    if(/^\d{17,20}$/.test(uid)&&/^[0-9a-f-]{36}$/i.test(changeId))
     await settleCustomPriceChange(env,db,uid,changeId);
-  }else if(checkoutMetadata(session).dpi_checkout_kind==='custom_subscription'){
-    const metadata=checkoutMetadata(session),uid=clean(metadata.dpi_user);
-    const customer=typeof session.customer==='string'?session.customer:session.customer?.id;
-    if(/^\d{17,20}$/.test(uid)&&customer&&session.mode==='subscription'&&session.payment_status==='paid'){
-     const billing=await db.prepare('SELECT customer_id FROM supporter_billing WHERE discord_user_id=?').bind(uid).first();
-     const offer=await getCustomPlan(db,uid);
-     if(billing?.customer_id===customer&&offer?.status==='offered'
-       &&offer.id===metadata.dpi_custom_id&&Number(offer.revision)===Number(metadata.dpi_custom_revision))
-      await syncCustomWithStripe(db,uid,customer,await customerSubscriptionSummaries(env,customer));
-    }
+  }else if(checkoutMetadata(session).dpi_checkout_kind==='custom_subscription_initial'){
+   const subscription=await provisionCustomPaidCheckoutSubscription(env,db,session);
+   const uid=clean(checkoutMetadata(session).dpi_user);
+   if(subscription&&/^\d{17,20}$/.test(uid))
+    await syncCustomWithStripe(db,uid,stripeId(session.customer),
+     await customerSubscriptionSummaries(env,stripeId(session.customer)));
   }else if(checkoutMetadata(session).dpi_checkout_kind==='credit_topup'){
    const fulfilled=await fulfillCreditTopup(env,db,session,event.created);
    if(fulfilled)await sendBillingNotification(env,db,'credit_topup_succeeded',{id:session.id,customer:session.customer,amount_paid:fulfilled.amount,currency:session.currency||'jpy',expires_at:fulfilled.expiresAt});
@@ -1483,4 +1494,69 @@ export async function recoverCustomPriceChanges(env,db,uid){
   catch(error){console.error('Custom plan price settlement deferred',{requestId:row.request_id,errorName:error?.name||'Error'});}
  }
  return results;
+}
+
+
+/** Create exactly one fixed-26th custom subscription *after* an initial
+ * payment-mode Checkout has succeeded. All Stripe mutations have stable
+ * idempotency keys; replays reconcile instead of starting another contract. */
+export async function provisionCustomPaidCheckoutSubscription(env,db,session){
+ const meta=checkoutMetadata(session);
+ if(session?.mode!=='payment'||session.payment_status!=='paid'
+  ||session.status!=='complete'||meta.dpi_checkout_kind!=='custom_subscription_initial')return null;
+ const uid=clean(meta.dpi_user),customer=stripeId(session.customer);
+ if(!/^\d{17,20}$/.test(uid)||!customer||session.client_reference_id!==uid)
+  fail('カスタム契約の決済対象者が一致しません。',409);
+ const offer=await getCustomPlan(db,uid);
+ const billing=await db.prepare('SELECT customer_id FROM supporter_billing WHERE discord_user_id=?').bind(uid).first();
+ const monthly=Number(meta.dpi_custom_monthly_yen),months=Number(meta.dpi_initial_months);
+ if(!offer||offer.id!==meta.dpi_custom_id||!['offered','active'].includes(offer.status)
+  ||billing?.customer_id!==customer||Number(meta.dpi_custom_revision)!==Number(offer.revision)
+  ||monthly!==Number(offer.confirmed_yen)||!Number.isInteger(months)||!([1,2].includes(months))
+  ||String(session.currency).toLowerCase()!=='jpy'
+  ||months*monthly!==Number(session.amount_total)
+  ||Number(meta.dpi_initial_amount_yen)!==Number(session.amount_total))
+  fail('カスタム契約または初回決済額が変更されています。手動で精算を確認してください。',409);
+ const existing=await subscriptions(env,customer);
+ const prior=existing.find(x=>x.metadata?.dpi_custom_id===offer.id
+  &&Number(x.metadata?.dpi_custom_revision)===Number(offer.revision)
+  &&x.metadata?.dpi_custom_initial_session===session.id);
+ if(prior)return prior;
+ if(existing.some(x=>!['canceled','incomplete_expired'].includes(x.status))
+  ||offer.status!=='offered'||offer.stripe_subscription_id)
+  fail('別のStripe契約が残っているため月額契約を追加しません。',409);
+ const now=Math.floor(Date.now()/1000),anchor=Number(meta.dpi_billing_anchor);
+ if(!Number.isInteger(anchor)||anchor<=now+60||anchor>now+70*86400)
+  fail('次回26日の請求日が過ぎています。二重請求回避のため手動対応してください。',409);
+ const paymentIntentId=stripeId(session.payment_intent);
+ if(!paymentIntentId)fail('カスタムプランの初回支払い情報がありません。',502);
+ const intent=await stripe(env,`payment_intents/${encodeURIComponent(paymentIntentId)}`);
+ const paymentMethod=stripeId(intent.payment_method);
+ if(intent.status!=='succeeded'||!paymentMethod||stripeId(intent.customer)!==customer
+  ||Number(intent.amount_received)!==Number(session.amount_total))
+  fail('初回決済の入金・支払い方法を照合できません。',409);
+ const product=await stripe(env,'products',{
+  name:`DPI-Bot カスタムプラン ${String(offer.name||'').slice(0,65)}`,
+  'metadata[dpi_custom_id]':offer.id,'metadata[dpi_user]':uid,
+ },`dpi-custom-product-${offer.id}`);
+ if(!/^prod_/.test(product.id||'')||product.livemode!==false)
+  fail('Stripeテスト用の商品情報を作成できませんでした。',502);
+ const result=await stripe(env,'subscriptions',{
+  customer,default_payment_method:paymentMethod,collection_method:'charge_automatically',
+  billing_cycle_anchor:String(anchor),proration_behavior:'none',
+  payment_behavior:'error_if_incomplete','billing_mode[type]':'flexible',
+  'items[0][price_data][currency]':'jpy',
+  'items[0][price_data][unit_amount]':String(monthly),
+  'items[0][price_data][product]':product.id,
+  'items[0][price_data][recurring][interval]':'month',
+  'items[0][quantity]':'1',
+  'metadata[dpi_user]':uid,'metadata[dpi_custom_id]':offer.id,
+  'metadata[dpi_custom_revision]':String(offer.revision),
+  'metadata[dpi_custom_initial_session]':session.id,
+ },`dpi-custom-initial-sub-${session.id}`);
+ if(!['active','trialing'].includes(result.status)||stripeId(result.customer)!==customer
+  ||result.metadata?.dpi_custom_id!==offer.id
+  ||Number(result.items?.data?.[0]?.price?.unit_amount)!==monthly)
+  fail('作成後の月額契約を検証できませんでした。',502);
+ return result;
 }
