@@ -4,6 +4,7 @@ let creditSummary = null;
 let creditCampaigns = [];
 let compensationRequestId = '';
 let actionRequestId = '';
+let customRequestId = '';
 
 const $ = id => document.getElementById(id);
 const STATUS_LABELS = Object.freeze({active:'有効',trialing:'有効（次回請求待ち）',past_due:'支払い遅延',unpaid:'未払い',paused:'一時停止',incomplete:'手続き未完了'});
@@ -11,6 +12,13 @@ const ACTIVE_STATUSES = new Set(['active','trialing','past_due','unpaid','paused
 
 document.addEventListener('DOMContentLoaded', () => {
  $('refresh-btn').addEventListener('click', loadAccounts);
+ $('custom-form').addEventListener('submit',event=>{event.preventDefault();submitCustom('save');});
+ $('custom-load').addEventListener('click',loadCustom);
+ $('custom-checkout').addEventListener('click',()=>submitCustom('checkout'));
+ $('custom-cancel').addEventListener('click',()=>submitCustom('cancel'));
+ for(const id of ['custom-channels','custom-servers','custom-rules','custom-complex','custom-city','custom-extract','custom-multi','custom-reuse'])$(id).addEventListener('input',updateCustomEstimate);
+ $('custom-city').addEventListener('change',()=>{if(!$('custom-city').checked)$('custom-extract').checked=false;updateCustomEstimate();});
+ updateCustomEstimate();
  $('account-search').addEventListener('input', renderAccounts);
  $('detail-close').addEventListener('click', () => $('detail-dialog').close());
  $('dialog-close').addEventListener('click', () => $('action-dialog').close());
@@ -189,6 +197,7 @@ function accountCard(account) {
  card.append(heading,meta);
  if(account.accountStatus==='suspended')card.append(element('p','account-enforcement-reason',`BAN理由: ${account.statusReason||'理由未登録'}${account.statusUpdatedAt?`／${dateText(account.statusUpdatedAt)}`:''}`));
  if(account.billingError)card.append(element('p','billing-error',account.billingError));
+ if(account.customPlan)card.append(element('p','',`カスタムプラン：${account.customPlan.name}／${account.customPlan.status==='active'?'有効':account.customPlan.status==='offered'?'提供中・未決済':'停止'}／確定月額${Number(account.customPlan.monthlyYen).toLocaleString('ja-JP')}円`));
  const subscriptions=account.subscriptions||[];
  if(!subscriptions.length){card.append(element('p','empty-contract','現在表示できる契約はありません。'));return card;}
  const grid=element('div','subscription-grid');
@@ -322,3 +331,49 @@ function paymentLink(value) {
 function dateText(value){if(!value)return '—';const date=new Date(value);return Number.isNaN(date.getTime())?'—':new Intl.DateTimeFormat('ja-JP',{dateStyle:'medium',timeStyle:'short',timeZone:'Asia/Tokyo'}).format(date);}
 function unixDate(value){return value?dateText(Number(value)*1000):'—';}
 function money(amount,currency='jpy'){return new Intl.NumberFormat('ja-JP',{style:'currency',currency:String(currency||'jpy').toUpperCase(),maximumFractionDigits:0}).format(Number(amount)||0);}
+
+function customPayload(){
+ return {
+  discordUserId:$('custom-uid').value.trim(),confirmDiscordUserId:$('custom-confirm').value.trim(),
+  name:$('custom-name').value.trim(),channels:Number($('custom-channels').value),servers:Number($('custom-servers').value),
+  rules:Number($('custom-rules').value),monthlyYen:Number($('custom-price').value),
+  complexConditions:$('custom-complex').checked,municipalityBranching:$('custom-city').checked,
+  contentExtraction:$('custom-extract').checked,multiDestination:$('custom-multi').checked,
+  secondaryReuse:$('custom-reuse').checked,reason:$('custom-reason').value.trim(),
+  requestId:customRequestId||crypto.randomUUID(),
+ };
+}
+function updateCustomEstimate(){
+ const p=customPayload(),base=p.complexConditions||p.contentExtraction?1280:p.municipalityBranching||p.channels>2||p.servers>1||p.rules>5?800:300;
+ const defaults=base===1280?[20,5,30]:base===800?[10,3,15]:[2,1,5];
+ const price=base+Math.ceil(Math.max(0,p.channels-defaults[0])/3)*200+Math.max(0,p.servers-defaults[1])*200+Math.ceil(Math.max(0,p.rules-defaults[2])/5)*100+(p.secondaryReuse?200:0);
+ $('custom-estimate').textContent=Number.isFinite(price)?`${price.toLocaleString('ja-JP')}円／月（参考値）`:'—';
+}
+function loadCustom(){
+ const id=$('custom-uid').value.trim(),account=accounts.find(item=>item.discordUserId===id);
+ if(!account){$('custom-result').textContent='対象ユーザーを登録者一覧から確認してください。';return;}
+ const p=account.customPlan;
+ if(!p){$('custom-result').textContent='カスタムプランは未設定です。';return;}
+ $('custom-name').value=p.name;
+ for(const [id,value] of [['custom-channels',p.channels],['custom-servers',p.servers],['custom-rules',p.rules],['custom-price',p.monthlyYen]])$(id).value=String(value);
+ for(const [id,value] of [['custom-complex',p.complexConditions],['custom-city',p.municipalityBranching],['custom-extract',p.contentExtraction],['custom-multi',p.multiDestination],['custom-reuse',p.secondaryReuse]])$(id).checked=value===true;
+ $('custom-result').textContent=`現在の状態：${p.status}／更新日：${p.updatedAt||'不明'}。契約中は確定料金を変更できません。`;
+ updateCustomEstimate();
+}
+async function submitCustom(action){
+ const payload={...customPayload(),action};
+ if(!/^\d{17,20}$/.test(payload.discordUserId)||payload.confirmDiscordUserId!==payload.discordUserId){$('custom-result').textContent='Discord IDと確認欄を一致させてください。';return;}
+ if(payload.reason.length<5){$('custom-result').textContent='理由を5文字以上入力してください。';return;}
+ if(action==='save'&&!$('custom-form').reportValidity())return;
+ if(action==='cancel'&&!window.confirm('このユーザーのカスタム契約を停止します。Stripeの契約も即時解約され、返金は自動実行しません。続行しますか？'))return;
+ const button=$(`custom-${action==='checkout'?'checkout':action==='cancel'?'cancel':'save'}`);
+ button.disabled=true;$('custom-result').textContent='カスタムプランを処理しています…';
+ try{
+  const response=await fetch('/site/supporter-admin/api/custom-plan',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','Accept':'application/json'},body:JSON.stringify(payload)});
+  const data=await response.json().catch(()=>({}));
+  if(!response.ok||!data.success)throw new Error(data.message||`HTTP ${response.status}`);
+  $('custom-result').replaceChildren(element('span','',data.message));
+  if(data.url){$('custom-result').append(document.createElement('br'),paymentLink(data.url));}
+  customRequestId='';await loadAccounts();
+ }catch(error){$('custom-result').textContent=error.message;}finally{button.disabled=false;}
+}
