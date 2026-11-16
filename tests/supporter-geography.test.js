@@ -62,6 +62,11 @@ test('Snapshot does not expand a Pro-only rule after downgrade',async()=>{
  const snapshot=await buildSupporterSnapshot(db,{},loadSubscriptions,1800000001000);
  assert.equal(snapshot.rules.length,1);
  assert.equal(snapshot.rules[0].prefecture,'all');
+ assert.equal(snapshot.schemaVersion,1);
+ const proSubscriptions=async()=>new Map([['cus123',[{status:'active',recognizedPlan:true,planId:'pro'}]]]);
+ const precise=await buildSupporterSnapshot(db,{},proSubscriptions,1800000002000);
+ assert.equal(precise.rules.length,2);
+ assert.equal(precise.schemaVersion,2);
 });
 
 test('Progressive selectors and analytics view use separate modules',async()=>{
