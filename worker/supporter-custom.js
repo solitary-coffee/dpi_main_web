@@ -82,7 +82,11 @@ export async function syncCustomWithStripe(db,uid,customer,summaries){
   return getCustomPlan(db,uid);
  }
  if(row.status==='active'&&!summaries.some(item=>customSubscriptionMatches(row,item))){
-  // A canceled or changed Stripe subscription must not leave a privileged route.
+  const linked=summaries.find(item=>item.subscriptionId===row.stripe_subscription_id);
+  // A price/revision mismatch can be a paid admin change in flight.
+  // Keep the contract record for recovery but suspend paid routing until
+  // Stripe and D1 agree. Cancel only when the subscription is actually gone.
+  if(linked)return row;
   await db.prepare(`UPDATE supporter_custom_plans SET status='canceled',updated_at=?
    WHERE discord_user_id=? AND status='active' AND stripe_subscription_id=?`)
    .bind(new Date().toISOString(),uid,row.stripe_subscription_id).run();
