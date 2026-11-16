@@ -555,15 +555,15 @@ test('option-only additions apply credits to the next 26th invoice after user co
   return new Response(JSON.stringify(data),{status:200,headers:{'content-type':'application/json'}});
  };
  try{
-  const previewResponse=await billingAction(new Request('https://dpi-bot.com/api/supporter/billing/preview-update'),env,db,'123',{plan:'supporter',channelPacks:1,serverPacks:0});
-  const preview=await previewResponse.json();assert.equal(preview.planChanged,false);assert.equal(preview.planProration,0);assert.equal(preview.immediateCreditApplied,0);assert.equal(preview.nextInvoiceCreditApplied,400);assert.equal(preview.creditApplied,400);assert.equal(preview.immediateDue,0);assert.equal(preview.nextInvoiceSubtotal,500);assert.equal(preview.nextInvoiceDue,100);
+  const previewResponse=await billingAction(new Request('https://dpi-bot.com/api/supporter/billing/preview-update'),env,db,'123',{plan:'supporter',channelPacks:1,serverPacks:0,rulePacks:1});
+  const preview=await previewResponse.json();assert.equal(preview.planChanged,false);assert.equal(preview.planProration,0);assert.equal(preview.immediateCreditApplied,0);assert.equal(preview.nextInvoiceCreditApplied,400);assert.equal(preview.creditApplied,400);assert.equal(preview.immediateDue,0);assert.equal(preview.nextInvoiceSubtotal,700);assert.equal(preview.nextInvoiceDue,300);assert.equal(preview.next.rules,8);
   assert.equal(calls.some(call=>call.path==='/v1/invoices/create_preview'),false);calls.length=0;
   const requestId='123e4567-e89b-42d3-a456-426614174001';
-  const blocked=await billingAction(new Request('https://dpi-bot.com/api/supporter/billing/update'),env,db,'123',{plan:'supporter',channelPacks:1,serverPacks:0,prorationDate:preview.prorationDate,expectedCreditApplied:400,useCredits:false,requestId});
+  const blocked=await billingAction(new Request('https://dpi-bot.com/api/supporter/billing/update'),env,db,'123',{plan:'supporter',channelPacks:1,serverPacks:0,rulePacks:1,prorationDate:preview.prorationDate,expectedCreditApplied:400,useCredits:false,requestId});
   assert.equal(blocked.status,409);assert.equal(calls.some(call=>call.path==='/v1/subscriptions/sub_options'),false);calls.length=0;
-  const response=await billingAction(new Request('https://dpi-bot.com/api/supporter/billing/update'),env,db,'123',{plan:'supporter',channelPacks:1,serverPacks:0,prorationDate:preview.prorationDate,expectedCreditApplied:400,useCredits:true,requestId});
-  assert.equal(response.status,200);const result=await response.json();assert.match(result.message,/26日の請求書確定時に消費/);assert.deepEqual(result.creditApplication,{immediate:0,nextInvoice:400,nextInvoiceDue:100});
-  const optionUpdate=calls.find(call=>call.path==='/v1/subscriptions/sub_options'&&call.method==='POST');assert.equal(optionUpdate.params.get('proration_behavior'),'none');assert.equal(optionUpdate.params.get('items[0][price]'),'price_addon');assert.equal(optionUpdate.params.get('items[0][quantity]'),'1');
+  const response=await billingAction(new Request('https://dpi-bot.com/api/supporter/billing/update'),env,db,'123',{plan:'supporter',channelPacks:1,serverPacks:0,rulePacks:1,prorationDate:preview.prorationDate,expectedCreditApplied:400,useCredits:true,requestId});
+  assert.equal(response.status,200);const result=await response.json();assert.match(result.message,/26日の請求書確定時に消費/);assert.deepEqual(result.creditApplication,{immediate:0,nextInvoice:400,nextInvoiceDue:300});
+  const optionUpdate=calls.find(call=>call.path==='/v1/subscriptions/sub_options'&&call.method==='POST');assert.equal(optionUpdate.params.get('proration_behavior'),'none');assert.equal(optionUpdate.params.get('items[0][price]'),'price_addon');assert.equal(optionUpdate.params.get('items[0][quantity]'),'2');assert.equal(optionUpdate.params.get('metadata[dpi_rule_packs]'),'1');
  }finally{globalThis.fetch=originalFetch;}
 });
 test('downgrades are scheduled for the next renewal without refund or immediate invoice',async()=>{
