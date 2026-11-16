@@ -46,7 +46,8 @@ export async function loadSupporterAreaCatalogue(now=Date.now()){
 
 export function geographicEntitlements(subscriptions=[]){
  const plans=new Set(subscriptions.filter(s=>s?.recognizedPlan!==false&&['active','trialing','past_due','unpaid','paused'].includes(s?.status)).map(s=>s.planId));
- return {prefecture:plans.has('plus')||plans.has('pro'),municipality:plans.has('plus')||plans.has('pro'),strictMunicipality:plans.has('pro')};
+ const custom=subscriptions.find(s=>s?.planId==='custom'&&s?.recognizedPlan===true&&['active','trialing'].includes(s?.status));
+ return {prefecture:!!custom?.municipalityBranching||plans.has('plus')||plans.has('pro'),municipality:!!custom?.municipalityBranching||plans.has('plus')||plans.has('pro'),strictMunicipality:!!custom?.contentExtraction||plans.has('pro')};
 }
 
 export function normalizeGeographicRule(rule,region,limits,catalogue){
