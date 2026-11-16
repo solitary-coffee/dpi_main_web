@@ -28,7 +28,7 @@ export async function loadSupporterAreaCatalogue(now=Date.now()){
  const class20s=source?.class20s||{},class15s=source?.class15s||{},class10s=source?.class10s||{};
  const municipalities=[],districtIndex=new Map();
  for(const [code,entry] of Object.entries(class20s)){
-  if(!/^\\d{7}$/.test(code)||typeof entry?.name!=='string'||!PREF_BY_CODE.has(code.slice(0,2)))continue;
+  if(!/^[0-9]{7}$/.test(code)||typeof entry?.name!=='string'||!PREF_BY_CODE.has(code.slice(0,2)))continue;
   const parent=class15s[String(entry.parent||'')],districtCode=String(parent?.parent||'');
   const district=class10s[districtCode];
   const prefectureCode=code.slice(0,2);
@@ -66,7 +66,8 @@ export function normalizeGeographicRule(rule,region,limits,catalogue){
  }
  if(strictMunicipality&&(!limits.strictMunicipality||municipality==='all'))
   throw Object.assign(new Error('市区町村だけの情報を配信する機能はProプランで、対象市区町村の指定時のみ利用できます。'),{status:400});
- return {prefecture,district,municipality,strictMunicipality};
+ const districtCityCodes=district==='all'?[]:catalogue.municipalities.filter(item=>item.districtCode===district).map(item=>item.code);
+ return {prefecture,district,municipality,strictMunicipality,districtCityCodes};
 }
 
 export function geographicRuleAllowed(rule,entitlements){
