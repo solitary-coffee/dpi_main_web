@@ -48,7 +48,8 @@ test('radar rates and rainfall conditions reflect current selectable Worker valu
  assert.deepEqual(RAIN_RADAR_CONDITIONS.map(([id])=>id),['all','rain-detected','rainfall-threshold']);
  assert.match(html,/1・2・3・6・12・24時間ごと/);
  assert.match(html,/0\.1～20 mm\/h/);
- assert.match(html,/定時更新／降雨検知／降水量の閾値以上/);
+ assert.match(html,/定時更新・降雨検知の配信条件/);
+ assert.match(html,/1時間降水量の閾値指定（0\.1～20 mm\/h）<\/th><td>—<\/td><td>○<\/td>/);
  assert.match(html,/雨雲レーダー（地方単位）/);
 });
 
@@ -66,4 +67,18 @@ test('comparison describes the actual selectable earthquake, EEW and weather typ
  }
  assert.match(html,/class="comparison-table"/);
  assert.match(html,/カスタムを相談する/);
+});
+
+
+test('new add-on presentation and weather list reflect the revised contract',async()=>{
+ const [html,home]=await Promise.all([read('site/supporter/plans.html'),read('site/supporter/index.html')]);
+ assert.match(html,/追加サーバー（2件）／追加ルール（3件）/);
+ assert.match(html,/今後も随時追加予定/);
+ assert.match(home,/サーバー上限を2件追加/);
+ assert.match(home,/通知ルール上限を3件追加/);
+ const weather=html.slice(html.indexOf('<summary>気象情報'),html.indexOf('</details>',html.indexOf('<summary>気象情報')));
+ assert.match(weather,/<li>大雨に関する警戒レベル情報<\/li>/);
+ assert.match(weather,/<li>台風情報<\/li>/);
+ assert.match(weather,/<li>気象解説情報（潮位）<\/li>/);
+ assert.ok((weather.match(/<li>/g)||[]).length>=19);
 });

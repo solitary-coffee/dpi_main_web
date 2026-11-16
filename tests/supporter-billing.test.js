@@ -5,9 +5,9 @@ import {adminBillingAction,adminDisciplinaryBillingAction,billingAction,billingW
 import {assertSupporterAccountActive,changeSupporterAccountStatus,supporterAccountEnforcement,supporterAdminAccount,supporterAdminDetails,supporterCreditMetrics} from '../worker/supporter.js';
 import {readFile} from 'node:fs/promises';
 test('plan, channel and server add-ons are server controlled',()=>{
- assert.deepEqual(selection({plan:'supporter',channelPacks:2,serverPacks:1}),{plan:'supporter',packs:2,channelPacks:2,serverPacks:1,baseMonthly:300,monthly:900,channels:8,servers:2,rules:5,complexConditions:false,multiDestination:false});
- assert.deepEqual(selection({plan:'plus',channelPacks:1,serverPacks:0}),{plan:'plus',packs:1,channelPacks:1,serverPacks:0,baseMonthly:800,monthly:1000,channels:13,servers:3,rules:15,complexConditions:false,multiDestination:false});
- assert.deepEqual(selection({plan:'pro',channelPacks:0,serverPacks:0}),{plan:'pro',packs:0,channelPacks:0,serverPacks:0,baseMonthly:1280,monthly:1280,channels:20,servers:5,rules:30,complexConditions:true,multiDestination:true});
+ assert.deepEqual(selection({plan:'supporter',channelPacks:2,serverPacks:1}),{plan:'supporter',packs:2,channelPacks:2,serverPacks:1,rulePacks:0,baseMonthly:300,monthly:900,channels:8,servers:3,rules:5,complexConditions:false,multiDestination:false});
+ assert.deepEqual(selection({plan:'plus',channelPacks:1,serverPacks:0}),{plan:'plus',packs:1,channelPacks:1,serverPacks:0,rulePacks:0,baseMonthly:800,monthly:1000,channels:13,servers:3,rules:15,complexConditions:false,multiDestination:false});
+ assert.deepEqual(selection({plan:'pro',channelPacks:0,serverPacks:0}),{plan:'pro',packs:0,channelPacks:0,serverPacks:0,rulePacks:0,baseMonthly:1280,monthly:1280,channels:20,servers:5,rules:30,complexConditions:true,multiDestination:true});
  for(const v of [{plan:'supporter',channelPacks:6,serverPacks:0},{plan:'supporter',channelPacks:0,serverPacks:-1},{plan:'supporter',channelPacks:'1',serverPacks:0},{plan:'unknown',channelPacks:0,serverPacks:0}])assert.throws(()=>selection(v));
 });
 test('billing is anchored to the 26th JST and late-month signup charges two months',()=>{
@@ -82,7 +82,7 @@ test('sufficient charged credits can activate a plan once without opening card C
    if(sql.includes('supporter_billing_notifications'))return noticeStatus?{status:noticeStatus}:null;
    return null;
   },async run(){
-   if(sql.includes('INSERT INTO supporter_credit_signups'))attempt={request_id:values[0],discord_user_id:values[1],customer_id:values[2],plan_id:values[3],channel_packs:values[4],server_packs:values[5],amount:values[6],billing_anchor:values[7],legal_consent_version:values[8],status:'pending'};
+   if(sql.includes('INSERT INTO supporter_credit_signups'))attempt={request_id:values[0],discord_user_id:values[1],customer_id:values[2],plan_id:values[3],channel_packs:values[4],server_packs:values[5],rule_packs:values[6],amount:values[7],billing_anchor:values[8],legal_consent_version:values[9],status:'pending'};
    if(sql.includes("status='debited'")){attempt.balance_transaction_id=values[0];attempt.status='debited';}
    if(sql.includes("status='provisioned'")){attempt.balance_transaction_id=attempt.balance_transaction_id||values[0];attempt.subscription_id=values[1];attempt.status='provisioned';}
    if(sql.includes('INSERT INTO supporter_billing_notifications')&&!noticeStatus)noticeStatus='pending';
@@ -114,7 +114,7 @@ test('sufficient charged credits can activate a plan once without opening card C
 test('credit-funded signup rejects insufficient balance before consuming credits',async()=>{
  const uid='637850681666961408',requestId='123e4567-e89b-42d3-a456-426614174102';let attempt=null;
  const env={SUPPORTER_BILLING_MODE:'test',STRIPE_SECRET_KEY:'rk_test_example',STRIPE_WEBHOOK_SECRET:'whsec_x',STRIPE_PRICE_SUPPORTER:'price_basic',STRIPE_PRICE_PLUS:'price_plus',STRIPE_PRICE_PRO:'price_pro',STRIPE_PRICE_ADDON:'price_addon',STRIPE_PORTAL_CONFIG:'bpc_x'};
- const db={prepare(sql){let values=[];return{bind(...input){values=input;return this;},async first(){if(sql.includes('request_id='))return attempt;if(sql.includes("status IN ('pending','debited')"))return null;return null;},async run(){if(sql.includes('INSERT INTO supporter_credit_signups'))attempt={request_id:values[0],discord_user_id:values[1],customer_id:values[2],plan_id:values[3],channel_packs:values[4],server_packs:values[5],amount:values[6],billing_anchor:values[7],legal_consent_version:values[8],status:'pending'};if(sql.includes("status='failed'"))attempt.status='failed';return{meta:{changes:1}};}};}};
+ const db={prepare(sql){let values=[];return{bind(...input){values=input;return this;},async first(){if(sql.includes('request_id='))return attempt;if(sql.includes("status IN ('pending','debited')"))return null;return null;},async run(){if(sql.includes('INSERT INTO supporter_credit_signups'))attempt={request_id:values[0],discord_user_id:values[1],customer_id:values[2],plan_id:values[3],channel_packs:values[4],server_packs:values[5],rule_packs:values[6],amount:values[7],billing_anchor:values[8],legal_consent_version:values[9],status:'pending'};if(sql.includes("status='failed'"))attempt.status='failed';return{meta:{changes:1}};}};}};
  const calls=[],originalFetch=globalThis.fetch;globalThis.fetch=async(url,init={})=>{const path=new URL(url).pathname;calls.push(path);const data=path==='/v1/subscriptions'?{livemode:false,data:[]}:{livemode:false,balance:-100};return new Response(JSON.stringify(data),{status:200,headers:{'content-type':'application/json'}});};
  try{
   await assert.rejects(()=>provisionCreditFundedSignup(env,db,uid,'cus_credit',selection({plan:'supporter',channelPacks:0,serverPacks:0}),{requestId,legalConsentVersion:'2026-11-15'}),error=>error.status===409&&/不足/.test(error.message));
@@ -124,7 +124,7 @@ test('credit-funded signup rejects insufficient balance before consuming credits
 test('credit-funded signup restores the consumed balance when subscription creation fails',async()=>{
  const uid='637850681666961408',requestId='123e4567-e89b-42d3-a456-426614174103';let attempt=null,balance=-1000;
  const env={SUPPORTER_BILLING_MODE:'test',STRIPE_SECRET_KEY:'rk_test_example',STRIPE_WEBHOOK_SECRET:'whsec_x',STRIPE_PRICE_SUPPORTER:'price_basic',STRIPE_PRICE_PLUS:'price_plus',STRIPE_PRICE_PRO:'price_pro',STRIPE_PRICE_ADDON:'price_addon',STRIPE_PORTAL_CONFIG:'bpc_x'};
- const db={prepare(sql){let values=[];return{bind(...input){values=input;return this;},async first(){if(sql.includes('request_id='))return attempt;if(sql.includes("status IN ('pending','debited')"))return attempt&&['pending','debited'].includes(attempt.status)?attempt:null;return null;},async run(){if(sql.includes('INSERT INTO supporter_credit_signups'))attempt={request_id:values[0],discord_user_id:values[1],customer_id:values[2],plan_id:values[3],channel_packs:values[4],server_packs:values[5],amount:values[6],billing_anchor:values[7],legal_consent_version:values[8],status:'pending'};if(sql.includes("status='debited'")){attempt.balance_transaction_id=values[0];attempt.status='debited';}if(sql.includes("status='refunded'"))attempt.status='refunded';return{meta:{changes:1}};}};}};
+ const db={prepare(sql){let values=[];return{bind(...input){values=input;return this;},async first(){if(sql.includes('request_id='))return attempt;if(sql.includes("status IN ('pending','debited')"))return attempt&&['pending','debited'].includes(attempt.status)?attempt:null;return null;},async run(){if(sql.includes('INSERT INTO supporter_credit_signups'))attempt={request_id:values[0],discord_user_id:values[1],customer_id:values[2],plan_id:values[3],channel_packs:values[4],server_packs:values[5],rule_packs:values[6],amount:values[7],billing_anchor:values[8],legal_consent_version:values[9],status:'pending'};if(sql.includes("status='debited'")){attempt.balance_transaction_id=values[0];attempt.status='debited';}if(sql.includes("status='refunded'"))attempt.status='refunded';return{meta:{changes:1}};}};}};
  const balanceAmounts=[],originalFetch=globalThis.fetch;globalThis.fetch=async(url,init={})=>{const path=new URL(url).pathname,method=init.method||'GET',params=new URLSearchParams(init.body||'');let data={livemode:false};let status=200;
   if(path==='/v1/subscriptions'&&method==='GET')data={livemode:false,data:[]};
   else if(path==='/v1/subscriptions'&&method==='POST'){status=500;data={error:{message:'temporary failure'}};}
@@ -184,7 +184,7 @@ test('subscription summary includes plan, dates, amount and item details',()=>{
  assert.equal(result.nextRenewalAt,1702592000);
  assert.equal(result.amount,700);
  assert.equal(result.channels,5);
- assert.equal(result.servers,2);
+ assert.equal(result.servers,3);
  assert.deepEqual(result.items.map(item=>[item.label,item.quantity,item.subtotal]),[['BASIC',1,300],['追加オプション',2,400]]);
 });
 
@@ -504,7 +504,7 @@ test('plan proration separates the old-plan refund equivalent from the new-plan 
 test('scheduled change summaries expose the next plan without Stripe identifiers',()=>{
  const env={STRIPE_PRICE_SUPPORTER:'price_basic',STRIPE_PRICE_PLUS:'price_plus',STRIPE_PRICE_PRO:'price_pro',STRIPE_PRICE_ADDON:'price_addon'};
  const current={planId:'pro',channelPacks:0,serverPacks:0,nextRenewalAt:1800000000};
- assert.deepEqual(scheduledChangeSummary({phases:[{start_date:1800000000,metadata:{dpi_channel_packs:'1',dpi_server_packs:'0'},items:[{price:'price_plus',quantity:1},{price:'price_addon',quantity:1}]}]},env,current),{effectiveAt:1800000000,plan:'Plus',planId:'plus',monthly:1000,channels:13,servers:3,rules:15,channelPacks:1,serverPacks:0});
+ assert.deepEqual(scheduledChangeSummary({phases:[{start_date:1800000000,metadata:{dpi_channel_packs:'1',dpi_server_packs:'0'},items:[{price:'price_plus',quantity:1},{price:'price_addon',quantity:1}]}]},env,current),{effectiveAt:1800000000,plan:'Plus',planId:'plus',monthly:1000,channels:13,servers:3,rules:15,channelPacks:1,serverPacks:0,rulePacks:0});
 });
 test('invoice history only returns safe Stripe document links',async()=>{
  const env={SUPPORTER_BILLING_MODE:'test',STRIPE_SECRET_KEY:'rk_test_example',STRIPE_WEBHOOK_SECRET:'whsec_x',STRIPE_PRICE_SUPPORTER:'price_basic',STRIPE_PRICE_PLUS:'price_plus',STRIPE_PRICE_PRO:'price_pro',STRIPE_PRICE_ADDON:'price_addon',STRIPE_PORTAL_CONFIG:'bpc_x'};
@@ -555,15 +555,15 @@ test('option-only additions apply credits to the next 26th invoice after user co
   return new Response(JSON.stringify(data),{status:200,headers:{'content-type':'application/json'}});
  };
  try{
-  const previewResponse=await billingAction(new Request('https://dpi-bot.com/api/supporter/billing/preview-update'),env,db,'123',{plan:'supporter',channelPacks:1,serverPacks:0});
-  const preview=await previewResponse.json();assert.equal(preview.planChanged,false);assert.equal(preview.planProration,0);assert.equal(preview.immediateCreditApplied,0);assert.equal(preview.nextInvoiceCreditApplied,400);assert.equal(preview.creditApplied,400);assert.equal(preview.immediateDue,0);assert.equal(preview.nextInvoiceSubtotal,500);assert.equal(preview.nextInvoiceDue,100);
+  const previewResponse=await billingAction(new Request('https://dpi-bot.com/api/supporter/billing/preview-update'),env,db,'123',{plan:'supporter',channelPacks:1,serverPacks:0,rulePacks:1});
+  const preview=await previewResponse.json();assert.equal(preview.planChanged,false);assert.equal(preview.planProration,0);assert.equal(preview.immediateCreditApplied,0);assert.equal(preview.nextInvoiceCreditApplied,400);assert.equal(preview.creditApplied,400);assert.equal(preview.immediateDue,0);assert.equal(preview.nextInvoiceSubtotal,700);assert.equal(preview.nextInvoiceDue,300);assert.equal(preview.next.rules,8);
   assert.equal(calls.some(call=>call.path==='/v1/invoices/create_preview'),false);calls.length=0;
   const requestId='123e4567-e89b-42d3-a456-426614174001';
-  const blocked=await billingAction(new Request('https://dpi-bot.com/api/supporter/billing/update'),env,db,'123',{plan:'supporter',channelPacks:1,serverPacks:0,prorationDate:preview.prorationDate,expectedCreditApplied:400,useCredits:false,requestId});
+  const blocked=await billingAction(new Request('https://dpi-bot.com/api/supporter/billing/update'),env,db,'123',{plan:'supporter',channelPacks:1,serverPacks:0,rulePacks:1,prorationDate:preview.prorationDate,expectedCreditApplied:400,useCredits:false,requestId});
   assert.equal(blocked.status,409);assert.equal(calls.some(call=>call.path==='/v1/subscriptions/sub_options'),false);calls.length=0;
-  const response=await billingAction(new Request('https://dpi-bot.com/api/supporter/billing/update'),env,db,'123',{plan:'supporter',channelPacks:1,serverPacks:0,prorationDate:preview.prorationDate,expectedCreditApplied:400,useCredits:true,requestId});
-  assert.equal(response.status,200);const result=await response.json();assert.match(result.message,/26日の請求書確定時に消費/);assert.deepEqual(result.creditApplication,{immediate:0,nextInvoice:400,nextInvoiceDue:100});
-  const optionUpdate=calls.find(call=>call.path==='/v1/subscriptions/sub_options'&&call.method==='POST');assert.equal(optionUpdate.params.get('proration_behavior'),'none');assert.equal(optionUpdate.params.get('items[0][price]'),'price_addon');assert.equal(optionUpdate.params.get('items[0][quantity]'),'1');
+  const response=await billingAction(new Request('https://dpi-bot.com/api/supporter/billing/update'),env,db,'123',{plan:'supporter',channelPacks:1,serverPacks:0,rulePacks:1,prorationDate:preview.prorationDate,expectedCreditApplied:400,useCredits:true,requestId});
+  assert.equal(response.status,200);const result=await response.json();assert.match(result.message,/26日の請求書確定時に消費/);assert.deepEqual(result.creditApplication,{immediate:0,nextInvoice:400,nextInvoiceDue:300});
+  const optionUpdate=calls.find(call=>call.path==='/v1/subscriptions/sub_options'&&call.method==='POST');assert.equal(optionUpdate.params.get('proration_behavior'),'none');assert.equal(optionUpdate.params.get('items[0][price]'),'price_addon');assert.equal(optionUpdate.params.get('items[0][quantity]'),'2');assert.equal(optionUpdate.params.get('metadata[dpi_rule_packs]'),'1');
  }finally{globalThis.fetch=originalFetch;}
 });
 test('downgrades are scheduled for the next renewal without refund or immediate invoice',async()=>{

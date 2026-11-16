@@ -55,7 +55,7 @@
       <tr><th scope="row">登録サーバー上限</th><td>1</td><td>3</td><td>5</td><td>契約内容による</td></tr>
       <tr><th scope="row">通知チャンネル上限</th><td>2</td><td>10</td><td>20</td><td>契約内容による</td></tr>
       <tr><th scope="row">通知ルール上限</th><td>5</td><td>15</td><td>30</td><td>契約内容による</td></tr>
-      <tr><th scope="row">追加チャンネル（3件）／追加サーバー（1件）</th><td>各＋200円／月</td><td>各＋200円／月</td><td>各＋200円／月</td><td>個別条件</td></tr>
+      <tr><th scope="row">追加チャンネル（3件）／追加サーバー（2件）／追加ルール（3件）</th><td>各＋200円／月</td><td>各＋200円／月</td><td>各＋200円／月</td><td>個別条件</td></tr>
       <tr class="comparison-group"><th scope="row" colspan="5">対応する通知情報</th></tr>
       <tr><th scope="row">地震情報（震度速報・震源・震度・長周期地震動など）</th><td>○</td><td>○</td><td>○</td><td>○</td></tr>
       <tr><th scope="row">緊急地震速報（地震動予報・警報）</th><td>○</td><td>○</td><td>○</td><td>○</td></tr>
@@ -74,8 +74,8 @@
       <tr><th scope="row">1ルールから複数チャンネルへ配信</th><td>—</td><td>—</td><td>○</td><td>許可時のみ</td></tr>
       <tr class="comparison-group"><th scope="row" colspan="5">雨雲レーダーの配信設定</th></tr>
       <tr><th scope="row">配信頻度（1・2・3・6・12・24時間ごと）</th><td>○</td><td>○</td><td>○</td><td>○</td></tr>
-      <tr><th scope="row">配信条件（定時更新／降雨検知／降水量の閾値以上）</th><td>○</td><td>○</td><td>○</td><td>○</td></tr>
-      <tr><th scope="row">1時間降水量の閾値指定（0.1～20 mm/h）</th><td>○</td><td>○</td><td>○</td><td>○</td></tr>
+      <tr><th scope="row">定時更新・降雨検知の配信条件</th><td>○</td><td>○</td><td>○</td><td>○</td></tr>
+      <tr><th scope="row">1時間降水量の閾値指定（0.1～20 mm/h）</th><td>—</td><td>○</td><td>○</td><td>○</td></tr>
       <tr class="compare-cta-row"><th scope="row">お申込み</th><td><a href="/site/supporter/?plan=supporter#billing">Basicを契約する</a></td><td><a href="/site/supporter/?plan=plus#billing">Plusを契約する</a></td><td><a href="/site/supporter/?plan=pro#billing">Proを契約する</a></td><td><a href="/site/supp/index.html">カスタムを相談する</a></td></tr>
      </tbody>
     </table>
@@ -85,6 +85,7 @@
   <section class="comparison-catalog" aria-labelledby="catalog-title">
    <h2 id="catalog-title">選択できる配信情報の詳細</h2>
    <p>通知ルールの情報種別・詳細として現在選択できる項目です。各情報の受信・提供状況によって実際の配信は異なります。</p>
+   <p class="comparison-future-note">対応する配信情報や便利な機能は、今後も随時追加予定です。</p>
    <div class="delivery-grid">
     <details class="delivery-category">
      <summary>地震情報 <span class="delivery-count">7種類の選択肢</span></summary>
@@ -112,14 +113,26 @@
     <details class="delivery-category">
      <summary>気象情報 <span class="delivery-count">警報・注意報など</span></summary>
      <ul>
-      <li>大雨・土砂災害・洪水・高潮に関する警戒レベル情報</li>
-      <li>暴風・暴風雪、波浪、大雪の警報・注意報</li>
-      <li>その他の気象注意報、竜巻注意情報</li>
-      <li>記録的短時間大雨情報、指定河川洪水予報</li>
-      <li>熱中症警戒アラート、早期天候情報</li>
-      <li>全般気象情報、台風情報、気象防災速報</li>
-      <li>線状降水帯に関する情報、顕著な大雪情報</li>
-      <li>気象解説情報、気象解説情報（潮位）</li>
+      <li>大雨に関する警戒レベル情報</li>
+      <li>土砂災害に関する警戒レベル情報</li>
+      <li>洪水警報・洪水注意報</li>
+      <li>高潮に関する警戒レベル情報</li>
+      <li>暴風・暴風雪の警報・注意報</li>
+      <li>波浪の警報・注意報</li>
+      <li>大雪の警報・注意報</li>
+      <li>その他の気象注意報</li>
+      <li>竜巻注意情報</li>
+      <li>記録的短時間大雨情報</li>
+      <li>指定河川洪水予報</li>
+      <li>熱中症警戒アラート</li>
+      <li>早期天候情報</li>
+      <li>全般気象情報</li>
+      <li>台風情報</li>
+      <li>気象防災速報</li>
+      <li>線状降水帯に関する情報</li>
+      <li>顕著な大雪情報</li>
+      <li>気象解説情報</li>
+      <li>気象解説情報（潮位）</li>
      </ul>
     </details>
     <details class="delivery-category">
@@ -135,7 +148,7 @@
   </section>
   <section class="comparison-notices" aria-labelledby="comparison-notes-heading">
    <h2 id="comparison-notes-heading">選択前にご確認ください</h2>
-   <p>追加オプションは、チャンネル3件あたり月額200円、サーバー1件あたり月額200円です。請求日は毎月26日です。詳細な金額はお申込み画面で必ず確認してください。</p>
+   <p>追加オプションは、それぞれ月額200円でチャンネル＋3件・サーバー＋2件・通知ルール＋3件です。請求日は毎月26日です。詳細な金額はお申込み画面で必ず確認してください。</p>
    <p>市区町村単位の設定はProまたは許可済みカスタムプランで、気象庁の地域コードなどで判定できる情報に限ります。北海道の「振興局相当」は気象庁の地方区分を指し、行政上の振興局区分との完全一致を保証するものではありません。EEWは市区町村指定に対応せず、雨雲レーダーは地方単位です。</p>
    <p>有料プラン契約だけでは二次利用は許可されません。転載・再配信・加工配信には、別途<a href="/site/reuse/">二次利用申請</a>と承認が必要です。</p>
    <p>契約画面は現在テスト運用中のため、許可されたユーザーのみ表示されます。契約画面にアクセスできない場合は<a href="/site/supp/index.html">お問い合わせ</a>をご利用ください。</p>

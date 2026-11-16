@@ -43,7 +43,7 @@ test('有効な契約のルールだけを個人情報なしでスナップシ�
     const loadSubscriptions = async (_env, customerIds) => {
         assert.deepEqual(customerIds, ['cus_active', 'cus_canceled']);
         return new Map([
-            ['cus_active', [{status: 'active', recognizedPlan: true}]],
+            ['cus_active', [{status: 'active', recognizedPlan: true, planId:'plus'}]],
             ['cus_canceled', [{status: 'canceled', recognizedPlan: true}]],
         ]);
     };
