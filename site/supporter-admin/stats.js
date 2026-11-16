@@ -43,7 +43,7 @@ async function load(){
   for(const [label,value] of [['総クレジット',credit.totalCredits==null?'取得不可':number(credit.totalCredits)],['保有者数',credit.creditUsers==null?'取得不可':number(credit.creditUsers)],['購入者数',number(credit.purchasers)],['累計チャージ（円）',yen(credit.netPurchased)],['30日以内の失効予定',number(credit.expiring30Days)],['累計失効',number(credit.expiredCredits)]])metric(details,label,value);
   const months=new Map();
   for(const account of accounts){
-   const d=String(account.registeredAt||'').slice(0,7);if(/^\\d{4}-\\d{2}$/.test(d))months.set(d,(months.get(d)||0)+1);
+   const d=String(account.registeredAt||'').slice(0,7);if(/^[0-9]{4}-[0-9]{2}$/.test(d))months.set(d,(months.get(d)||0)+1);
   }
   chart($('stats-registrations'),[...months].sort((a,b)=>a[0].localeCompare(b[0])).slice(-12));
   $('stats-status').textContent=data.creditSummaryError||'現在の契約・クレジット情報を表示しています（履歴推移ではありません）。';
