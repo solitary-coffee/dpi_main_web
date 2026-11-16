@@ -1,3 +1,4 @@
+import { geographicEntitlements, geographicRuleAllowed } from './supporter-geo.js';
 const ACTIVE_SUBSCRIPTION_STATUSES = new Set(['active', 'trialing', 'past_due', 'unpaid', 'paused']);
 const ALLOWED_RULE_TYPES = new Set(['earthquake', 'eew', 'weather', 'rain-radar']);
 const SNAPSHOT_TTL_SECONDS = 30 * 60 * 60;
@@ -57,7 +58,11 @@ export async function buildSupporterSnapshot(db, env, loadSubscriptions, nowMs =
         const subscriptions = grouped.get(row.customer_id) || [];
         const entitled = subscriptions.some(item => item?.recognizedPlan !== false && ACTIVE_SUBSCRIPTION_STATUSES.has(item?.status));
         if (!entitled) continue;
+        const geographicAccess = geographicEntitlements(subscriptions);
         for (const [index, rule] of rulesFromSettings(row.settings_json).entries()) {
+            // Never broaden a previously paid geographic filter on downgrade.
+            // Suspend incompatible rules until the customer chooses a new scope.
+            if (!geographicRuleAllowed(rule, geographicAccess)) continue;
             const id = `rule-${await digestPrefix(`${row.discord_user_id}:${Number(row.revision) || 0}:${index + 1}`)}`;
             const value = normalizedRule(rule, id);
             if (value) rules.push(value);
