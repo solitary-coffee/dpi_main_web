@@ -1,4 +1,5 @@
 import { refreshSupporterSnapshotSafely } from './supporter-snapshot.js';
+import { getCustomPlan,customLocked,customPublic,enrichCustomSubscriptions,syncCustomWithStripe } from './supporter-custom.js';
 
 // Test-only integration. Live keys are deliberately rejected until delivery is ready.
 const json = (data,status=200)=>Response.json(data,{status,headers:{'Cache-Control':'no-store'}});
@@ -629,7 +630,7 @@ export function subscriptionSummary(subscription,env={}){
  const planId=basePrice===env.STRIPE_PRICE_PRO?'pro':basePrice===env.STRIPE_PRICE_PLUS?'plus':basePrice===env.STRIPE_PRICE_SUPPORTER?'supporter':'';
  const recognizedPlan=!!planId&&options.valid;
  const choice=recognizedPlan?selection({plan:planId,channelPacks,serverPacks}):{channels:0,servers:0,rules:0,complexConditions:false,multiDestination:false};
- return {status:subscription.status||'unknown',cancelAtPeriodEnd:subscription.cancel_at_period_end===true,startedAt:unix(subscription.start_date)||unix(subscription.created),currentPeriodStart,nextRenewalAt,amount:items.reduce((sum,item)=>sum+item.subtotal,0),currency,plan:planId?PLAN_CATALOG[planId].name:'確認が必要な契約',planId,recognizedPlan,configurationValid:options.valid,channelPacks,serverPacks,channels:choice.channels,servers:choice.servers,rules:choice.rules,complexConditions:choice.complexConditions,multiDestination:choice.multiDestination,items,scheduledChange:null};
+ return {subscriptionId:subscription.id||'',customId:clean(metadata.dpi_custom_id),customRevision:Number(metadata.dpi_custom_revision)||0,status:subscription.status||'unknown',cancelAtPeriodEnd:subscription.cancel_at_period_end===true,startedAt:unix(subscription.start_date)||unix(subscription.created),currentPeriodStart,nextRenewalAt,amount:items.reduce((sum,item)=>sum+item.subtotal,0),currency,plan:planId?PLAN_CATALOG[planId].name:'確認が必要な契約',planId,recognizedPlan,configurationValid:options.valid,channelPacks,serverPacks,channels:choice.channels,servers:choice.servers,rules:choice.rules,complexConditions:choice.complexConditions,multiDestination:choice.multiDestination,items,scheduledChange:null};
 }
 export function reconcileRulesForLimits(settingsJson,limits={}){
  let settings;
@@ -733,6 +734,7 @@ export async function billingAction(request,env,db,uid,input={}){
  if(!billingReady(env))return json({message:'決済設定が完了していません。'},503);
  const account=await db.prepare('SELECT discord_user_id,billing_email,account_status,status_reason,status_updated_at FROM supporter_accounts WHERE discord_user_id=?').bind(uid).first();
  if(!account)return json({message:'先に登録してください。'},409);
+ const customPlan=await getCustomPlan(db,uid);
  const accountEnforcement={suspended:account.account_status==='suspended',status:account.account_status||'active',reason:clean(account.status_reason),updatedAt:account.status_updated_at||null};
  if(accountEnforcement.suspended&&!['status','portal'].includes(action))return json({message:`有料プランアカウントは管理者によりBANされています。${accountEnforcement.reason?` 理由: ${accountEnforcement.reason}`:''}`,accountEnforcement},403);
  await db.prepare('INSERT INTO supporter_billing(discord_user_id) VALUES(?) ON CONFLICT DO NOTHING').bind(uid).run();
@@ -743,10 +745,14 @@ export async function billingAction(request,env,db,uid,input={}){
   if(recovery.recovered&&recovery.checkoutId)await db.prepare('UPDATE supporter_billing SET checkout_id=?,dirty=1 WHERE discord_user_id=?').bind(recovery.checkoutId,uid).run();
   const [summaries,invoices,credits,dunning]=await Promise.all([customerSubscriptionSummaries(env,row.customer_id),customerInvoices(env,row.customer_id),customerCredits(env,row.customer_id),dunningState(db,row.customer_id)]);
   const creditDetails=await purchasedCreditStatus(db,uid,credits);
-  const active=summaries.filter(item=>item.recognizedPlan!==false&&['active','trialing','past_due','unpaid','paused'].includes(item.status));
-  const rulesAdjustment=active.length?await reconcileStoredRulesForCustomer(db,row.customer_id,combinedLimits(active)):{changed:false,removedRules:0,removedDestinations:0,simplifiedRules:0};
-  return json({mode:'test',billingDay:26,subscriptions:summaries,invoices,credits,creditDetails,dunning,accountEnforcement,rulesAdjustment,recoveredSubscription:recovery.recovered,creditTopupRecovery,deliveryEnabled:false});
+  const syncedCustom=await syncCustomWithStripe(db,uid,row.customer_id,summaries);
+  const effective=enrichCustomSubscriptions(summaries,syncedCustom);
+  const active=effective.filter(item=>item.recognizedPlan!==false&&['active','trialing','past_due','unpaid','paused'].includes(item.status));
+  // Never silently truncate custom-plan rules. Admin must resolve a lowered quota first.
+  const rulesAdjustment=active.length&&!effective.some(item=>item.managedCustom)?await reconcileStoredRulesForCustomer(db,row.customer_id,combinedLimits(active)):{changed:false,removedRules:0,removedDestinations:0,simplifiedRules:0};
+  return json({mode:'test',billingDay:26,subscriptions:effective,customPlan:customPublic(syncedCustom),invoices,credits,creditDetails,dunning,accountEnforcement,rulesAdjustment,recoveredSubscription:recovery.recovered,creditTopupRecovery,deliveryEnabled:false});
  }
+ if(customLocked(customPlan)&&['checkout','update','preview-update','portal'].includes(action))return json({message:'カスタムプランの提供中はユーザー側でプラン変更・標準プラン申込みを行えません。契約の変更・解約は管理者へお問い合わせください。',customPlan:customPublic(customPlan)},403);
  if(action==='portal'&&accountEnforcement.suspended&&!row.customer_id)return json({message:'BAN中のため契約管理画面を作成できません。',accountEnforcement},403);
  if(!row.customer_id){const customer=await createBillingCustomer(env,uid,account.billing_email,`dpi-customer-${uid}`);await db.prepare('UPDATE supporter_billing SET customer_id=? WHERE discord_user_id=? AND customer_id IS NULL').bind(customer.id,uid).run();row=await db.prepare('SELECT * FROM supporter_billing WHERE discord_user_id=?').bind(uid).first();}
  else if(account.billing_email)await stripe(env,`customers/${encodeURIComponent(row.customer_id)}`,{email:account.billing_email},await idempotencyKey(`dpi-customer-email-${uid}-`,account.billing_email));
@@ -1172,7 +1178,14 @@ export async function billingWebhook(request,env,ctx){
  if(['customer.subscription.created','customer.subscription.updated'].includes(event.type)){
   const subscription=event.data?.object;
   const summary=subscriptionSummary(subscription,env);
-  if(summary.recognizedPlan&&['active','trialing','past_due','unpaid','paused'].includes(subscription?.status))await reconcileStoredRulesForCustomer(db,subscription.customer,summary);
+  if(summary.customId){
+   const uid=clean(subscription?.metadata?.dpi_user);
+   if(/^\d{17,20}$/.test(uid)){
+    const billing=await db.prepare('SELECT customer_id FROM supporter_billing WHERE discord_user_id=?').bind(uid).first();
+    const customer=typeof subscription.customer==='string'?subscription.customer:subscription.customer?.id;
+    if(billing?.customer_id===customer)await syncCustomWithStripe(db,uid,customer,await customerSubscriptionSummaries(env,customer));
+   }
+  }else if(summary.recognizedPlan&&['active','trialing','past_due','unpaid','paused'].includes(subscription?.status))await reconcileStoredRulesForCustomer(db,subscription.customer,summary);
  }
  // Events invalidate a cache only; status always comes from Stripe, never from stale event payloads.
  await db.batch([db.prepare('INSERT INTO supporter_stripe_events(id,received_at) VALUES(?,?) ON CONFLICT DO NOTHING').bind(event.id,Date.now()),db.prepare('UPDATE supporter_billing SET dirty=1 WHERE customer_id=?').bind(eventCustomerId(event))]);
@@ -1217,4 +1230,46 @@ export async function runSupporterBillingSchedule(env,nowMs=Date.now()){
  const expiredCredits=await expirePurchasedCredits(env,db);
  await refreshSupporterSnapshotSafely(env,db,subscriptionSummariesByCustomer,'billing_schedule');
  return {retried,paid,failed,suspended,expiredCredits};
+}
+
+/** Test-mode custom monthly checkout. A 24-hour single-user session is used,
+ * never a reusable open-amount Stripe Payment Link. */
+export async function createCustomCheckout(env,customer,uid,offer,requestId){
+ if(!billingReady(env))fail('Stripeテスト接続を確認できません。',503);
+ if(!customer||!/^\\d{17,20}$/.test(uid)||offer?.status!=='offered')fail('カスタムプランの提供状態を確認してください。',409);
+ const origin=actionOrigin(env);
+ const now=Math.floor(Date.now()/1000);
+ const input={
+  mode:'subscription',customer,client_reference_id:uid,
+  'line_items[0][price_data][currency]':'jpy',
+  'line_items[0][price_data][unit_amount]':String(offer.confirmed_yen),
+  'line_items[0][price_data][recurring][interval]':'month',
+  'line_items[0][price_data][product_data][name]':String(offer.name).slice(0,80),
+  'line_items[0][quantity]':'1',
+  'subscription_data[metadata][dpi_custom_id]':offer.id,
+  'subscription_data[metadata][dpi_custom_revision]':String(offer.revision),
+  'subscription_data[metadata][dpi_user]':uid,
+  'metadata[dpi_checkout_kind]':'custom_subscription',
+  'metadata[dpi_custom_id]':offer.id,
+  'metadata[dpi_custom_revision]':String(offer.revision),
+  'metadata[dpi_user]':uid,
+  success_url:`${origin}/site/supporter/?custom=completed`,
+  cancel_url:`${origin}/site/supporter/?custom=canceled`,
+  expires_at:String(now+86400),
+  integration_identifier:integrationIdentifier('dpi_custom_'),
+ };
+ const checkout=await stripe(env,'checkout/sessions',input,`dpi-custom-checkout-${offer.id}-${offer.revision}-${requestId}`);
+ if(!checkout.url||checkout.mode!=='subscription'||checkout.status!=='open')fail('Stripe専用決済セッションを作成できませんでした。',502);
+ return {id:checkout.id,url:checkout.url,expiresAt:checkout.expires_at};
+}
+export async function expireCustomCheckout(env,sessionId,key){
+ if(!sessionId)return;
+ const session=await stripe(env,`checkout/sessions/${encodeURIComponent(sessionId)}`);
+ if(session.status==='open')await stripe(env,`checkout/sessions/${encodeURIComponent(sessionId)}/expire`,{},key);
+}
+export async function cancelCustomSubscription(env,subscriptionId,key){
+ if(!subscriptionId)return;
+ const item=await stripe(env,`subscriptions/${encodeURIComponent(subscriptionId)}`);
+ if(!['canceled','incomplete_expired'].includes(item.status))
+  await stripe(env,`subscriptions/${encodeURIComponent(subscriptionId)}`,{},key,'DELETE');
 }
