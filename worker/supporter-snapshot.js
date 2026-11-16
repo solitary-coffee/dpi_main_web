@@ -60,6 +60,7 @@ export async function buildSupporterSnapshot(db, env, loadSubscriptions, nowMs =
         const entitled = subscriptions.some(item => item?.recognizedPlan !== false && ACTIVE_SUBSCRIPTION_STATUSES.has(item?.status));
         if (!entitled) continue;
         const geographicAccess = geographicEntitlements(subscriptions);
+        const rainfallThresholdAllowed=subscriptions.some(item=>item?.recognizedPlan!==false && ACTIVE_SUBSCRIPTION_STATUSES.has(item?.status) && (['plus','pro'].includes(item.planId)||item.managedCustom===true));
         const custom=subscriptions.find(item=>item?.managedCustom===true&&['active','trialing'].includes(item.status));
         const allRules=rulesFromSettings(row.settings_json);
         // Fail closed on unapproved custom-plan combinations, without deleting settings.
@@ -77,6 +78,8 @@ export async function buildSupporterSnapshot(db, env, loadSubscriptions, nowMs =
             // Never broaden a previously paid geographic filter on downgrade.
             // Suspend incompatible rules until the customer chooses a new scope.
             if (!geographicRuleAllowed(rule, geographicAccess)) continue;
+            // Do not broaden a Basic contract's previously saved Plus-only threshold.
+            if (rule.type==='rain-radar' && rule.radarCondition==='rainfall-threshold' && !rainfallThresholdAllowed) continue;
             const id = `rule-${await digestPrefix(`${row.discord_user_id}:${Number(row.revision) || 0}:${index + 1}`)}`;
             const value = normalizedRule(rule, id);
             if (value) rules.push(value);
