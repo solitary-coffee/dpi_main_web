@@ -916,7 +916,7 @@ export async function handleSupporterRequest(request, env, ctx) {
       await recordAdminCreditLot(db,uid,input.action,clean(input.requestId),Math.abs(Number(result.creditEvent.delta)||0));
      } catch (error) { console.error('Paid plan credit event write failed',{errorName:error?.name||'Error'}); creditRecorded = false; }
     }
-    const auditRecorded = await writeSupporterAudit(db,admin.email,input.action,uid,{reason:clean(input.reason),amount:Number(input.amount)||null,plan:clean(input.plan)||null,channelPacks:Number.isInteger(Number(input.channelPacks??input.packs))?Number(input.channelPacks??input.packs):null,serverPacks:Number.isInteger(Number(input.serverPacks))?Number(input.serverPacks):null,requestId:clean(input.requestId),resultMessage:result.message});
+    const auditRecorded = await writeSupporterAudit(db,admin.email,input.action,uid,{reason:clean(input.reason),amount:Number(input.amount)||null,plan:clean(input.plan)||null,channelPacks:Number.isInteger(Number(input.channelPacks??input.packs))?Number(input.channelPacks??input.packs):null,serverPacks:Number.isInteger(Number(input.serverPacks))?Number(input.serverPacks):null,rulePacks:Number.isInteger(Number(input.rulePacks))?Number(input.rulePacks):null,requestId:clean(input.requestId),resultMessage:result.message});
     return response({success:true,...result,auditRecorded,creditRecorded});
    }
    if (request.method !== 'GET') return response({message:'Method not allowed'},405);
