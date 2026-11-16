@@ -69,13 +69,13 @@ test('comparison page and CSS share the paid dashboard access gate',async()=>{
  assert.match(html,/雨雲レーダーの地方別設定/);
  assert.match(html,/カスタムを相談する/);
  assert.match(html,/別途.*二次利用申請/s);
- assert.match(js,/async function supporterSite\\(request, env, db\\)/);
- assert.match(js,/if \\(!supporterPublicEnabled\\(env\\)\\) \\{/);
- assert.doesNotMatch(js,/publicComparison/);
- assert.match(js,/supporterTestUserAllowed\\(env, session\\.discord_user_id\\)/);
- assert.match(js,/authenticateNewsletterAdmin\\(request, env\\)/);
- assert.match(js,/if \\(!allowed\\) return notFound\\(\\)/);
- assert.match(js,/headers\\.set\\('X-Robots-Tag', 'noindex, nofollow, noarchive'\\)/);
+ assert.ok(js.includes('async function supporterSite(request, env, db)'));
+ assert.ok(js.includes('if (!supporterPublicEnabled(env)) {'));
+ assert.ok(!js.includes('publicComparison'));
+ assert.ok(js.includes('supporterTestUserAllowed(env, session.discord_user_id)'));
+ assert.ok(js.includes('authenticateNewsletterAdmin(request, env)'));
+ assert.ok(js.includes('if (!allowed) return notFound()'));
+ assert.ok(js.includes("headers.set('X-Robots-Tag', 'noindex, nofollow, noarchive')"));
 });
 test('unauthed comparison assets return 404 without exposing content',async()=>{
  const {handleSupporterRequest}=await import('../worker/supporter.js');
