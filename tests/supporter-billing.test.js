@@ -210,7 +210,7 @@ test('admin rule details expose subscriber, server, channel names and readable c
  assert.equal(account.rules[0].name,'首都圏EEW');
  assert.equal(account.rules[0].guildName,'防災サーバー');
  assert.deepEqual(account.rules[0].channels,[{id:'22222222222222222',name:'地震速報'},{id:'33333333333333333',name:''}]);
- assert.deepEqual(account.rules[0].details.map(item=>item.value),['緊急地震速報','緊急地震速報（警報）','関東甲信地方','いずれかを満たす（OR）','震度5弱以上','上昇時のみ','対象警報地方のみ','マグニチュード：M6.5以上']);
+ assert.deepEqual(account.rules[0].details.map(item=>item.value),['緊急地震速報','緊急地震速報（警報）','関東甲信地方','いずれかを満たす（OR）','送信する（初期値）','震度5弱以上','上昇時のみ','対象警報地方のみ','マグニチュード：M6.5以上']);
 });
 test('paid plans stay separate from secondary-use applications and private in navigation',async()=>{
  const [reuseHtml,reuseScript,basicHtml,billingSource,billingUi]=await Promise.all([
