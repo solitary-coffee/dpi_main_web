@@ -4,7 +4,7 @@ let rules = [];
 let options;
 let areaCatalogue={municipalities:[],districts:[]};
 let areaCatalogueFailed=false;
-let entitlements = {servers:1,channels:2,rules:5,complexConditions:false,multiDestination:false,prefecture:false,municipality:false,strictMunicipality:false};
+let entitlements = {servers:1,channels:2,rules:5,complexConditions:false,multiDestination:false,prefecture:false,municipality:false,strictMunicipality:false,rainfallThreshold:false};
 let hasConfigurableContract = false;
 let billingAvailable = false;
 let accountSuspended = false;
@@ -16,7 +16,8 @@ let availableCredits=0;
 const channelsByGuild = new Map();
 const PLAN_OPTIONS=[['supporter','BASIC 月額300円'],['plus','Plus 月額800円'],['pro','Pro 月額1,280円']];
 const CHANNEL_PACK_OPTIONS=[[0,'チャンネル追加なし'],[1,'＋3チャンネル / 月額＋200円'],[2,'＋6チャンネル / 月額＋400円'],[3,'＋9チャンネル / 月額＋600円'],[4,'＋12チャンネル / 月額＋800円'],[5,'＋15チャンネル / 月額＋1,000円']];
-const SERVER_PACK_OPTIONS=[[0,'サーバー追加なし'],[1,'＋1サーバー / 月額＋200円'],[2,'＋2サーバー / 月額＋400円'],[3,'＋3サーバー / 月額＋600円'],[4,'＋4サーバー / 月額＋800円'],[5,'＋5サーバー / 月額＋1,000円']];
+const SERVER_PACK_OPTIONS=[[0,'サーバー追加なし'],[1,'＋2サーバー / 月額＋200円'],[2,'＋4サーバー / 月額＋400円'],[3,'＋6サーバー / 月額＋600円'],[4,'＋8サーバー / 月額＋800円'],[5,'＋10サーバー / 月額＋1,000円']];
+const RULE_PACK_OPTIONS=[[0,'ルール追加なし'],[1,'＋3ルール / 月額＋200円'],[2,'＋6ルール / 月額＋400円'],[3,'＋9ルール / 月額＋600円'],[4,'＋12ルール / 月額＋800円'],[5,'＋15ルール / 月額＋1,000円']];
 
 const $ = id => document.getElementById(id);
 const status = text => { $('status').textContent = text; };
@@ -183,7 +184,7 @@ function additionalConditionsField(article,rule){
   const kind=document.createElement('select');kind.setAttribute('aria-label',`追加条件${index+1}の種類`);selectOptions(kind,conditionKinds(rule),condition.kind);
   const values=conditionValues(rule,condition.kind);
   const value=document.createElement(values?'select':'input');value.setAttribute('aria-label',`追加条件${index+1}の値`);
-  if(values)selectOptions(value,values,String(condition.value??''));else{value.value=String(condition.value??'');value.inputMode='decimal';value.placeholder=condition.kind==='rainfallThreshold'?'0.1〜500 mm/h':'0〜10';}
+  if(values)selectOptions(value,values,String(condition.value??''));else{value.value=String(condition.value??'');value.inputMode='decimal';value.placeholder=condition.kind==='rainfallThreshold'?'0.1〜20 mm/h':'0〜10';}
   kind.onchange=()=>{condition.kind=kind.value;condition.value=defaultConditionValue(rule,condition.kind);render();};
   value.onchange=()=>{condition.value=value.value;};
   const remove=document.createElement('button');remove.type='button';remove.className='condition-remove';remove.textContent='条件を削除';remove.onclick=()=>{rule.conditions.splice(index,1);render();};
@@ -328,8 +329,15 @@ function render() {
   field(conditionFields, rule, 'region', '対象地方', options.regions);
   geoScopeFields(conditionFields,rule);
   if (rule.type === 'rain-radar') {
-   field(conditionFields, rule, 'radarCondition', '配信条件', options.rainRadarConditions);
-   if(rule.radarCondition==='rainfall-threshold')field(conditionFields, rule, 'rainfallThresholdMmPerHour', '1時間降水量の閾値（mm/h・最大20）', null, {inputmode:'decimal',min:'0.1',max:'20',step:'0.1'});
+   field(conditionFields, rule, 'radarCondition', '配信条件', entitlements.rainfallThreshold?options.rainRadarConditions:options.rainRadarConditions.filter(([id])=>id!=='rainfall-threshold'));
+   if(!entitlements.rainfallThreshold){
+    const note=document.createElement('p');note.className='geo-upgrade';
+    note.textContent=rule.radarCondition==='rainfall-threshold'
+     ?'保存済みの降水量閾値ルールはBasicでは配信されません。Plus以上へ変更するか、配信条件を明示的に選び直してください。'
+     :'1時間降水量の閾値指定はPlus以上のプランで利用できます。';
+    conditionFields.append(note);
+   }
+   if(rule.radarCondition==='rainfall-threshold'&&entitlements.rainfallThreshold)field(conditionFields, rule, 'rainfallThresholdMmPerHour', '1時間降水量の閾値（mm/h・最大20）', null, {inputmode:'decimal',min:'0.1',max:'20',step:'0.1'});
    field(conditionFields, rule, 'deliveryIntervalHours', '配信頻度', options.rainRadarIntervals);
   } else if (rule.type === 'weather') {
    if (WEATHER_ALERT_DETAILS.has(rule.detail)) field(conditionFields, rule, 'weatherLevel', '警戒レベル', options.weatherLevels);
@@ -520,8 +528,9 @@ const topupSignupTitle=document.createElement('h4');topupSignupTitle.textContent
 const topupPlan=document.createElement('select');topupPlan.setAttribute('aria-label','クレジットで申し込むプラン');selectOptions(topupPlan,PLAN_OPTIONS,'supporter');
 const topupChannelPacks=document.createElement('select');topupChannelPacks.setAttribute('aria-label','クレジット申込みの追加チャンネル');selectOptions(topupChannelPacks,CHANNEL_PACK_OPTIONS,0);
 const topupServerPacks=document.createElement('select');topupServerPacks.setAttribute('aria-label','クレジット申込みの追加サーバー');selectOptions(topupServerPacks,SERVER_PACK_OPTIONS,0);
+const topupRulePacks=document.createElement('select');topupRulePacks.setAttribute('aria-label','クレジット申込みの追加ルール');selectOptions(topupRulePacks,RULE_PACK_OPTIONS,0);
 const topupSignupOptions=document.createElement('div');topupSignupOptions.className='billing-options';
-for(const [labelText,input] of [['プラン',topupPlan],['チャンネル追加',topupChannelPacks],['サーバー追加',topupServerPacks]]){const label=document.createElement('label');const span=document.createElement('span');span.textContent=labelText;label.append(span,input);topupSignupOptions.append(label);}
+for(const [labelText,input] of [['プラン',topupPlan],['チャンネル追加',topupChannelPacks],['サーバー追加',topupServerPacks],['ルール追加',topupRulePacks]]){const label=document.createElement('label');const span=document.createElement('span');span.textContent=labelText;label.append(span,input);topupSignupOptions.append(label);}
 const topupSignupPreview=document.createElement('p');topupSignupPreview.className='price-preview';
 const topupSignupWarning=document.createElement('p');topupSignupWarning.className='credit-balance-warning';topupSignupWarning.id='credit-signup-balance-warning';topupSignupWarning.setAttribute('role','alert');
 const topupSignupConsent=document.createElement('label');topupSignupConsent.className='legal-consent';
@@ -555,27 +564,28 @@ selectOptions(channelPacks,CHANNEL_PACK_OPTIONS,0);
 const serverPacks = document.createElement('select');
 serverPacks.setAttribute('aria-label','追加サーバー');
 selectOptions(serverPacks,SERVER_PACK_OPTIONS,0);
+const rulePacks=document.createElement('select');rulePacks.setAttribute('aria-label','追加ルール');selectOptions(rulePacks,RULE_PACK_OPTIONS,0);
 const optionGrid=document.createElement('div');optionGrid.className='billing-options';
-for(const [labelText,input] of [['プラン',plan],['チャンネル追加',channelPacks],['サーバー追加',serverPacks]]){const label=document.createElement('label');const span=document.createElement('span');span.textContent=labelText;label.append(span,input);optionGrid.append(label);}
+for(const [labelText,input] of [['プラン',plan],['チャンネル追加',channelPacks],['サーバー追加',serverPacks],['ルール追加',rulePacks]]){const label=document.createElement('label');const span=document.createElement('span');span.textContent=labelText;label.append(span,input);optionGrid.append(label);}
 const pricePreview=document.createElement('p');pricePreview.className='price-preview';
 const checkoutSummary=document.createElement('dl');checkoutSummary.className='checkout-summary';
 const creditPaymentChoice=document.createElement('label');creditPaymentChoice.className='credit-payment-choice';
 const creditPaymentInput=document.createElement('input');creditPaymentInput.type='checkbox';
 const creditPaymentText=document.createElement('span');creditPaymentChoice.append(creditPaymentInput,creditPaymentText);
-const updatePricePreview=()=>{const base={supporter:300,plus:800,pro:1280}[plan.value]||300;const monthly=base+200*(Number(channelPacks.value)+Number(serverPacks.value));const jstDay=Number(new Intl.DateTimeFormat('en-US',{day:'numeric',timeZone:'Asia/Tokyo'}).format(new Date()));const initial=monthly*(jstDay>=26?2:1);const canPayWithCredits=availableCredits>=initial;if(!canPayWithCredits)creditPaymentInput.checked=false;creditPaymentInput.disabled=!canPayWithCredits;creditPaymentText.textContent=canPayWithCredits?`${initial.toLocaleString('ja-JP')}クレジットで全額支払う（支払い後残高 ${(availableCredits-initial).toLocaleString('ja-JP')}クレジット）`:`全額払いには${initial.toLocaleString('ja-JP')}クレジット必要です（現在 ${availableCredits.toLocaleString('ja-JP')}クレジット）`;pricePreview.textContent=`月額 ${monthly.toLocaleString('ja-JP')}円／新規申込時 ${initial.toLocaleString('ja-JP')}円（${jstDay>=26?'当月分＋翌月分':'当月分'}）`;checkoutSummary.replaceChildren();const rows=[['申込みプラン',{supporter:'BASIC',plus:'Plus',pro:'Pro'}[plan.value]],['初回支払額',`${initial.toLocaleString('ja-JP')}円`],['申込時の支払方法',creditPaymentInput.checked?'チャージ済みクレジット':'クレジットカード等'],['次回以降','毎月26日に翌月分を請求'],['提供開始','決済確認後'],['解約','契約管理画面から手続きし、期間末で終了。支払済み料金の返金なし']];for(const [term,value] of rows){const dt=document.createElement('dt');dt.textContent=term;const dd=document.createElement('dd');dd.textContent=value;checkoutSummary.append(dt,dd);}updateCheckoutAvailability();};
-for(const input of [plan,channelPacks,serverPacks])input.addEventListener('change',updatePricePreview);
+const updatePricePreview=()=>{const base={supporter:300,plus:800,pro:1280}[plan.value]||300;const monthly=base+200*(Number(channelPacks.value)+Number(serverPacks.value)+Number(rulePacks.value));const jstDay=Number(new Intl.DateTimeFormat('en-US',{day:'numeric',timeZone:'Asia/Tokyo'}).format(new Date()));const initial=monthly*(jstDay>=26?2:1);const canPayWithCredits=availableCredits>=initial;if(!canPayWithCredits)creditPaymentInput.checked=false;creditPaymentInput.disabled=!canPayWithCredits;creditPaymentText.textContent=canPayWithCredits?`${initial.toLocaleString('ja-JP')}クレジットで全額支払う（支払い後残高 ${(availableCredits-initial).toLocaleString('ja-JP')}クレジット）`:`全額払いには${initial.toLocaleString('ja-JP')}クレジット必要です（現在 ${availableCredits.toLocaleString('ja-JP')}クレジット）`;pricePreview.textContent=`月額 ${monthly.toLocaleString('ja-JP')}円／新規申込時 ${initial.toLocaleString('ja-JP')}円（${jstDay>=26?'当月分＋翌月分':'当月分'}）`;checkoutSummary.replaceChildren();const rows=[['申込みプラン',{supporter:'BASIC',plus:'Plus',pro:'Pro'}[plan.value]],['初回支払額',`${initial.toLocaleString('ja-JP')}円`],['申込時の支払方法',creditPaymentInput.checked?'チャージ済みクレジット':'クレジットカード等'],['次回以降','毎月26日に翌月分を請求'],['提供開始','決済確認後'],['解約','契約管理画面から手続きし、期間末で終了。支払済み料金の返金なし']];for(const [term,value] of rows){const dt=document.createElement('dt');dt.textContent=term;const dd=document.createElement('dd');dd.textContent=value;checkoutSummary.append(dt,dd);}updateCheckoutAvailability();};
+for(const input of [plan,channelPacks,serverPacks,rulePacks])input.addEventListener('change',updatePricePreview);
 creditPaymentInput.addEventListener('change',updatePricePreview);
 updatePricePreview();application.append(optionGrid,pricePreview,checkoutSummary,creditPaymentChoice);
 
-const selectedInitialCharge=(selectedPlan,selectedChannelPacks,selectedServerPacks)=>{
+const selectedInitialCharge=(selectedPlan,selectedChannelPacks,selectedServerPacks,selectedRulePacks)=>{
  const base={supporter:300,plus:800,pro:1280}[selectedPlan]||300;
- const monthly=base+200*(Number(selectedChannelPacks)+Number(selectedServerPacks));
+ const monthly=base+200*(Number(selectedChannelPacks)+Number(selectedServerPacks)+Number(selectedRulePacks));
  const jstDay=Number(new Intl.DateTimeFormat('en-US',{day:'numeric',timeZone:'Asia/Tokyo'}).format(new Date()));
  return {monthly,initial:monthly*(jstDay>=26?2:1),lateMonth:jstDay>=26};
 };
 function updateTopupSignupAvailability(){
  if(!topupSignupButton)return;
- const price=selectedInitialCharge(topupPlan.value,topupChannelPacks.value,topupServerPacks.value);
+ const price=selectedInitialCharge(topupPlan.value,topupChannelPacks.value,topupServerPacks.value,topupRulePacks.value);
  if(hasExistingContract){
   topupSignupTitle.textContent='残クレジットでプラン・オプションを変更';
   topupSignupPreview.textContent=`変更後の月額 ${price.monthly.toLocaleString('ja-JP')}円`;
@@ -601,7 +611,7 @@ function updateTopupSignupAvailability(){
  topupSignupButton.title=hasExistingContract?'既に契約済みです。プラン変更をご利用ください。':shortage>0?'クレジット残高が不足しています。':'';
  topupSignupButton.textContent=hasExistingContract?'契約中':shortage>0?'クレジットが不足しています':'クレジットでこのプランを申し込む';
 }
-for(const input of [topupPlan,topupChannelPacks,topupServerPacks])input.addEventListener('change',updateTopupSignupAvailability);
+for(const input of [topupPlan,topupChannelPacks,topupServerPacks,topupRulePacks])input.addEventListener('change',updateTopupSignupAvailability);
 topupSignupConsentInput.addEventListener('change',updateTopupSignupAvailability);
 updateTopupSignupAvailability();
 
@@ -641,7 +651,7 @@ topupReloadButton.onclick=async()=>{
 
 topupSignupButton.onclick=async()=>{
  topupSignupStatus.textContent='';
- const selection={plan:topupPlan.value,channelPacks:Number(topupChannelPacks.value),serverPacks:Number(topupServerPacks.value)};
+ const selection={plan:topupPlan.value,channelPacks:Number(topupChannelPacks.value),serverPacks:Number(topupServerPacks.value),rulePacks:Number(topupRulePacks.value)};
  if(hasExistingContract){
   topupSignupButton.disabled=true;const original=topupSignupButton.textContent;topupSignupButton.textContent='料金を計算中…';
   try{
@@ -652,7 +662,7 @@ topupSignupButton.onclick=async()=>{
   return;
  }
  if(!topupEmail.reportValidity()||!topupSignupConsentInput.reportValidity())return;
- const price=selectedInitialCharge(topupPlan.value,topupChannelPacks.value,topupServerPacks.value);
+ const price=selectedInitialCharge(topupPlan.value,topupChannelPacks.value,topupServerPacks.value,topupRulePacks.value);
  if(availableCredits<price.initial){updateTopupSignupAvailability();topupSignupStatus.textContent=`クレジットが ${(price.initial-availableCredits).toLocaleString('ja-JP')} 不足しています。先にチャージしてください。`;return;}
  topupSignupButton.disabled=true;const original=topupSignupButton.textContent;topupSignupButton.textContent='申込み処理中…';
  try{
@@ -797,19 +807,19 @@ function renderContracts(subscriptions,dunning={},customPlan=null,customCheckout
  updateTopupSignupAvailability();
  if (!subscriptions.length) {
   if(!customPlanLocked)contract.textContent = '現在の契約はありません。';
-  entitlements={servers:1,channels:2,rules:5,complexConditions:false,multiDestination:false,prefecture:false,municipality:false,strictMunicipality:false};
+  entitlements={servers:1,channels:2,rules:5,complexConditions:false,multiDestination:false,prefecture:false,municipality:false,strictMunicipality:false,rainfallThreshold:false};
   if(options)setRuleAccess(false);
   return;
  }
  const active=subscriptions.filter(item=>item.recognizedPlan!==false&&['active','trialing','past_due','unpaid','paused'].includes(item.status));
  const geographicPlans=new Set(active.map(item=>item.planId));
  const custom=active.find(item=>item.managedCustom===true);
- entitlements={...active.reduce((limits,item)=>({servers:Math.max(limits.servers,Number(item.servers)||1),channels:Math.max(limits.channels,Number(item.channels)||2),rules:Math.max(limits.rules,Number(item.rules)||5),complexConditions:limits.complexConditions||item.complexConditions===true,multiDestination:limits.multiDestination||item.multiDestination===true}),{servers:1,channels:2,rules:5,complexConditions:false,multiDestination:false}),prefecture:!!custom?.municipalityBranching||geographicPlans.has('plus')||geographicPlans.has('pro'),municipality:!!custom?.municipalityBranching||geographicPlans.has('pro'),strictMunicipality:!!custom?.contentExtraction||geographicPlans.has('pro')};
+ entitlements={...active.reduce((limits,item)=>({servers:Math.max(limits.servers,Number(item.servers)||1),channels:Math.max(limits.channels,Number(item.channels)||2),rules:Math.max(limits.rules,Number(item.rules)||5),complexConditions:limits.complexConditions||item.complexConditions===true,multiDestination:limits.multiDestination||item.multiDestination===true,rainfallThreshold:limits.rainfallThreshold||['plus','pro'].includes(item.planId)||item.managedCustom===true}),{servers:1,channels:2,rules:5,complexConditions:false,multiDestination:false,rainfallThreshold:false}),prefecture:!!custom?.municipalityBranching||geographicPlans.has('plus')||geographicPlans.has('pro'),municipality:!!custom?.municipalityBranching||geographicPlans.has('pro'),strictMunicipality:!!custom?.contentExtraction||geographicPlans.has('pro')};
  const current=active[0]||subscriptions[0];
  if(dunning?.usageSuspended){const warning=document.createElement('p');warning.className='billing-suspension';warning.textContent='月末再決済を確認できなかったため、有料プランの通知設定は利用停止中です。契約管理画面からお支払いを完了してください。';contract.append(warning);}
  if(current){
-  plan.value=current.planId||'supporter';channelPacks.value=String(current.channelPacks||0);serverPacks.value=String(current.serverPacks||0);
-  topupPlan.value=current.planId||'supporter';topupChannelPacks.value=String(current.channelPacks||0);topupServerPacks.value=String(current.serverPacks||0);
+  plan.value=current.planId||'supporter';channelPacks.value=String(current.channelPacks||0);serverPacks.value=String(current.serverPacks||0);rulePacks.value=String(current.rulePacks||0);
+  topupPlan.value=current.planId||'supporter';topupChannelPacks.value=String(current.channelPacks||0);topupServerPacks.value=String(current.serverPacks||0);topupRulePacks.value=String(current.rulePacks||0);
   // Comparison-page CTAs preselect the requested plan without submitting payment.
   const requestedPlan=new URLSearchParams(location.search).get('plan');
   if(PLAN_OPTIONS.some(([id])=>id===requestedPlan)&&!window.__dpiComparisonPlanApplied){
@@ -956,7 +966,7 @@ for (const [label,action] of [['このプランで申し込む','checkout'],['�
   const originalLabel=button.textContent;
   button.textContent=action==='checkout'?'決済画面を準備中…':'処理中…';
   try {
-   const selection={plan:plan.value,channelPacks:Number(channelPacks.value),serverPacks:Number(serverPacks.value)};
+   const selection={plan:plan.value,channelPacks:Number(channelPacks.value),serverPacks:Number(serverPacks.value),rulePacks:Number(rulePacks.value)};
    if(action==='update'){
     const result=await api('/api/supporter/billing/preview-update','POST',selection);
     showBillingPreview(result,selection);return;
