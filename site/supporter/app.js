@@ -372,7 +372,7 @@ async function load() {
   if(billingEnabled){
    try{
     const billingState=await api('/api/supporter/billing/status');applyAccountEnforcement(billingState.accountEnforcement);
-    renderContracts(billingState.subscriptions||[],billingState.dunning,billingState.customPlan,billingState.customCheckoutUrl);renderInvoices(billingState.invoices||[]);
+    renderContracts(billingState.subscriptions||[],billingState.dunning,billingState.customPlan,billingState.customCheckoutUrl,billingState.customChange,billingState.customChangeCheckoutUrl);renderInvoices(billingState.invoices||[]);
     if(billingState.rulesAdjustment?.changed){
      revision=Number(billingState.rulesAdjustment.revision)||revision;
      rules=(billingState.rulesAdjustment.rules||[]).map(normalizeRule);
@@ -387,6 +387,7 @@ async function load() {
     if(creditResult==='completed'&&billingState.creditTopupRecovery?.failed>0)status('支払いは確認できましたが、クレジットの反映処理に失敗しました。時間をおいて「残高・履歴を再読み込み」を押してください。');
     if(creditResult==='canceled')status('クレジットチャージをキャンセルしました。料金は発生していません。');
     if(billingState.recoveredSubscription)status('支払い済みの申込みから契約を復旧し、有料プランを有効化しました。');
+    if(new URLSearchParams(location.search).get('custom')==='change-completed')status('カスタム契約の差額支払いを受け付けました。Stripeの決済確認後に新しい契約へ反映されます。');
    }catch{contract.textContent='契約情報を自動取得できませんでした。「最新の契約・明細を読み込む」を押してください。';setRuleAccess(false);}
   }
  }
@@ -608,7 +609,7 @@ topupReloadButton.onclick=async()=>{
  topupReloadStatus.textContent='';topupReloadButton.disabled=true;const original=topupReloadButton.textContent;topupReloadButton.textContent='再読み込み中…';
  try{
   const state=await api('/api/supporter/billing/status');applyAccountEnforcement(state.accountEnforcement);
-  renderContracts(state.subscriptions||[],state.dunning,state.customPlan,state.customCheckoutUrl);renderInvoices(state.invoices||[]);renderCreditDetails(state.creditDetails||{balance:Number(state.credits||0)});
+  renderContracts(state.subscriptions||[],state.dunning,state.customPlan,state.customCheckoutUrl,state.customChange,state.customChangeCheckoutUrl);renderInvoices(state.invoices||[]);renderCreditDetails(state.creditDetails||{balance:Number(state.credits||0)});
   const recovery=state.creditTopupRecovery||{};
   if(recovery.recovered>0){topupReloadStatus.textContent=`支払い済みのチャージ${recovery.recovered}件を反映しました。`;status(topupReloadStatus.textContent);}
   else if(recovery.failed>0){topupReloadStatus.textContent='支払い状況を取得できませんでした。時間をおいて再度お試しください。';status(topupReloadStatus.textContent);}
@@ -636,7 +637,7 @@ topupSignupButton.onclick=async()=>{
  try{
   const result=await api('/api/supporter/billing/checkout','POST',{...selection,email:topupEmail.value,legalConsent:true,useCredits:true,requestId:crypto.randomUUID()});
   if(result.url)location.href=stripeDestination(result.url);
-  else{renderContracts(result.subscriptions||[],result.dunning);renderInvoices(result.invoices||[]);renderCreditDetails(result.creditDetails||{balance:Number(result.credits||0)});status(result.message||'クレジットでプランを申し込みました。');topupSignupStatus.textContent=result.message||'申込みが完了しました。';}
+  else{renderContracts(result.subscriptions||[],result.dunning,result.customPlan,result.customCheckoutUrl,result.customChange,result.customChangeCheckoutUrl);renderInvoices(result.invoices||[]);renderCreditDetails(result.creditDetails||{balance:Number(result.credits||0)});status(result.message||'クレジットでプランを申し込みました。');topupSignupStatus.textContent=result.message||'申込みが完了しました。';}
  }catch(error){topupSignupStatus.textContent=error.message;status(error.message);}
  finally{topupSignupButton.textContent=original;updateTopupSignupAvailability();}
 };
@@ -712,7 +713,7 @@ function renderInvoices(invoices){
  }
 }
 
-function renderContracts(subscriptions,dunning={},customPlan=null,customCheckoutUrl='') {
+function renderContracts(subscriptions,dunning={},customPlan=null,customCheckoutUrl='',customChange=null,customChangeCheckoutUrl='') {
  contract.replaceChildren();
  customPlanLocked=customPlan?.locked===true;
  for(const button of document.querySelectorAll('[data-billing-action]')){
@@ -727,6 +728,18 @@ function renderContracts(subscriptions,dunning={},customPlan=null,customCheckout
   const details=document.createElement('p');details.textContent=`管理者提供／${customPlan.status==='active'?'利用中':'支払い待ち'}／月額 ${Number(customPlan.monthlyYen).toLocaleString('ja-JP')}円。上限：${customPlan.channels}チャンネル、${customPlan.servers}サーバー、${customPlan.rules}ルール。プラン変更は管理者のみ可能です。`;
   card.append(title,details);
   if(customPlan.status==='offered'&&customCheckoutUrl){const pay=document.createElement('a');pay.href=stripeDestination(customCheckoutUrl);pay.textContent='専用の支払い手続きへ';pay.rel='noopener noreferrer';card.append(pay);}
+  if(customChange){
+   const changed=document.createElement('p');changed.className='scheduled-change';
+   changed.textContent=customChange.status==='paid'
+    ?'管理者による月額変更の差額決済を確認しました。契約への反映を処理しています。'
+    :`カスタム契約の変更が提示されています。現在月額 ${Number(customChange.oldMonthlyYen).toLocaleString('ja-JP')}円 → 新月額 ${Number(customChange.nextMonthlyYen).toLocaleString('ja-JP')}円／当月差額 ${Number(customChange.amountDueYen).toLocaleString('ja-JP')}円。支払い確認後に新料金と配信条件が有効になります。`;
+   card.append(changed);
+   if(customChangeCheckoutUrl&&customChange.status==='pending'){
+    const link=document.createElement('a');link.href=stripeDestination(customChangeCheckoutUrl);
+    link.textContent=`当月差額 ${Number(customChange.amountDueYen).toLocaleString('ja-JP')}円を支払う（Stripe）`;
+    link.rel='noopener noreferrer';card.append(link);
+   }
+  }
   const reuse=document.createElement('p');reuse.textContent=customPlan.secondaryReuse?'二次利用の契約上の対象です。実施前には別途申請・承認が必要です。':'二次利用はこの契約では許可されていません。';card.append(reuse);
   contract.append(card);
  }
@@ -853,7 +866,7 @@ $('billing-preview-confirm').onclick=run(async()=>{
  try{
   const result=await api('/api/supporter/billing/update','POST',{...pendingUpdate.requested,prorationDate:pendingUpdate.prorationDate,expectedCreditApplied:pendingUpdate.expectedCreditApplied,useCredits:pendingUpdate.useCredits,requestId:crypto.randomUUID()});
   pendingUpdate=null;previewDialog.close();
-  const state=await api('/api/supporter/billing/status');applyAccountEnforcement(state.accountEnforcement);renderContracts(state.subscriptions||[],state.dunning,state.customPlan,state.customCheckoutUrl);renderInvoices(state.invoices||[]);
+  const state=await api('/api/supporter/billing/status');applyAccountEnforcement(state.accountEnforcement);renderContracts(state.subscriptions||[],state.dunning,state.customPlan,state.customCheckoutUrl,state.customChange,state.customChangeCheckoutUrl);renderInvoices(state.invoices||[]);
   renderCreditDetails(state.creditDetails||{balance:Number(state.credits||result.credits||0)});status(result.message||'契約情報を更新しました。');
  } finally {button.disabled=false;}
 });
@@ -900,7 +913,7 @@ for (const [label,action] of [['このプランで申し込む','checkout'],['�
     location.href = stripeDestination(result.url);
    } else {
     applyAccountEnforcement(result.accountEnforcement||{});
-    renderContracts(result.subscriptions||[],result.dunning);renderInvoices(result.invoices||[]);
+    renderContracts(result.subscriptions||[],result.dunning,result.customPlan,result.customCheckoutUrl,result.customChange,result.customChangeCheckoutUrl);renderInvoices(result.invoices||[]);
     renderCreditDetails(result.creditDetails||{balance:Number(result.credits||0)});
     status(result.message||'契約情報を更新しました。');
    }
