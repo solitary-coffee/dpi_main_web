@@ -5,3 +5,27 @@
 .section-description{color:var(--admin-muted)}.compensation-form{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin-top:18px}.compensation-form label{display:grid;gap:7px;font-weight:700}.compensation-form input,.compensation-form select,.compensation-form textarea{width:100%;padding:11px 12px;border:1px solid #aeb8c5;border-radius:6px;background:#fff;color:#182230;font:inherit}.compensation-reason{grid-column:span 2}.compensation-form .danger-btn{align-self:end}.campaign-history-title{margin:24px 0 10px}.campaign-list{display:grid;gap:10px}.campaign-card{padding:14px;border:1px solid var(--admin-line);border-left:4px solid #8ec9ff;border-radius:6px;background:var(--admin-panel-soft)}.campaign-card.completed{border-left-color:#79d69a}.campaign-card.partial,.campaign-card.failed{border-left-color:#ff8c8c}.campaign-card h4{margin:0 0 6px;color:#8ec9ff}.campaign-card p{margin:4px 0}.campaign-meta{color:var(--admin-muted);font-size:.9rem}.campaign-card button{margin-top:8px;padding:8px 12px;border:0;border-radius:5px;background:#237fdb;color:#fff;font:inherit;font-weight:700;cursor:pointer}.campaign-card button:disabled{opacity:.6}@media(max-width:900px){.compensation-form{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:768px){.compensation-form{grid-template-columns:1fr}.compensation-reason{grid-column:auto}}
 
 .stats-link{display:inline-flex;align-items:center;justify-content:center;padding:10px 15px;border:1px solid #8ec9ff;border-radius:6px;color:#dcefff;font-weight:700;text-decoration:none}.stats-link:hover{background:#24445d}.admin-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap}@media(max-width:768px){.admin-bar,.stats-link{width:100%}}
+
+
+/* Frequently used account/credit actions stay on the main admin dashboard. */
+.custom-settings-details{margin-top:14px;border:1px solid var(--admin-line);border-radius:12px;background:var(--admin-panel-soft);overflow:hidden}
+.custom-settings-summary{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:8px;padding:18px 20px;cursor:pointer;color:#fff;font-weight:800;list-style-position:inside}
+.custom-settings-summary:hover{background:#29465f}
+.custom-settings-summary:focus-visible,.custom-toggle input:focus-visible{outline:3px solid #8ec9ff;outline-offset:3px}
+.custom-summary-hint{color:var(--admin-muted);font-size:.84rem;font-weight:500}
+.custom-settings-details[open] .custom-summary-hint{display:none}
+.custom-settings-content{padding:6px 20px 20px;border-top:1px solid var(--admin-line)}
+.custom-settings-content .compensation-form{grid-template-columns:repeat(2,minmax(0,1fr))}
+.custom-settings-content .compensation-form>.admin-bar,.custom-settings-content .compensation-form>p{grid-column:1/-1}
+.custom-toggle{display:flex!important;flex-direction:row!important;align-items:center;gap:12px;min-height:58px;padding:12px 14px;border:1px solid var(--admin-line);border-radius:9px;background:var(--admin-panel)}
+.custom-toggle input[type="checkbox"]{appearance:none;flex:0 0 46px;width:46px!important;height:26px;margin:0;padding:0!important;border:1px solid #aeb8c5;border-radius:20px;background:#67727c;cursor:pointer;position:relative;transition:background .16s}
+.custom-toggle input[type="checkbox"]::before{content:"";position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;background:#fff;transition:transform .16s}
+.custom-toggle input[type="checkbox"]:checked{background:#247d52;border-color:#79d69a}
+.custom-toggle input[type="checkbox"]:checked::before{transform:translateX(20px)}
+.custom-toggle input[type="checkbox"]:disabled{opacity:.5;cursor:not-allowed}
+.custom-toggle-copy{flex:1;font-weight:650;color:#f5f7fa}
+.custom-toggle-status{min-width:36px;text-align:center;font-size:.85rem;font-weight:800;color:#c4cbd3}
+.custom-toggle input:checked~.custom-toggle-status{color:#a8f2c3}
+.custom-checkbox{display:flex!important;flex-direction:row!important;align-items:center;gap:10px;padding:12px;border:1px solid var(--admin-line);border-radius:8px}
+.custom-checkbox input[type="checkbox"]{width:20px!important;height:20px;flex:0 0 20px;accent-color:#237fdb}
+@media(max-width:768px){.custom-settings-content{padding:8px 12px 16px}.custom-settings-content .compensation-form{grid-template-columns:1fr}.custom-toggle{gap:9px;padding:10px}.custom-summary-hint{font-size:.74rem}}
