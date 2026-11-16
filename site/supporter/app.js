@@ -351,10 +351,10 @@ function render() {
    if(rule.radarCondition==='rainfall-threshold'&&entitlements.rainfallThreshold){
     const thresholds=[...options.rainRadarThresholds];
     const current=String(rule.rainfallThresholdMmPerHour??'');
-    if(current!==''&&!thresholds.some(([id])=>id===current))thresholds.push([current,`既存設定：${current} mm/h（変更時は10/20から選択）`]);
+    if(current!==''&&!thresholds.some(([id])=>id===current))thresholds.push([current,`既存設定：${current} mm/h（変更時は10・20・30・50・80から選択）`]);
     field(conditionFields,rule,'rainfallThresholdMmPerHour','降水強度の閾値（1時間あたり）',thresholds);
     const note=document.createElement('p');note.className='help';
-    note.textContent='取得元の画像は20 mm/h超を細分化できません。新規設定は10または20 mm/h以上のみ対応します。';
+    note.textContent='気象庁の高解像度降水ナウキャストから判定します。10・20・30・50・80 mm/hを選択でき、80 mm/h以上の細分化（100 mm/hなど）には対応していません。';
     conditionFields.append(note);
    }
    field(conditionFields, rule, 'deliveryIntervalHours', '配信頻度', options.rainRadarIntervals);
