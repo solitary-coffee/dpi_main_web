@@ -1,6 +1,7 @@
 import { requireSession, assertCsrf, assertSameOrigin, readJson, fetchGuildChannels } from './reuse.js';
 import { authenticateNewsletterAdmin } from './access.js';
-import { adminBillingAction, adminDisciplinaryBillingAction, billingAction, billingReady, createBillingCustomer, creditsByCustomer, customerSubscriptionSummaries, expireSupporterPendingCheckouts, publicPlans, reconcilePaidCheckoutSubscription, sendSupporterDisciplinaryNotification, subscriptionSummariesByCustomer } from './supporter-billing.js';
+import { adminBillingAction, adminDisciplinaryBillingAction, billingAction, billingReady, createBillingCustomer, creditsByCustomer, customerSubscriptionSummaries, expireSupporterPendingCheckouts, publicPlans, reconcilePaidCheckoutSubscription, sendSupporterDisciplinaryNotification, subscriptionSummariesByCustomer, createCustomCheckout, expireCustomCheckout, cancelCustomSubscription } from './supporter-billing.js';
+import { getCustomPlan,customLocked,customPublic,normalizeCustomPlan,enrichCustomSubscriptions } from './supporter-custom.js';
 import { refreshSupporterSnapshotSafely } from './supporter-snapshot.js';
 import { PREFECTURES, loadSupporterAreaCatalogue, geographicEntitlements, normalizeGeographicRule } from './supporter-geo.js';
 
@@ -21,7 +22,7 @@ function ruleCount(settingsJson) {
   return Array.isArray(settings.rules) ? settings.rules.length : 0;
  } catch { return 0; }
 }
-export function supporterAdminAccount(row, subscriptions = [], billingError = '', credits = 0) {
+export function supporterAdminAccount(row, subscriptions = [], billingError = '', credits = 0, customPlan = null) {
  return {
   discordUserId: row.discord_user_id,
   discordName: row.discord_name || '',
@@ -37,6 +38,7 @@ export function supporterAdminAccount(row, subscriptions = [], billingError = ''
   statusUpdatedAt: row.status_updated_at || null,
   statusUpdatedBy: row.status_updated_by || '',
   billingError,
+  customPlan:customPublic(customPlan),
  };
 }
 export function supporterAccountEnforcement(row){
@@ -438,6 +440,7 @@ export function supporterAdminDetails(row, channelsByGuild = {}) {
     {label:'詳細種別',value:type==='rain-radar'?'雨雲レーダー':optionLabel(type==='earthquake'?EARTHQUAKE_DETAILS:type==='eew'?EEW_DETAILS:WEATHER_DETAILS,clean(rule?.detail)||'all')},
     {label:'対象地方',value:optionLabel(SUPPORTER_REGIONS,clean(rule?.region)||'all')},
     {label:'条件の組み合わせ',value:clean(rule?.conditionLogic)==='or'?'いずれかを満たす（OR）':'すべて満たす（AND）'},
+    ...(type==='eew'?[{label:'最終報を送信',value:rule?.sendFinalReport===false?'震度が変化した場合のみ':'送信する（初期値）'}]:[]),
    ];
    if(clean(rule?.prefecture)&&clean(rule.prefecture)!=='all')details.push({label:'都道府県',value:PREFECTURES.find(row=>row.code===clean(rule.prefecture))?.name||clean(rule.prefecture)});
    if(clean(rule?.district)&&clean(rule.district)!=='all')details.push({label:'北海道内の地方区分',value:clean(rule.district)});
@@ -562,7 +565,7 @@ export function normalizeSupporterRules(input, guilds, limits = {servers:1,chann
   if (magnitudeMode === 'threshold' && magnitudeMin === null) throw Object.assign(new Error('閾値以上で通知するマグニチュードを入力してください。'),{status:400});
   const eewWarningAreaMode = type === 'eew' && detail === 'warning' ? (clean(rule?.eewWarningAreaMode) || 'all') : '';
   if (eewWarningAreaMode && !EEW_WARNING_AREA_MODE_IDS.has(eewWarningAreaMode)) throw Object.assign(new Error('緊急地震速報（警報）の対象地方条件を確認してください。'),{status:400});
-  return {name,guildId,channelId,channelIds,type,detail,region,...geographic,conditionLogic,conditions,intensityMode,intensity,magnitudeMode,magnitudeMin,weatherLevel:'',warningLevel:'',eewWarningAreaMode,radarCondition:'',rainfallThresholdMmPerHour:null,deliveryIntervalHours:null};
+  return {name,guildId,channelId,channelIds,type,detail,region,...geographic,conditionLogic,conditions,intensityMode,intensity,magnitudeMode,magnitudeMin,weatherLevel:'',warningLevel:'',eewWarningAreaMode,sendFinalReport:type==='eew'?rule?.sendFinalReport!==false:true,radarCondition:'',rainfallThresholdMmPerHour:null,deliveryIntervalHours:null};
  });
  const serverCount = new Set(rules.map(rule => rule.guildId)).size;
  const channelCount = new Set(rules.flatMap(rule => rule.channelIds.map(channelId=>`${rule.guildId}:${channelId}`))).size;
@@ -584,7 +587,9 @@ async function supporterLimits(env, db, uid) {
   const suspension = await db.prepare(`SELECT invoice_id FROM supporter_dunning WHERE customer_id=? AND status='suspended' LIMIT 1`).bind(row.customer_id).first();
   if (suspension) throw Object.assign(new Error('月末再決済を確認できなかったため、有料プランの通知設定は利用停止中です。契約管理画面からお支払いを完了してください。'),{status:409});
   await reconcilePaidCheckoutSubscription(env,row.customer_id,uid);
-  const active = (await customerSubscriptionSummaries(env,row.customer_id)).filter(item=>item.recognizedPlan!==false&&['active','trialing','past_due','unpaid','paused'].includes(item.status));
+  const custom=await getCustomPlan(db,uid);
+  const summaries=enrichCustomSubscriptions(await customerSubscriptionSummaries(env,row.customer_id),custom);
+  const active = summaries.filter(item=>item.recognizedPlan!==false&&['active','trialing','past_due','unpaid','paused'].includes(item.status));
   if (!active.length) throw Object.assign(new Error('通知設定は有効な契約を確認してから利用できます。'),{status:409});
   return {...active.reduce((limits,item)=>({servers:Math.max(limits.servers,Number(item.servers)||1),channels:Math.max(limits.channels,Number(item.channels)||2),rules:Math.max(limits.rules,Number(item.rules)||5),complexConditions:limits.complexConditions||item.complexConditions===true,multiDestination:limits.multiDestination||item.multiDestination===true}),fallback),...geographicEntitlements(active)};
  } catch(error) { if(error?.status===409)throw error;throw Object.assign(new Error('契約上限を確認できませんでした。時間をおいて再試行してください。'),{status:503}); }
@@ -665,6 +670,86 @@ export async function handleSupporterRequest(request, env, ctx) {
     const campaign=await processCompensationCampaign(env,db,admin,campaignProcessMatch[1]);
     return response({success:true,message:campaign.status==='completed'?'補償クレジットの配布が完了しました。':campaign.status==='partial'?'一部の対象者へ配布できませんでした。':campaign.status==='failed'?'補償クレジットを配布できませんでした。':'補償クレジットを配布中です。',campaign});
    }
+   if (path === '/site/supporter-admin/api/custom-plan') {
+    if(request.method!=='POST')return response({message:'Method not allowed'},405);
+    assertAdminOrigin(request);
+    const input=await readJson(request);
+    const uid=clean(input.discordUserId),reason=clean(input.reason),requestId=clean(input.requestId);
+    if(!/^\d{17,20}$/.test(uid)||input.confirmDiscordUserId!==uid)return response({message:'対象Discord IDを再入力してください。'},400);
+    if(reason.length<5||reason.length>500)return response({message:'変更理由を5〜500文字で入力してください。'},400);
+    if(!/^[0-9a-f-]{36}$/i.test(requestId))return response({message:'要求IDが不正です。'},400);
+    const account=await db.prepare(`SELECT a.discord_user_id,a.billing_email,a.account_status,b.customer_id
+     FROM supporter_accounts a LEFT JOIN supporter_billing b ON b.discord_user_id=a.discord_user_id WHERE a.discord_user_id=?`).bind(uid).first();
+    if(!account)return response({message:'対象ユーザーは有料プランに未登録です。'},404);
+    assertSupporterAccountActive(account);
+    let current=await getCustomPlan(db,uid);
+    if(input.action==='save'){
+     const next=normalizeCustomPlan(input);
+     const active=current?.status==='active';
+     if(active&&Number(current.confirmed_yen)!==next.monthlyYen)return response({message:'契約中の料金は決済同意を再取得するまで変更できません。上限・機能の変更は可能です。'},409);
+     if(!active&&account.customer_id){
+      const subs=await customerSubscriptionSummaries(env,account.customer_id);
+      if(subs.some(item=>['active','trialing','past_due','unpaid','paused'].includes(item.status)&&item.customId!==current?.id))
+       return response({message:'既存の通常契約があります。二重請求防止のため、契約を管理者が終了した後でカスタムプランを提供してください。'},409);
+     }
+     if(current?.stripe_checkout_id&&current.status==='offered')await expireCustomCheckout(env,current.stripe_checkout_id,`dpi-custom-expire-${current.id}-${current.revision}`);
+     const now=new Date().toISOString();
+     const values=[next.name,next.channels,next.servers,next.rules,Number(next.complexConditions),Number(next.municipalityBranching),Number(next.contentExtraction),Number(next.multiDestination),Number(next.secondaryReuse),next.estimatedYen,next.monthlyYen,reason,admin.email,now];
+     if(current){
+      const updated=await db.prepare(`UPDATE supporter_custom_plans SET name=?,channel_limit=?,server_limit=?,rule_limit=?,
+       complex_conditions=?,municipality_branching=?,content_extraction=?,multi_destination=?,secondary_reuse=?,
+       estimated_yen=?,confirmed_yen=?,reason=?,updated_by=?,updated_at=?,
+       revision=CASE WHEN status='active' THEN revision ELSE revision+1 END,
+       stripe_checkout_id=CASE WHEN status='active' THEN stripe_checkout_id ELSE NULL END,
+       checkout_expires_at=CASE WHEN status='active' THEN checkout_expires_at ELSE NULL END,
+       status=CASE WHEN status='active' THEN 'active' ELSE 'offered' END
+       WHERE discord_user_id=? AND revision=?`).bind(...values,uid,current.revision).run();
+      if(!updated.meta?.changes)return response({message:'別の管理者によって更新されました。画面を再読み込みしてください。'},409);
+     }else{
+      await db.prepare(`INSERT INTO supporter_custom_plans
+       (discord_user_id,id,name,channel_limit,server_limit,rule_limit,complex_conditions,municipality_branching,content_extraction,
+        multi_destination,secondary_reuse,estimated_yen,confirmed_yen,reason,updated_by,created_at,updated_at)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+       .bind(uid,crypto.randomUUID(),next.name,next.channels,next.servers,next.rules,
+        Number(next.complexConditions),Number(next.municipalityBranching),Number(next.contentExtraction),
+        Number(next.multiDestination),Number(next.secondaryReuse),next.estimatedYen,next.monthlyYen,reason,admin.email,now,now).run();
+     }
+     current=await getCustomPlan(db,uid);
+    }else if(input.action==='checkout'){
+     if(!current||current.status!=='offered')return response({message:'まず提供するカスタムプランを保存してください。'},409);
+     if(!billingReady(env))return response({message:'Stripeテスト決済が利用できません。'},503);
+     if(!account.billing_email)return response({message:'ユーザーのメールアドレスが未登録です。'},409);
+     if(!account.customer_id){
+      const customer=await createBillingCustomer(env,uid,account.billing_email,`dpi-custom-customer-${uid}`);
+      await db.prepare(`INSERT INTO supporter_billing(discord_user_id,customer_id) VALUES(?,?)
+       ON CONFLICT(discord_user_id) DO UPDATE SET customer_id=COALESCE(customer_id,excluded.customer_id)`).bind(uid,customer.id).run();
+      account.customer_id=(await db.prepare('SELECT customer_id FROM supporter_billing WHERE discord_user_id=?').bind(uid).first()).customer_id;
+     }
+     const other=await customerSubscriptionSummaries(env,account.customer_id);
+     if(other.some(item=>['active','trialing','past_due','unpaid','paused'].includes(item.status)))
+      return response({message:'既に有効な契約があります。二重請求防止のため新しい決済リンクは発行しません。'},409);
+     if(current.stripe_checkout_id)await expireCustomCheckout(env,current.stripe_checkout_id,`dpi-custom-expire-${current.id}-${current.revision}`);
+     const session=await createCustomCheckout(env,account.customer_id,uid,current,requestId);
+     const changed=await db.prepare(`UPDATE supporter_custom_plans SET stripe_checkout_id=?,checkout_expires_at=?,updated_at=?
+      WHERE discord_user_id=? AND revision=? AND status='offered'`)
+      .bind(session.id,session.expiresAt,new Date().toISOString(),uid,current.revision).run();
+     if(!changed.meta?.changes){await expireCustomCheckout(env,session.id,`dpi-custom-stale-${session.id}`);return response({message:'プラン内容が更新されたため支払いリンクを無効化しました。再読み込みしてください。'},409);}
+     current=await getCustomPlan(db,uid);
+     await writeSupporterAudit(db,admin.email,'custom_checkout',uid,{reason,requestId,revision:current.revision,price:current.confirmed_yen,expiresAt:session.expiresAt});
+     return response({success:true,message:'このDiscord ID専用の月額支払いURL（24時間有効）を作成しました。',url:session.url,expiresAt:session.expiresAt,customPlan:customPublic(current)});
+    }else if(input.action==='cancel'){
+     if(!current||current.status==='canceled')return response({message:'停止するカスタムプランはありません。'},409);
+     if(current.stripe_checkout_id)await expireCustomCheckout(env,current.stripe_checkout_id,`dpi-custom-stop-checkout-${current.id}`);
+     if(current.stripe_subscription_id)await cancelCustomSubscription(env,current.stripe_subscription_id,`dpi-custom-stop-sub-${current.id}`);
+     await db.prepare(`UPDATE supporter_custom_plans SET status='canceled',updated_at=?,updated_by=?,reason=?,stripe_checkout_id=NULL,checkout_expires_at=NULL
+      WHERE discord_user_id=? AND id=?`).bind(new Date().toISOString(),admin.email,reason,uid,current.id).run();
+     current=await getCustomPlan(db,uid);
+    }else return response({message:'カスタムプラン操作を確認してください。'},400);
+    await writeSupporterAudit(db,admin.email,`custom_${input.action}`,uid,{reason,requestId,revision:current.revision,status:current.status,estimated:current.estimated_yen,confirmed:current.confirmed_yen});
+    const task=refreshSupporterSnapshotSafely(env,db,subscriptionSummariesByCustomer,'custom_plan_changed');
+    if(ctx?.waitUntil)ctx.waitUntil(task);else await task;
+    return response({success:true,customPlan:customPublic(current),message:input.action==='cancel'?'カスタムプランを停止しました。':'カスタムプランを保存しました。'});
+   }
    if (path === '/site/supporter-admin/api/action') {
     if (request.method !== 'POST') return response({message:'Method not allowed'},405);
     assertAdminOrigin(request);
@@ -675,6 +760,7 @@ export async function handleSupporterRequest(request, env, ctx) {
      FROM supporter_accounts a LEFT JOIN supporter_billing b ON b.discord_user_id=a.discord_user_id
      WHERE a.discord_user_id=?`).bind(uid).first();
     if (!account) return response({message:'対象の有料プラン登録者が見つかりません。'},404);
+    if(input.action==='change_subscription'&&customLocked(await getCustomPlan(db,uid)))return response({message:'カスタムプランを提供中です。変更にはカスタムプラン設定をご利用ください。'},409);
     if (['disciplinary_cancel','ban_account','unban_account'].includes(input.action)) {
      const requestId=clean(input.requestId),reason=clean(input.reason),action=clean(input.action),now=Math.floor(Date.now()/1000);
      if(!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestId)||reason.length<5||reason.length>500)return response({message:'操作理由を5〜500文字で入力してください。'},400);
@@ -778,7 +864,9 @@ export async function handleSupporterRequest(request, env, ctx) {
      if (creditResult.status === 'fulfilled') creditBalances = creditResult.value;
      else billingError = `${billingError}${billingError ? ' ' : ''}クレジット残高を取得できませんでした。`;
     }
-    const accounts = (rows.results||[]).map(row=>supporterAdminAccount(row,grouped.get(row.customer_id)||[],row.customer_id?billingError:'',creditBalances.get(row.customer_id)||0));
+    const customRows=(await db.prepare('SELECT * FROM supporter_custom_plans').all()).results||[];
+    const customByUid=new Map(customRows.map(row=>[row.discord_user_id,row]));
+    const accounts = (rows.results||[]).map(row=>{const custom=customByUid.get(row.discord_user_id);return supporterAdminAccount(row,enrichCustomSubscriptions(grouped.get(row.customer_id)||[],custom),row.customer_id?billingError:'',creditBalances.get(row.customer_id)||0,custom);});
     let creditSummary=null,creditSummaryError='';
     try{creditSummary=await supporterCreditMetrics(db,billingRows.results||[],creditBalances,stripeEnabled&&!billingError.includes('クレジット残高'));}
     catch(error){console.error('Paid plan credit summary failed',{errorName:error?.name||'Error'});creditSummaryError='クレジット集計を取得できませんでした。';}
@@ -809,7 +897,7 @@ export async function handleSupporterRequest(request, env, ctx) {
      catch{return{guildId,channels:[],failed:true};}
     }));
     const channelsByGuild=Object.fromEntries(channelResults.map(result=>[result.guildId,result.channels]));
-    return response({account:supporterAdminDetails(row,channelsByGuild),channelLookupFailedGuildIds:channelResults.filter(result=>result.failed).map(result=>result.guildId)});
+    return response({account:supporterAdminDetails(row,channelsByGuild),customPlan:customPublic(await getCustomPlan(db,uid)),channelLookupFailedGuildIds:channelResults.filter(result=>result.failed).map(result=>result.guildId)});
    }
    const asset = await env.ASSETS.fetch(request);
    const headers = new Headers(asset.headers);
@@ -858,7 +946,7 @@ export async function handleSupporterRequest(request, env, ctx) {
    const discordName=clean(session.discord_username).slice(0,100);
    if(discordName)await db.prepare('UPDATE supporter_accounts SET discord_name=? WHERE discord_user_id=? AND COALESCE(discord_name,\'\')<>?').bind(discordName,uid,discordName).run();
    const account = await db.prepare('SELECT * FROM supporter_accounts WHERE discord_user_id=?').bind(uid).first();
-   return response({account,deliveryEnabled:false,billingEnabled:billingReady(env)});
+   return response({account,customPlan:customPublic(await getCustomPlan(db,uid)),deliveryEnabled:false,billingEnabled:billingReady(env)});
   }
   if (path === '/api/supporter/account' && request.method === 'POST') {
    const input = await readJson(request);
