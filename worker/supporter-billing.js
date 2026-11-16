@@ -1,5 +1,6 @@
 import { refreshSupporterSnapshotSafely } from './supporter-snapshot.js';
 import { getCustomPlan,customLocked,customPublic,enrichCustomSubscriptions,syncCustomWithStripe } from './supporter-custom.js';
+import { currentCustomChange,getCustomChange,commitCustomChange } from './supporter-custom-change.js';
 
 // Test-only integration. Live keys are deliberately rejected until delivery is ready.
 const json = (data,status=200)=>Response.json(data,{status,headers:{'Cache-Control':'no-store'}});
@@ -1297,4 +1298,147 @@ export async function cancelCustomSubscription(env,subscriptionId,key){
  const item=await stripe(env,`subscriptions/${encodeURIComponent(subscriptionId)}`);
  if(!['canceled','incomplete_expired'].includes(item.status))
   await stripe(env,`subscriptions/${encodeURIComponent(subscriptionId)}`,{},key,'DELETE');
+}
+
+
+/** Restrict managed price mutations to a single paid monthly Stripe item.
+ * No discounts/schedules/multi-item subscriptions: these need manual settlement
+ * rather than quietly producing the wrong amount or resetting renewal dates. */
+export async function verifiedCustomSubscription(env,customer,uid,offer){
+ if(!billingReady(env)||!offer?.stripe_subscription_id)fail('カスタム契約のStripe情報を確認できません。',409);
+ const subscription=await stripe(env,`subscriptions/${encodeURIComponent(offer.stripe_subscription_id)}`);
+ const realCustomer=stripeId(subscription.customer),items=subscription.items?.data||[];
+ const item=items[0],meta=subscription.metadata||{};
+ if(subscription.livemode!==false||realCustomer!==customer||meta.dpi_user!==uid
+  ||meta.dpi_custom_id!==offer.id||!['active'].includes(subscription.status)
+  ||subscription.pending_update||scheduleId(subscription)||subscription.cancel_at_period_end
+  ||items.length!==1||!item?.id||Number(item.quantity)!==1
+  ||item.price?.currency!=='jpy'||item.price?.recurring?.interval!=='month'
+  ||Number(item.price?.recurring?.interval_count||1)!==1
+  ||!/^prod_/.test(stripeId(item.price?.product))||subscription.discounts?.length
+  ||subscription.collection_method!=='charge_automatically'
+ )fail('Stripe契約に未処理請求・予約変更・複数料金・割引等があるため自動変更できません。内容をご確認ください。',409);
+ return subscription;
+}
+export async function createCustomDifferenceCheckout(env,customer,uid,offer,change){
+ if(!billingReady(env)||change.status!=='pending'||Number(change.amount_due_yen)<50)
+  fail('差額決済は50円以上で作成してください。50円未満の変更は運営者が請求方法を確認してください。',409);
+ const amount=Number(change.amount_due_yen);
+ const origin=actionOrigin(env),now=Math.floor(Date.now()/1000);
+ const checkout=await stripe(env,'checkout/sessions',{
+  mode:'payment',customer,client_reference_id:uid,
+  'line_items[0][price_data][currency]':'jpy',
+  'line_items[0][price_data][unit_amount]':String(amount),
+  'line_items[0][price_data][product_data][name]':`${offer.name} 当月分変更差額`.slice(0,80),
+  'line_items[0][quantity]':'1',
+  'payment_intent_data[metadata][dpi_custom_change]':change.request_id,
+  'metadata[dpi_checkout_kind]':'custom_change',
+  'metadata[dpi_user]':uid,
+  'metadata[dpi_custom_id]':offer.id,
+  'metadata[dpi_change_request]':change.request_id,
+  'metadata[dpi_custom_revision]':String(change.old_revision),
+  'metadata[dpi_new_monthly]':String(change.next_monthly_yen),
+  'metadata[dpi_old_monthly]':String(change.old_monthly_yen),
+  expires_at:String(now+86400),
+  success_url:`${origin}/site/supporter/?custom=change-completed`,
+  cancel_url:`${origin}/site/supporter/?custom=change-canceled`,
+  integration_identifier:integrationIdentifier('dpi_custom_change_'),
+ },`dpi-custom-difference-${change.request_id}`);
+ if(!checkout.url||checkout.mode!=='payment'||checkout.status!=='open')fail('Stripeの差額決済URLの生成に失敗しました。',502);
+ return {id:checkout.id,url:checkout.url,expiresAt:Number(checkout.expires_at)};
+}
+export async function customDifferenceCheckoutUrl(env,customer,uid,offer,change){
+ if(!change||change.status!=='pending'||!change.checkout_session_id)return '';
+ const checkout=await stripe(env,`checkout/sessions/${encodeURIComponent(change.checkout_session_id)}`);
+ const url=clean(checkout.url);
+ let valid=false;try{const parsed=new URL(url);valid=parsed.protocol==='https:'&&parsed.hostname==='checkout.stripe.com';}catch{}
+ return valid&&checkout.status==='open'&&Number(checkout.expires_at)>Date.now()/1000
+  &&stripeId(checkout.customer)===customer&&checkout.client_reference_id===uid
+  &&checkout.mode==='payment'&&checkout.metadata?.dpi_change_request===change.request_id
+  &&checkout.metadata?.dpi_custom_id===offer.id&&Number(checkout.amount_total)===Number(change.amount_due_yen)
+  ?url:'';
+}
+export async function applyCustomStripePrice(env,customer,uid,offer,change){
+ const subscription=await verifiedCustomSubscription(env,customer,uid,offer);
+ const item=subscription.items?.data?.[0];
+ const meta=subscription.metadata||{};
+ if(Number(meta.dpi_custom_revision)===Number(change.next_revision)
+  &&Number(item.price.unit_amount)===Number(change.next_monthly_yen))return subscription;
+ if(Number(meta.dpi_custom_revision)!==Number(change.old_revision)
+  ||Number(item.price.unit_amount)!==Number(change.old_monthly_yen)
+  ||Number(change.old_revision)!==Number(offer.revision))
+  fail('Stripe契約の料金・改訂番号が変更されています。自動変更を停止しました。',409);
+ const updated=await stripe(env,`subscriptions/${encodeURIComponent(subscription.id)}`,{
+  'items[0][id]':item.id,
+  'items[0][price_data][currency]':'jpy',
+  'items[0][price_data][unit_amount]':String(change.next_monthly_yen),
+  'items[0][price_data][product]':stripeId(item.price.product),
+  'items[0][price_data][recurring][interval]':'month',
+  'items[0][quantity]':'1',
+  proration_behavior:'none',billing_cycle_anchor:'unchanged',
+  payment_behavior:'error_if_incomplete',
+  'metadata[dpi_custom_revision]':String(change.next_revision),
+  'metadata[dpi_updated_by]':'admin',
+  'metadata[dpi_custom_change_request]':change.request_id,
+ },`dpi-custom-recurring-${change.request_id}`);
+ if(updated.pending_update||Number(updated.items?.data?.[0]?.price?.unit_amount)!==Number(change.next_monthly_yen)
+  ||Number(updated.metadata?.dpi_custom_revision)!==Number(change.next_revision))fail('Stripe契約料金の切替結果を確認できませんでした。',502);
+ return updated;
+}
+/** Idempotent recovery: checkout is fetched from Stripe, not trusted from
+ * the webhook payload. A paid change stays in D1 until a recurring price
+ * update AND local limits can be committed. */
+export async function settleCustomPriceChange(env,db,uid,requestId){
+ let change=await getCustomChange(db,requestId);
+ if(!change||change.discord_user_id!==uid)fail('料金変更要求が見つかりません。',404);
+ if(change.status==='applied')return {applied:true,change};
+ if(!['pending','paid'].includes(change.status))fail('無効な料金変更要求です。',409);
+ const row=await getCustomPlan(db,uid);
+ const customer=change.stripe_customer_id;
+ const binding=await db.prepare('SELECT customer_id FROM supporter_billing WHERE discord_user_id=?').bind(uid).first();
+ if(!row||row.status!=='active'||row.id!==change.custom_plan_id
+  ||row.stripe_subscription_id!==change.stripe_subscription_id
+  ||binding?.customer_id!==customer)fail('契約ユーザーとStripeの紐付けを確認できません。',409);
+ if(change.status==='pending'){
+  if(!change.checkout_session_id)return {applied:false,pending:true,change};
+  const session=await stripe(env,`checkout/sessions/${encodeURIComponent(change.checkout_session_id)}`);
+  if(session.mode!=='payment'||session.status!=='complete'||session.payment_status!=='paid'
+   ||session.currency!=='jpy'||stripeId(session.customer)!==customer||session.client_reference_id!==uid
+   ||Number(session.amount_total)!==Number(change.amount_due_yen)
+   ||session.metadata?.dpi_checkout_kind!=='custom_change'
+   ||session.metadata?.dpi_user!==uid||session.metadata?.dpi_custom_id!==row.id
+   ||session.metadata?.dpi_change_request!==change.request_id
+   ||Number(session.metadata?.dpi_custom_revision)!==Number(change.old_revision))
+   return {applied:false,pending:true,change};
+  await db.prepare(`UPDATE supporter_custom_plan_changes SET status='paid',updated_at=?
+   WHERE request_id=? AND status='pending'`).bind(new Date().toISOString(),requestId).run();
+  change=await getCustomChange(db,requestId);
+ }
+ if(change.status!=='paid')return {applied:change.status==='applied',change};
+ // Protect already applied requests from a repeated Stripe mutation.
+ if(row.revision===Number(change.next_revision)
+  &&Number(row.confirmed_yen)===Number(change.next_monthly_yen)){
+  await db.prepare(`UPDATE supporter_custom_plan_changes SET status='applied',updated_at=?
+   WHERE request_id=? AND status='paid'`).bind(new Date().toISOString(),requestId).run();
+  return {applied:true,change:await getCustomChange(db,requestId)};
+ }
+ if(row.revision!==Number(change.old_revision)||Number(row.confirmed_yen)!==Number(change.old_monthly_yen))
+  fail('変更中に契約状態が更新されたため差額の適用を保留しました。',409);
+ await applyCustomStripePrice(env,customer,uid,row,change);
+ const plan=await commitCustomChange(db,change);
+ return {applied:true,plan,change:await getCustomChange(db,requestId)};
+}
+export async function recoverCustomPriceChanges(env,db,uid){
+ if(!billingReady(env))return [];
+ const rows=uid?
+  (await db.prepare(`SELECT request_id FROM supporter_custom_plan_changes WHERE discord_user_id=?
+    AND status IN ('pending','paid') ORDER BY created_at LIMIT 4`).bind(uid).all()).results||[]:
+  (await db.prepare(`SELECT request_id,discord_user_id FROM supporter_custom_plan_changes WHERE
+    status IN ('pending','paid') ORDER BY updated_at LIMIT 15`).all()).results||[];
+ const results=[];
+ for(const row of rows){
+  try{results.push(await settleCustomPriceChange(env,db,uid||row.discord_user_id,row.request_id));}
+  catch(error){console.error('Custom plan price settlement deferred',{requestId:row.request_id,errorName:error?.name||'Error'});}
+ }
+ return results;
 }
