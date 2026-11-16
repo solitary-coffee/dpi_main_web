@@ -103,6 +103,7 @@ function field(article, rule, key, label, values, attributes = {}) {
    if (key === 'prefecture') {rule.district='all';rule.municipality='all';rule.strictMunicipality=false;}
    if (key === 'district') {rule.municipality='all';rule.strictMunicipality=false;}
    if (key === 'municipality' && input.value==='all')rule.strictMunicipality=false;
+   if (key === 'radarCondition' && input.value==='rainfall-threshold' && (rule.rainfallThresholdMmPerHour===''||rule.rainfallThresholdMmPerHour==null))rule.rainfallThresholdMmPerHour='10';
    render();
   }
  };
@@ -171,6 +172,7 @@ function conditionValues(rule,kind){
  if(kind==='weatherLevel')return options.weatherLevels;
  if(kind==='warningLevel')return options.warningLevels;
  if(kind==='radarCondition')return options.rainRadarConditions;
+ if(kind==='rainfallThreshold')return options.rainRadarThresholds;
  return null;
 }
 function defaultConditionValue(rule,kind){return kind==='magnitude'?'4.0':kind==='rainfallThreshold'?'10':String(conditionValues(rule,kind)?.[0]?.[0]||'');}
@@ -182,9 +184,13 @@ function additionalConditionsField(article,rule){
  rule.conditions.forEach((condition,index)=>{
   const row=document.createElement('div');row.className='condition-row';
   const kind=document.createElement('select');kind.setAttribute('aria-label',`追加条件${index+1}の種類`);selectOptions(kind,conditionKinds(rule),condition.kind);
-  const values=conditionValues(rule,condition.kind);
+  const optionsForCondition=conditionValues(rule,condition.kind);
+  const values=optionsForCondition?[...optionsForCondition]:null;
+  if(values&&condition.kind==='rainfallThreshold'&&!values.some(([id])=>String(id)===String(condition.value??''))&&condition.value!==''&&condition.value!==null){
+   values.push([String(condition.value),`旧設定（${condition.value} mm/h）・変更は10または20を選択`]);
+  }
   const value=document.createElement(values?'select':'input');value.setAttribute('aria-label',`追加条件${index+1}の値`);
-  if(values)selectOptions(value,values,String(condition.value??''));else{value.value=String(condition.value??'');value.inputMode='decimal';value.placeholder=condition.kind==='rainfallThreshold'?'0.1〜20 mm/h':'0〜10';}
+  if(values)selectOptions(value,values,String(condition.value??''));else{value.value=String(condition.value??'');value.inputMode='decimal';value.placeholder='0〜10';}
   kind.onchange=()=>{condition.kind=kind.value;condition.value=defaultConditionValue(rule,condition.kind);render();};
   value.onchange=()=>{condition.value=value.value;};
   const remove=document.createElement('button');remove.type='button';remove.className='condition-remove';remove.textContent='条件を削除';remove.onclick=()=>{rule.conditions.splice(index,1);render();};
@@ -329,15 +335,28 @@ function render() {
   field(conditionFields, rule, 'region', '対象地方', options.regions);
   geoScopeFields(conditionFields,rule);
   if (rule.type === 'rain-radar') {
-   field(conditionFields, rule, 'radarCondition', '配信条件', entitlements.rainfallThreshold?options.rainRadarConditions:options.rainRadarConditions.filter(([id])=>id!=='rainfall-threshold'));
+   const radarConditions=entitlements.rainfallThreshold?[...options.rainRadarConditions]:options.rainRadarConditions.filter(([id])=>id==='all');
+   if(!radarConditions.some(([id])=>id===rule.radarCondition)){
+    const existing=options.rainRadarConditions.find(([id])=>id===rule.radarCondition);
+    if(existing)radarConditions.push([existing[0],`旧設定：${existing[1]}（Basicでは配信停止）`]);
+   }
+   field(conditionFields,rule,'radarCondition','配信条件',radarConditions);
    if(!entitlements.rainfallThreshold){
     const note=document.createElement('p');note.className='geo-upgrade';
-    note.textContent=rule.radarCondition==='rainfall-threshold'
-     ?'保存済みの降水量閾値ルールはBasicでは配信されません。Plus以上へ変更するか、配信条件を明示的に選び直してください。'
-     :'1時間降水量の閾値指定はPlus以上のプランで利用できます。';
+    note.textContent=rule.radarCondition!=='all'
+     ?`保存済みの「${options.rainRadarConditions.find(([id])=>id===rule.radarCondition)?.[1]||rule.radarCondition}」はBasicでは配信されません。値を変えずに保管します。Plus以上に変更するか、「定時更新」を明示的に選択してください。`
+     :'降雨検知と降水量の閾値指定はPlus以上で利用できます。Basicでは定時更新のみ選択可能です。';
     conditionFields.append(note);
    }
-   if(rule.radarCondition==='rainfall-threshold'&&entitlements.rainfallThreshold)field(conditionFields, rule, 'rainfallThresholdMmPerHour', '1時間降水量の閾値（mm/h・最大20）', null, {inputmode:'decimal',min:'0.1',max:'20',step:'0.1'});
+   if(rule.radarCondition==='rainfall-threshold'&&entitlements.rainfallThreshold){
+    const thresholds=[...options.rainRadarThresholds];
+    const current=String(rule.rainfallThresholdMmPerHour??'');
+    if(current!==''&&!thresholds.some(([id])=>id===current))thresholds.push([current,`既存設定：${current} mm/h（変更時は10・20・30・50・80から選択）`]);
+    field(conditionFields,rule,'rainfallThresholdMmPerHour','降水強度の閾値（1時間あたり）',thresholds);
+    const note=document.createElement('p');note.className='help';
+    note.textContent='気象庁の高解像度降水ナウキャストから判定します。10・20・30・50・80 mm/hを選択でき、80 mm/h以上の細分化（100 mm/hなど）には対応していません。';
+    conditionFields.append(note);
+   }
    field(conditionFields, rule, 'deliveryIntervalHours', '配信頻度', options.rainRadarIntervals);
   } else if (rule.type === 'weather') {
    if (WEATHER_ALERT_DETAILS.has(rule.detail)) field(conditionFields, rule, 'weatherLevel', '警戒レベル', options.weatherLevels);

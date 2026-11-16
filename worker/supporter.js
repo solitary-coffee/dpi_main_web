@@ -357,8 +357,13 @@ export const WEATHER_DETAILS = Object.freeze([
 export const RAIN_RADAR_CONDITIONS = Object.freeze([
  ['all', '定時更新'],
  ['rain-detected', '対象地方で降雨を検出'],
- ['rainfall-threshold', '1時間降水量が閾値以上'],
+ ['rainfall-threshold', '指定した降水量以上で配信'],
 ]);
+// The existing GIF parser (dpi_code/disco/uchi/supporter_radar.py) can
+// distinguish 10 and 20 mm/h in the requested 10-100 range. Its 20+ color
+// class is capped at 20; values above 20 cannot be verified.
+export const RAIN_RADAR_THRESHOLD_OPTIONS = Object.freeze([['10','10 mm/h以上'],['20','20 mm/h以上'],['30','30 mm/h以上'],['50','50 mm/h以上'],['80','80 mm/h以上']]);
+const RAIN_RADAR_THRESHOLD_VALUES = new Set(RAIN_RADAR_THRESHOLD_OPTIONS.map(([value])=>Number(value)));
 export const RAIN_RADAR_INTERVALS = Object.freeze([
  ['1', '1時間ごと'],
  ['2', '2時間ごと'],
@@ -481,11 +486,16 @@ function optionalMagnitude(value) {
  return Math.round(number * 10) / 10;
 }
 
-function optionalRainfallThreshold(value) {
+function optionalRainfallThreshold(value,previousValue=null) {
  if (value === '' || value === undefined || value === null) return null;
  const number = Number(value);
- if (!Number.isFinite(number) || number < 0.1 || number > 20) throw Object.assign(new Error('現在の雨雲レーダーで判定できる閾値は0.1から20mm/hです。'),{status:400});
- return Math.round(number * 10) / 10;
+ if (!Number.isFinite(number) || number < 0.1 || number > 80) throw Object.assign(new Error('気象庁高解像度降水ナウキャストで判別できる最大階級は80mm/h以上です。'),{status:400});
+ const normalized=Math.round(number * 10) / 10;
+ // Do not silently migrate old saved values (0.1-20mm/h). Only unchanged
+ // values from the stored rule may keep their historical settings.
+ if (!RAIN_RADAR_THRESHOLD_VALUES.has(normalized) && Number(previousValue)!==normalized)
+  throw Object.assign(new Error('降水量閾値は10・20・30・50・80mm/hから選択してください。'),{status:400});
+ return normalized;
 }
 
 function thresholdMode(rule, key, legacyKey, thresholdValue) {
@@ -495,11 +505,11 @@ function thresholdMode(rule, key, legacyKey, thresholdValue) {
  return thresholdValue !== '' && thresholdValue !== undefined && thresholdValue !== null ? 'threshold' : 'all';
 }
 
-function normalizeAdditionalConditions(input,type,complexConditions){
+function normalizeAdditionalConditions(input,type,complexConditions,previousConditions=[]){
  const requested=Array.isArray(input)?input:[];
  if(requested.length>8)throw Object.assign(new Error('追加条件は1ルールにつき8件までです。'),{status:400});
  if(requested.length&&!complexConditions)throw Object.assign(new Error('複数条件はProプランで利用できます。'),{status:400});
- const normalized=requested.map(condition=>{
+ const normalized=requested.map((condition,index)=>{
   const kind=clean(condition?.kind);const raw=condition?.value;const value=clean(raw);
   if(kind==='region'&&REGION_IDS.has(value))return{kind,operator:'equals',value};
   if(kind==='detail'&&type!=='rain-radar'&&DETAILS[type].has(value))return{kind,operator:'equals',value};
@@ -508,7 +518,11 @@ function normalizeAdditionalConditions(input,type,complexConditions){
   if(kind==='weatherLevel'&&type==='weather'&&WEATHER_LEVEL_IDS.has(value))return{kind,operator:'equals',value};
   if(kind==='warningLevel'&&type==='weather'&&WARNING_LEVEL_IDS.has(value))return{kind,operator:'equals',value};
   if(kind==='radarCondition'&&type==='rain-radar'&&RAIN_RADAR_CONDITION_IDS.has(value))return{kind,operator:'equals',value};
-  if(kind==='rainfallThreshold'&&type==='rain-radar'&&complexConditions){const rainfall=optionalRainfallThreshold(raw);if(rainfall!==null)return{kind,operator:'at_least',value:rainfall};}
+  if(kind==='rainfallThreshold'&&type==='rain-radar'&&complexConditions){
+   const previous=previousConditions[index];
+   const rainfall=optionalRainfallThreshold(raw,previous?.kind==='rainfallThreshold'?previous.value:null);
+   if(rainfall!==null)return{kind,operator:'at_least',value:rainfall};
+  }
   throw Object.assign(new Error('追加条件の種類または値を確認してください。'),{status:400});
  });
  const unique=[];const seen=new Set();
@@ -516,10 +530,16 @@ function normalizeAdditionalConditions(input,type,complexConditions){
  return unique;
 }
 
-export function normalizeSupporterRules(input, guilds, limits = {servers:1,channels:2,rules:5,complexConditions:false,multiDestination:false}, catalogue = null) {
+export function normalizeSupporterRules(input, guilds, limits = {servers:1,channels:2,rules:5,complexConditions:false,multiDestination:false}, catalogue = null, previousRules = []) {
  const ruleLimit=Math.max(1,Number(limits.rules)||5);
  if (!Array.isArray(input) || input.length > ruleLimit) throw Object.assign(new Error(`通知ルールは${ruleLimit}件までです。`),{status:400});
- const rules = input.map(rule => {
+ const rules = input.map((rule,index) => {
+  // The previous rule must match the same destination, type and scope. This
+  // permits editing other settings without rewriting legacy thresholds.
+  const matchesPrior=prior=>prior?.type===rule?.type&&prior?.guildId===rule?.guildId
+   &&(prior?.channelId||prior?.channelIds?.[0])===(rule?.channelId||rule?.channelIds?.[0])
+   &&(prior?.region||'all')===(rule?.region||'all');
+  const oldRule=matchesPrior(previousRules[index])?previousRules[index]:null;
   const name = clean(rule?.name);
   const guildId = clean(rule?.guildId);
   const requestedChannelIds=Array.isArray(rule?.channelIds)?rule.channelIds.map(clean).filter(Boolean):[];
@@ -543,14 +563,16 @@ export function normalizeSupporterRules(input, guilds, limits = {servers:1,chann
   const requestedDetail = clean(rule?.detail) || 'all';
   const detail = type === 'eew' && requestedDetail === 'intensity-change' ? 'forecast' : requestedDetail;
   if (!DETAILS[type].has(detail)) throw Object.assign(new Error('情報の詳細種別を確認してください。'),{status:400});
-  const conditions=normalizeAdditionalConditions(rule?.conditions,type,limits.complexConditions===true);
+  const conditions=normalizeAdditionalConditions(rule?.conditions,type,limits.complexConditions===true,oldRule?.conditions||[]);
   if (type === 'rain-radar') {
    const radarCondition=clean(rule?.radarCondition)||'all';
    const deliveryIntervalHours=clean(rule?.deliveryIntervalHours)||'1';
    if(!RAIN_RADAR_CONDITION_IDS.has(radarCondition))throw Object.assign(new Error('雨雲レーダーの配信条件を確認してください。'),{status:400});
+   if(radarCondition!=='all' && limits.rainfallThreshold!==true && oldRule?.radarCondition!==radarCondition)
+    throw Object.assign(new Error('降雨検知・降水量閾値の配信条件はPlus以上のプランで利用できます。'),{status:400});
    if(!RAIN_RADAR_INTERVAL_IDS.has(deliveryIntervalHours))throw Object.assign(new Error('雨雲レーダーの配信頻度を確認してください。'),{status:400});
-   if(radarCondition==='rainfall-threshold'&&limits.rainfallThreshold!==true)throw Object.assign(new Error('1時間降水量の閾値指定はPlus以上のプランで利用できます。'),{status:400});
-   const rainfallThresholdMmPerHour=radarCondition==='rainfall-threshold'?optionalRainfallThreshold(rule?.rainfallThresholdMmPerHour):null;
+   const rainfallThresholdMmPerHour=radarCondition==='rainfall-threshold'
+    ?optionalRainfallThreshold(rule?.rainfallThresholdMmPerHour,oldRule?.radarCondition==='rainfall-threshold'?oldRule.rainfallThresholdMmPerHour:null):null;
    if(radarCondition==='rainfall-threshold'&&rainfallThresholdMmPerHour===null)throw Object.assign(new Error('1時間降水量の閾値を入力してください。'),{status:400});
    return {name,guildId,channelId,channelIds,type,detail:'all',region,...geographic,conditionLogic,conditions,intensityMode:'',intensity:'',magnitudeMode:'',magnitudeMin:null,weatherLevel:'',warningLevel:'',eewWarningAreaMode:'',radarCondition,rainfallThresholdMmPerHour,deliveryIntervalHours:Number(deliveryIntervalHours)};
   }
@@ -1001,7 +1023,7 @@ export async function handleSupporterRequest(request, env, ctx) {
    return response({billingEnabled:false, deliveryEnabled:false, plans:publicPlans(), addons:{channel:{yen:200,channels:3},server:{yen:200,servers:2},rule:{yen:200,rules:3},prorated:false},billingDay:26});
   }
   if (path === '/api/supporter/options' && request.method === 'GET') {
-   return response({regions:SUPPORTER_REGIONS,prefectures:PREFECTURES,weatherLevels:WEATHER_LEVELS,warningLevels:WARNING_LEVELS,earthquakeDetails:EARTHQUAKE_DETAILS,eewDetails:EEW_DETAILS,eewWarningAreaModes:EEW_WARNING_AREA_MODES,weatherDetails:WEATHER_DETAILS,thresholdModes:THRESHOLD_MODES,rainRadarConditions:RAIN_RADAR_CONDITIONS,rainRadarIntervals:RAIN_RADAR_INTERVALS});
+   return response({regions:SUPPORTER_REGIONS,prefectures:PREFECTURES,weatherLevels:WEATHER_LEVELS,warningLevels:WARNING_LEVELS,earthquakeDetails:EARTHQUAKE_DETAILS,eewDetails:EEW_DETAILS,eewWarningAreaModes:EEW_WARNING_AREA_MODES,weatherDetails:WEATHER_DETAILS,thresholdModes:THRESHOLD_MODES,rainRadarConditions:RAIN_RADAR_CONDITIONS,rainRadarThresholds:RAIN_RADAR_THRESHOLD_OPTIONS,rainRadarIntervals:RAIN_RADAR_INTERVALS});
   }
   if (path === '/api/supporter/areas' && request.method === 'GET') {
    const areas=await loadSupporterAreaCatalogue();
@@ -1048,7 +1070,10 @@ export async function handleSupporterRequest(request, env, ctx) {
    const limits = await supporterLimits(env,db,uid);
    const needsAreaCatalogue=Array.isArray(input.rules)&&input.rules.some(rule=>rule?.municipality&&rule.municipality!=='all'||rule?.district&&rule.district!=='all');
    const catalogue=needsAreaCatalogue?await loadSupporterAreaCatalogue():{prefectures:PREFECTURES,municipalities:[],districts:[]};
-   const rules = normalizeSupporterRules(input.rules, guilds, limits, catalogue);
+   const oldAccount=await db.prepare('SELECT settings_json FROM supporter_accounts WHERE discord_user_id=? AND revision=?').bind(uid,input.revision).first();
+   if(!oldAccount)return response({message:'未登録、または別画面で更新されています。再読み込みしてください。'},409);
+   let oldRules=[];try{const parsed=JSON.parse(oldAccount.settings_json||'{}');oldRules=Array.isArray(parsed?.rules)?parsed.rules:[];}catch{ /* Treat invalid legacy data as no exemptions. */ }
+   const rules = normalizeSupporterRules(input.rules, guilds, limits, catalogue, oldRules);
    await assertRuleChannels(rules, env);
    const result = await db.prepare('UPDATE supporter_accounts SET settings_json=?, revision=revision+1, updated_at=? WHERE discord_user_id=? AND revision=?').bind(JSON.stringify({rules}),new Date().toISOString(),uid,input.revision).run();
    if (!result.meta.changes) return response({message:'未登録、または別画面で更新されています。再読み込みしてください。'},409);

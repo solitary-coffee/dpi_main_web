@@ -35,29 +35,29 @@ test('有料プラン画面は雨雲レーダーと二次利用申請の案内�
 });
 
 test('雨雲レーダーは地方・配信条件・更新頻度を保存する',()=>{
- const radar={...base,name:'関東の雨雲',type:'rain-radar',region:'kanto-koshin',radarCondition:'rainfall-threshold',rainfallThresholdMmPerHour:'10.5',deliveryIntervalHours:'3'};
+ const radar={...base,name:'関東の雨雲',type:'rain-radar',region:'kanto-koshin',radarCondition:'rainfall-threshold',rainfallThresholdMmPerHour:'30',deliveryIntervalHours:'3'};
  const normalized=normalizeSupporterRules([radar],guilds,{servers:3,channels:10,rules:15,rainfallThreshold:true})[0];
  assert.equal(normalized.type,'rain-radar');
  assert.equal(normalized.detail,'all');
  assert.equal(normalized.region,'kanto-koshin');
  assert.equal(normalized.radarCondition,'rainfall-threshold');
- assert.equal(normalized.rainfallThresholdMmPerHour,10.5);
+ assert.equal(normalized.rainfallThresholdMmPerHour,30);
  assert.equal(normalized.deliveryIntervalHours,3);
  assert.equal(normalized.intensity,'');
 });
 
 test('雨雲レーダーの閾値は必要な場合だけ保持し、不正値を拒否する',()=>{
  const radar={...base,type:'rain-radar',radarCondition:'rain-detected',rainfallThresholdMmPerHour:'999',deliveryIntervalHours:'6'};
- assert.equal(normalizeSupporterRules([radar],guilds)[0].rainfallThresholdMmPerHour,null);
- assert.throws(()=>normalizeSupporterRules([{...radar,radarCondition:'rainfall-threshold'}],guilds,{servers:3,channels:10,rules:15,rainfallThreshold:true}),/0.1から20/);
- assert.throws(()=>normalizeSupporterRules([{...radar,deliveryIntervalHours:'5'}],guilds),/配信頻度/);
+ assert.equal(normalizeSupporterRules([radar],guilds,{servers:3,channels:10,rules:15,rainfallThreshold:true})[0].rainfallThresholdMmPerHour,null);
+ assert.throws(()=>normalizeSupporterRules([{...radar,radarCondition:'rainfall-threshold'}],guilds,{servers:3,channels:10,rules:15,rainfallThreshold:true}),/最大階級は80/);
+ assert.throws(()=>normalizeSupporterRules([{...radar,deliveryIntervalHours:'5'}],guilds,{servers:3,channels:10,rules:15,rainfallThreshold:true}),/配信頻度/);
  assert.throws(()=>normalizeSupporterRules([{...radar,radarCondition:'unknown'}],guilds),/配信条件/);
  assert.throws(()=>normalizeSupporterRules([{...radar,conditions:[{kind:'intensity',value:'4'}]}],guilds,{servers:5,channels:20,rules:30,complexConditions:true,multiDestination:true}),/追加条件/);
 });
 
 test('Proは雨雲レーダーの複数条件をAND・ORで保存できる',()=>{
  const rule={...base,type:'rain-radar',radarCondition:'rain-detected',deliveryIntervalHours:'1',conditionLogic:'or',conditions:[{kind:'region',value:'tohoku'},{kind:'radarCondition',value:'rainfall-threshold'},{kind:'rainfallThreshold',value:'20'}]};
- const normalized=normalizeSupporterRules([rule],guilds,{servers:5,channels:20,rules:30,complexConditions:true,multiDestination:true})[0];
+ const normalized=normalizeSupporterRules([rule],guilds,{servers:5,channels:20,rules:30,complexConditions:true,multiDestination:true,rainfallThreshold:true})[0];
  assert.equal(normalized.conditionLogic,'or');
  assert.deepEqual(normalized.conditions,[{kind:'region',operator:'equals',value:'tohoku'},{kind:'radarCondition',operator:'equals',value:'rainfall-threshold'},{kind:'rainfallThreshold',operator:'at_least',value:20}]);
 });

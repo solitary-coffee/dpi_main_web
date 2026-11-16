@@ -74,8 +74,9 @@
       <tr><th scope="row">1ルールから複数チャンネルへ配信</th><td>—</td><td>—</td><td>○</td><td>許可時のみ</td></tr>
       <tr class="comparison-group"><th scope="row" colspan="5">雨雲レーダーの配信設定</th></tr>
       <tr><th scope="row">配信頻度（1・2・3・6・12・24時間ごと）</th><td>○</td><td>○</td><td>○</td><td>○</td></tr>
-      <tr><th scope="row">定時更新・降雨検知の配信条件</th><td>○</td><td>○</td><td>○</td><td>○</td></tr>
-      <tr><th scope="row">1時間降水量の閾値指定（0.1～20 mm/h）</th><td>—</td><td>○</td><td>○</td><td>○</td></tr>
+      <tr><th scope="row">定時更新</th><td>○</td><td>○</td><td>○</td><td>○</td></tr>
+      <tr><th scope="row">降雨検知時に配信</th><td>—</td><td>○</td><td>○</td><td>○</td></tr>
+      <tr><th scope="row">降水量が指定の閾値以上で配信（10・20・30・50・80 mm/h）</th><td>—</td><td>○</td><td>○</td><td>○</td></tr>
       <tr class="compare-cta-row"><th scope="row">お申込み</th><td><a href="/site/supporter/?plan=supporter#billing">Basicを契約する</a></td><td><a href="/site/supporter/?plan=plus#billing">Plusを契約する</a></td><td><a href="/site/supporter/?plan=pro#billing">Proを契約する</a></td><td><a href="/site/supp/index.html">カスタムを相談する</a></td></tr>
      </tbody>
     </table>
@@ -140,8 +141,9 @@
      <ul>
       <li>対象地方の選択（都道府県・市区町村指定には非対応）</li>
       <li>配信頻度：1・2・3・6・12・24時間ごと</li>
-      <li>定時更新、降雨を検知したとき、降水量が閾値以上のとき</li>
-      <li>1時間降水量の下限：0.1～20 mm/h</li>
+      <li>Basic：定時更新のみ。Plus以上：降雨検知または降水量の閾値以上を選択可能</li>
+      <li>降水量が指定の閾値以上で配信：10・20・30・50・80 mm/hから選択</li>
+      <li>降雨検知と閾値判定には気象庁高解像度降水ナウキャストを利用（DPI-Botによる加工解析）。80 mm/h以上の階級は100 mm/hなどと区別できません。</li>
      </ul>
     </details>
    </div>
@@ -149,6 +151,7 @@
   <section class="comparison-notices" aria-labelledby="comparison-notes-heading">
    <h2 id="comparison-notes-heading">選択前にご確認ください</h2>
    <p>追加オプションは、それぞれ月額200円でチャンネル＋3件・サーバー＋2件・通知ルール＋3件です。請求日は毎月26日です。詳細な金額はお申込み画面で必ず確認してください。</p>
+   <p>強雨条件の判定値は気象庁の高解像度降水ナウキャスト画像を解析した階級値です。取得元の障害や仕様変更時は条件付き配信を保留します。出典：<a href="https://www.jma.go.jp/bosai/nowc/">気象庁「雨雲の動き」</a>（DPI-Botが加工解析）。</p>
    <p>市区町村単位の設定はProまたは許可済みカスタムプランで、気象庁の地域コードなどで判定できる情報に限ります。北海道の「振興局相当」は気象庁の地方区分を指し、行政上の振興局区分との完全一致を保証するものではありません。EEWは市区町村指定に対応せず、雨雲レーダーは地方単位です。</p>
    <p>有料プラン契約だけでは二次利用は許可されません。転載・再配信・加工配信には、別途<a href="/site/reuse/">二次利用申請</a>と承認が必要です。</p>
    <p>契約画面は現在テスト運用中のため、許可されたユーザーのみ表示されます。契約画面にアクセスできない場合は<a href="/site/supp/index.html">お問い合わせ</a>をご利用ください。</p>
