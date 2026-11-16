@@ -37,3 +37,30 @@
 .eew-final-status{font-weight:800;color:#d3e9f8}
 .eew-final-report-option small{flex:1 1 100%;color:#d9e6ef;font-size:.78rem}
 @media(max-width:768px){.plan-comparison-link{width:100%;justify-content:center}.current-plan-banner{padding:12px}.eew-final-report-option{gap:8px}}
+
+
+/* Align plan cards with the shared DPI-Bot theme and keep badge out of flow. */
+.plan-section .plans{align-items:stretch;grid-auto-rows:1fr}
+.plan-section .plans>article{
+ position:relative;min-width:0;min-height:100%;padding:52px 18px 20px;
+ border:1px solid var(--line);border-radius:8px;background:var(--panel);
+}
+.plan-section .plans>article h3{margin:0 0 8px;line-height:1.35;color:#8ec9ff}
+.plan-section .plans>article strong{margin:6px 0 13px;line-height:1.35;font-size:clamp(1.4rem,2vw,1.65rem)}
+.plan-section .plans>article p{margin:8px 0;line-height:1.6;overflow-wrap:anywhere}
+.plan-section .plans>article.is-current-plan{
+ border-color:var(--blue);background:var(--panel-soft);
+ box-shadow:inset 0 0 0 1px var(--blue),0 0 0 2px rgba(52,152,219,.12)
+}
+.plan-section .plans>article .current-plan-marker{
+ position:absolute;top:14px;left:18px;
+ display:inline-flex;align-items:center;min-height:26px;padding:4px 11px;
+ border-radius:16px;background:var(--blue-dark);color:#fff;
+ font-size:.78rem;line-height:1.3;font-weight:800;white-space:nowrap;
+}
+.current-plan-banner{border-color:var(--line);border-left:4px solid var(--blue);background:var(--panel);color:var(--text)}
+.current-plan-banner.has-active-plan{border-color:var(--line);border-left-color:var(--ok);background:var(--panel-soft);color:var(--text)}
+@media(max-width:768px){
+ .plan-section .plans>article{padding:48px 16px 18px}
+ .plan-section .plans>article .current-plan-marker{top:12px;left:16px}
+}
