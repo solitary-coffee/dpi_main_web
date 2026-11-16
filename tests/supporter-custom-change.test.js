@@ -91,7 +91,7 @@ function stubStripe(t,state){
      product:'prod_custom',recurring:{interval:'month',interval_count:1}}}]}});
   }
   if(path==='/v1/invoices/in_custom_paid'){
-   return Response.json({id:'in_custom_paid',livemode:false,status:'paid',subscription:subscriptionId,
+   return Response.json({id:'in_custom_paid',livemode:false,status:state.invoicePaid===false?'open':'paid',subscription:subscriptionId,
     customer,currency:'jpy',amount_remaining:0,amount_paid:1000});
   }
   if(path==='/v1/checkout/sessions/cs_difference'){
@@ -180,6 +180,32 @@ test('downgrade changes recurring price with zero immediate Checkout calls',asyn
  assert.equal(plan.confirmed_yen,700);
  assert.equal(changes.get(requestId).status,'applied');
  assert.equal(calls.filter(c=>c.path.includes('/checkout/')).length,0);
+});
+
+test('same-price rule changes update only Stripe metadata and do not create a new Price or Checkout',async t=>{
+ const {db,plan,changes}=makeFake(),requestId='71389e55-3216-46c0-afb2-92b091d31683';
+ const state={monthly:1000,revision:2,paid:false,requestId};
+ const calls=stubStripe(t,state);
+ const pending=await stageCustomChange(db,uid,customer,plan,{...proposed,monthlyYen:1000},'admin','機能追加',requestId);
+ assert.equal(pending.amount_due_yen,0);
+ await settleCustomPriceChange(env,db,uid,requestId);
+ assert.equal(changes.get(requestId).status,'applied');
+ const stripeChange=calls.find(x=>x.path==='/v1/subscriptions/'+subscriptionId&&x.method==='POST');
+ assert.ok(stripeChange);
+ assert.equal(stripeChange.params.get('items[0][price_data][unit_amount]'),null);
+ assert.equal(stripeChange.params.get('metadata[dpi_custom_revision]'),'3');
+});
+
+test('unpaid current invoice blocks price change before a Stripe mutation',async t=>{
+ const {db,plan}=makeFake(),requestId='71389e55-3216-46c0-afb2-92b091d31684';
+ const state={monthly:1000,revision:2,paid:false,invoicePaid:false,requestId};
+ const calls=stubStripe(t,state);
+ await assert.rejects(verifiedCustomSubscription(env,customer,uid,plan),/支払い完了/);
+ const pending=await stageCustomChange(db,uid,customer,plan,{...proposed,monthlyYen:700},'admin','減額確認',requestId);
+ assert.equal(pending.status,'paid');
+ await assert.rejects(settleCustomPriceChange(env,db,uid,requestId),/支払い完了/);
+ assert.equal(plan.confirmed_yen,1000);
+ assert.equal(calls.filter(c=>c.path==='/v1/subscriptions/'+subscriptionId&&c.method==='POST').length,0);
 });
 
 test('admin confirmation and billing webhook are integrated and migration includes idempotency',async()=>{
