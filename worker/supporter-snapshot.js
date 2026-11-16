@@ -1,4 +1,5 @@
 import { geographicEntitlements, geographicRuleAllowed } from './supporter-geo.js';
+import { enrichCustomGroup } from './supporter-custom.js';
 const ACTIVE_SUBSCRIPTION_STATUSES = new Set(['active', 'trialing', 'past_due', 'unpaid', 'paused']);
 const ALLOWED_RULE_TYPES = new Set(['earthquake', 'eew', 'weather', 'rain-radar']);
 const SNAPSHOT_TTL_SECONDS = 30 * 60 * 60;
@@ -52,14 +53,27 @@ export async function buildSupporterSnapshot(db, env, loadSubscriptions, nowMs =
         ORDER BY a.discord_user_id`).all();
     const accounts = rows.results || [];
     const customerIds = [...new Set(accounts.map(row => clean(row.customer_id)).filter(Boolean))];
-    const grouped = await loadSubscriptions(env, customerIds);
+    const grouped = await enrichCustomGroup(db,accounts,await loadSubscriptions(env, customerIds));
     const rules = [];
     for (const row of accounts) {
         const subscriptions = grouped.get(row.customer_id) || [];
         const entitled = subscriptions.some(item => item?.recognizedPlan !== false && ACTIVE_SUBSCRIPTION_STATUSES.has(item?.status));
         if (!entitled) continue;
         const geographicAccess = geographicEntitlements(subscriptions);
-        for (const [index, rule] of rulesFromSettings(row.settings_json).entries()) {
+        const custom=subscriptions.find(item=>item?.managedCustom===true&&['active','trialing'].includes(item.status));
+        const allRules=rulesFromSettings(row.settings_json);
+        // Fail closed on unapproved custom-plan combinations, without deleting settings.
+        if(custom&&allRules.length>custom.rules)continue;
+        const guilds=new Set(),channels=new Set();
+        for(const rule of allRules){
+          const destinations=Array.isArray(rule.channelIds)&&rule.channelIds.length?rule.channelIds:[rule.channelId];
+          guilds.add(String(rule.guildId||''));
+          for(const channel of destinations)channels.add(String(rule.guildId||'')+':'+String(channel||''));
+          if(custom&&((!custom.complexConditions&&(rule.conditionLogic==='or'||rule.conditions?.length))||
+            (!custom.multiDestination&&destinations.length>1)))break;
+        }
+        if(custom&&(guilds.size>custom.servers||channels.size>custom.channels||allRules.some(rule=>(!custom.complexConditions&&(rule.conditionLogic==='or'||rule.conditions?.length))||(!custom.multiDestination&&Array.isArray(rule.channelIds)&&rule.channelIds.length>1))))continue;
+        for (const [index, rule] of allRules.entries()) {
             // Never broaden a previously paid geographic filter on downgrade.
             // Suspend incompatible rules until the customer chooses a new scope.
             if (!geographicRuleAllowed(rule, geographicAccess)) continue;
@@ -75,7 +89,7 @@ export async function buildSupporterSnapshot(db, env, loadSubscriptions, nowMs =
     return {
         // V2 explicitly prevents old delivery workers from interpreting new
         // municipality filters as broad region-only routes during rollout.
-        schemaVersion: rules.some(rule => ['prefecture','district','municipality'].some(key => rule[key] && rule[key] !== 'all') || rule.strictMunicipality === true) ? 2 : 1,
+        schemaVersion: rules.some(rule => rule.type === 'eew' && rule.sendFinalReport === false) ? 3 : rules.some(rule => ['prefecture','district','municipality'].some(key => rule[key] && rule[key] !== 'all') || rule.strictMunicipality === true) ? 2 : 1,
         version: `supporter-${generatedAtMs}-${await digestPrefix(canonicalRules)}`,
         generatedAt,
         expiresAt: generatedAt + SNAPSHOT_TTL_SECONDS,
