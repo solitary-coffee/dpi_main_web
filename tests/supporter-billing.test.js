@@ -258,10 +258,11 @@ test('paid plans stay separate from secondary-use applications and private in na
  assert.match(billingUi,/アップグレード差額と次回26日の請求に利用できます/);
 });
 test('admin billing operations require confirmation, reason, same-origin and audit logging',async()=>{
- const [worker,html,script]=await Promise.all([
+ const [worker,html,script,statistics]=await Promise.all([
   readFile(new URL('../worker/supporter.js',import.meta.url),'utf8'),
   readFile(new URL('../site/supporter-admin/index.html',import.meta.url),'utf8'),
   readFile(new URL('../site/supporter-admin/app.js',import.meta.url),'utf8'),
+  readFile(new URL('../site/supporter-admin/stats.js',import.meta.url),'utf8'),
  ]);
  assert.match(worker,/assertAdminOrigin\(request\)/);
  assert.match(worker,/input\.confirmDiscordUserId !== uid/);
@@ -284,8 +285,10 @@ test('admin billing operations require confirmation, reason, same-origin and aud
  assert.match(script,/再度支払うことで申込み/);
  assert.match(script,/再申込み不可のBAN状態/);
  assert.match(html,/credit-legal-monitor/);
- assert.match(script,/総合クレジット数/);
- assert.match(script,/クレジット利用者数/);
+ assert.match(html,/契約・クレジット統計を見る/);
+ assert.match(statistics,/総クレジット/);
+ assert.match(statistics,/保有者数/);
+ assert.doesNotMatch(script,/総合クレジット数/);
  assert.match(script,/届出基準/);
  assert.doesNotMatch(script,/\.innerHTML\s*=/);
 });
