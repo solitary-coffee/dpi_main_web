@@ -257,6 +257,24 @@ function geoScopeFields(container,rule){
   const district=field(container,rule,'district','北海道内の地方・全域',[['all','北海道全域'],...districts]);
   district.disabled=areaCatalogueFailed||!districts.length;
  }
+ if(!entitlements.municipality){
+  const note=document.createElement('p');note.className='geo-upgrade';
+  note.textContent=rule.municipality&&rule.municipality!=='all'
+   ?'この市区町村指定は現在のPlus以下の契約では利用できず、配信対象から除外されています。Proへの変更、または以下の操作で指定を解除して保存してください。'
+   :'市区町村の指定はPro版以上、または市区町村権限を付与されたカスタムプランで利用できます。';
+  container.append(note);
+  if(rule.municipality&&rule.municipality!=='all'){
+   const reset=document.createElement('button');reset.type='button';reset.className='secondary-btn';
+   reset.textContent='市区町村指定を解除する（保存前に確認）';
+   reset.addEventListener('click',()=>{
+    if(!window.confirm('このルールの市区町村指定を解除すると、都道府県など、より広い範囲が対象になります。変更を保存するまでは反映されません。続行しますか？'))return;
+    rule.municipality='all';rule.strictMunicipality=false;render();
+    status('市区町村指定を解除しました。対象範囲を確認し、通知設定を保存してください。');
+   });
+   container.append(reset);
+  }
+  return;
+ }
  const cities=areaCatalogue.municipalities.filter(item=>item.prefectureCode===rule.prefecture&&(rule.district==='all'||item.districtCode===rule.district)).map(item=>[item.code,item.name]);
  const municipality=field(container,rule,'municipality','市区町村・全域',[['all','選択地域の全域'],...cities]);
  municipality.disabled=areaCatalogueFailed||!cities.length;
@@ -297,9 +315,12 @@ function render() {
   if(entitlements.complexConditions)field(article, rule, 'conditionLogic', '条件の組み合わせ', [['and','すべて満たす（AND）'],['or','いずれかを満たす（OR）']]);
   if (rule.type === 'eew'){
    const finalLabel=document.createElement('label');finalLabel.className='eew-final-report-option';
-   const finalCheck=document.createElement('input');finalCheck.type='checkbox';finalCheck.checked=rule.sendFinalReport!==false;
-   finalCheck.addEventListener('change',()=>{rule.sendFinalReport=finalCheck.checked;});
-   finalLabel.append(finalCheck,document.createTextNode(' 最終報を送信する（OFFの場合、予想最大震度が変わらない最終報を省略）'));
+   const finalCheck=document.createElement('input');finalCheck.type='checkbox';finalCheck.role='switch';finalCheck.checked=rule.sendFinalReport!==false;
+   const finalStatus=document.createElement('span');finalStatus.className='eew-final-status';finalStatus.textContent=finalCheck.checked?'ON':'OFF';
+   finalCheck.addEventListener('change',()=>{rule.sendFinalReport=finalCheck.checked;finalStatus.textContent=finalCheck.checked?'ON':'OFF';});
+   finalLabel.append(finalCheck,document.createTextNode(' 最終報を送信する'),finalStatus);
+   const finalHelp=document.createElement('small');finalHelp.textContent='OFF：予想最大震度が変わらない最終報を省略します。';
+   finalLabel.append(finalHelp);
    article.append(finalLabel);
    if(rule.detail==='warning')field(article, rule, 'eewWarningAreaMode', '警報地方の条件', options.eewWarningAreaModes);
   }
@@ -527,7 +548,7 @@ const invoiceTitle=document.createElement('h3');invoiceTitle.className='invoice-
 const invoiceHistory=document.createElement('div');invoiceHistory.className='invoice-history';invoiceHistory.textContent='契約後に請求明細を確認できます。';
 const plan = document.createElement('select');
 plan.setAttribute('aria-label','契約プラン');
-selectOptions(plan,PLAN_OPTIONS,'supporter');
+selectOptions(plan,PLAN_OPTIONS,new URLSearchParams(location.search).get('plan')||'supporter');
 const channelPacks = document.createElement('select');
 channelPacks.setAttribute('aria-label','追加チャンネル');
 selectOptions(channelPacks,CHANNEL_PACK_OPTIONS,0);
@@ -713,8 +734,35 @@ function renderInvoices(invoices){
  }
 }
 
+function highlightCurrentPlans(subscriptions=[],customPlan=null){
+ const allowed=new Set(['active','trialing','past_due','unpaid','paused']);
+ const current=subscriptions.filter(item=>item.recognizedPlan!==false&&allowed.has(item.status)&&['supporter','plus','pro','custom'].includes(item.planId));
+ const ids=new Set(current.map(item=>item.planId));
+ const names={supporter:'BASIC',plus:'Plus',pro:'Pro',custom:'カスタム'};
+ for(const card of document.querySelectorAll('.plans [data-plan]')){
+  const isCurrent=ids.has(card.dataset.plan);
+  card.classList.toggle('is-current-plan',isCurrent);
+  let marker=card.querySelector('.current-plan-marker');
+  if(isCurrent&&!marker){
+   marker=document.createElement('span');marker.className='current-plan-marker';
+   marker.textContent='現在利用中';card.insertBefore(marker,card.firstChild);
+  }else if(!isCurrent&&marker)marker.remove();
+ }
+ const banner=$('current-plan-banner');
+ if(!banner)return;
+ banner.classList.toggle('has-active-plan',current.length>0);
+ if(current.length){
+  banner.textContent=`現在のご利用プラン：${current.map(item=>`${names[item.planId]}（月額 ${Number(item.amount||0).toLocaleString('ja-JP')}円・${STATUS_LABELS[item.status]||item.status}）`).join('／')}`;
+ }else if(customPlan?.status==='offered'){
+  banner.textContent='現在のご利用プラン：カスタムプランの契約手続き待ち（決済確認後に利用可能）';
+ }else{
+  banner.textContent='現在のご利用プラン：未契約。ご希望のプランを選択してください。';
+ }
+}
+
 function renderContracts(subscriptions,dunning={},customPlan=null,customCheckoutUrl='',customChange=null,customChangeCheckoutUrl='') {
  contract.replaceChildren();
+ highlightCurrentPlans(subscriptions,customPlan);
  customPlanLocked=customPlan?.locked===true;
  for(const button of document.querySelectorAll('[data-billing-action]')){
   if(['checkout','update','portal'].includes(button.dataset.billingAction)){
@@ -756,12 +804,18 @@ function renderContracts(subscriptions,dunning={},customPlan=null,customCheckout
  const active=subscriptions.filter(item=>item.recognizedPlan!==false&&['active','trialing','past_due','unpaid','paused'].includes(item.status));
  const geographicPlans=new Set(active.map(item=>item.planId));
  const custom=active.find(item=>item.managedCustom===true);
- entitlements={...active.reduce((limits,item)=>({servers:Math.max(limits.servers,Number(item.servers)||1),channels:Math.max(limits.channels,Number(item.channels)||2),rules:Math.max(limits.rules,Number(item.rules)||5),complexConditions:limits.complexConditions||item.complexConditions===true,multiDestination:limits.multiDestination||item.multiDestination===true}),{servers:1,channels:2,rules:5,complexConditions:false,multiDestination:false}),prefecture:!!custom?.municipalityBranching||geographicPlans.has('plus')||geographicPlans.has('pro'),municipality:!!custom?.municipalityBranching||geographicPlans.has('plus')||geographicPlans.has('pro'),strictMunicipality:!!custom?.contentExtraction||geographicPlans.has('pro')};
+ entitlements={...active.reduce((limits,item)=>({servers:Math.max(limits.servers,Number(item.servers)||1),channels:Math.max(limits.channels,Number(item.channels)||2),rules:Math.max(limits.rules,Number(item.rules)||5),complexConditions:limits.complexConditions||item.complexConditions===true,multiDestination:limits.multiDestination||item.multiDestination===true}),{servers:1,channels:2,rules:5,complexConditions:false,multiDestination:false}),prefecture:!!custom?.municipalityBranching||geographicPlans.has('plus')||geographicPlans.has('pro'),municipality:!!custom?.municipalityBranching||geographicPlans.has('pro'),strictMunicipality:!!custom?.contentExtraction||geographicPlans.has('pro')};
  const current=active[0]||subscriptions[0];
  if(dunning?.usageSuspended){const warning=document.createElement('p');warning.className='billing-suspension';warning.textContent='月末再決済を確認できなかったため、有料プランの通知設定は利用停止中です。契約管理画面からお支払いを完了してください。';contract.append(warning);}
  if(current){
   plan.value=current.planId||'supporter';channelPacks.value=String(current.channelPacks||0);serverPacks.value=String(current.serverPacks||0);
   topupPlan.value=current.planId||'supporter';topupChannelPacks.value=String(current.channelPacks||0);topupServerPacks.value=String(current.serverPacks||0);
+  // Comparison-page CTAs preselect the requested plan without submitting payment.
+  const requestedPlan=new URLSearchParams(location.search).get('plan');
+  if(PLAN_OPTIONS.some(([id])=>id===requestedPlan)&&!window.__dpiComparisonPlanApplied){
+   window.__dpiComparisonPlanApplied=true;
+   plan.value=requestedPlan;topupPlan.value=requestedPlan;
+  }
   updatePricePreview();updateTopupSignupAvailability();
  }
  for (const subscription of subscriptions) {
