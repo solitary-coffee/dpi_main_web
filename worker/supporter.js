@@ -1,7 +1,8 @@
 import { requireSession, assertCsrf, assertSameOrigin, readJson, fetchGuildChannels } from './reuse.js';
 import { authenticateNewsletterAdmin } from './access.js';
-import { adminBillingAction, adminDisciplinaryBillingAction, billingAction, billingReady, createBillingCustomer, creditsByCustomer, customerSubscriptionSummaries, expireSupporterPendingCheckouts, publicPlans, reconcilePaidCheckoutSubscription, sendSupporterDisciplinaryNotification, subscriptionSummariesByCustomer, createCustomCheckout, expireCustomCheckout, cancelCustomSubscription } from './supporter-billing.js';
+import { adminBillingAction, adminDisciplinaryBillingAction, billingAction, billingReady, createBillingCustomer, creditsByCustomer, customerSubscriptionSummaries, expireSupporterPendingCheckouts, publicPlans, reconcilePaidCheckoutSubscription, sendSupporterDisciplinaryNotification, subscriptionSummariesByCustomer, createCustomCheckout, expireCustomCheckout, cancelCustomSubscription,verifiedCustomSubscription,createCustomDifferenceCheckout,settleCustomPriceChange,recoverCustomPriceChanges } from './supporter-billing.js';
 import { getCustomPlan,customLocked,customPublic,normalizeCustomPlan,enrichCustomSubscriptions } from './supporter-custom.js';
+import { customChangeQuote,currentCustomChange,customChangePublic,stageCustomChange } from './supporter-custom-change.js';
 import { refreshSupporterSnapshotSafely } from './supporter-snapshot.js';
 import { PREFECTURES, loadSupporterAreaCatalogue, geographicEntitlements, normalizeGeographicRule } from './supporter-geo.js';
 
@@ -684,10 +685,67 @@ export async function handleSupporterRequest(request, env, ctx) {
     if(!account)return response({message:'対象ユーザーは有料プランに未登録です。'},404);
     assertSupporterAccountActive(account);
     let current=await getCustomPlan(db,uid);
-    if(input.action==='save'){
+    if(['preview','save'].includes(input.action)){
      const next=normalizeCustomPlan(input);
      const active=current?.status==='active';
-     if(active&&Number(current.confirmed_yen)!==next.monthlyYen)return response({message:'契約中の料金は決済同意を再取得するまで変更できません。上限・機能の変更は可能です。'},409);
+     if(active){
+      // Recover a paid Checkout before allowing a second change.
+      if(account.customer_id)await recoverCustomPriceChanges(env,db,uid);
+      current=await getCustomPlan(db,uid);
+      const pending=await currentCustomChange(db,uid);
+      if(pending){
+       return response({message:'既存の料金変更が未完了です。決済または取消後にもう一度お試しください。',
+        customPlan:customPublic(current),pendingChange:customChangePublic(pending)},409);
+      }
+      if(!account.customer_id)return response({message:'Stripe契約者が登録されていません。'},409);
+      const stripeSubscription=await verifiedCustomSubscription(env,account.customer_id,uid,current);
+      const stripeItem=stripeSubscription.items.data[0];
+      if(Number(stripeItem.price.unit_amount)!==Number(current.confirmed_yen)
+        ||Number(stripeSubscription.metadata?.dpi_custom_revision)!==Number(current.revision))
+       return response({message:'Stripeの契約料金がDBと一致しないため変更を停止しました。'},409);
+      const quote=customChangeQuote(current,input);
+      if(quote.immediateDueYen>0&&quote.immediateDueYen<50)return response({
+       message:'追加決済が50円未満です。Stripeの最低決済金額を満たさないため、料金を調整してください。',quote},409);
+      if(input.action==='preview')return response({success:true,quote,customPlan:customPublic(current)});
+      if(Number(input.expectedRevision)!==Number(current.revision))
+       return response({message:'別の管理者によって料金または権限が更新されました。最新情報を読み直してください。'},409);
+      let staged;
+      try{
+       staged=await stageCustomChange(db,uid,account.customer_id,current,input,admin.email,reason,requestId);
+      }catch(error){
+       if(String(error?.message||'').includes('UNIQUE'))return response({message:'すでに変更処理中の契約があります。決済結果を確認してください。'},409);
+       throw error;
+      }
+      let session=null,result=null;
+      if(quote.immediateDueYen>0){
+       session=await createCustomDifferenceCheckout(env,account.customer_id,uid,current,staged);
+       const updated=await db.prepare(`UPDATE supporter_custom_plan_changes SET checkout_session_id=?,checkout_expires_at=?,updated_at=?
+        WHERE request_id=? AND status='pending' AND checkout_session_id IS NULL`)
+        .bind(session.id,session.expiresAt,new Date().toISOString(),requestId).run();
+       if(!updated.meta?.changes){
+        await expireCustomCheckout(env,session.id,`dpi-custom-change-stale-${requestId}`);
+        return response({message:'別の操作で料金変更が開始されました。新しい決済リンクを無効化しました。'},409);
+       }
+      }else{
+       result=await settleCustomPriceChange(env,db,uid,requestId);
+      }
+      const fresh=await getCustomPlan(db,uid);
+      const change=await currentCustomChange(db,uid);
+      await writeSupporterAudit(db,admin.email,'custom_price_change',uid,{
+       requestId,reason,oldMonthlyYen:quote.oldMonthlyYen,newMonthlyYen:quote.newMonthlyYen,
+       differenceYen:quote.differenceYen,immediateDueYen:quote.immediateDueYen,
+       paid:result?.applied===true,checkoutId:session?.id||null,
+      });
+      if(result?.applied){
+       const snapshotTask=refreshSupporterSnapshotSafely(env,db,subscriptionSummariesByCustomer,'custom_price_changed');
+       if(ctx?.waitUntil)ctx.waitUntil(snapshotTask);else await snapshotTask;
+      }
+      return response({success:true,customPlan:customPublic(fresh),pendingChange:customChangePublic(change),
+       quote,url:session?.url||null,
+       message:session?'当月分の差額のみを請求する専用URLを発行しました。決済確認後に月額と利用権限を更新します。':
+        '契約内容を更新しました。当月の追加請求・返金はなく、次回以降は新しい月額を適用します。'});
+     }
+     if(input.action==='preview')return response({success:true,quote:null,customPlan:customPublic(current)});
      if(!active&&account.customer_id){
       const subs=await customerSubscriptionSummaries(env,account.customer_id);
       if(subs.some(item=>['active','trialing','past_due','unpaid','paused'].includes(item.status)&&item.customId!==current?.id))
@@ -716,6 +774,17 @@ export async function handleSupporterRequest(request, env, ctx) {
         Number(next.multiDestination),Number(next.secondaryReuse),next.estimatedYen,next.monthlyYen,reason,admin.email,now,now).run();
      }
      current=await getCustomPlan(db,uid);
+    }else if(input.action==='cancel-change'){
+     if(!current||current.status!=='active')return response({message:'契約中のカスタムプランがありません。'},409);
+     const pending=await currentCustomChange(db,uid);
+     if(!pending)return response({message:'取り消せる差額決済はありません。'},409);
+     if(pending.status==='paid')return response({message:'差額の入金が確認されています。変更の適用・返金は管理者の確認が必要です。'},409);
+     if(pending.checkout_session_id)
+      await expireCustomCheckout(env,pending.checkout_session_id,`dpi-custom-change-cancel-${pending.request_id}`);
+     await db.prepare(`UPDATE supporter_custom_plan_changes SET status='canceled',updated_at=?
+      WHERE request_id=? AND status='pending'`).bind(new Date().toISOString(),pending.request_id).run();
+     await writeSupporterAudit(db,admin.email,'custom_change_canceled',uid,{requestId:pending.request_id,reason});
+     return response({success:true,message:'未決済の料金変更を取り消しました。既存の契約は継続しています。'});
     }else if(input.action==='checkout'){
      if(!current||current.status!=='offered')return response({message:'まず提供するカスタムプランを保存してください。'},409);
      if(!billingReady(env))return response({message:'Stripeテスト決済が利用できません。'},503);
@@ -739,6 +808,12 @@ export async function handleSupporterRequest(request, env, ctx) {
      await writeSupporterAudit(db,admin.email,'custom_checkout',uid,{reason,requestId,revision:current.revision,price:current.confirmed_yen,expiresAt:session.expiresAt});
      return response({success:true,message:'このDiscord ID専用の月額支払いURL（24時間有効）を作成しました。',url:session.url,expiresAt:session.expiresAt,customPlan:customPublic(current)});
     }else if(input.action==='cancel'){
+     const pending=await currentCustomChange(db,uid);
+     if(pending){
+      if(pending.status==='paid')return response({message:'入金済み変更の処理が残っています。先に精算してください。'},409);
+      if(pending.checkout_session_id)await expireCustomCheckout(env,pending.checkout_session_id,`dpi-custom-change-stop-${pending.request_id}`);
+      await db.prepare(`UPDATE supporter_custom_plan_changes SET status='canceled',updated_at=? WHERE request_id=? AND status='pending'`).bind(new Date().toISOString(),pending.request_id).run();
+     }
      if(!current||current.status==='canceled')return response({message:'停止するカスタムプランはありません。'},409);
      if(current.stripe_checkout_id)await expireCustomCheckout(env,current.stripe_checkout_id,`dpi-custom-stop-checkout-${current.id}`);
      if(current.stripe_subscription_id)await cancelCustomSubscription(env,current.stripe_subscription_id,`dpi-custom-stop-sub-${current.id}`);
