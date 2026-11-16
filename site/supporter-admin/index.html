@@ -27,9 +27,14 @@
    </ul>
   </nav>
   <main class="main-content">
-   <header class="topbar"><div><p class="eyebrow">BILLING OPERATIONS</p><h1>有料プラン管理</h1></div><div class="admin-bar"><a class="stats-link" href="stats.html">契約・クレジット統計を見る</a><button id="refresh-btn" type="button">最新情報に更新</button></div></header>
+   <header class="topbar"><div><p class="eyebrow">BILLING OPERATIONS</p><h1>有料プラン管理</h1></div><div class="admin-bar"><button id="custom-open" class="stats-link" type="button" aria-controls="custom-settings-details" aria-expanded="false">カスタムプラン設定</button><a class="stats-link" href="stats.html">契約・クレジット統計を見る</a><button id="refresh-btn" type="button">最新情報に更新</button></div></header>
    <div id="global-status" class="status" role="alert" aria-live="assertive"></div>
    <section class="admin-section" aria-labelledby="summary-title"><div class="section-heading"><div><p class="eyebrow">OVERVIEW</p><h2 id="summary-title">契約・クレジット状況</h2></div><span id="billing-mode"></span></div><div id="summary-cards" class="metric-grid"></div><div id="credit-legal-monitor" class="credit-legal-monitor" aria-live="polite"></div></section>
+   <section class="admin-section" aria-labelledby="accounts-title">
+    <div class="section-heading"><div><p class="eyebrow">ACCOUNTS</p><h2 id="accounts-title">登録者・契約一覧</h2></div></div>
+    <label class="search-label">契約者名・Discord ID・メール・プランで絞り込み<input id="account-search" type="search" autocomplete="off" placeholder="契約者名 / Discord ID / メール / BASIC / Plus / Pro"></label>
+    <div id="accounts" class="account-list" aria-live="polite"></div>
+   </section>
    <section class="admin-section" aria-labelledby="compensation-title">
     <div class="section-heading"><div><p class="eyebrow">COMPENSATION CREDITS</p><h2 id="compensation-title">補償クレジット配布</h2></div></div>
     <p class="section-description">インシデントなどの補償クレジットを、全登録者・特定ユーザー・特定プランの契約者へ配布します。理由と有効期限は利用者の画面にも表示されます。</p>
@@ -50,6 +55,9 @@
    <section class="admin-section" aria-labelledby="custom-title">
     <div class="section-heading"><div><p class="eyebrow">PERSONAL CONTRACTS</p><h2 id="custom-title">ユーザー別カスタムプラン</h2></div></div>
     <p class="section-description">管理者が指定Discord IDへ個別の契約を提供します。提示額と確定額は別管理です。Stripe決済確認前は配信権限を有効化しません。二次利用には従来どおり別途申請・許諾が必要です。</p>
+    <details id="custom-settings-details" class="custom-settings-details">
+     <summary class="custom-settings-summary"><span>カスタムプランの料金・権限・上限を編集する</span><span class="custom-summary-hint">クリックして詳細設定を表示</span></summary>
+     <div class="custom-settings-content">
     <form id="custom-form" class="compensation-form">
      <label>対象Discord ID<input id="custom-uid" type="text" inputmode="numeric" pattern="[0-9]{17,20}" required placeholder="123456789012345678"></label>
      <button id="custom-load" type="button" class="secondary-btn">現在の設定を読み込む</button>
@@ -57,11 +65,11 @@
      <label>チャンネル上限<input id="custom-channels" type="number" min="1" max="200" value="20" required></label>
      <label>サーバー上限<input id="custom-servers" type="number" min="1" max="50" value="5" required></label>
      <label>ルール上限<input id="custom-rules" type="number" min="1" max="500" value="30" required></label>
-     <label><input id="custom-complex" type="checkbox"> 複雑条件（AND/OR・追加条件）を利用可能</label>
-     <label><input id="custom-city" type="checkbox"> 市区町村単位の分岐を利用可能</label>
-     <label><input id="custom-extract" type="checkbox"> 配信本文を指定市区町村だけに抽出可能</label>
-     <label><input id="custom-multi" type="checkbox"> 1ルールから複数チャンネルへの配信を許可</label>
-     <label><input id="custom-reuse" type="checkbox"> 二次利用を契約上許容（別途申請・審査は必須）</label>
+     <label class="custom-toggle"><input id="custom-complex" type="checkbox" role="switch"><span class="custom-toggle-copy">複雑条件（AND/OR・追加条件）を利用可能</span><span class="custom-toggle-status" data-for="custom-complex" aria-hidden="true">OFF</span></label>
+     <label class="custom-toggle"><input id="custom-city" type="checkbox" role="switch"><span class="custom-toggle-copy">市区町村単位の分岐を利用可能</span><span class="custom-toggle-status" data-for="custom-city" aria-hidden="true">OFF</span></label>
+     <label class="custom-toggle"><input id="custom-extract" type="checkbox" role="switch"><span class="custom-toggle-copy">配信本文を指定市区町村だけに抽出可能</span><span class="custom-toggle-status" data-for="custom-extract" aria-hidden="true">OFF</span></label>
+     <label class="custom-toggle"><input id="custom-multi" type="checkbox" role="switch"><span class="custom-toggle-copy">1ルールから複数チャンネルへの配信を許可</span><span class="custom-toggle-status" data-for="custom-multi" aria-hidden="true">OFF</span></label>
+     <label class="custom-checkbox"><input id="custom-reuse" type="checkbox"><span>二次利用を契約上許容（別途申請・審査は必須）</span></label>
      <p>参考月額概算：<strong id="custom-estimate">—</strong></p>
      <label>管理者が確定する月額（税込・円）<input id="custom-price" type="number" min="100" max="1000000" step="1" value="1280" required></label>
      <label>設定・変更理由<textarea id="custom-reason" rows="3" minlength="5" maxlength="500" required></textarea></label>
@@ -70,11 +78,8 @@
     </form>
     <p class="section-description">増額時は当月分の差額だけを追加決済し、決済が完了するまで旧契約・旧料金を維持します。減額時は当月分の返金を行わず、次回以降の月額を変更します。Stripeの最低決済額は50円です。</p>
     <div id="custom-result" class="action-result" role="status" aria-live="polite"></div>
-   </section>
-   <section class="admin-section" aria-labelledby="accounts-title">
-    <div class="section-heading"><div><p class="eyebrow">ACCOUNTS</p><h2 id="accounts-title">登録者・契約一覧</h2></div></div>
-    <label class="search-label">契約者名・Discord ID・メール・プランで絞り込み<input id="account-search" type="search" autocomplete="off" placeholder="契約者名 / Discord ID / メール / BASIC / Plus / Pro"></label>
-    <div id="accounts" class="account-list" aria-live="polite"></div>
+     </div>
+    </details>
    </section>
   </main>
  </div>

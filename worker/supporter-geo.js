@@ -47,7 +47,7 @@ export async function loadSupporterAreaCatalogue(now=Date.now()){
 export function geographicEntitlements(subscriptions=[]){
  const plans=new Set(subscriptions.filter(s=>s?.recognizedPlan!==false&&['active','trialing','past_due','unpaid','paused'].includes(s?.status)).map(s=>s.planId));
  const custom=subscriptions.find(s=>s?.planId==='custom'&&s?.recognizedPlan===true&&['active','trialing'].includes(s?.status));
- return {prefecture:!!custom?.municipalityBranching||plans.has('plus')||plans.has('pro'),municipality:!!custom?.municipalityBranching||plans.has('plus')||plans.has('pro'),strictMunicipality:!!custom?.contentExtraction||plans.has('pro')};
+ return {prefecture:!!custom?.municipalityBranching||plans.has('plus')||plans.has('pro'),municipality:!!custom?.municipalityBranching||plans.has('pro'),strictMunicipality:!!custom?.contentExtraction||plans.has('pro')};
 }
 
 export function normalizeGeographicRule(rule,region,limits,catalogue){
@@ -63,7 +63,7 @@ export function normalizeGeographicRule(rule,region,limits,catalogue){
  if(municipality!=='all'){
   const city=catalogue?.municipalities?.find(item=>item.code===municipality);
   if(!limits.municipality||!city||city.prefectureCode!==prefecture||(district!=='all'&&city.districtCode!==district))
-   throw Object.assign(new Error('市区町村を指定するにはPlus以上の契約と正しい地域コードが必要です。'),{status:400});
+   throw Object.assign(new Error('市区町村を指定するにはPro版または市区町村権限を持つカスタムプランと正しい地域コードが必要です。'),{status:400});
  }
  if(strictMunicipality&&(!limits.strictMunicipality||municipality==='all'))
   throw Object.assign(new Error('市区町村だけの情報を配信する機能はProプランで、対象市区町村の指定時のみ利用できます。'),{status:400});

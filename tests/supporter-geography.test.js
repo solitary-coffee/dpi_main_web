@@ -7,8 +7,8 @@ import {readFile} from 'node:fs/promises';
 
 const guilds=[{id:'12345678901234567',name:'DPI-Test'}];
 const basic={servers:1,channels:2,rules:5,complexConditions:false,multiDestination:false,prefecture:false,municipality:false,strictMunicipality:false};
-const plus={...basic,prefecture:true,municipality:true,rules:15};
-const pro={...plus,strictMunicipality:true,complexConditions:true,multiDestination:true,rules:30};
+const plus={...basic,prefecture:true,municipality:false,rules:15};
+const pro={...plus,municipality:true,strictMunicipality:true,complexConditions:true,multiDestination:true,rules:30};
 const areas={
  prefectures:PREFECTURES,
  districts:[{code:'0110',name:'石狩地方',prefectureCode:'01'}],
@@ -21,16 +21,18 @@ const areas={
 };
 const base={name:'札幌市の気象警報',guildId:guilds[0].id,channelId:'98765432109876543',type:'weather',detail:'heavy-rain-level',region:'hokkaido',prefecture:'01',district:'0110',municipality:'0110000'};
 
-test('Basic cannot save prefecture/city and Plus can select correct JMA locality',()=>{
+test('Basic cannot save prefecture and Plus can select prefecture only',()=>{
  assert.throws(()=>normalizeSupporterRules([base],guilds,basic,areas),/Plus/);
- const value=normalizeSupporterRules([base],guilds,plus,areas)[0];
+ assert.throws(()=>normalizeSupporterRules([base],guilds,plus,areas),/Pro版/);
+ const value=normalizeSupporterRules([{...base,municipality:'all'}],guilds,plus,areas)[0];
  assert.equal(value.prefecture,'01');
- assert.equal(value.municipality,'0110000');
+ assert.equal(value.district,'0110');
+ assert.equal(value.municipality,'all');
  assert.deepEqual(value.districtCityCodes,['0110000','0121700','0123500']);
  assert.equal(value.strictMunicipality,false);
 });
 
-test('Pro only can select city-only content, and locality validation fails closed',()=>{
+test('Pro and eligible custom can select city-only content, locality validation fails closed',()=>{
  assert.throws(()=>normalizeSupporterRules([{...base,strictMunicipality:true}],guilds,plus,areas),/Pro/);
  assert.equal(normalizeSupporterRules([{...base,strictMunicipality:true}],guilds,pro,areas)[0].strictMunicipality,true);
  assert.throws(()=>normalizeSupporterRules([{...base,municipality:'0410000'}],guilds,pro,areas),/地域コード/);
@@ -51,6 +53,14 @@ test('Legacy regional rules remain valid and downgraded geo rules are suspended'
  assert.equal(rights.prefecture,false);
  assert.equal(geographicRuleAllowed({...base,strictMunicipality:true},rights),false);
  assert.equal(geographicRuleAllowed(legacy,rights),true);
+ const plusRights=geographicEntitlements([{status:'active',recognizedPlan:true,planId:'plus'}]);
+ assert.equal(plusRights.prefecture,true);
+ assert.equal(plusRights.municipality,false);
+ assert.equal(geographicRuleAllowed(base,plusRights),false);
+ const proRights=geographicEntitlements([{status:'active',recognizedPlan:true,planId:'pro'}]);
+ assert.equal(proRights.municipality,true);
+ const customRights=geographicEntitlements([{status:'active',recognizedPlan:true,planId:'custom',municipalityBranching:true}]);
+ assert.equal(customRights.municipality,true);
 });
 
 test('Snapshot does not expand a Pro-only rule after downgrade',async()=>{

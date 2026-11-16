@@ -623,6 +623,8 @@ export function supporterTestUserAllowed(env, discordUserId) {
 async function supporterSite(request, env, db) {
  const method = request.method.toUpperCase();
  if (!['GET', 'HEAD'].includes(method)) return notFound();
+ // Comparison assets and the contract dashboard share the same access gate.
+ // Never bypass authentication for plans.html or its associated stylesheet.
  if (!supporterPublicEnabled(env)) {
   let allowed = false;
   try {

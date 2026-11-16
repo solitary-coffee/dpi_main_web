@@ -13,6 +13,19 @@ const ACTIVE_STATUSES = new Set(['active','trialing','past_due','unpaid','paused
 
 document.addEventListener('DOMContentLoaded', () => {
  $('refresh-btn').addEventListener('click', loadAccounts);
+ const details=$('custom-settings-details');
+ $('custom-open').addEventListener('click',()=>{
+  details.open=!details.open;
+  if(details.open)details.scrollIntoView({behavior:'smooth',block:'start'});
+ });
+ details.addEventListener('toggle',()=>{
+  $('custom-open').setAttribute('aria-expanded',String(details.open));
+  $('custom-open').textContent=details.open?'カスタム設定を閉じる':'カスタムプラン設定';
+ });
+ for(const id of ['custom-complex','custom-city','custom-extract','custom-multi']){
+  $(id).addEventListener('change',syncCustomToggles);
+ }
+ syncCustomToggles();
  $('custom-form').addEventListener('submit',event=>{event.preventDefault();submitCustom('save');});
  $('custom-load').addEventListener('click',loadCustom);
  $('custom-checkout').addEventListener('click',()=>submitCustom('checkout'));
@@ -20,7 +33,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
  $('custom-cancel').addEventListener('click',()=>submitCustom('cancel'));
  for(const id of ['custom-channels','custom-servers','custom-rules','custom-complex','custom-city','custom-extract','custom-multi','custom-reuse'])$(id).addEventListener('input',updateCustomEstimate);
- $('custom-city').addEventListener('change',()=>{if(!$('custom-city').checked)$('custom-extract').checked=false;updateCustomEstimate();});
+ $('custom-city').addEventListener('change',()=>{if(!$('custom-city').checked)$('custom-extract').checked=false;syncCustomToggles();updateCustomEstimate();});
  updateCustomEstimate();
  $('account-search').addEventListener('input', renderAccounts);
  $('detail-close').addEventListener('click', () => $('detail-dialog').close());
@@ -34,6 +47,30 @@ document.addEventListener('DOMContentLoaded', () => {
  loadAccounts();
 });
 
+function syncCustomToggles(){
+ const extraction=$('custom-extract');
+ extraction.disabled=!$('custom-city').checked;
+ if(extraction.disabled)extraction.checked=false;
+ for(const status of document.querySelectorAll('.custom-toggle-status[data-for]')){
+  const input=$(status.dataset.for);
+  if(!input)continue;
+  status.textContent=input.checked?'ON':'OFF';
+ }
+}
+function openCustomForAccount(account){
+ if(!account)return;
+ // Always remove another account's pending form edits before switching users.
+ $('custom-form').reset();
+ $('custom-settings-details').open=true;
+ $('custom-uid').value=account.discordUserId;
+ $('custom-confirm').value=account.discordUserId;
+ $('custom-reason').value='';
+ loadedCustomRevision=null;
+ customRequestId='';
+ if(account.customPlan)loadCustom();
+ else{$('custom-result').textContent='新規カスタムプランを設定できます。設定内容を確認して保存してください。';syncCustomToggles();updateCustomEstimate();}
+ $('custom-settings-details').scrollIntoView({behavior:'smooth',block:'start'});
+}
 function element(tag, className = '', text = '') {
  const node = document.createElement(tag);
  if (className) node.className = className;
@@ -194,7 +231,8 @@ function accountCard(account) {
  const actions=element('div','account-actions');
  const details=element('button','detail-btn','詳細');details.type='button';details.addEventListener('click',()=>openDetails(account));
  const manage=element('button','manage-btn','契約を管理');manage.type='button';manage.addEventListener('click',()=>openAction(account));
- actions.append(details,manage);heading.append(title,actions);
+ const custom=element('button','detail-btn','カスタム設定');custom.type='button';custom.addEventListener('click',()=>openCustomForAccount(account));
+ actions.append(details,manage,custom);heading.append(title,actions);
  const meta=element('div','account-meta');
  meta.append(element('span','',`Discord ID ${account.discordUserId}`),element('span','',`メール ${account.billingEmail||'未登録'}`),element('span','',`クレジット ${Number(account.credits||0).toLocaleString('ja-JP')}（${Number(account.credits||0).toLocaleString('ja-JP')}円分）`),element('span',account.accountStatus==='suspended'?'account-status-badge suspended':'account-status-badge',account.accountStatus==='suspended'?'BAN中':'利用可能'),element('span','',`登録 ${dateText(account.registeredAt)}`),element('span','',`更新 ${dateText(account.updatedAt)}`),element('span','',`通知ルール ${account.ruleCount}件`),element('span','',`設定revision ${account.revision}`));
  card.append(heading,meta);
@@ -363,6 +401,7 @@ function loadCustom(){
  for(const [id,value] of [['custom-channels',p.channels],['custom-servers',p.servers],['custom-rules',p.rules],['custom-price',p.monthlyYen]])$(id).value=String(value);
  for(const [id,value] of [['custom-complex',p.complexConditions],['custom-city',p.municipalityBranching],['custom-extract',p.contentExtraction],['custom-multi',p.multiDestination],['custom-reuse',p.secondaryReuse]])$(id).checked=value===true;
  loadedCustomRevision=Number(p.revision);
+ syncCustomToggles();
  $('custom-result').textContent=`現在の状態：${p.status}／更新日：${p.updatedAt||'不明'}。契約中でも管理者は料金を変更できます。`;
  if(account.pendingCustomChange){
   const c=account.pendingCustomChange;
@@ -406,6 +445,22 @@ async function submitCustom(action){
 ${q.immediateDueYen>0?'増額は差額の支払い確認後に適用します。':'追加決済なしで更新します。'}
 よろしいですか？`;
    if(!window.confirm(summary)){$('custom-result').textContent='変更を取り消しました。';return;}
+  }
+  if(action==='save'&&account?.customPlan?.status!=='active'){
+   const summary=`このユーザーに新しくカスタムプランを設定します。
+
+Discord ID：${payload.discordUserId}
+プラン名：${payload.name}
+月額：${payload.monthlyYen.toLocaleString('ja-JP')}円
+上限：${payload.servers}サーバー／${payload.channels}チャンネル／${payload.rules}ルール
+複雑条件：${payload.complexConditions?'ON':'OFF'}
+市区町村：${payload.municipalityBranching?'ON':'OFF'}
+本文抽出：${payload.contentExtraction?'ON':'OFF'}
+複数チャンネル：${payload.multiDestination?'ON':'OFF'}
+二次利用の契約上の許容：${payload.secondaryReuse?'あり（別途申請必須）':'なし'}
+
+保存後も利用者の決済が確認されるまで配信権限は有効になりません。続行しますか？`;
+   if(!window.confirm(summary)){$('custom-result').textContent='設定の保存を取り消しました。';return;}
   }
   const data=await send(payload);
   $('custom-result').replaceChildren(element('span','',data.message));
