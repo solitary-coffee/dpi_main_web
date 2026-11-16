@@ -66,8 +66,9 @@
      <label>管理者が確定する月額（税込・円）<input id="custom-price" type="number" min="100" max="1000000" step="1" value="1280" required></label>
      <label>設定・変更理由<textarea id="custom-reason" rows="3" minlength="5" maxlength="500" required></textarea></label>
      <label>確認のため対象Discord IDを再入力<input id="custom-confirm" type="text" inputmode="numeric" pattern="[0-9]{17,20}" required></label>
-     <div class="admin-bar"><button id="custom-save" type="submit">カスタムプランを保存</button><button id="custom-checkout" type="button" class="secondary-btn">専用支払いリンクを発行</button><button id="custom-cancel" type="button" class="danger-btn">カスタムプランを停止</button></div>
+     <div class="admin-bar"><button id="custom-save" type="submit">変更内容と差額を確認して保存</button><button id="custom-checkout" type="button" class="secondary-btn">新規契約の専用支払いリンク</button><button id="custom-cancel-change" type="button" class="secondary-btn">未決済の料金変更を取り消す</button><button id="custom-cancel" type="button" class="danger-btn">カスタムプランを停止</button></div>
     </form>
+    <p class="section-description">増額時は当月分の差額だけを追加決済し、決済が完了するまで旧契約・旧料金を維持します。減額時は当月分の返金を行わず、次回以降の月額を変更します。Stripeの最低決済額は50円です。</p>
     <div id="custom-result" class="action-result" role="status" aria-live="polite"></div>
    </section>
    <section class="admin-section" aria-labelledby="accounts-title">
