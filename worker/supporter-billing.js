@@ -744,10 +744,19 @@ export async function billingAction(request,env,db,uid,input={}){
   const creditTopupRecovery=await reconcilePendingCreditTopups(env,db,uid,row.customer_id);
   const recovery=await reconcilePaidCheckoutSubscription(env,row.customer_id,uid,db);
   if(recovery.recovered&&recovery.checkoutId)await db.prepare('UPDATE supporter_billing SET checkout_id=?,dirty=1 WHERE discord_user_id=?').bind(recovery.checkoutId,uid).run();
+  // A successfully paid change may have lost its webhook acknowledgment.
+  // Retry idempotently before exposing the billing state.
+  await recoverCustomPriceChanges(env,db,uid);
   const [summaries,invoices,credits,dunning]=await Promise.all([customerSubscriptionSummaries(env,row.customer_id),customerInvoices(env,row.customer_id),customerCredits(env,row.customer_id),dunningState(db,row.customer_id)]);
   const creditDetails=await purchasedCreditStatus(db,uid,credits);
   const syncedCustom=await syncCustomWithStripe(db,uid,row.customer_id,summaries);
   const effective=enrichCustomSubscriptions(summaries,syncedCustom);
+  const pendingCustomChange=await currentCustomChange(db,uid);
+  let customChangeCheckoutUrl='';
+  if(syncedCustom?.status==='active'&&pendingCustomChange?.status==='pending'){
+   try{customChangeCheckoutUrl=await customDifferenceCheckoutUrl(env,row.customer_id,uid,syncedCustom,pendingCustomChange);}
+   catch(error){console.error('Custom difference Checkout verification deferred',{errorName:error?.name||'Error'});}
+  }
   const active=effective.filter(item=>item.recognizedPlan!==false&&['active','trialing','past_due','unpaid','paused'].includes(item.status));
   // Never silently truncate custom-plan rules. Admin must resolve a lowered quota first.
   const rulesAdjustment=active.length&&!effective.some(item=>item.managedCustom)?await reconcileStoredRulesForCustomer(db,row.customer_id,combinedLimits(active)):{changed:false,removedRules:0,removedDestinations:0,simplifiedRules:0};
@@ -763,7 +772,7 @@ export async function billingAction(request,env,db,uid,input={}){
       &&host.protocol==='https:'&&host.hostname==='checkout.stripe.com')customCheckoutUrl=safe;
    }catch{ /* An unavailable or stale Checkout URL must never be displayed. */ }
   }
-  return json({mode:'test',billingDay:26,subscriptions:effective,customPlan:customPublic(syncedCustom),customCheckoutUrl,invoices,credits,creditDetails,dunning,accountEnforcement,rulesAdjustment,recoveredSubscription:recovery.recovered,creditTopupRecovery,deliveryEnabled:false});
+  return json({mode:'test',billingDay:26,subscriptions:effective,customPlan:customPublic(syncedCustom),customCheckoutUrl,customChange:pendingCustomChange?{requestId:pendingCustomChange.request_id,status:pendingCustomChange.status,oldMonthlyYen:Number(pendingCustomChange.old_monthly_yen),nextMonthlyYen:Number(pendingCustomChange.next_monthly_yen),amountDueYen:Number(pendingCustomChange.amount_due_yen)}:null,customChangeCheckoutUrl,invoices,credits,creditDetails,dunning,accountEnforcement,rulesAdjustment,recoveredSubscription:recovery.recovered,creditTopupRecovery,deliveryEnabled:false});
  }
  if(customLocked(customPlan)&&['checkout','update','preview-update','portal'].includes(action))return json({message:'カスタムプランの提供中はユーザー側でプラン変更・標準プラン申込みを行えません。契約の変更・解約は管理者へお問い合わせください。',customPlan:customPublic(customPlan)},403);
  if(action==='portal'&&accountEnforcement.suspended&&!row.customer_id)return json({message:'BAN中のため契約管理画面を作成できません。',accountEnforcement},403);
@@ -1166,6 +1175,10 @@ export async function billingWebhook(request,env,ctx){
   const session=event.data?.object;
   if(await rejectDisciplinedCheckout(env,db,session)){
    console.warn('Checkout completed after disciplinary action and was rejected',{sessionId:clean(session?.id),uid:clean(checkoutMetadata(session).dpi_user||session?.client_reference_id)});
+  }else if(checkoutMetadata(session).dpi_checkout_kind==='custom_change'){
+   const metadata=checkoutMetadata(session),uid=clean(metadata.dpi_user),changeId=clean(metadata.dpi_change_request);
+   if(/^\d{17,20}$/.test(uid)&&/^[0-9a-f-]{36}$/i.test(changeId))
+    await settleCustomPriceChange(env,db,uid,changeId);
   }else if(checkoutMetadata(session).dpi_checkout_kind==='custom_subscription'){
     const metadata=checkoutMetadata(session),uid=clean(metadata.dpi_user);
     const customer=typeof session.customer==='string'?session.customer:session.customer?.id;
@@ -1195,6 +1208,12 @@ export async function billingWebhook(request,env,ctx){
    db.prepare('UPDATE supporter_billing SET checkout_key=NULL,checkout_id=NULL,checkout_params=NULL,dirty=1 WHERE checkout_id=?').bind(sessionId),
    db.prepare(`UPDATE supporter_credit_topups SET status='failed',updated_at=? WHERE checkout_session_id=? AND status='pending'`).bind(Math.floor(Date.now()/1000),sessionId),
   ]);
+  if(checkoutMetadata(session).dpi_checkout_kind==='custom_change'){
+   // Expiry/failure cannot cancel a payment already confirmed elsewhere.
+   await db.prepare(`UPDATE supporter_custom_plan_changes SET status='canceled',updated_at=?
+    WHERE checkout_session_id=? AND status='pending'`)
+    .bind(new Date().toISOString(),sessionId).run();
+  }
   if(event.type==='checkout.session.async_payment_failed'&&checkoutMetadata(session).dpi_checkout_kind==='credit_topup')await sendBillingNotification(env,db,'credit_topup_failed',{id:sessionId,customer:session.customer,amount_due:Number(session.amount_total||0),currency:session.currency||'jpy'});
  }
  if(event.type==='customer.updated')await syncCustomerEmail(db,event.data?.object);
@@ -1251,6 +1270,7 @@ export async function runSupporterBillingSchedule(env,nowMs=Date.now()){
   catch(error){console.error('Supporter disciplinary email retry failed',{requestId:row.request_id,errorName:error?.name||'Error'});}
  }
  const expiredCredits=await expirePurchasedCredits(env,db);
+ await recoverCustomPriceChanges(env,db);
  await refreshSupporterSnapshotSafely(env,db,subscriptionSummariesByCustomer,'billing_schedule');
  return {retried,paid,failed,suspended,expiredCredits};
 }
@@ -1292,6 +1312,7 @@ export async function expireCustomCheckout(env,sessionId,key){
  if(!sessionId)return;
  const session=await stripe(env,`checkout/sessions/${encodeURIComponent(sessionId)}`);
  if(session.status==='open')await stripe(env,`checkout/sessions/${encodeURIComponent(sessionId)}/expire`,{},key);
+ else if(session.status==='complete'||session.payment_status==='paid')fail('この決済はすでに処理済みのため無効化できません。Stripeと契約状態を確認してください。',409);
 }
 export async function cancelCustomSubscription(env,subscriptionId,key){
  if(!subscriptionId)return;
