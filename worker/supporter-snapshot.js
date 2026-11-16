@@ -89,7 +89,7 @@ export async function buildSupporterSnapshot(db, env, loadSubscriptions, nowMs =
     return {
         // V2 explicitly prevents old delivery workers from interpreting new
         // municipality filters as broad region-only routes during rollout.
-        schemaVersion: rules.some(rule => ['prefecture','district','municipality'].some(key => rule[key] && rule[key] !== 'all') || rule.strictMunicipality === true) ? 2 : 1,
+        schemaVersion: rules.some(rule => rule.type === 'eew' && rule.sendFinalReport === false) ? 3 : rules.some(rule => ['prefecture','district','municipality'].some(key => rule[key] && rule[key] !== 'all') || rule.strictMunicipality === true) ? 2 : 1,
         version: `supporter-${generatedAtMs}-${await digestPrefix(canonicalRules)}`,
         generatedAt,
         expiresAt: generatedAt + SNAPSHOT_TTL_SECONDS,
