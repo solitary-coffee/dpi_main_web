@@ -523,6 +523,10 @@ export function normalizeSupporterRules(input, guilds, limits = {servers:1,chann
   const region = clean(rule?.region) || 'all';
   const conditionLogic=clean(rule?.conditionLogic)||'and';
   const geographic=normalizeGeographicRule(rule,region,limits,catalogue);
+  if(type==='rain-radar'&&geographic.prefecture!=='all')
+   throw Object.assign(new Error('現在の雨雲レーダー画像は地方単位です。都道府県・市区町村単位の正確な降雨判定には対応していません。'),{status:400});
+  if(type==='eew'&&(geographic.district!=='all'||geographic.municipality!=='all'))
+   throw Object.assign(new Error('緊急地震速報には市区町村単位の確定した警報対象コードが含まれないため、地方・都道府県単位で設定してください。'),{status:400});
   if (!name || name.length > 80 || !guilds.some(g=>g.id===guildId) || !channelIds.length || channelIds.some(id=>!/^\d{17,20}$/.test(id))
       || !['earthquake','eew','weather','rain-radar'].includes(type) || !REGION_IDS.has(region)) {
    throw Object.assign(new Error('入力内容とサーバー管理権限を確認してください。'),{status:400});
