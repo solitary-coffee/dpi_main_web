@@ -269,7 +269,7 @@ def _handle_action(body):
 
 
 def _validate_supporter_snapshot(value, now=None):
-    if not isinstance(value, dict) or int(value.get("schemaVersion", 0)) != 1:
+    if not isinstance(value, dict) or int(value.get("schemaVersion", 0)) not in (1, 2):
         raise ValueError("有料プラン配信設定の形式を確認してください。")
     version = _clean(value.get("version"), 128)
     generated_at = _integer(value.get("generatedAt"), 0)
@@ -318,7 +318,7 @@ def _validate_supporter_snapshot(value, now=None):
     if dedicated_min < 1 or urls_per_worker < 1 or not 1 <= max_workers <= 10:
         raise ValueError("有料プラン配信の分散設定を確認してください。")
     return {
-        "schemaVersion": 1,
+        "schemaVersion": int(value["schemaVersion"]),
         "version": version,
         "generatedAt": generated_at,
         "expiresAt": expires_at,
