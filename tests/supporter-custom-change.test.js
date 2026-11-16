@@ -87,8 +87,8 @@ function stubStripe(t,state){
     }
     state.revision=Number(params.get('metadata[dpi_custom_revision]'));
    }
-   return Response.json({id:subscriptionId,livemode:false,customer,status:'active',latest_invoice:'in_custom_paid',collection_method:'charge_automatically',
-    metadata:{dpi_user:uid,dpi_custom_id:customId,dpi_custom_revision:String(state.revision)},
+   return Response.json({id:subscriptionId,livemode:false,customer,status:'active',latest_invoice:state.firstPeriod?null:'in_custom_paid',collection_method:'charge_automatically',
+    metadata:{dpi_user:uid,dpi_custom_id:customId,dpi_custom_revision:String(state.revision),...(state.firstPeriod?{dpi_custom_initial_session:'cs_test_initial'}:{})},
     items:{data:[{id:'si_custom',quantity:1,price:{currency:'jpy',unit_amount:state.monthly,
      product:'prod_custom',recurring:{interval:'month',interval_count:1}}}]}});
   }
@@ -96,7 +96,16 @@ function stubStripe(t,state){
    return Response.json({id:'in_custom_paid',livemode:false,status:state.invoicePaid===false?'open':'paid',subscription:subscriptionId,
     customer,currency:'jpy',amount_remaining:0,amount_paid:1000});
   }
-  if(path==='/v1/checkout/sessions/cs_difference'){
+  if(path==='/v1/checkout/sessions/cs_test_initial'){
+    return Response.json({id:'cs_test_initial',livemode:false,mode:'payment',
+     status:state.initialPaid===false?'open':'complete',
+     payment_status:state.initialPaid===false?'unpaid':'paid',
+     currency:'jpy',customer,client_reference_id:state.initialWrongUser?'88888888888888888':uid,
+     amount_total:state.initialWrongAmount?900:1000,
+     metadata:{dpi_checkout_kind:'custom_subscription_initial',dpi_custom_id:customId,
+      dpi_custom_revision:'2',dpi_custom_monthly_yen:'1000',dpi_initial_months:'1'}});
+   }
+   if(path==='/v1/checkout/sessions/cs_difference'){
    return Response.json({id:'cs_difference',livemode:false,mode:'payment',status:state.paid?'complete':'open',
     payment_status:state.paid?'paid':'unpaid',currency:'jpy',customer,client_reference_id:uid,amount_total:600,
     expires_at:2000000000,url:'https://checkout.stripe.com/c/pay/cs_difference',
@@ -208,6 +217,29 @@ test('unpaid current invoice blocks price change before a Stripe mutation',async
  await assert.rejects(settleCustomPriceChange(env,db,uid,requestId),/支払い完了/);
  assert.equal(plan.confirmed_yen,1000);
  assert.equal(calls.filter(c=>c.path==='/v1/subscriptions/'+subscriptionId&&c.method==='POST').length,0);
+});
+
+test('paid initial checkout permits price changes before the first 26th renewal',async t=>{
+ const {plan}=makeFake();
+ const state={firstPeriod:true,initialPaid:true,monthly:1000,revision:2};
+ const requests=stubStripe(t,state);
+ const subscription=await verifiedCustomSubscription(env,customer,uid,plan);
+ assert.equal(subscription.id,subscriptionId);
+ assert.equal(requests.some(c=>c.path==='/v1/checkout/sessions/cs_test_initial'),true);
+ assert.equal(requests.some(c=>c.path==='/v1/invoices/in_custom_paid'),false);
+});
+
+test('unpaid, wrong-user and wrong-amount first checkout cannot authorize changes',async t=>{
+ const {plan}=makeFake();
+ const state={firstPeriod:true,initialPaid:false,monthly:1000,revision:2};
+ stubStripe(t,state);
+ await assert.rejects(verifiedCustomSubscription(env,customer,uid,plan),/初回Checkout/);
+ state.initialPaid=true;
+ state.initialWrongUser=true;
+ await assert.rejects(verifiedCustomSubscription(env,customer,uid,plan),/初回Checkout/);
+ state.initialWrongUser=false;
+ state.initialWrongAmount=true;
+ await assert.rejects(verifiedCustomSubscription(env,customer,uid,plan),/初回Checkout/);
 });
 
 test('admin confirmation and billing webhook are integrated and migration includes idempotency',async()=>{
