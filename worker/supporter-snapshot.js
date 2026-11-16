@@ -73,7 +73,9 @@ export async function buildSupporterSnapshot(db, env, loadSubscriptions, nowMs =
     const generatedAt = Math.floor(generatedAtMs / 1000);
     const canonicalRules = JSON.stringify(rules);
     return {
-        schemaVersion: 1,
+        // V2 explicitly prevents old delivery workers from interpreting new
+        // municipality filters as broad region-only routes during rollout.
+        schemaVersion: rules.some(rule => ['prefecture','district','municipality'].some(key => rule[key] && rule[key] !== 'all') || rule.strictMunicipality === true) ? 2 : 1,
         version: `supporter-${generatedAtMs}-${await digestPrefix(canonicalRules)}`,
         generatedAt,
         expiresAt: generatedAt + SNAPSHOT_TTL_SECONDS,
