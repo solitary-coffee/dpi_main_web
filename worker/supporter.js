@@ -357,12 +357,12 @@ export const WEATHER_DETAILS = Object.freeze([
 export const RAIN_RADAR_CONDITIONS = Object.freeze([
  ['all', '定時更新'],
  ['rain-detected', '対象地方で降雨を検出'],
- ['rainfall-threshold', '1時間降水量が閾値以上'],
+ ['rainfall-threshold', '指定した降水量以上で配信'],
 ]);
 // The existing GIF parser (dpi_code/disco/uchi/supporter_radar.py) can
 // distinguish 10 and 20 mm/h in the requested 10-100 range. Its 20+ color
 // class is capped at 20; values above 20 cannot be verified.
-export const RAIN_RADAR_THRESHOLD_OPTIONS = Object.freeze([['10','10 mm/h以上'],['20','20 mm/h以上']]);
+export const RAIN_RADAR_THRESHOLD_OPTIONS = Object.freeze([['10','10 mm/h以上'],['20','20 mm/h以上'],['30','30 mm/h以上'],['50','50 mm/h以上'],['80','80 mm/h以上']]);
 const RAIN_RADAR_THRESHOLD_VALUES = new Set(RAIN_RADAR_THRESHOLD_OPTIONS.map(([value])=>Number(value)));
 export const RAIN_RADAR_INTERVALS = Object.freeze([
  ['1', '1時間ごと'],
@@ -489,12 +489,12 @@ function optionalMagnitude(value) {
 function optionalRainfallThreshold(value,previousValue=null) {
  if (value === '' || value === undefined || value === null) return null;
  const number = Number(value);
- if (!Number.isFinite(number) || number < 0.1 || number > 20) throw Object.assign(new Error('現在の雨雲レーダーで判別できる最大降水強度は20mm/hです。'),{status:400});
+ if (!Number.isFinite(number) || number < 0.1 || number > 80) throw Object.assign(new Error('気象庁高解像度降水ナウキャストで判別できる最大階級は80mm/h以上です。'),{status:400});
  const normalized=Math.round(number * 10) / 10;
  // Do not silently migrate old saved values (0.1-20mm/h). Only unchanged
  // values from the stored rule may keep their historical settings.
  if (!RAIN_RADAR_THRESHOLD_VALUES.has(normalized) && Number(previousValue)!==normalized)
-  throw Object.assign(new Error('新しい降水量閾値は10mm/hまたは20mm/hから選択してください。'),{status:400});
+  throw Object.assign(new Error('降水量閾値は10・20・30・50・80mm/hから選択してください。'),{status:400});
  return normalized;
 }
 
@@ -539,7 +539,7 @@ export function normalizeSupporterRules(input, guilds, limits = {servers:1,chann
   const matchesPrior=prior=>prior?.type===rule?.type&&prior?.guildId===rule?.guildId
    &&(prior?.channelId||prior?.channelIds?.[0])===(rule?.channelId||rule?.channelIds?.[0])
    &&(prior?.region||'all')===(rule?.region||'all');
-  const oldRule=[previousRules[index],...previousRules].find(matchesPrior)||null;
+  const oldRule=matchesPrior(previousRules[index])?previousRules[index]:null;
   const name = clean(rule?.name);
   const guildId = clean(rule?.guildId);
   const requestedChannelIds=Array.isArray(rule?.channelIds)?rule.channelIds.map(clean).filter(Boolean):[];
