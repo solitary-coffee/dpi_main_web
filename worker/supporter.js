@@ -437,12 +437,12 @@ export function supporterAdminDetails(row, channelsByGuild = {}) {
     {label:'情報種別',value:SUPPORTER_TYPE_LABELS[type]||type||'未設定'},
     {label:'詳細種別',value:type==='rain-radar'?'雨雲レーダー':optionLabel(type==='earthquake'?EARTHQUAKE_DETAILS:type==='eew'?EEW_DETAILS:WEATHER_DETAILS,clean(rule?.detail)||'all')},
     {label:'対象地方',value:optionLabel(SUPPORTER_REGIONS,clean(rule?.region)||'all')},
-    {label:'都道府県',value:PREFECTURES.find(row=>row.code===clean(rule?.prefecture))?.name||'全域'},
-    {label:'北海道内の地方',value:clean(rule?.district)==='all'||!rule?.district?'全域':clean(rule?.district)},
-    {label:'市区町村（気象庁コード）',value:clean(rule?.municipality)==='all'||!rule?.municipality?'全域':clean(rule?.municipality)},
-    {label:'指定市区町村のみ表示',value:rule?.strictMunicipality===true?'有効（Pro）':'通常表示'},
     {label:'条件の組み合わせ',value:clean(rule?.conditionLogic)==='or'?'いずれかを満たす（OR）':'すべて満たす（AND）'},
    ];
+   if(clean(rule?.prefecture)&&clean(rule.prefecture)!=='all')details.push({label:'都道府県',value:PREFECTURES.find(row=>row.code===clean(rule.prefecture))?.name||clean(rule.prefecture)});
+   if(clean(rule?.district)&&clean(rule.district)!=='all')details.push({label:'北海道内の地方区分',value:clean(rule.district)});
+   if(clean(rule?.municipality)&&clean(rule.municipality)!=='all')details.push({label:'市区町村（気象庁コード）',value:clean(rule.municipality)});
+   if(rule?.strictMunicipality===true)details.push({label:'指定市区町村のみ表示',value:'有効（Pro）'});
    if(type==='rain-radar'){
     details.push({label:'配信条件',value:optionLabel(RAIN_RADAR_CONDITIONS,clean(rule?.radarCondition)||'all')});
     if(clean(rule?.radarCondition)==='rainfall-threshold')details.push({label:'1時間降水量',value:`${Number(rule?.rainfallThresholdMmPerHour)}mm/h以上`});
