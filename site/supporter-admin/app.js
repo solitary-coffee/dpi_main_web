@@ -59,13 +59,16 @@ function syncCustomToggles(){
 }
 function openCustomForAccount(account){
  if(!account)return;
+ // Always remove another account's pending form edits before switching users.
+ $('custom-form').reset();
  $('custom-settings-details').open=true;
  $('custom-uid').value=account.discordUserId;
  $('custom-confirm').value=account.discordUserId;
+ $('custom-reason').value='';
  loadedCustomRevision=null;
  customRequestId='';
  if(account.customPlan)loadCustom();
- else{$('custom-result').textContent='新規カスタムプランを設定できます。設定内容を確認して保存してください。';syncCustomToggles();}
+ else{$('custom-result').textContent='新規カスタムプランを設定できます。設定内容を確認して保存してください。';syncCustomToggles();updateCustomEstimate();}
  $('custom-settings-details').scrollIntoView({behavior:'smooth',block:'start'});
 }
 function element(tag, className = '', text = '') {
@@ -442,6 +445,22 @@ async function submitCustom(action){
 ${q.immediateDueYen>0?'増額は差額の支払い確認後に適用します。':'追加決済なしで更新します。'}
 よろしいですか？`;
    if(!window.confirm(summary)){$('custom-result').textContent='変更を取り消しました。';return;}
+  }
+  if(action==='save'&&account?.customPlan?.status!=='active'){
+   const summary=`このユーザーに新しくカスタムプランを設定します。
+
+Discord ID：${payload.discordUserId}
+プラン名：${payload.name}
+月額：${payload.monthlyYen.toLocaleString('ja-JP')}円
+上限：${payload.servers}サーバー／${payload.channels}チャンネル／${payload.rules}ルール
+複雑条件：${payload.complexConditions?'ON':'OFF'}
+市区町村：${payload.municipalityBranching?'ON':'OFF'}
+本文抽出：${payload.contentExtraction?'ON':'OFF'}
+複数チャンネル：${payload.multiDestination?'ON':'OFF'}
+二次利用の契約上の許容：${payload.secondaryReuse?'あり（別途申請必須）':'なし'}
+
+保存後も利用者の決済が確認されるまで配信権限は有効になりません。続行しますか？`;
+   if(!window.confirm(summary)){$('custom-result').textContent='設定の保存を取り消しました。';return;}
   }
   const data=await send(payload);
   $('custom-result').replaceChildren(element('span','',data.message));
