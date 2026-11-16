@@ -12,7 +12,7 @@ vars: SUPPORTER_BILLING_MODE=test、SUPPORTER_PUBLIC_ORIGIN=https://dpi-bot.com�
 
 限定公開中は `/site/supporter/` とサポーターAPIをDiscordユーザーIDの許可リストで保護する。未認証・未許可ユーザーには一律404を返し、画面レスポンスには `X-Robots-Tag: noindex, nofollow, noarchive` を付与する。Cloudflare Access認証済み管理者は画面資産のみ確認できるが、ユーザー操作にはDiscordログインも必要。`SUPPORTER_PUBLIC_ENABLED=true` は一般公開時だけ設定する。空値や未設定は閉鎖扱い。
 
-価格はJPYで、BASIC月額300円、Plus月額800円、Pro月額1,280円。追加チャンネル3件または追加サーバー1件につき月額200円。税込総額として価格を登録し、追加税を自動加算する設定は使用しない。Portalは支払方法変更、請求履歴、期間末解約を有効にし、プラン・数量変更はDPI-Bot側の確認画面から行う。
+価格はJPYで、BASIC月額300円、Plus月額800円、Pro月額1,280円。追加チャンネル3件・追加サーバー2件・追加通知ルール3件の各パックにつき月額200円。税込総額として価格を登録し、追加税を自動加算する設定は使用しない。Portalは支払方法変更、請求履歴、期間末解約を有効にし、プラン・数量変更はDPI-Bot側の確認画面から行う。
 
 アップグレード前は `POST /v1/invoices/create_preview` で基本プランの差額だけを見積もり、同じ `proration_date` を確定時のSubscription更新に使用する。確認画面では旧プランの未使用分（返金相当額）、新プランの残期間分、その差額を分けて表示する。ダウングレードまたは利用枠の削減はSubscription Scheduleへ予約し、返金・日割り精算を行わず、現在の契約期間終了後の26日から適用する。追加オプションの即時変更は `proration_behavior=none` とする。
 
@@ -22,7 +22,7 @@ Webhook: /api/supporter/stripe/webhook。対象はcheckout.session.completed/exp
 
 契約状態はStripeから都度取得し、順不同Webhookの内容で状態を上書きしない。イベントIDを保存。通知設定は有効な契約を確認したユーザーのみ保存可能で、Proは1ルール最大8件の追加条件を持てる。現時点では保存内容と配信プログラムの接続なし。
 
-POST /api/supporter/billing/checkout: {plan:"supporter"|"plus"|"pro",channelPacks:0..5,serverPacks:0..5,legalConsent:true}。申込画面で料金・支払時期・提供時期・解約条件を確認し、利用規約、プライバシーポリシー、特定商取引法に基づく表記への同意を必須とする。同意日時と `SUPPORTER_CONSENT_VERSION` をD1およびStripe metadataへ記録する。
+POST /api/supporter/billing/checkout: {plan:"supporter"|"plus"|"pro",channelPacks:0..5,serverPacks:0..5,rulePacks:0..5,legalConsent:true}。申込画面で料金・支払時期・提供時期・解約条件を確認し、利用規約、プライバシーポリシー、特定商取引法に基づく表記への同意を必須とする。同意日時と `SUPPORTER_CONSENT_VERSION` をD1およびStripe metadataへ記録する。
 POST /api/supporter/billing/preview-update: 契約変更の料金・利用枠プレビュー。
 POST /api/supporter/billing/update: プレビューの `prorationDate` と同じ選択内容を確定。
 POST /api/supporter/billing/portal: {}。
@@ -77,3 +77,14 @@ Stripe Checkoutの日本円最低決済額は50円のため、増額差額が1�
 - Stripeは`SUPPORTER_BILLING_MODE=test`のままです。テスト環境で実際の Checkout・subscription更新・Webhook署名照合・翌月Invoiceを確認し、本番決済が不要に動作しないことを確認してください。
 - Stripe制限付きキーは、サブスクリプション読み取り・更新、Checkout作成・照会、Invoice照会、顧客照会が必要です。
 - 管理者が契約上の二次利用権限を設定しても、既存の二次利用申請・審査は別途必要です。
+
+## 追加ルールパック・サーバー上限（2026年11月）
+
+- 新規パックの価格：月額200円でチャンネル＋3件、サーバー＋2件、通知ルール＋3件。基本プラン価格は据え置き。
+- Stripeの既存 `STRIPE_PRICE_ADDON`（単価200円）を使用。Subscriptionの追加オプション数量 = `dpi_channel_packs` + `dpi_server_packs` + `dpi_rule_packs`。新しくStripe商品・価格IDを作る必要はありません。
+- 古い契約に `dpi_rule_packs` が存在しない場合は **0** として解釈し、金額を変更しません。サーバー追加1パックについては契約価格を据え置いたまま「2サーバー追加」として上限を増やします。
+- 初回Stripe Checkout（新規カード決済）、クレジット全額払い、ユーザー/管理者による変更・変更予約のすべてに `rulePacks` と `dpi_rule_packs` を引き継ぎます。
+- `migrations/0027_supporter_rule_packs.sql` は **Workerの新コードを公開する前に必ずD1に適用**してください。既存のクレジット払い申込行にはrule_packs=0が入ります。
+- 雨雲レーダーの **1時間降水量0.1～20mm/hの閾値**はPlus・Proまたは有効なカスタム契約に限定。Basicの既存閾値ルールは自動で定時更新へ変更せず、配信スナップショットから除外します。
+- 定時更新と降雨検知、および1/2/3/6/12/24時間の配信頻度はBasicでも利用できます。
+- **ロールアウト時の検証**：Stripeの契約 metadata/追加オプション数量と請求額、D1の0027マイグレーション、Basic既存ルールの停止件数、予約変更とクレジット申込みのリカバリーを確認してから運用してください。
