@@ -1339,6 +1339,13 @@ export async function verifiedCustomSubscription(env,customer,uid,offer){
   ||!/^prod_/.test(stripeId(item.price?.product))||subscription.discounts?.length
   ||subscription.collection_method!=='charge_automatically'
  )fail('Stripe契約に未処理請求・予約変更・複数料金・割引等があるため自動変更できません。内容をご確認ください。',409);
+ const lastInvoiceId=stripeId(subscription.latest_invoice);
+ if(!lastInvoiceId)fail('最新請求書が確認できないため、既支払い額を確認できません。',409);
+ const invoice=await stripe(env,`invoices/${encodeURIComponent(lastInvoiceId)}`);
+ if(invoice.livemode!==false||invoice.status!=='paid'||stripeId(invoice.customer)!==customer
+  ||invoice.currency!=='jpy'||Number(invoice.amount_remaining||0)!==0
+  ||invoiceSubscriptionId(invoice)!==subscription.id)
+  fail('最新の月額料金の支払い完了を確認できません。未払いや別契約の請求書を確認してください。',409);
  return subscription;
 }
 export async function createCustomDifferenceCheckout(env,customer,uid,offer,change){
