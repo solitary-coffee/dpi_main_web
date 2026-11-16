@@ -78,8 +78,9 @@ export async function buildSupporterSnapshot(db, env, loadSubscriptions, nowMs =
             // Never broaden a previously paid geographic filter on downgrade.
             // Suspend incompatible rules until the customer chooses a new scope.
             if (!geographicRuleAllowed(rule, geographicAccess)) continue;
-            // Do not broaden a Basic contract's previously saved Plus-only threshold.
-            if (rule.type==='rain-radar' && rule.radarCondition==='rainfall-threshold' && !rainfallThresholdAllowed) continue;
+            // Basic receives scheduled radar updates only. Do not convert old
+            // rain-detected/threshold rules into unconditional broadcasts.
+            if (rule.type==='rain-radar' && ['rain-detected','rainfall-threshold'].includes(rule.radarCondition) && !rainfallThresholdAllowed) continue;
             const id = `rule-${await digestPrefix(`${row.discord_user_id}:${Number(row.revision) || 0}:${index + 1}`)}`;
             const value = normalizedRule(rule, id);
             if (value) rules.push(value);
