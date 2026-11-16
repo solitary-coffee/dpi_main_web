@@ -508,7 +508,7 @@ function normalizeAdditionalConditions(input,type,complexConditions){
   if(kind==='weatherLevel'&&type==='weather'&&WEATHER_LEVEL_IDS.has(value))return{kind,operator:'equals',value};
   if(kind==='warningLevel'&&type==='weather'&&WARNING_LEVEL_IDS.has(value))return{kind,operator:'equals',value};
   if(kind==='radarCondition'&&type==='rain-radar'&&RAIN_RADAR_CONDITION_IDS.has(value))return{kind,operator:'equals',value};
-  if(kind==='rainfallThreshold'&&type==='rain-radar'){const rainfall=optionalRainfallThreshold(raw);if(rainfall!==null)return{kind,operator:'at_least',value:rainfall};}
+  if(kind==='rainfallThreshold'&&type==='rain-radar'&&complexConditions){const rainfall=optionalRainfallThreshold(raw);if(rainfall!==null)return{kind,operator:'at_least',value:rainfall};}
   throw Object.assign(new Error('追加条件の種類または値を確認してください。'),{status:400});
  });
  const unique=[];const seen=new Set();
@@ -549,6 +549,7 @@ export function normalizeSupporterRules(input, guilds, limits = {servers:1,chann
    const deliveryIntervalHours=clean(rule?.deliveryIntervalHours)||'1';
    if(!RAIN_RADAR_CONDITION_IDS.has(radarCondition))throw Object.assign(new Error('雨雲レーダーの配信条件を確認してください。'),{status:400});
    if(!RAIN_RADAR_INTERVAL_IDS.has(deliveryIntervalHours))throw Object.assign(new Error('雨雲レーダーの配信頻度を確認してください。'),{status:400});
+   if(radarCondition==='rainfall-threshold'&&limits.rainfallThreshold!==true)throw Object.assign(new Error('1時間降水量の閾値指定はPlus以上のプランで利用できます。'),{status:400});
    const rainfallThresholdMmPerHour=radarCondition==='rainfall-threshold'?optionalRainfallThreshold(rule?.rainfallThresholdMmPerHour):null;
    if(radarCondition==='rainfall-threshold'&&rainfallThresholdMmPerHour===null)throw Object.assign(new Error('1時間降水量の閾値を入力してください。'),{status:400});
    return {name,guildId,channelId,channelIds,type,detail:'all',region,...geographic,conditionLogic,conditions,intensityMode:'',intensity:'',magnitudeMode:'',magnitudeMin:null,weatherLevel:'',warningLevel:'',eewWarningAreaMode:'',radarCondition,rainfallThresholdMmPerHour,deliveryIntervalHours:Number(deliveryIntervalHours)};
@@ -580,7 +581,7 @@ export function normalizeSupporterRules(input, guilds, limits = {servers:1,chann
 }
 
 async function supporterLimits(env, db, uid) {
- const fallback = {servers:1,channels:2,rules:5,complexConditions:false,multiDestination:false};
+ const fallback = {servers:1,channels:2,rules:5,complexConditions:false,multiDestination:false,rainfallThreshold:false};
  if (!billingReady(env)) throw Object.assign(new Error('決済設定を確認できないため、通知設定を保存できません。'),{status:503});
  const account=await db.prepare('SELECT account_status,status_reason,status_updated_at FROM supporter_accounts WHERE discord_user_id=?').bind(uid).first();
  assertSupporterAccountActive(account);
@@ -594,7 +595,7 @@ async function supporterLimits(env, db, uid) {
   const summaries=enrichCustomSubscriptions(await customerSubscriptionSummaries(env,row.customer_id),custom);
   const active = summaries.filter(item=>item.recognizedPlan!==false&&['active','trialing','past_due','unpaid','paused'].includes(item.status));
   if (!active.length) throw Object.assign(new Error('通知設定は有効な契約を確認してから利用できます。'),{status:409});
-  return {...active.reduce((limits,item)=>({servers:Math.max(limits.servers,Number(item.servers)||1),channels:Math.max(limits.channels,Number(item.channels)||2),rules:Math.max(limits.rules,Number(item.rules)||5),complexConditions:limits.complexConditions||item.complexConditions===true,multiDestination:limits.multiDestination||item.multiDestination===true}),fallback),...geographicEntitlements(active)};
+  return {...active.reduce((limits,item)=>({servers:Math.max(limits.servers,Number(item.servers)||1),channels:Math.max(limits.channels,Number(item.channels)||2),rules:Math.max(limits.rules,Number(item.rules)||5),complexConditions:limits.complexConditions||item.complexConditions===true,multiDestination:limits.multiDestination||item.multiDestination===true,rainfallThreshold:limits.rainfallThreshold||['plus','pro'].includes(item.planId)||item.managedCustom===true}),fallback),...geographicEntitlements(active)};
  } catch(error) { if(error?.status===409)throw error;throw Object.assign(new Error('契約上限を確認できませんでした。時間をおいて再試行してください。'),{status:503}); }
 }
 
@@ -989,7 +990,7 @@ export async function handleSupporterRequest(request, env, ctx) {
    return new Response(asset.body,{status:asset.status,statusText:asset.statusText,headers});
   }
   if (path === '/api/supporter/plans' && request.method === 'GET' && supporterPublicEnabled(env)) {
-   return response({billingEnabled:false, deliveryEnabled:false, plans:publicPlans(), addons:{channel:{yen:200,channels:3},server:{yen:200,servers:1},prorated:false},billingDay:26});
+   return response({billingEnabled:false, deliveryEnabled:false, plans:publicPlans(), addons:{channel:{yen:200,channels:3},server:{yen:200,servers:2},rule:{yen:200,rules:3},prorated:false},billingDay:26});
   }
   let session;
   try { session = await requireSession(request, {...env,REUSE_DB:db}); }
@@ -997,7 +998,7 @@ export async function handleSupporterRequest(request, env, ctx) {
   const uid = session.discord_user_id;
   if (!supporterTestUserAllowed(env, uid)) return notFound();
   if (path === '/api/supporter/plans' && request.method === 'GET') {
-   return response({billingEnabled:false, deliveryEnabled:false, plans:publicPlans(), addons:{channel:{yen:200,channels:3},server:{yen:200,servers:1},prorated:false},billingDay:26});
+   return response({billingEnabled:false, deliveryEnabled:false, plans:publicPlans(), addons:{channel:{yen:200,channels:3},server:{yen:200,servers:2},rule:{yen:200,rules:3},prorated:false},billingDay:26});
   }
   if (path === '/api/supporter/options' && request.method === 'GET') {
    return response({regions:SUPPORTER_REGIONS,prefectures:PREFECTURES,weatherLevels:WEATHER_LEVELS,warningLevels:WARNING_LEVELS,earthquakeDetails:EARTHQUAKE_DETAILS,eewDetails:EEW_DETAILS,eewWarningAreaModes:EEW_WARNING_AREA_MODES,weatherDetails:WEATHER_DETAILS,thresholdModes:THRESHOLD_MODES,rainRadarConditions:RAIN_RADAR_CONDITIONS,rainRadarIntervals:RAIN_RADAR_INTERVALS});
