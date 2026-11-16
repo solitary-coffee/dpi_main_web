@@ -53,8 +53,8 @@ test('scheduled change carries the new rule pack quantity',()=>{
 });
 test('Basic cannot request rain radar mm/h threshold; Plus may save it',()=>{
  assert.throws(()=>normalizeSupporterRules([rainRule],[{id:guildId}],limit),/Plus以上/);
- const allowed=normalizeSupporterRules([rainRule],[{id:guildId}],{...limit,rainfallThreshold:true});
- assert.equal(allowed[0].rainfallThresholdMmPerHour,2);
+ const allowed=normalizeSupporterRules([{...rainRule,rainfallThresholdMmPerHour:30}],[{id:guildId}],{...limit,rainfallThreshold:true});
+ assert.equal(allowed[0].rainfallThresholdMmPerHour,30);
  assert.equal(allowed[0].radarCondition,'rainfall-threshold');
 });
 test('old Basic rainfall threshold is excluded from active snapshot without widening delivery',async()=>{
