@@ -47,6 +47,29 @@
     <h3 class="campaign-history-title">最近の配布</h3>
     <div id="compensation-campaigns" class="campaign-list" aria-live="polite"></div>
    </section>
+   <section class="admin-section" aria-labelledby="custom-title">
+    <div class="section-heading"><div><p class="eyebrow">PERSONAL CONTRACTS</p><h2 id="custom-title">ユーザー別カスタムプラン</h2></div></div>
+    <p class="section-description">管理者が指定Discord IDへ個別の契約を提供します。提示額と確定額は別管理です。Stripe決済確認前は配信権限を有効化しません。二次利用には従来どおり別途申請・許諾が必要です。</p>
+    <form id="custom-form" class="compensation-form">
+     <label>対象Discord ID<input id="custom-uid" type="text" inputmode="numeric" pattern="[0-9]{17,20}" required placeholder="123456789012345678"></label>
+     <button id="custom-load" type="button" class="secondary-btn">現在の設定を読み込む</button>
+     <label>カスタムプラン名<input id="custom-name" type="text" maxlength="80" value="カスタムプラン" required></label>
+     <label>チャンネル上限<input id="custom-channels" type="number" min="1" max="200" value="20" required></label>
+     <label>サーバー上限<input id="custom-servers" type="number" min="1" max="50" value="5" required></label>
+     <label>ルール上限<input id="custom-rules" type="number" min="1" max="500" value="30" required></label>
+     <label><input id="custom-complex" type="checkbox"> 複雑条件（AND/OR・追加条件）を利用可能</label>
+     <label><input id="custom-city" type="checkbox"> 市区町村単位の分岐を利用可能</label>
+     <label><input id="custom-extract" type="checkbox"> 配信本文を指定市区町村だけに抽出可能</label>
+     <label><input id="custom-multi" type="checkbox"> 1ルールから複数チャンネルへの配信を許可</label>
+     <label><input id="custom-reuse" type="checkbox"> 二次利用を契約上許容（別途申請・審査は必須）</label>
+     <p>参考月額概算：<strong id="custom-estimate">—</strong></p>
+     <label>管理者が確定する月額（税込・円）<input id="custom-price" type="number" min="100" max="1000000" step="1" value="1280" required></label>
+     <label>設定・変更理由<textarea id="custom-reason" rows="3" minlength="5" maxlength="500" required></textarea></label>
+     <label>確認のため対象Discord IDを再入力<input id="custom-confirm" type="text" inputmode="numeric" pattern="[0-9]{17,20}" required></label>
+     <div class="admin-bar"><button id="custom-save" type="submit">カスタムプランを保存</button><button id="custom-checkout" type="button" class="secondary-btn">専用支払いリンクを発行</button><button id="custom-cancel" type="button" class="danger-btn">カスタムプランを停止</button></div>
+    </form>
+    <div id="custom-result" class="action-result" role="status" aria-live="polite"></div>
+   </section>
    <section class="admin-section" aria-labelledby="accounts-title">
     <div class="section-heading"><div><p class="eyebrow">ACCOUNTS</p><h2 id="accounts-title">登録者・契約一覧</h2></div></div>
     <label class="search-label">契約者名・Discord ID・メール・プランで絞り込み<input id="account-search" type="search" autocomplete="off" placeholder="契約者名 / Discord ID / メール / BASIC / Plus / Pro"></label>
