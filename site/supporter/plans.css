@@ -51,3 +51,6 @@
  .comparison-notices{padding:16px}
  .comparison-main-link{width:100%}
 }
+
+.comparison-future-note{margin:10px 0 18px;padding:12px 16px;border-left:4px solid var(--blue);background:var(--panel-soft);color:var(--text);font-weight:650}
+.delivery-category li{margin:8px 0;line-height:1.65}
