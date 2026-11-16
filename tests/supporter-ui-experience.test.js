@@ -59,7 +59,7 @@ test('the admin screen retains frequent operations and expands custom settings o
  assert.match(css,/\.custom-toggle input\[type="checkbox"\]:checked/);
 });
 
-test('comparison page is readable unauthenticated, contracts are still protected',async()=>{
+test('comparison page and CSS share the paid dashboard access gate',async()=>{
  const [html,js]=await Promise.all([read('site/supporter/plans.html'),read('worker/supporter.js')]);
  for(const plan of publicPlans()){
   assert.match(html,new RegExp(plan.yen.toLocaleString('ja-JP')+'円'));
@@ -69,9 +69,29 @@ test('comparison page is readable unauthenticated, contracts are still protected
  assert.match(html,/雨雲レーダーの地方別設定/);
  assert.match(html,/カスタムを相談する/);
  assert.match(html,/別途.*二次利用申請/s);
- assert.match(js,/pathname==='\/site\/supporter\/plans\.html'/);
- assert.match(js,/pathname==='\/site\/supporter\/plans\.css'/);
- assert.match(js,/!publicComparison && !supporterPublicEnabled\(env\)/);
+ assert.match(js,/async function supporterSite\\(request, env, db\\)/);
+ assert.match(js,/if \\(!supporterPublicEnabled\\(env\\)\\) \\{/);
+ assert.doesNotMatch(js,/publicComparison/);
+ assert.match(js,/supporterTestUserAllowed\\(env, session\\.discord_user_id\\)/);
+ assert.match(js,/authenticateNewsletterAdmin\\(request, env\\)/);
+ assert.match(js,/if \\(!allowed\\) return notFound\\(\\)/);
+ assert.match(js,/headers\\.set\\('X-Robots-Tag', 'noindex, nofollow, noarchive'\\)/);
+});
+test('unauthed comparison assets return 404 without exposing content',async()=>{
+ const {handleSupporterRequest}=await import('../worker/supporter.js');
+ let fetched=0;
+ const env={
+  SUPPORTER_PUBLIC_ENABLED:'false',
+  SUPPORTER_TEST_USER_IDS:'12345678901234567',
+  REUSE_DB:{prepare:()=>{throw new Error('No anonymous DB access');}},
+  ASSETS:{fetch:()=>{fetched++;return new Response('sensitive content');}},
+ };
+ for(const path of ['/site/supporter/','/site/supporter/plans.html','/site/supporter/plans.css']){
+  const req=new Request('https://dpi-bot.com'+path);
+  const response=await handleSupporterRequest(req,env,{});
+  assert.equal(response.status,404,`Unauthorized ${path} should be hidden`);
+ }
+ assert.equal(fetched,0,'Static comparison assets must not be read on unauthorized requests');
 });
 
 test('threshold options remain dropdowns, ON/OFF switches use checkboxes',async()=>{
