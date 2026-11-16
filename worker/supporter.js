@@ -23,7 +23,7 @@ function ruleCount(settingsJson) {
   return Array.isArray(settings.rules) ? settings.rules.length : 0;
  } catch { return 0; }
 }
-export function supporterAdminAccount(row, subscriptions = [], billingError = '', credits = 0, customPlan = null) {
+export function supporterAdminAccount(row, subscriptions = [], billingError = '', credits = 0, customPlan = null, pendingCustomChange = null) {
  return {
   discordUserId: row.discord_user_id,
   discordName: row.discord_name || '',
@@ -40,6 +40,7 @@ export function supporterAdminAccount(row, subscriptions = [], billingError = ''
   statusUpdatedBy: row.status_updated_by || '',
   billingError,
   customPlan:customPublic(customPlan),
+  pendingCustomChange:customChangePublic(pendingCustomChange),
  };
 }
 export function supporterAccountEnforcement(row){
@@ -940,9 +941,13 @@ export async function handleSupporterRequest(request, env, ctx) {
      if (creditResult.status === 'fulfilled') creditBalances = creditResult.value;
      else billingError = `${billingError}${billingError ? ' ' : ''}クレジット残高を取得できませんでした。`;
     }
-    const customRows=(await db.prepare('SELECT * FROM supporter_custom_plans').all()).results||[];
-    const customByUid=new Map(customRows.map(row=>[row.discord_user_id,row]));
-    const accounts = (rows.results||[]).map(row=>{const custom=customByUid.get(row.discord_user_id);return supporterAdminAccount(row,enrichCustomSubscriptions(grouped.get(row.customer_id)||[],custom),row.customer_id?billingError:'',creditBalances.get(row.customer_id)||0,custom);});
+    const [customRows,pendingRows]=await Promise.all([
+     db.prepare('SELECT * FROM supporter_custom_plans').all(),
+     db.prepare(`SELECT * FROM supporter_custom_plan_changes WHERE status IN ('pending','paid')`).all(),
+    ]);
+    const customByUid=new Map((customRows.results||[]).map(row=>[row.discord_user_id,row]));
+    const pendingByUid=new Map((pendingRows.results||[]).map(row=>[row.discord_user_id,row]));
+    const accounts = (rows.results||[]).map(row=>{const custom=customByUid.get(row.discord_user_id);return supporterAdminAccount(row,enrichCustomSubscriptions(grouped.get(row.customer_id)||[],custom),row.customer_id?billingError:'',creditBalances.get(row.customer_id)||0,custom,pendingByUid.get(row.discord_user_id));});
     let creditSummary=null,creditSummaryError='';
     try{creditSummary=await supporterCreditMetrics(db,billingRows.results||[],creditBalances,stripeEnabled&&!billingError.includes('クレジット残高'));}
     catch(error){console.error('Paid plan credit summary failed',{errorName:error?.name||'Error'});creditSummaryError='クレジット集計を取得できませんでした。';}
