@@ -388,9 +388,10 @@ export async function creditsByCustomer(env,customers){
 export function selection(input){
  const channelPacks=input.channelPacks??input.packs??0;
  const serverPacks=input.serverPacks??0;
+ const rulePacks=input.rulePacks??0;
  const definition=PLAN_CATALOG[input.plan];
- if(!definition||!Number.isInteger(channelPacks)||channelPacks<0||channelPacks>5||!Number.isInteger(serverPacks)||serverPacks<0||serverPacks>5)fail('プランまたは追加オプション数が不正です。');
- return {plan:input.plan,packs:channelPacks,channelPacks,serverPacks,baseMonthly:definition.yen,monthly:definition.yen+200*(channelPacks+serverPacks),channels:definition.channels+3*channelPacks,servers:definition.servers+serverPacks,rules:definition.rules,complexConditions:definition.complexConditions,multiDestination:definition.multiDestination};
+ if(!definition||!Number.isInteger(channelPacks)||channelPacks<0||channelPacks>5||!Number.isInteger(serverPacks)||serverPacks<0||serverPacks>5||!Number.isInteger(rulePacks)||rulePacks<0||rulePacks>5)fail('プランまたは追加オプション数が不正です。');
+ return {plan:input.plan,packs:channelPacks,channelPacks,serverPacks,rulePacks,baseMonthly:definition.yen,monthly:definition.yen+200*(channelPacks+serverPacks+rulePacks),channels:definition.channels+3*channelPacks,servers:definition.servers+2*serverPacks,rules:definition.rules+3*rulePacks,complexConditions:definition.complexConditions,multiDestination:definition.multiDestination};
 }
 export function billingSchedule(now=Date.now()){
  const jst=new Date(Number(now)+9*60*60*1000);
@@ -460,15 +461,15 @@ export function paidCheckoutSubscriptionParams(env,session,paymentIntent,now=Mat
  const customer=typeof session.customer==='string'?session.customer:session.customer?.id;
  const paymentMethod=typeof paymentIntent?.payment_method==='string'?paymentIntent.payment_method:paymentIntent?.payment_method?.id;
  if(!customer||!paymentMethod)fail('初回決済の支払方法を確認できませんでした。',502);
- const choice=selection({plan:metadata.dpi_plan,channelPacks:Number(metadata.dpi_channel_packs),serverPacks:Number(metadata.dpi_server_packs)});
+ const choice=selection({plan:metadata.dpi_plan,channelPacks:Number(metadata.dpi_channel_packs),serverPacks:Number(metadata.dpi_server_packs),rulePacks:Number(metadata.dpi_rule_packs||0)});
  let anchor=Number(metadata.dpi_billing_anchor);
  if(!Number.isInteger(anchor)||anchor<=now+60)anchor=billingSchedule(now*1000).anchor;
  const params={customer,default_payment_method:paymentMethod,collection_method:'charge_automatically',billing_cycle_anchor:String(anchor),proration_behavior:'none','billing_mode[type]':'flexible',
   'items[0][price]':planPrice(env,choice.plan),'items[0][quantity]':'1',
   'metadata[dpi_user]':String(metadata.dpi_user||session.client_reference_id||''),'metadata[dpi_plan]':choice.plan,
   'metadata[dpi_legal_consent_version]':String(metadata.dpi_legal_consent_version||''),
-  'metadata[dpi_channel_packs]':String(choice.channelPacks),'metadata[dpi_server_packs]':String(choice.serverPacks)};
- const optionPacks=choice.channelPacks+choice.serverPacks;
+  'metadata[dpi_channel_packs]':String(choice.channelPacks),'metadata[dpi_server_packs]':String(choice.serverPacks),'metadata[dpi_rule_packs]':String(choice.rulePacks)};
+ const optionPacks=choice.channelPacks+choice.serverPacks+choice.rulePacks;
  if(optionPacks){params['items[1][price]']=env.STRIPE_PRICE_ADDON;params['items[1][quantity]']=String(optionPacks);}
  return params;
 }
@@ -477,9 +478,9 @@ export function creditSignupSubscriptionParams(env,customer,uid,choice,schedule,
   'items[0][price]':planPrice(env,choice.plan),'items[0][quantity]':'1',
   'metadata[dpi_user]':String(uid),'metadata[dpi_plan]':choice.plan,
   'metadata[dpi_legal_consent_version]':String(legalConsentVersion),
-  'metadata[dpi_channel_packs]':String(choice.channelPacks),'metadata[dpi_server_packs]':String(choice.serverPacks),
+  'metadata[dpi_channel_packs]':String(choice.channelPacks),'metadata[dpi_server_packs]':String(choice.serverPacks),'metadata[dpi_rule_packs]':String(choice.rulePacks),
   'metadata[dpi_initial_payment_method]':'credit_balance','metadata[dpi_credit_signup_request_id]':String(requestId)};
- const optionPacks=choice.channelPacks+choice.serverPacks;
+ const optionPacks=choice.channelPacks+choice.serverPacks+choice.rulePacks;
  if(optionPacks){params['items[1][price]']=env.STRIPE_PRICE_ADDON;params['items[1][quantity]']=String(optionPacks);}
  return params;
 }
@@ -528,7 +529,7 @@ export async function reconcilePaidCheckoutSubscription(env,customer,uid,db=null
  return {subscription,recovered:!!subscription,checkoutId:session.id};
 }
 function sameCreditSignup(attempt,customer,choice,legalConsentVersion){
- return attempt?.customer_id===customer&&attempt?.plan_id===choice.plan&&Number(attempt?.channel_packs)===choice.channelPacks&&Number(attempt?.server_packs)===choice.serverPacks&&Number(attempt?.amount)>0&&Number(attempt?.billing_anchor)>0&&attempt?.legal_consent_version===legalConsentVersion;
+ return attempt?.customer_id===customer&&attempt?.plan_id===choice.plan&&Number(attempt?.channel_packs)===choice.channelPacks&&Number(attempt?.server_packs)===choice.serverPacks&&Number(attempt?.rule_packs??0)===choice.rulePacks&&Number(attempt?.amount)>0&&Number(attempt?.billing_anchor)>0&&attempt?.legal_consent_version===legalConsentVersion;
 }
 function creditSignupSubscription(list,requestId){
  return (list||[]).find(subscription=>String(subscription?.metadata?.dpi_credit_signup_request_id||'')===String(requestId));
@@ -561,8 +562,8 @@ export async function provisionCreditFundedSignup(env,db,uid,customer,choice,inp
   }else{
    try{
     await db.prepare(`INSERT INTO supporter_credit_signups
-     (request_id,discord_user_id,customer_id,plan_id,channel_packs,server_packs,amount,billing_anchor,legal_consent_version,status,created_at,updated_at)
-     VALUES(?,?,?,?,?,?,?,?,?,'pending',?,?)`).bind(requestedId,uid,customer,choice.plan,choice.channelPacks,choice.serverPacks,amount,schedule.anchor,legalConsentVersion,now,now).run();
+     (request_id,discord_user_id,customer_id,plan_id,channel_packs,server_packs,rule_packs,amount,billing_anchor,legal_consent_version,status,created_at,updated_at)
+     VALUES(?,?,?,?,?,?,?,?,?,?,'pending',?,?)`).bind(requestedId,uid,customer,choice.plan,choice.channelPacks,choice.serverPacks,choice.rulePacks,amount,schedule.anchor,legalConsentVersion,now,now).run();
     attempt=await db.prepare('SELECT * FROM supporter_credit_signups WHERE request_id=?').bind(requestedId).first();
    }catch(error){
     attempt=await db.prepare(`SELECT * FROM supporter_credit_signups WHERE discord_user_id=? AND status IN ('pending','debited') ORDER BY created_at DESC LIMIT 1`).bind(uid).first();
@@ -617,11 +618,12 @@ export async function provisionCreditFundedSignup(env,db,uid,customer,choice,inp
 const unix = value => Number.isFinite(Number(value)) && Number(value) > 0 ? Number(value) : null;
 function optionPackSummary(metadata={},addonQuantity=0){
  const combined=Number(addonQuantity);
- const channelRaw=clean(metadata.dpi_channel_packs),serverRaw=clean(metadata.dpi_server_packs);
+ const channelRaw=clean(metadata.dpi_channel_packs),serverRaw=clean(metadata.dpi_server_packs),ruleRaw=clean(metadata.dpi_rule_packs);
  const channelPacks=channelRaw===''?(serverRaw===''?combined:0):Number(channelRaw);
  const serverPacks=serverRaw===''?0:Number(serverRaw);
- const valid=Number.isInteger(combined)&&combined>=0&&Number.isInteger(channelPacks)&&channelPacks>=0&&channelPacks<=5&&Number.isInteger(serverPacks)&&serverPacks>=0&&serverPacks<=5&&channelPacks+serverPacks===combined;
- return {valid,channelPacks:valid?channelPacks:0,serverPacks:valid?serverPacks:0};
+ const rulePacks=ruleRaw===''?0:Number(ruleRaw);
+ const valid=Number.isInteger(combined)&&combined>=0&&Number.isInteger(channelPacks)&&channelPacks>=0&&channelPacks<=5&&Number.isInteger(serverPacks)&&serverPacks>=0&&serverPacks<=5&&Number.isInteger(rulePacks)&&rulePacks>=0&&rulePacks<=5&&channelPacks+serverPacks+rulePacks===combined;
+ return {valid,channelPacks:valid?channelPacks:0,serverPacks:valid?serverPacks:0,rulePacks:valid?rulePacks:0};
 }
 export function subscriptionSummary(subscription,env={}){
  const labels=new Map([
@@ -642,11 +644,11 @@ export function subscriptionSummary(subscription,env={}){
  const addonQuantity=items.find(item=>item.price===env.STRIPE_PRICE_ADDON)?.quantity||0;
  const metadata=subscription.metadata||{};
  const options=optionPackSummary(metadata,addonQuantity);
- const {channelPacks,serverPacks}=options;
+ const {channelPacks,serverPacks,rulePacks}=options;
  const planId=basePrice===env.STRIPE_PRICE_PRO?'pro':basePrice===env.STRIPE_PRICE_PLUS?'plus':basePrice===env.STRIPE_PRICE_SUPPORTER?'supporter':'';
  const recognizedPlan=!!planId&&options.valid;
- const choice=recognizedPlan?selection({plan:planId,channelPacks,serverPacks}):{channels:0,servers:0,rules:0,complexConditions:false,multiDestination:false};
- return {subscriptionId:subscription.id||'',customId:clean(metadata.dpi_custom_id),customRevision:Number(metadata.dpi_custom_revision)||0,status:subscription.status||'unknown',cancelAtPeriodEnd:subscription.cancel_at_period_end===true,startedAt:unix(subscription.start_date)||unix(subscription.created),currentPeriodStart,nextRenewalAt,amount:items.reduce((sum,item)=>sum+item.subtotal,0),currency,plan:planId?PLAN_CATALOG[planId].name:'確認が必要な契約',planId,recognizedPlan,configurationValid:options.valid,channelPacks,serverPacks,channels:choice.channels,servers:choice.servers,rules:choice.rules,complexConditions:choice.complexConditions,multiDestination:choice.multiDestination,items,scheduledChange:null};
+ const choice=recognizedPlan?selection({plan:planId,channelPacks,serverPacks,rulePacks}):{channels:0,servers:0,rules:0,complexConditions:false,multiDestination:false};
+ return {subscriptionId:subscription.id||'',customId:clean(metadata.dpi_custom_id),customRevision:Number(metadata.dpi_custom_revision)||0,status:subscription.status||'unknown',cancelAtPeriodEnd:subscription.cancel_at_period_end===true,startedAt:unix(subscription.start_date)||unix(subscription.created),currentPeriodStart,nextRenewalAt,amount:items.reduce((sum,item)=>sum+item.subtotal,0),currency,plan:planId?PLAN_CATALOG[planId].name:'確認が必要な契約',planId,recognizedPlan,configurationValid:options.valid,channelPacks,serverPacks,rulePacks,channels:choice.channels,servers:choice.servers,rules:choice.rules,complexConditions:choice.complexConditions,multiDestination:choice.multiDestination,items,scheduledChange:null};
 }
 export function reconcileRulesForLimits(settingsJson,limits={}){
  let settings;
@@ -712,10 +714,10 @@ export function scheduledChangeSummary(schedule,env,currentSummary){
  const combined=Number(addon?.quantity||0);
  const options=optionPackSummary(metadata,combined);
  if(!options.valid)return null;
- const {channelPacks,serverPacks}=options;
- const choice=selection({plan:planId,channelPacks,serverPacks});
- if(choice.plan===currentSummary.planId&&choice.channelPacks===currentSummary.channelPacks&&choice.serverPacks===currentSummary.serverPacks)return null;
- return {effectiveAt:unix(phase.start_date),plan:PLAN_CATALOG[planId].name,planId,monthly:choice.monthly,channels:choice.channels,servers:choice.servers,rules:choice.rules,channelPacks,serverPacks};
+ const {channelPacks,serverPacks,rulePacks}=options;
+ const choice=selection({plan:planId,channelPacks,serverPacks,rulePacks});
+ if(choice.plan===currentSummary.planId&&choice.channelPacks===currentSummary.channelPacks&&choice.serverPacks===currentSummary.serverPacks&&choice.rulePacks===currentSummary.rulePacks)return null;
+ return {effectiveAt:unix(phase.start_date),plan:PLAN_CATALOG[planId].name,planId,monthly:choice.monthly,channels:choice.channels,servers:choice.servers,rules:choice.rules,channelPacks,serverPacks,rulePacks};
 }
 async function summaryWithSchedule(env,subscription){
  const summary=subscriptionSummary(subscription,env);
@@ -877,7 +879,7 @@ export async function billingAction(request,env,db,uid,input={}){
   'payment_intent_data[setup_future_usage]':'off_session','payment_intent_data[metadata][dpi_user]':uid,
   'metadata[dpi_checkout_kind]':'initial_subscription','metadata[dpi_user]':uid,'metadata[dpi_plan]':choice.plan,
   'metadata[dpi_legal_consent_version]':legalConsentVersion,'metadata[dpi_channel_packs]':String(choice.channelPacks),
-  'metadata[dpi_server_packs]':String(choice.serverPacks),'metadata[dpi_billing_anchor]':String(schedule.anchor),
+  'metadata[dpi_server_packs]':String(choice.serverPacks),'metadata[dpi_rule_packs]':String(choice.rulePacks),'metadata[dpi_billing_anchor]':String(schedule.anchor),
   success_url:`${origin}/site/supporter/?checkout=returned`,cancel_url:`${origin}/site/supporter/?checkout=canceled`,expires_at:String(Math.floor(Date.now()/1000)+3600),integration_identifier:integrationIdentifier('dpi_paid_')};
  const line=0;
  params[`line_items[${line}][price_data][currency]`]='jpy';
@@ -892,14 +894,15 @@ export async function billingAction(request,env,db,uid,input={}){
  await db.prepare('UPDATE supporter_billing SET checkout_id=? WHERE discord_user_id=? AND checkout_key=?').bind(checkout.id,uid,row.checkout_key).run();
  if(checkout.status==='expired'){await db.prepare('UPDATE supporter_billing SET checkout_key=NULL,checkout_id=NULL,checkout_params=NULL WHERE discord_user_id=? AND checkout_key=?').bind(uid,row.checkout_key).run();return json({message:'前の決済画面が期限切れです。再度お試しください。'},409);}
  if(checkout.status!=='open')return json({message:'決済結果を確認中です。契約状態を更新してください。'},409);
- if(saved['metadata[dpi_plan]']!==params['metadata[dpi_plan]']||saved['metadata[dpi_channel_packs]']!==params['metadata[dpi_channel_packs]']||saved['metadata[dpi_server_packs]']!==params['metadata[dpi_server_packs]'])return json({message:'別の条件で決済画面を作成済みです。期限切れ後に変更できます（最大1時間）。'},409);
+ if(saved['metadata[dpi_plan]']!==params['metadata[dpi_plan]']||saved['metadata[dpi_channel_packs]']!==params['metadata[dpi_channel_packs]']||saved['metadata[dpi_server_packs]']!==params['metadata[dpi_server_packs]']||String(saved['metadata[dpi_rule_packs]']||0)!==params['metadata[dpi_rule_packs]'])return json({message:'別の条件で決済画面を作成済みです。期限切れ後に変更できます（最大1時間）。'},409);
  return json({url:checkout.url,mode:'test'});
 }
 function adminChoice(input){
  const plan=String(input.plan||'');
  const channelPacks=Number(input.channelPacks??input.packs);
  const serverPacks=Number(input.serverPacks??0);
- return selection({plan,channelPacks,serverPacks});
+ const rulePacks=Number(input.rulePacks??0);
+ return selection({plan,channelPacks,serverPacks,rulePacks});
 }
 function activeSubscription(list){
  return list.find(item=>['active','trialing','past_due','unpaid','paused'].includes(item.status))||list[0];
@@ -927,7 +930,7 @@ export function creditApplication(credits,immediateCharge,nextInvoiceSubtotal){
 }
 async function previewSubscriptionUpdate(env,customer,current,choice,requestedProrationDate){
  const currentSummary=subscriptionSummary(current,env);
- if(currentSummary.planId===choice.plan&&currentSummary.channelPacks===choice.channelPacks&&currentSummary.serverPacks===choice.serverPacks)fail('プラン・オプションの変更内容がありません。',409);
+ if(currentSummary.planId===choice.plan&&currentSummary.channelPacks===choice.channelPacks&&currentSummary.serverPacks===choice.serverPacks&&currentSummary.rulePacks===choice.rulePacks)fail('プラン・オプションの変更内容がありません。',409);
  const base=current.items?.data?.find(item=>item.price?.id!==env.STRIPE_PRICE_ADDON);
  if(!base?.id)fail('契約項目を確認できませんでした。',409);
  const prorationDate=Number.isInteger(requestedProrationDate)?requestedProrationDate:Math.floor(Date.now()/1000);
@@ -957,7 +960,7 @@ async function previewSubscriptionUpdate(env,customer,current,choice,requestedPr
   creditApplied:creditUse.totalCreditApplied,immediateCreditApplied:creditUse.immediateCreditApplied,nextInvoiceCreditApplied:creditUse.nextInvoiceCreditApplied,
   immediateDue:changeTiming==='next_period'?0:creditUse.immediateDue,nextInvoiceSubtotal:choice.monthly,nextInvoiceDue:creditUse.nextInvoiceDue,remainingCreditsAfterNext:creditUse.remainingAfterNext,
   creditGenerated:changeTiming==='next_period'?0:Math.max(0,-planProration),
-  optionChange:{currentChannelPacks:currentSummary.channelPacks,nextChannelPacks:choice.channelPacks,currentServerPacks:currentSummary.serverPacks,nextServerPacks:choice.serverPacks,prorated:false,effectiveAt:currentSummary.nextRenewalAt},
+  optionChange:{currentChannelPacks:currentSummary.channelPacks,nextChannelPacks:choice.channelPacks,currentServerPacks:currentSummary.serverPacks,nextServerPacks:choice.serverPacks,currentRulePacks:currentSummary.rulePacks,nextRulePacks:choice.rulePacks,prorated:false,effectiveAt:currentSummary.nextRenewalAt},
   nextRenewalAt:currentSummary.nextRenewalAt,
   notice:changeTiming==='next_period'?'変更は次回26日から適用され、返金はありません。利用するクレジットは次回の請求に反映します。':'基本プランの差額は日割りで精算します。追加オプションは日割りせず、次回26日分から反映します。利用するクレジットは今回の差額、次回の請求の順に充当します。',
  };
@@ -987,8 +990,8 @@ async function scheduleSubscriptionChange(env,current,choice,key,extraMetadata={
  phaseItems(params,0,currentItems);
  params['phases[1][start_date]']=String(currentSummary.nextRenewalAt);
  params['phases[1][proration_behavior]']='none';
- phaseItems(params,1,[{price:planPrice(env,choice.plan),quantity:1},...(choice.channelPacks+choice.serverPacks?[{price:env.STRIPE_PRICE_ADDON,quantity:choice.channelPacks+choice.serverPacks}]:[])]);
- const metadata={dpi_plan:choice.plan,dpi_channel_packs:String(choice.channelPacks),dpi_server_packs:String(choice.serverPacks),...extraMetadata};
+ phaseItems(params,1,[{price:planPrice(env,choice.plan),quantity:1},...(choice.channelPacks+choice.serverPacks+choice.rulePacks?[{price:env.STRIPE_PRICE_ADDON,quantity:choice.channelPacks+choice.serverPacks+choice.rulePacks}]:[])]);
+ const metadata={dpi_plan:choice.plan,dpi_channel_packs:String(choice.channelPacks),dpi_server_packs:String(choice.serverPacks),dpi_rule_packs:String(choice.rulePacks),...extraMetadata};
  for(const [name,value] of Object.entries(metadata))params[`phases[1][metadata][${name}]`]=String(value);
  return await stripe(env,`subscription_schedules/${encodeURIComponent(schedule.id)}`,params,`${key}-schedule-update`);
 }
@@ -997,11 +1000,11 @@ async function updateSubscription(env,current,choice,key,extra={},prorationDate)
  const addon=current.items?.data?.find(item=>item.price?.id===env.STRIPE_PRICE_ADDON);
  if(!base?.id)fail('契約項目を確認できませんでした。',409);
  const currentSummary=subscriptionSummary(current,env);
- const optionPacks=choice.channelPacks+choice.serverPacks;
- const currentOptionPacks=currentSummary.channelPacks+currentSummary.serverPacks;
+ const optionPacks=choice.channelPacks+choice.serverPacks+choice.rulePacks;
+ const currentOptionPacks=currentSummary.channelPacks+currentSummary.serverPacks+currentSummary.rulePacks;
  const baseChanged=currentSummary.planId!==choice.plan;
- const optionsChanged=currentOptionPacks!==optionPacks||currentSummary.channelPacks!==choice.channelPacks||currentSummary.serverPacks!==choice.serverPacks;
- const metadata={'metadata[dpi_plan]':choice.plan,'metadata[dpi_channel_packs]':String(choice.channelPacks),'metadata[dpi_server_packs]':String(choice.serverPacks),...extra};
+ const optionsChanged=currentOptionPacks!==optionPacks||currentSummary.channelPacks!==choice.channelPacks||currentSummary.serverPacks!==choice.serverPacks||currentSummary.rulePacks!==choice.rulePacks;
+ const metadata={'metadata[dpi_plan]':choice.plan,'metadata[dpi_channel_packs]':String(choice.channelPacks),'metadata[dpi_server_packs]':String(choice.serverPacks),'metadata[dpi_rule_packs]':String(choice.rulePacks),...extra};
  let result=current,releasedSchedule=false;
  if(baseChanged){
   const existingScheduleId=scheduleId(current);
