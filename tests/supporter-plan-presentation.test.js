@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {
  EARTHQUAKE_DETAILS,EEW_DETAILS,WEATHER_DETAILS,
- RAIN_RADAR_CONDITIONS,RAIN_RADAR_INTERVALS
+ RAIN_RADAR_CONDITIONS,RAIN_RADAR_INTERVALS,RAIN_RADAR_THRESHOLD_OPTIONS
 } from '../worker/supporter.js';
 
 const read=path=>readFile(new URL('../'+path,import.meta.url),'utf8');
@@ -44,12 +44,14 @@ test('prefecture and Hokkaido shinko-kyoku-equivalent detail share one row',asyn
 
 test('radar rates and rainfall conditions reflect current selectable Worker values',async()=>{
  const html=await read('site/supporter/plans.html');
+ assert.deepEqual(RAIN_RADAR_THRESHOLD_OPTIONS.map(([id])=>id),['10','20','30','50','80']);
  assert.deepEqual(RAIN_RADAR_INTERVALS.map(([id])=>id),['1','2','3','6','12','24']);
  assert.deepEqual(RAIN_RADAR_CONDITIONS.map(([id])=>id),['all','rain-detected','rainfall-threshold']);
  assert.match(html,/1・2・3・6・12・24時間ごと/);
- assert.match(html,/0\.1～20 mm\/h/);
- assert.match(html,/定時更新・降雨検知の配信条件/);
- assert.match(html,/1時間降水量の閾値指定（0\.1～20 mm\/h）<\/th><td>—<\/td><td>○<\/td>/);
+ assert.match(html,/降雨検知時に配信<\/th><td>—<\/td><td>○<\/td>/);
+ assert.match(html,/降水量が指定の閾値以上で配信（10・20・30・50・80 mm\/h）<\/th><td>—<\/td><td>○<\/td>/);
+ assert.match(html,/Basic：定時更新のみ/);
+ assert.doesNotMatch(html,/0\.1～20 mm\/h/);
  assert.match(html,/雨雲レーダー（地方単位）/);
 });
 
