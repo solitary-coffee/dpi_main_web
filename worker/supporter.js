@@ -623,11 +623,9 @@ export function supporterTestUserAllowed(env, discordUserId) {
 async function supporterSite(request, env, db) {
  const method = request.method.toUpperCase();
  if (!['GET', 'HEAD'].includes(method)) return notFound();
- // The read-only comparison page is public; all contract and billing pages
- // retain their existing Discord/test-user/admin access controls.
- const pathname=new URL(request.url).pathname;
- const publicComparison=pathname==='/site/supporter/plans.html'||pathname==='/site/supporter/plans.css';
- if (!publicComparison && !supporterPublicEnabled(env)) {
+ // Comparison assets and the contract dashboard share the same access gate.
+ // Never bypass authentication for plans.html or its associated stylesheet.
+ if (!supporterPublicEnabled(env)) {
   let allowed = false;
   try {
    const session = await requireSession(request, {...env, REUSE_DB: db});
@@ -644,7 +642,7 @@ async function supporterSite(request, env, db) {
  const asset = await env.ASSETS.fetch(request);
  const headers = new Headers(asset.headers);
  headers.set('Cache-Control', 'private, no-store');
- if (!publicComparison && !supporterPublicEnabled(env)) headers.set('X-Robots-Tag', 'noindex, nofollow, noarchive');
+ if (!supporterPublicEnabled(env)) headers.set('X-Robots-Tag', 'noindex, nofollow, noarchive');
  return new Response(asset.body, {status: asset.status, statusText: asset.statusText, headers});
 }
 
