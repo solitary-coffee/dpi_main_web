@@ -234,12 +234,22 @@ function geoScopeFields(container,rule){
  if(rule.region==='all')return;
  const prefectures=(options.prefectures||[]).filter(item=>item.region===rule.region).map(item=>[item.code,item.name]);
  const prefecture=field(container,rule,'prefecture','都道府県・全域',[['all','地方全域'],...prefectures]);
- prefecture.disabled=!entitlements.prefecture;
+ prefecture.disabled=!entitlements.prefecture||rule.type==='rain-radar';
+ if(rule.type==='rain-radar'&&entitlements.prefecture){
+  const note=document.createElement('p');note.className='geo-upgrade';
+  note.textContent='雨雲レーダーの取得元は地方単位の画像です。精密な都道府県・市区町村判定には非対応のため選択できません。';
+  container.append(note);return;
+ }
  if(!entitlements.prefecture){
   const note=document.createElement('p');note.className='geo-upgrade';note.textContent='都道府県単位の配信はPlus版以上にアップグレードしてください。';container.append(note);
   return;
  }
  if(rule.prefecture==='all')return;
+ if(rule.type==='eew'){
+  const city=field(container,rule,'municipality','市区町村・全域',[['all','選択地域の全域']]);
+  city.disabled=true;
+  const note=document.createElement('p');note.className='geo-upgrade';note.textContent='緊急地震速報は市区町村単位の対象判定を保証できないため、都道府県までの選択となります。';container.append(note);return;
+ }
  if(rule.prefecture==='01'){
   const districts=areaCatalogue.districts.filter(item=>item.prefectureCode==='01').map(item=>[item.code,item.name]);
   const district=field(container,rule,'district','北海道内の地方・全域',[['all','北海道全域'],...districts]);
