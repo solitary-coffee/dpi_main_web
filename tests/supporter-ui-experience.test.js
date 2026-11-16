@@ -63,7 +63,7 @@ test('comparison page is readable unauthenticated, contracts are still protected
  const [html,js]=await Promise.all([read('site/supporter/plans.html'),read('worker/supporter.js')]);
  for(const plan of publicPlans()){
   assert.match(html,new RegExp(plan.yen.toLocaleString('ja-JP')+'円'));
-  assert.match(html,new RegExp('\?plan='+plan.id+'#billing'));
+  assert.ok(html.includes('?plan='+plan.id+'#billing'));
  }
  assert.match(html,/市区町村単位の指定/);
  assert.match(html,/雨雲レーダーの地方別設定/);
