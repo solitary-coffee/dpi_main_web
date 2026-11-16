@@ -1268,6 +1268,9 @@ export async function createCustomCheckout(env,customer,uid,offer,requestId){
   'line_items[0][price_data][recurring][interval]':'month',
   'line_items[0][price_data][product_data][name]':String(offer.name).slice(0,80),
   'line_items[0][quantity]':'1',
+  // 26th 00:00 UTC = 26th 09:00 JST, consistent monthly billing date.
+  'subscription_data[billing_cycle_anchor_config][day_of_month]':'26',
+  'subscription_data[billing_cycle_anchor_config][hour]':'0',
   'subscription_data[metadata][dpi_custom_id]':offer.id,
   'subscription_data[metadata][dpi_custom_revision]':String(offer.revision),
   'subscription_data[metadata][dpi_user]':uid,
