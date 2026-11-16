@@ -750,7 +750,19 @@ export async function billingAction(request,env,db,uid,input={}){
   const active=effective.filter(item=>item.recognizedPlan!==false&&['active','trialing','past_due','unpaid','paused'].includes(item.status));
   // Never silently truncate custom-plan rules. Admin must resolve a lowered quota first.
   const rulesAdjustment=active.length&&!effective.some(item=>item.managedCustom)?await reconcileStoredRulesForCustomer(db,row.customer_id,combinedLimits(active)):{changed:false,removedRules:0,removedDestinations:0,simplifiedRules:0};
-  return json({mode:'test',billingDay:26,subscriptions:effective,customPlan:customPublic(syncedCustom),invoices,credits,creditDetails,dunning,accountEnforcement,rulesAdjustment,recoveredSubscription:recovery.recovered,creditTopupRecovery,deliveryEnabled:false});
+  let customCheckoutUrl='';
+  if(syncedCustom?.status==='offered'&&syncedCustom.stripe_checkout_id){
+   try {
+    const checkout=await stripe(env,`checkout/sessions/${encodeURIComponent(syncedCustom.stripe_checkout_id)}`);
+    const safe=String(checkout.url||'');
+    const host=new URL(safe);
+    if(checkout.mode==='subscription'&&checkout.status==='open'&&Number(checkout.expires_at)>Date.now()/1000
+      &&checkout.customer===row.customer_id&&checkout.client_reference_id===uid
+      &&checkout.metadata?.dpi_custom_id===syncedCustom.id&&Number(checkout.metadata?.dpi_custom_revision)===Number(syncedCustom.revision)
+      &&host.protocol==='https:'&&host.hostname==='checkout.stripe.com')customCheckoutUrl=safe;
+   }catch{ /* An unavailable or stale Checkout URL must never be displayed. */ }
+  }
+  return json({mode:'test',billingDay:26,subscriptions:effective,customPlan:customPublic(syncedCustom),customCheckoutUrl,invoices,credits,creditDetails,dunning,accountEnforcement,rulesAdjustment,recoveredSubscription:recovery.recovered,creditTopupRecovery,deliveryEnabled:false});
  }
  if(customLocked(customPlan)&&['checkout','update','preview-update','portal'].includes(action))return json({message:'カスタムプランの提供中はユーザー側でプラン変更・標準プラン申込みを行えません。契約の変更・解約は管理者へお問い合わせください。',customPlan:customPublic(customPlan)},403);
  if(action==='portal'&&accountEnforcement.suspended&&!row.customer_id)return json({message:'BAN中のため契約管理画面を作成できません。',accountEnforcement},403);
@@ -1153,6 +1165,16 @@ export async function billingWebhook(request,env,ctx){
   const session=event.data?.object;
   if(await rejectDisciplinedCheckout(env,db,session)){
    console.warn('Checkout completed after disciplinary action and was rejected',{sessionId:clean(session?.id),uid:clean(checkoutMetadata(session).dpi_user||session?.client_reference_id)});
+  }else if(checkoutMetadata(session).dpi_checkout_kind==='custom_subscription'){
+    const metadata=checkoutMetadata(session),uid=clean(metadata.dpi_user);
+    const customer=typeof session.customer==='string'?session.customer:session.customer?.id;
+    if(/^\d{17,20}$/.test(uid)&&customer&&session.mode==='subscription'&&session.payment_status==='paid'){
+     const billing=await db.prepare('SELECT customer_id FROM supporter_billing WHERE discord_user_id=?').bind(uid).first();
+     const offer=await getCustomPlan(db,uid);
+     if(billing?.customer_id===customer&&offer?.status==='offered'
+       &&offer.id===metadata.dpi_custom_id&&Number(offer.revision)===Number(metadata.dpi_custom_revision))
+      await syncCustomWithStripe(db,uid,customer,await customerSubscriptionSummaries(env,customer));
+    }
   }else if(checkoutMetadata(session).dpi_checkout_kind==='credit_topup'){
    const fulfilled=await fulfillCreditTopup(env,db,session,event.created);
    if(fulfilled)await sendBillingNotification(env,db,'credit_topup_succeeded',{id:session.id,customer:session.customer,amount_paid:fulfilled.amount,currency:session.currency||'jpy',expires_at:fulfilled.expiresAt});
@@ -1236,7 +1258,7 @@ export async function runSupporterBillingSchedule(env,nowMs=Date.now()){
  * never a reusable open-amount Stripe Payment Link. */
 export async function createCustomCheckout(env,customer,uid,offer,requestId){
  if(!billingReady(env))fail('Stripeテスト接続を確認できません。',503);
- if(!customer||!/^\\d{17,20}$/.test(uid)||offer?.status!=='offered')fail('カスタムプランの提供状態を確認してください。',409);
+ if(!customer||!/^\d{17,20}$/.test(uid)||offer?.status!=='offered')fail('カスタムプランの提供状態を確認してください。',409);
  const origin=actionOrigin(env);
  const now=Math.floor(Date.now()/1000);
  const input={
