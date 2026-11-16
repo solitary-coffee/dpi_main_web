@@ -10,6 +10,7 @@ const CHANNEL_ID = '98765432109876543';
 function database(rows) {
     return {
         prepare(sql) {
+            if(sql.includes('supporter_custom_plans'))return {async all(){return {results:[]};}};
             assert.match(sql, /NOT EXISTS/u);
             return {async all() { return {results: rows}; }};
         },
