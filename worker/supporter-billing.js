@@ -1361,12 +1361,34 @@ export async function verifiedCustomSubscription(env,customer,uid,offer){
   ||subscription.collection_method!=='charge_automatically'
  )fail('Stripe契約に未処理請求・予約変更・複数料金・割引等があるため自動変更できません。内容をご確認ください。',409);
  const lastInvoiceId=stripeId(subscription.latest_invoice);
- if(!lastInvoiceId)fail('最新請求書が確認できないため、既支払い額を確認できません。',409);
- const invoice=await stripe(env,`invoices/${encodeURIComponent(lastInvoiceId)}`);
- if(invoice.livemode!==false||invoice.status!=='paid'||stripeId(invoice.customer)!==customer
-  ||invoice.currency!=='jpy'||Number(invoice.amount_remaining||0)!==0
-  ||invoiceSubscriptionId(invoice)!==subscription.id)
-  fail('最新の月額料金の支払い完了を確認できません。未払いや別契約の請求書を確認してください。',409);
+ if(lastInvoiceId){
+  const invoice=await stripe(env,`invoices/${encodeURIComponent(lastInvoiceId)}`);
+  if(invoice.livemode!==false||invoice.status!=='paid'||stripeId(invoice.customer)!==customer
+   ||invoice.currency!=='jpy'||Number(invoice.amount_remaining||0)!==0
+   ||invoiceSubscriptionId(invoice)!==subscription.id)
+   fail('最新の月額料金の支払い完了を確認できません。未払いや別契約の請求書を確認してください。',409);
+ }else{
+  // A subscription created after a fully paid one-off initial Checkout
+  // has no invoice until its first 26th renewal. Verify that *paid*
+  // Checkout directly rather than rejecting legitimate early upgrades.
+  const initialId=clean(meta.dpi_custom_initial_session);
+  if(!/^cs_(?:test_)?[A-Za-z0-9]+$/.test(initialId))
+   fail('初回請求の支払済みセッションを確認できません。',409);
+  const checkout=await stripe(env,`checkout/sessions/${encodeURIComponent(initialId)}`);
+  const checkoutMeta=checkoutMetadata(checkout);
+  const firstMonths=Number(checkoutMeta.dpi_initial_months);
+  if(checkout.livemode!==false||checkout.mode!=='payment'
+   ||checkout.status!=='complete'||checkout.payment_status!=='paid'
+   ||stripeId(checkout.customer)!==customer||checkout.client_reference_id!==uid
+   ||checkoutMeta.dpi_checkout_kind!=='custom_subscription_initial'
+   ||checkoutMeta.dpi_custom_id!==offer.id
+   ||Number(checkoutMeta.dpi_custom_revision)!==Number(offer.revision)
+   ||Number(checkoutMeta.dpi_custom_monthly_yen)!==Number(offer.confirmed_yen)
+   ||!([1,2].includes(firstMonths))
+   ||Number(checkout.amount_total)!==Number(offer.confirmed_yen)*firstMonths
+   ||checkout.currency!=='jpy')
+   fail('カスタム初回Checkoutの支払完了・契約情報を確認できません。',409);
+ }
  return subscription;
 }
 export async function createCustomDifferenceCheckout(env,customer,uid,offer,change){
