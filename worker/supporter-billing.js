@@ -766,7 +766,7 @@ export async function billingAction(request,env,db,uid,input={}){
     const checkout=await stripe(env,`checkout/sessions/${encodeURIComponent(syncedCustom.stripe_checkout_id)}`);
     const safe=String(checkout.url||'');
     const host=new URL(safe);
-    if(checkout.mode==='subscription'&&checkout.status==='open'&&Number(checkout.expires_at)>Date.now()/1000
+    if(checkout.mode==='payment'&&checkout.status==='open'&&Number(checkout.expires_at)>Date.now()/1000
       &&checkout.customer===row.customer_id&&checkout.client_reference_id===uid
       &&checkout.metadata?.dpi_custom_id===syncedCustom.id&&Number(checkout.metadata?.dpi_custom_revision)===Number(syncedCustom.revision)
       &&host.protocol==='https:'&&host.hostname==='checkout.stripe.com')customCheckoutUrl=safe;
@@ -1277,36 +1277,46 @@ export async function runSupporterBillingSchedule(env,nowMs=Date.now()){
 
 /** Test-mode custom monthly checkout. A 24-hour single-user session is used,
  * never a reusable open-amount Stripe Payment Link. */
-export async function createCustomCheckout(env,customer,uid,offer,requestId){
- if(!billingReady(env))fail('Stripeテスト接続を確認できません。',503);
- if(!customer||!/^\d{17,20}$/.test(uid)||offer?.status!=='offered')fail('カスタムプランの提供状態を確認してください。',409);
- const origin=actionOrigin(env);
- const now=Math.floor(Date.now()/1000);
- const input={
-  mode:'subscription',customer,client_reference_id:uid,
+export function customInitialCheckoutParams(customer,uid,offer,requestId,now=Date.now(),origin='https://dpi-bot.com'){
+ const schedule=billingSchedule(now);
+ if(!customer||!/^\d{17,20}$/.test(uid)||offer?.status!=='offered'
+  ||!Number.isInteger(Number(offer.confirmed_yen))||Number(offer.confirmed_yen)<100)
+  fail('カスタムプランの提供内容を確認してください。',409);
+ const amount=Number(offer.confirmed_yen)*schedule.initialMonths;
+ if(!Number.isSafeInteger(amount)||amount>2000000)fail('初回の請求額が上限を超えています。',409);
+ return {
+  mode:'payment',customer,client_reference_id:uid,
   'line_items[0][price_data][currency]':'jpy',
-  'line_items[0][price_data][unit_amount]':String(offer.confirmed_yen),
-  'line_items[0][price_data][recurring][interval]':'month',
-  'line_items[0][price_data][product_data][name]':String(offer.name).slice(0,80),
+  'line_items[0][price_data][unit_amount]':String(amount),
+  'line_items[0][price_data][product_data][name]':`${String(offer.name||'カスタムプラン').slice(0,55)} 初回利用料`,
   'line_items[0][quantity]':'1',
-  // 26th 00:00 UTC = 26th 09:00 JST, consistent monthly billing date.
-  'subscription_data[billing_cycle_anchor_config][day_of_month]':'26',
-  'subscription_data[billing_cycle_anchor_config][hour]':'0',
-  'subscription_data[metadata][dpi_custom_id]':offer.id,
-  'subscription_data[metadata][dpi_custom_revision]':String(offer.revision),
-  'subscription_data[metadata][dpi_user]':uid,
-  'metadata[dpi_checkout_kind]':'custom_subscription',
+  'payment_intent_data[setup_future_usage]':'off_session',
+  'metadata[dpi_checkout_kind]':'custom_subscription_initial',
   'metadata[dpi_custom_id]':offer.id,
   'metadata[dpi_custom_revision]':String(offer.revision),
-  'metadata[dpi_user]':uid,
+  'metadata[dpi_custom_monthly_yen]':String(offer.confirmed_yen),
+  'metadata[dpi_initial_months]':String(schedule.initialMonths),
+  'metadata[dpi_initial_amount_yen]':String(amount),
+  'metadata[dpi_billing_anchor]':String(schedule.anchor),
+  'metadata[dpi_user]':uid,'metadata[dpi_request_id]':requestId,
+  'payment_intent_data[metadata][dpi_checkout_kind]':'custom_subscription_initial',
+  'payment_intent_data[metadata][dpi_user]':uid,
+  'payment_intent_data[metadata][dpi_custom_id]':offer.id,
   success_url:`${origin}/site/supporter/?custom=completed`,
   cancel_url:`${origin}/site/supporter/?custom=canceled`,
-  expires_at:String(now+86400),
+  expires_at:String(Math.floor(now/1000)+86400),
   integration_identifier:integrationIdentifier('dpi_custom_'),
  };
+}
+export async function createCustomCheckout(env,customer,uid,offer,requestId){
+ if(!billingReady(env))fail('Stripeテスト接続を確認できません。',503);
+ const input=customInitialCheckoutParams(customer,uid,offer,requestId,Date.now(),actionOrigin(env));
  const checkout=await stripe(env,'checkout/sessions',input,`dpi-custom-checkout-${offer.id}-${offer.revision}-${requestId}`);
- if(!checkout.url||checkout.mode!=='subscription'||checkout.status!=='open')fail('Stripe専用決済セッションを作成できませんでした。',502);
- return {id:checkout.id,url:checkout.url,expiresAt:checkout.expires_at};
+ if(!checkout.url||checkout.mode!=='payment'||checkout.status!=='open'
+  ||Number(checkout.amount_total)!==Number(input['line_items[0][price_data][unit_amount]']))
+  fail('Stripe専用決済セッションの初回金額を確認できませんでした。',502);
+ return {id:checkout.id,url:checkout.url,expiresAt:checkout.expires_at,
+  amount:Number(input['line_items[0][price_data][unit_amount]'])};
 }
 export async function expireCustomCheckout(env,sessionId,key){
  if(!sessionId)return;
