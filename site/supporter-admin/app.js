@@ -5,6 +5,7 @@ let creditCampaigns = [];
 let compensationRequestId = '';
 let actionRequestId = '';
 let customRequestId = '';
+let loadedCustomRevision = null;
 
 const $ = id => document.getElementById(id);
 const STATUS_LABELS = Object.freeze({active:'有効',trialing:'有効（次回請求待ち）',past_due:'支払い遅延',unpaid:'未払い',paused:'一時停止',incomplete:'手続き未完了'});
@@ -15,6 +16,8 @@ document.addEventListener('DOMContentLoaded', () => {
  $('custom-form').addEventListener('submit',event=>{event.preventDefault();submitCustom('save');});
  $('custom-load').addEventListener('click',loadCustom);
  $('custom-checkout').addEventListener('click',()=>submitCustom('checkout'));
+ $('custom-cancel-change').addEventListener('click',()=>submitCustom('cancel-change'));
+
  $('custom-cancel').addEventListener('click',()=>submitCustom('cancel'));
  for(const id of ['custom-channels','custom-servers','custom-rules','custom-complex','custom-city','custom-extract','custom-multi','custom-reuse'])$(id).addEventListener('input',updateCustomEstimate);
  $('custom-city').addEventListener('change',()=>{if(!$('custom-city').checked)$('custom-extract').checked=false;updateCustomEstimate();});
@@ -198,6 +201,8 @@ function accountCard(account) {
  if(account.accountStatus==='suspended')card.append(element('p','account-enforcement-reason',`BAN理由: ${account.statusReason||'理由未登録'}${account.statusUpdatedAt?`／${dateText(account.statusUpdatedAt)}`:''}`));
  if(account.billingError)card.append(element('p','billing-error',account.billingError));
  if(account.customPlan)card.append(element('p','',`カスタムプラン：${account.customPlan.name}／${account.customPlan.status==='active'?'有効':account.customPlan.status==='offered'?'提供中・未決済':'停止'}／確定月額${Number(account.customPlan.monthlyYen).toLocaleString('ja-JP')}円`));
+ if(account.pendingCustomChange)card.append(element('p','scheduled-change',
+  `カスタム料金変更待ち：${account.pendingCustomChange.oldMonthlyYen.toLocaleString('ja-JP')}円 → ${account.pendingCustomChange.nextMonthlyYen.toLocaleString('ja-JP')}円／当月差額${account.pendingCustomChange.amountDueYen.toLocaleString('ja-JP')}円（${account.pendingCustomChange.status==='paid'?'決済済・適用待ち':'決済待ち'}）`));
  const subscriptions=account.subscriptions||[];
  if(!subscriptions.length){card.append(element('p','empty-contract','現在表示できる契約はありません。'));return card;}
  const grid=element('div','subscription-grid');
@@ -357,23 +362,57 @@ function loadCustom(){
  $('custom-name').value=p.name;
  for(const [id,value] of [['custom-channels',p.channels],['custom-servers',p.servers],['custom-rules',p.rules],['custom-price',p.monthlyYen]])$(id).value=String(value);
  for(const [id,value] of [['custom-complex',p.complexConditions],['custom-city',p.municipalityBranching],['custom-extract',p.contentExtraction],['custom-multi',p.multiDestination],['custom-reuse',p.secondaryReuse]])$(id).checked=value===true;
- $('custom-result').textContent=`現在の状態：${p.status}／更新日：${p.updatedAt||'不明'}。契約中は確定料金を変更できません。`;
+ loadedCustomRevision=Number(p.revision);
+ $('custom-result').textContent=`現在の状態：${p.status}／更新日：${p.updatedAt||'不明'}。契約中でも管理者は料金を変更できます。`;
+ if(account.pendingCustomChange){
+  const c=account.pendingCustomChange;
+  $('custom-result').textContent+=` 未処理の変更：${c.oldMonthlyYen}円 → ${c.nextMonthlyYen}円（当月差額${c.amountDueYen}円、${c.status}）。`;
+ }
  updateCustomEstimate();
 }
 async function submitCustom(action){
  const payload={...customPayload(),action};
- if(!/^\d{17,20}$/.test(payload.discordUserId)||payload.confirmDiscordUserId!==payload.discordUserId){$('custom-result').textContent='Discord IDと確認欄を一致させてください。';return;}
+ const account=accounts.find(item=>item.discordUserId===payload.discordUserId);
+ payload.expectedRevision=loadedCustomRevision??account?.customPlan?.revision??0;
+ if(!/^\d{17,20}$/.test(payload.discordUserId)||payload.confirmDiscordUserId!==payload.discordUserId){
+  $('custom-result').textContent='Discord IDと確認欄を一致させてください。';return;
+ }
  if(payload.reason.length<5){$('custom-result').textContent='理由を5文字以上入力してください。';return;}
  if(action==='save'&&!$('custom-form').reportValidity())return;
  if(action==='cancel'&&!window.confirm('このユーザーのカスタム契約を停止します。Stripeの契約も即時解約され、返金は自動実行しません。続行しますか？'))return;
- const button=$(`custom-${action==='checkout'?'checkout':action==='cancel'?'cancel':'save'}`);
+ if(action==='cancel-change'&&!window.confirm('未決済の当月差額請求を無効化し、既存契約を維持しますか？'))return;
+ const button=$(`custom-${action==='checkout'?'checkout':action==='cancel-change'?'cancel-change':action==='cancel'?'cancel':'save'}`);
  button.disabled=true;$('custom-result').textContent='カスタムプランを処理しています…';
  try{
-  const response=await fetch('/site/supporter-admin/api/custom-plan',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','Accept':'application/json'},body:JSON.stringify(payload)});
-  const data=await response.json().catch(()=>({}));
-  if(!response.ok||!data.success)throw new Error(data.message||`HTTP ${response.status}`);
+  const send=async body=>{
+   const response=await fetch('/site/supporter-admin/api/custom-plan',{
+    method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','Accept':'application/json'},body:JSON.stringify(body),
+   });
+   const data=await response.json().catch(()=>({}));
+   if(!response.ok||!data.success)throw new Error(data.message||`HTTP ${response.status}`);
+   return data;
+  };
+  if(action==='save'&&account?.customPlan?.status==='active'){
+   const preview=await send({...payload,action:'preview'});
+   const q=preview.quote;
+   if(!q)throw new Error('料金プレビューを取得できませんでした。');
+   const summary=`カスタムプラン契約変更内容を確認してください。
+
+現在月額：${q.oldMonthlyYen.toLocaleString('ja-JP')}円
+変更後月額：${q.newMonthlyYen.toLocaleString('ja-JP')}円
+当月の追加請求：${q.immediateDueYen.toLocaleString('ja-JP')}円${q.noImmediateRefund?'（減額分の返金なし）':''}
+次回以降の月額：${q.nextMonthlyYen.toLocaleString('ja-JP')}円
+
+${q.immediateDueYen>0?'増額は差額の支払い確認後に適用します。':'追加決済なしで更新します。'}
+よろしいですか？`;
+   if(!window.confirm(summary)){$('custom-result').textContent='変更を取り消しました。';return;}
+  }
+  const data=await send(payload);
   $('custom-result').replaceChildren(element('span','',data.message));
   if(data.url){$('custom-result').append(document.createElement('br'),paymentLink(data.url));}
-  customRequestId='';await loadAccounts();
- }catch(error){$('custom-result').textContent=error.message;}finally{button.disabled=false;}
+  customRequestId='';
+  loadedCustomRevision=null;
+  await loadAccounts();
+ }catch(error){$('custom-result').textContent=error.message;}
+ finally{button.disabled=false;}
 }
