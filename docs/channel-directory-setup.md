@@ -69,3 +69,33 @@ Lambdaは暗号化したJSONを `SupporterRouteBucketName` の `snapshots/` に�
 | Discord権限詳細 | Discordから個別取得可能 | Discordから個別取得可能 |
 
 未保存の項目は画面上で「未取得」と表示します。検索結果の「Discord情報を取得」を押すと、既存の `DISCORD_BOT_TOKEN` を使って、そのサーバーの概算ユーザー数、チャンネル種別、主要な権限上書きを取得して表示します。Botが参加していないサーバーや参照権限がないチャンネルは取得できません。
+
+
+## 有料配信スナップショットv3のAWS先行適用（Issue #131）
+
+地域別の判定条件はv2、EEWの`sendFinalReport=false`を含むルールはv3のスナップショットになります。**DPI-BotのWeb側PR #127/#128をマージする前に、AWS東京の公開APIがv1/v2/v3をすべて受け付ける状態であることを確認してください。** 大阪の専用配信Lambdaの更新とは別の処理です。
+
+AWS東京のCloudShellに本リポジトリの`aws/channel-directory-api/deploy_schema_v3.py`を配置して、以下の順に実行します。
+
+```bash
+python3 aws/channel-directory-api/deploy_schema_v3.py --check
+# 元のZIPのCodeSha256、保持するモジュール、v1/v2/v3受付・v4拒否を確認
+python3 aws/channel-directory-api/deploy_schema_v3.py --apply
+# Lambdaコードのみを更新。S3 ACTIVEやDynamoDBルール、EC2、運用モードは変更しない
+```
+
+このスクリプトは**実際に稼働するLambda ZIPをGetFunctionで取得し、元のZIPをCloudShellへ保存してから、`_validate_supporter_snapshot`関数内のスキーマ判定の2箇所だけを更新します**。コードが想定と異なる場合は中止します。元のZIPは`~/dpi-snapshot-v3-rollback/original.zip`に保管されます。Lambda更新には`lambda:GetFunction`、`lambda:UpdateFunctionCode`などの適切な権限が必要です。
+
+万一問題が起きた際は、同じCloudShellで
+
+```bash
+python3 aws/channel-directory-api/deploy_schema_v3.py --rollback
+```
+
+を使用します。ロールバックは**更新後のコードSHAが予定どおりである場合だけ**実行します。CloudShellの保存フォルダーを消去しないでください。
+
+```bash
+python3 -m unittest tests/test_aws_supporter_snapshot_v3.py -v
+```
+
+でもAWSを一切変更しないオフラインテストが可能です。**AWSの更新・自宅側の受信機構検証を完了するまで、v3スナップショットを本番公開しないでください。** Web側のmainへのマージではCloudflare D1マイグレーション・Workerデプロイが自動起動するため、#127→#128の順でマージし、Cloudflare Actionsの結果を確認します。

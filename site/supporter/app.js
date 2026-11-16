@@ -2,7 +2,9 @@ let session;
 let revision = 0;
 let rules = [];
 let options;
-let entitlements = {servers:1,channels:2,rules:5,complexConditions:false,multiDestination:false};
+let areaCatalogue={municipalities:[],districts:[]};
+let areaCatalogueFailed=false;
+let entitlements = {servers:1,channels:2,rules:5,complexConditions:false,multiDestination:false,prefecture:false,municipality:false,strictMunicipality:false};
 let hasConfigurableContract = false;
 let billingAvailable = false;
 let accountSuspended = false;
@@ -93,8 +95,12 @@ function field(article, rule, key, label, values, attributes = {}) {
    status(different?'別のサーバーが選択されています。契約中のサーバー数上限を確認してください。':'チャンネルを取得しています…');
    try { await loadChannels(rule.guildId, true); if(!different)status(''); } catch (error) { status(error.message); }
    render();
-  } else if (key === 'type' || key === 'detail' || key === 'intensityMode' || key === 'magnitudeMode' || key === 'conditionLogic' || key === 'radarCondition') {
+  } else if (key === 'type' || key === 'detail' || key === 'intensityMode' || key === 'magnitudeMode' || key === 'conditionLogic' || key === 'radarCondition' || key === 'region' || key === 'prefecture' || key === 'district' || key === 'municipality') {
    if (key === 'type') {rule.detail = 'all';rule.conditions=[];}
+   if (key === 'region') {rule.prefecture='all';rule.district='all';rule.municipality='all';rule.strictMunicipality=false;}
+   if (key === 'prefecture') {rule.district='all';rule.municipality='all';rule.strictMunicipality=false;}
+   if (key === 'district') {rule.municipality='all';rule.strictMunicipality=false;}
+   if (key === 'municipality' && input.value==='all')rule.strictMunicipality=false;
    render();
   }
  };
@@ -196,6 +202,10 @@ function normalizeRule(rule) {
   type,
   detail,
   region: rule.region || 'all',
+  prefecture: rule.prefecture || 'all',
+  district: rule.district || 'all',
+  municipality: rule.municipality || 'all',
+  strictMunicipality: rule.strictMunicipality===true,
   intensityMode: rule.intensityMode || (rule.intensityChange === 'increase' ? 'increase' : rule.intensity ? 'threshold' : 'all'),
   intensity: rule.intensity || '4',
   magnitudeMode: rule.magnitudeMode || (rule.magnitudeChange === 'increase' ? 'increase' : rule.magnitudeMin !== null && rule.magnitudeMin !== undefined && rule.magnitudeMin !== '' ? 'threshold' : 'all'),
@@ -217,6 +227,49 @@ function savedRules(account){
   const settings=JSON.parse(account?.settings_json||'{}');
   return Array.isArray(settings.rules)?settings.rules.map(normalizeRule):[];
  }catch{return [];}
+}
+
+
+function geoScopeFields(container,rule){
+ if(rule.region==='all')return;
+ const prefectures=(options.prefectures||[]).filter(item=>item.region===rule.region).map(item=>[item.code,item.name]);
+ const prefecture=field(container,rule,'prefecture','都道府県・全域',[['all','地方全域'],...prefectures]);
+ prefecture.disabled=!entitlements.prefecture||rule.type==='rain-radar';
+ if(rule.type==='rain-radar'&&entitlements.prefecture){
+  const note=document.createElement('p');note.className='geo-upgrade';
+  note.textContent='雨雲レーダーの取得元は地方単位の画像です。精密な都道府県・市区町村判定には非対応のため選択できません。';
+  container.append(note);return;
+ }
+ if(!entitlements.prefecture){
+  const note=document.createElement('p');note.className='geo-upgrade';note.textContent='都道府県単位の配信はPlus版以上にアップグレードしてください。';container.append(note);
+  return;
+ }
+ if(rule.prefecture==='all')return;
+ if(rule.type==='eew'){
+  const city=field(container,rule,'municipality','市区町村・全域',[['all','選択地域の全域']]);
+  city.disabled=true;
+  const note=document.createElement('p');note.className='geo-upgrade';note.textContent='緊急地震速報は市区町村単位の対象判定を保証できないため、都道府県までの選択となります。';container.append(note);return;
+ }
+ if(rule.prefecture==='01'){
+  const districts=areaCatalogue.districts.filter(item=>item.prefectureCode==='01').map(item=>[item.code,item.name]);
+  const district=field(container,rule,'district','北海道内の地方・全域',[['all','北海道全域'],...districts]);
+  district.disabled=areaCatalogueFailed||!districts.length;
+ }
+ const cities=areaCatalogue.municipalities.filter(item=>item.prefectureCode===rule.prefecture&&(rule.district==='all'||item.districtCode===rule.district)).map(item=>[item.code,item.name]);
+ const municipality=field(container,rule,'municipality','市区町村・全域',[['all','選択地域の全域'],...cities]);
+ municipality.disabled=areaCatalogueFailed||!cities.length;
+ if(areaCatalogueFailed||!cities.length){
+  const note=document.createElement('p');note.className='geo-upgrade';note.textContent='気象庁の市区町村データを取得できませんでした。地域一覧を再読み込みしてください。';container.append(note);
+ }
+ if(rule.municipality!=='all'){
+  const label=document.createElement('label');label.className='geo-strict-option';
+  const checkbox=document.createElement('input');checkbox.type='checkbox';checkbox.checked=rule.strictMunicipality===true;checkbox.disabled=!entitlements.strictMunicipality;
+  checkbox.onchange=()=>{rule.strictMunicipality=checkbox.checked;};
+  const description=document.createElement('span');description.textContent=entitlements.strictMunicipality
+   ?'指定した市区町村の情報のみ表示・配信する（従来の広域本文と切替）'
+   :'指定した市区町村の情報のみ表示・配信する（Pro版にアップグレード）';
+  label.append(checkbox,description);container.append(label);
+ }
 }
 
 function render() {
@@ -243,6 +296,7 @@ function render() {
   if (rule.type === 'eew' && rule.detail === 'warning') field(article, rule, 'eewWarningAreaMode', '警報地方の条件', options.eewWarningAreaModes);
   const conditionFields=document.createElement('div');conditionFields.className='rule-condition-fields';
   field(conditionFields, rule, 'region', '対象地方', options.regions);
+  geoScopeFields(conditionFields,rule);
   if (rule.type === 'rain-radar') {
    field(conditionFields, rule, 'radarCondition', '配信条件', options.rainRadarConditions);
    if(rule.radarCondition==='rainfall-threshold')field(conditionFields, rule, 'rainfallThresholdMmPerHour', '1時間降水量の閾値（mm/h・最大20）', null, {inputmode:'decimal',min:'0.1',max:'20',step:'0.1'});
@@ -288,6 +342,8 @@ async function load() {
  }
  $('user').textContent = session.user.username;
  options = await api('/api/supporter/options');
+ try{const data=await api('/api/supporter/areas');areaCatalogue={municipalities:data.municipalities||[],districts:data.districts||[]};areaCatalogueFailed=false;}
+ catch(error){areaCatalogue={municipalities:[],districts:[]};areaCatalogueFailed=true;status(error.message);}
  const {account,billingEnabled} = await api('/api/supporter/account');
  stripeBillingEnabled=billingEnabled===true;
  applyAccountEnforcement({suspended:account?.account_status==='suspended',status:account?.account_status||'active',reason:account?.status_reason||'',updatedAt:account?.status_updated_at||null});
@@ -654,12 +710,13 @@ function renderContracts(subscriptions,dunning={}) {
  updateTopupSignupAvailability();
  if (!subscriptions.length) {
   contract.textContent = '現在の契約はありません。';
-  entitlements={servers:1,channels:2,rules:5,complexConditions:false,multiDestination:false};
+  entitlements={servers:1,channels:2,rules:5,complexConditions:false,multiDestination:false,prefecture:false,municipality:false,strictMunicipality:false};
   if(options)setRuleAccess(false);
   return;
  }
  const active=subscriptions.filter(item=>item.recognizedPlan!==false&&['active','trialing','past_due','unpaid','paused'].includes(item.status));
- entitlements=active.reduce((limits,item)=>({servers:Math.max(limits.servers,Number(item.servers)||1),channels:Math.max(limits.channels,Number(item.channels)||2),rules:Math.max(limits.rules,Number(item.rules)||5),complexConditions:limits.complexConditions||item.complexConditions===true,multiDestination:limits.multiDestination||item.multiDestination===true}),{servers:1,channels:2,rules:5,complexConditions:false,multiDestination:false});
+ const geographicPlans=new Set(active.map(item=>item.planId));
+ entitlements={...active.reduce((limits,item)=>({servers:Math.max(limits.servers,Number(item.servers)||1),channels:Math.max(limits.channels,Number(item.channels)||2),rules:Math.max(limits.rules,Number(item.rules)||5),complexConditions:limits.complexConditions||item.complexConditions===true,multiDestination:limits.multiDestination||item.multiDestination===true}),{servers:1,channels:2,rules:5,complexConditions:false,multiDestination:false}),prefecture:geographicPlans.has('plus')||geographicPlans.has('pro'),municipality:geographicPlans.has('plus')||geographicPlans.has('pro'),strictMunicipality:geographicPlans.has('pro')};
  const current=active[0]||subscriptions[0];
  if(dunning?.usageSuspended){const warning=document.createElement('p');warning.className='billing-suspension';warning.textContent='月末再決済を確認できなかったため、有料プランの通知設定は利用停止中です。契約管理画面からお支払いを完了してください。';contract.append(warning);}
  if(current){

@@ -21,6 +21,7 @@ const excluded = new Set([
     'site/mail-admin/index.html',
     'site/reuse-admin/index.html',
     'site/supporter-admin/index.html',
+    'site/supporter-admin/stats.html',
 ]);
 const expectedMenu = [
     ['/index.html', 'トップページ'],
