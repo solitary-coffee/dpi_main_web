@@ -148,16 +148,7 @@ function renderSummary() {
   ['有料プラン登録者',accounts.length],
   ['有効・対応中の契約',active.length],
   ['月額合計',money(active.reduce((sum,item)=>sum+Number(item.amount||0),0),'jpy')],
-  ['期間末解約予定',active.filter(item=>item.cancelAtPeriodEnd).length],
   ['BAN中',`${accounts.filter(account=>account.accountStatus==='suspended').length.toLocaleString('ja-JP')}人`],
-  ['総合クレジット数',creditMetric(creditSummary?.totalCredits)],
-  ['クレジット利用者数',creditSummary?.creditUsers==null?'取得不可':`${Number(creditSummary.creditUsers).toLocaleString('ja-JP')}人`],
-  ['購入クレジット残高',creditMetric(creditSummary?.purchasedBalance)],
-  ['管理者付与等の残高',creditMetric(creditSummary?.otherCredits)],
-  ['クレジット購入者数',`${Number(creditSummary?.purchasers||0).toLocaleString('ja-JP')}人`],
-  ['累計チャージ額',money(creditSummary?.netPurchased||0,'jpy')],
-  ['30日以内の失効予定',creditMetric(creditSummary?.expiring30Days)],
-  ['累計失効クレジット',creditMetric(creditSummary?.expiredCredits)],
  ];
  $('summary-cards').replaceChildren(...items.map(([label,value]) => {
   const card=element('article','metric-card');card.append(element('span','',label),element('strong','',String(value)));return card;
