@@ -1396,19 +1396,23 @@ export async function applyCustomStripePrice(env,customer,uid,offer,change){
   ||Number(item.price.unit_amount)!==Number(change.old_monthly_yen)
   ||Number(change.old_revision)!==Number(offer.revision))
   fail('Stripe契約の料金・改訂番号が変更されています。自動変更を停止しました。',409);
- const updated=await stripe(env,`subscriptions/${encodeURIComponent(subscription.id)}`,{
+ const metadata={
+  proration_behavior:'none',billing_cycle_anchor:'unchanged',
+  payment_behavior:'error_if_incomplete',
+  'metadata[dpi_custom_revision]':String(change.next_revision),
+  'metadata[dpi_updated_by]':'admin',
+  'metadata[dpi_custom_change_request]':change.request_id,
+ };
+ const priceParams=Number(change.next_monthly_yen)===Number(change.old_monthly_yen)?{}:{
   'items[0][id]':item.id,
   'items[0][price_data][currency]':'jpy',
   'items[0][price_data][unit_amount]':String(change.next_monthly_yen),
   'items[0][price_data][product]':stripeId(item.price.product),
   'items[0][price_data][recurring][interval]':'month',
   'items[0][quantity]':'1',
-  proration_behavior:'none',billing_cycle_anchor:'unchanged',
-  payment_behavior:'error_if_incomplete',
-  'metadata[dpi_custom_revision]':String(change.next_revision),
-  'metadata[dpi_updated_by]':'admin',
-  'metadata[dpi_custom_change_request]':change.request_id,
- },`dpi-custom-recurring-${change.request_id}`);
+ };
+ const updated=await stripe(env,`subscriptions/${encodeURIComponent(subscription.id)}`,
+  {...priceParams,...metadata},`dpi-custom-recurring-${change.request_id}`);
  if(updated.pending_update||Number(updated.items?.data?.[0]?.price?.unit_amount)!==Number(change.next_monthly_yen)
   ||Number(updated.metadata?.dpi_custom_revision)!==Number(change.next_revision))fail('Stripe契約料金の切替結果を確認できませんでした。',502);
  return updated;
