@@ -149,6 +149,47 @@ async function creditPurchaseTimestamp(env,session,paidAt){
  // Never shorten the purchased validity period because reconciliation ran late.
  return Math.floor(Date.now()/1000);
 }
+// A credit grant is claimed in D1 before Stripe is called. Stripe idempotency
+// keys expire after 24 hours, so a late retry (webhook redelivery, a leftover
+// pending row, a resumed compensation batch) must find the earlier grant via
+// the claim/its Stripe metadata instead of creating a second balance credit.
+async function findCreditGrantTransaction(env,customer,since,matches,maxPages=10){
+ let startingAfter='';
+ for(let page=0;page<maxPages;page++){
+  const result=await stripe(env,`customers/${encodeURIComponent(customer)}/balance_transactions?limit=100${startingAfter?`&starting_after=${encodeURIComponent(startingAfter)}`:''}`);
+  if(!Array.isArray(result?.data))fail('過去のクレジット付与を確認できませんでした。時間をおいて再試行してください。',503);
+  const found=result.data.find(matches);if(found)return found;
+  const oldest=result.data.at(-1);
+  if(!result.has_more||!oldest?.id||Number(oldest.created)<since)return null;
+  startingAfter=oldest.id;
+ }
+ fail('過去のクレジット付与を確認できませんでした。時間をおいて再試行してください。',503);
+}
+export async function grantCreditOnce(env,db,{grantKey,kind,uid,customer,amount,params,idempotencyKey,matches=null,record}){
+ const now=Math.floor(Date.now()/1000);
+ if(!grantKey||!customer||!Number.isSafeInteger(amount)||amount<1)fail('クレジット付与情報を確認できませんでした。',409);
+ const inserted=await db.prepare(`INSERT INTO supporter_credit_grants
+  (grant_key,kind,discord_user_id,customer_id,amount,status,created_at,updated_at)
+  VALUES(?,?,?,?,?,'claimed',?,?) ON CONFLICT(grant_key) DO NOTHING`).bind(grantKey,kind,uid,customer,amount,now,now).run();
+ let claimedAt=now;const fresh=Number(inserted?.meta?.changes||0)>0;
+ if(!fresh){
+  const claim=await db.prepare('SELECT * FROM supporter_credit_grants WHERE grant_key=?').bind(grantKey).first();
+  if(!claim)fail('クレジット付与の処理状態を確認できませんでした。',503);
+  if(claim.customer_id!==customer||Number(claim.amount)!==amount)fail('別の条件で処理済みのクレジット付与です。',409);
+  if(claim.status==='granted')return{alreadyRecorded:true,transactionId:clean(claim.stripe_transaction_id),balanceAfter:Math.max(0,Number(claim.balance_after)||0)};
+  claimedAt=Number(claim.created_at)||0;
+ }
+ const match=transaction=>transaction?.metadata?.dpi_credit_grant===grantKey||(typeof matches==='function'&&matches(transaction)===true);
+ // An earlier attempt may have reached Stripe and then failed before recording it.
+ let transaction=fresh?null:await findCreditGrantTransaction(env,customer,claimedAt-300,match);
+ if(!transaction)transaction=await stripe(env,`customers/${encodeURIComponent(customer)}/balance_transactions`,{...params,'metadata[dpi_credit_grant]':grantKey},idempotencyKey);
+ const balanceAfter=creditsFromBalance(transaction.ending_balance);
+ await db.batch([
+  ...await record(transaction,balanceAfter),
+  db.prepare(`UPDATE supporter_credit_grants SET status='granted',stripe_transaction_id=?,balance_after=?,updated_at=? WHERE grant_key=?`).bind(transaction.id,balanceAfter,Math.floor(Date.now()/1000),grantKey),
+ ]);
+ return{alreadyRecorded:false,transactionId:transaction.id,balanceAfter};
+}
 async function fulfillCreditTopup(env,db,session,paidAt=null){
  const metadata=checkoutMetadata(session);
  if(session?.mode!=='payment'||metadata.dpi_checkout_kind!=='credit_topup'||session.payment_status!=='paid')return null;
@@ -159,28 +200,32 @@ async function fulfillCreditTopup(env,db,session,paidAt=null){
  const billing=await db.prepare('SELECT customer_id FROM supporter_billing WHERE discord_user_id=?').bind(uid).first();
  if(!billing?.customer_id||billing.customer_id!==customer)fail('クレジット決済の利用者を確認できませんでした。',409);
  const purchasedAt=await creditPurchaseTimestamp(env,session,paidAt),expiresAt=creditExpiresAt(purchasedAt),now=Math.floor(Date.now()/1000);
- const transaction=await stripe(env,`customers/${encodeURIComponent(customer)}/balance_transactions`,{
-  amount:String(-amount),currency:'jpy',description:`DPI-Bot credit top-up: ${session.id}`,
-  'metadata[dpi_user]':uid,'metadata[dpi_credit_action]':'user_topup','metadata[dpi_checkout_session]':session.id,
- },`dpi-credit-topup-${session.id}`);
- const balanceAfter=creditsFromBalance(transaction.ending_balance);
- await db.batch([
-  db.prepare(`INSERT INTO supporter_credit_topups
-   (request_id,discord_user_id,customer_id,checkout_session_id,payment_intent_id,stripe_balance_transaction_id,amount,currency,status,purchased_at,expires_at,created_at,updated_at)
-   VALUES(?,?,?,?,?,?,?,'jpy','credited',?,?,?,?)
-   ON CONFLICT(request_id) DO UPDATE SET checkout_session_id=excluded.checkout_session_id,payment_intent_id=excluded.payment_intent_id,
-    stripe_balance_transaction_id=excluded.stripe_balance_transaction_id,status='credited',purchased_at=excluded.purchased_at,expires_at=excluded.expires_at,updated_at=excluded.updated_at`)
-   .bind(requestId,uid,customer,session.id,paymentIntent,transaction.id,amount,purchasedAt,expiresAt,purchasedAt,now),
-  db.prepare(`INSERT INTO supporter_credit_lots
-   (id,discord_user_id,source_type,source_id,original_amount,remaining_amount,expires_at,status,created_at,updated_at)
-   VALUES(?,?,'purchase',?,?,?,?, 'active',?,?) ON CONFLICT(source_type,source_id) DO NOTHING`)
-   .bind(`topup:${session.id}`,uid,session.id,amount,amount,expiresAt,purchasedAt,now),
-  db.prepare(`INSERT INTO supporter_credit_events
-   (id,discord_user_id,credit_delta,balance_after,stripe_transaction_id,reason,actor,created_at)
-   VALUES(?,?,?,?,?,'credit_topup','user',?) ON CONFLICT DO NOTHING`)
-   .bind(`topup:${session.id}`,uid,amount,balanceAfter,transaction.id,new Date(purchasedAt*1000).toISOString()),
- ]);
- return {uid,amount,balanceAfter,expiresAt};
+ const grant=await grantCreditOnce(env,db,{
+  grantKey:`topup:${session.id}`,kind:'credit_topup',uid,customer,amount,
+  params:{amount:String(-amount),currency:'jpy',description:`DPI-Bot credit top-up: ${session.id}`,
+   'metadata[dpi_user]':uid,'metadata[dpi_credit_action]':'user_topup','metadata[dpi_checkout_session]':session.id},
+  idempotencyKey:`dpi-credit-topup-${session.id}`,
+  matches:transaction=>transaction?.metadata?.dpi_credit_action==='user_topup'&&transaction?.metadata?.dpi_checkout_session===session.id,
+  record:(transaction,balanceAfter)=>[
+   db.prepare(`INSERT INTO supporter_credit_topups
+    (request_id,discord_user_id,customer_id,checkout_session_id,payment_intent_id,stripe_balance_transaction_id,amount,currency,status,purchased_at,expires_at,created_at,updated_at)
+    VALUES(?,?,?,?,?,?,?,'jpy','credited',?,?,?,?)
+    ON CONFLICT(request_id) DO UPDATE SET checkout_session_id=excluded.checkout_session_id,payment_intent_id=excluded.payment_intent_id,
+     stripe_balance_transaction_id=excluded.stripe_balance_transaction_id,status='credited',purchased_at=excluded.purchased_at,expires_at=excluded.expires_at,updated_at=excluded.updated_at`)
+    .bind(requestId,uid,customer,session.id,paymentIntent,transaction.id,amount,purchasedAt,expiresAt,purchasedAt,now),
+   db.prepare(`INSERT INTO supporter_credit_lots
+    (id,discord_user_id,source_type,source_id,original_amount,remaining_amount,expires_at,status,created_at,updated_at)
+    VALUES(?,?,'purchase',?,?,?,?, 'active',?,?) ON CONFLICT(source_type,source_id) DO NOTHING`)
+    .bind(`topup:${session.id}`,uid,session.id,amount,amount,expiresAt,purchasedAt,now),
+   db.prepare(`INSERT INTO supporter_credit_events
+    (id,discord_user_id,credit_delta,balance_after,stripe_transaction_id,reason,actor,created_at)
+    VALUES(?,?,?,?,?,'credit_topup','user',?) ON CONFLICT DO NOTHING`)
+    .bind(`topup:${session.id}`,uid,amount,balanceAfter,transaction.id,new Date(purchasedAt*1000).toISOString()),
+  ],
+ });
+ // Already granted and recorded atomically by an earlier attempt: never grant or notify twice.
+ if(grant.alreadyRecorded)return null;
+ return {uid,amount,balanceAfter:grant.balanceAfter,expiresAt};
 }
 export async function reconcilePendingCreditTopups(env,db,uid,customer){
  if(!customer)return {checked:0,recovered:0,failed:0};
@@ -372,18 +417,28 @@ async function recordInvoiceFailed(env,db,invoice){
   VALUES(?,?,?,?,?,'retry_scheduled',?,?,?,?) ON CONFLICT(invoice_id) DO UPDATE SET amount_due=excluded.amount_due,currency=excluded.currency,retry_at=excluded.retry_at,suspend_at=excluded.suspend_at,updated_at=excluded.updated_at`).bind(invoiceId,customer,subscriptionId,Number(invoice.amount_due||invoice.total||0),clean(invoice.currency||'jpy'),now,schedule.retryAt,schedule.suspendAt,now).run();
  return sendBillingNotification(env,db,'payment_failed',invoice,schedule.retryAt,schedule.suspendAt);
 }
+// Stripe list endpoints are paginated. A partial list must never be treated as
+// "no subscription" / "zero credits": callers keep their last known state on error.
+export const STRIPE_LIST_MAX_PAGES=200;
+export async function stripeListAll(env,path,onItem,maxPages=STRIPE_LIST_MAX_PAGES){
+ const separator=path.includes('?')?'&':'?';let startingAfter='';
+ for(let page=0;page<maxPages;page++){
+  const result=await stripe(env,startingAfter?`${path}${separator}starting_after=${encodeURIComponent(startingAfter)}`:path);
+  if(!Array.isArray(result?.data))fail('Stripeの一覧を最後まで取得できませんでした。',502);
+  for(const item of result.data)onItem(item);
+  if(!result.has_more)return;
+  const last=result.data.at(-1)?.id;
+  if(!last)fail('Stripeの一覧を最後まで取得できませんでした。',502);
+  startingAfter=last;
+ }
+ console.error('Stripe list exceeded the page limit',{path:path.split('?')[0],maxPages});
+ fail('Stripeの一覧が上限件数を超えたため、最新の状態を確定できませんでした。',502);
+}
 export async function creditsByCustomer(env,customers){
  const wanted=new Set((customers||[]).filter(Boolean));
  const resultMap=new Map([...wanted].map(customer=>[customer,0]));
  if(!wanted.size||!billingReady(env))return resultMap;
- let startingAfter='';
- for(let page=0;page<5;page++){
-  const suffix=startingAfter?`&starting_after=${encodeURIComponent(startingAfter)}`:'';
-  const result=await stripe(env,`customers?limit=100${suffix}`);
-  for(const customer of result.data||[])if(wanted.has(customer.id))resultMap.set(customer.id,creditsFromBalance(customer.balance));
-  if(!result.has_more||!result.data?.length)break;
-  startingAfter=result.data.at(-1).id;
- }
+ await stripeListAll(env,'customers?limit=100',customer=>{if(wanted.has(customer.id))resultMap.set(customer.id,creditsFromBalance(customer.balance));});
  return resultMap;
 }
 export function selection(input){
@@ -734,18 +789,11 @@ export async function subscriptionSummariesByCustomer(env,customers){
  const wanted=new Set((customers||[]).filter(Boolean));
  const grouped=new Map([...wanted].map(customer=>[customer,[]]));
  if(!wanted.size||!billingReady(env))return grouped;
- let startingAfter='';
- for(let page=0;page<5;page++){
-  const suffix=startingAfter?`&starting_after=${encodeURIComponent(startingAfter)}`:'';
-  const result=await stripe(env,`subscriptions?status=all&limit=100${suffix}`);
-  for(const subscription of result.data||[]){
-   if(['canceled','incomplete_expired'].includes(subscription.status))continue;
-   const customer=typeof subscription.customer==='string'?subscription.customer:subscription.customer?.id;
-   if(wanted.has(customer))grouped.get(customer).push(subscriptionSummary(subscription,env));
-  }
-  if(!result.has_more||!result.data?.length)break;
-  startingAfter=result.data.at(-1).id;
- }
+ await stripeListAll(env,'subscriptions?status=all&limit=100',subscription=>{
+  if(['canceled','incomplete_expired'].includes(subscription.status))return;
+  const customer=typeof subscription.customer==='string'?subscription.customer:subscription.customer?.id;
+  if(wanted.has(customer))grouped.get(customer).push(subscriptionSummary(subscription,env));
+ });
  return grouped;
 }
 export async function billingAction(request,env,db,uid,input={}){
@@ -1206,7 +1254,11 @@ export async function billingWebhook(request,env,ctx){
      await customerSubscriptionSummaries(env,stripeId(session.customer)));
   }else if(checkoutMetadata(session).dpi_checkout_kind==='credit_topup'){
    const fulfilled=await fulfillCreditTopup(env,db,session,event.created);
-   if(fulfilled)await sendBillingNotification(env,db,'credit_topup_succeeded',{id:session.id,customer:session.customer,amount_paid:fulfilled.amount,currency:session.currency||'jpy',expires_at:fulfilled.expiresAt});
+   // The credit is already recorded: a mail failure must not 503 the webhook and trigger a redelivery of the grant.
+   if(fulfilled){
+    try{await sendBillingNotification(env,db,'credit_topup_succeeded',{id:session.id,customer:session.customer,amount_paid:fulfilled.amount,currency:session.currency||'jpy',expires_at:fulfilled.expiresAt});}
+    catch(error){console.error('Credit top-up email failed',{sessionId:clean(session?.id),errorName:error?.name||'Error'});}
+   }
   }
   else{
    const provisioned=await provisionPaidCheckoutSubscription(env,session);
@@ -1250,9 +1302,32 @@ export async function billingWebhook(request,env,ctx){
  if(ctx?.waitUntil)ctx.waitUntil(snapshotTask);else await snapshotTask;
  return json({received:true});
 }
+async function publishScheduledSnapshot(env,db,reason){
+ try{
+  const result=await refreshSupporterSnapshotSafely(env,db,subscriptionSummariesByCustomer,reason);
+  if(result?.reason==='failed')console.error('Supporter delivery snapshot was not republished by the billing schedule; the previous snapshot stays until it expires',{reason});
+  return result;
+ }catch(error){
+  console.error('Supporter delivery snapshot was not republished by the billing schedule; the previous snapshot stays until it expires',{reason,errorName:error?.name||'Error'});
+  return{published:false,reason:'failed'};
+ }
+}
 export async function runSupporterBillingSchedule(env,nowMs=Date.now()){
  if(!billingReady(env))return {retried:0,paid:0,failed:0,suspended:0,expiredCredits:0};
- const db=env.REUSE_DB||env.NEWSLETTER_DB,now=Math.floor(Number(nowMs)/1000);let retried=0,paid=0,failed=0,suspended=0;
+ const db=env.REUSE_DB||env.NEWSLETTER_DB;
+ // Paid delivery depends on a snapshot that expires after 30 hours. Republish it
+ // before anything else so a failing billing task can never stop delivery.
+ await publishScheduledSnapshot(env,db,'billing_schedule_start');
+ let tasks,taskError=null;
+ try{tasks=await runBillingScheduleTasks(env,db,nowMs);}
+ catch(error){taskError=error;console.error('Supporter billing schedule task failed',{errorName:error?.name||'Error',status:Number(error?.status)||null,stripeStatus:Number(error?.stripeStatus)||null});}
+ // Republish again so suspensions/recoveries from this run reach delivery promptly.
+ await publishScheduledSnapshot(env,db,'billing_schedule');
+ if(taskError)throw taskError;
+ return tasks;
+}
+async function runBillingScheduleTasks(env,db,nowMs){
+ const now=Math.floor(Number(nowMs)/1000);let retried=0,paid=0,failed=0,suspended=0;
  const due=await db.prepare(`SELECT * FROM supporter_dunning WHERE status='retry_scheduled' AND retry_at<=? ORDER BY retry_at LIMIT 50`).bind(now).all();
  for(const row of due.results||[]){
   const claim=await db.prepare(`UPDATE supporter_dunning SET status='retrying',retry_attempted_at=?,updated_at=? WHERE invoice_id=? AND status='retry_scheduled'`).bind(now,now,row.invoice_id).run();
@@ -1286,7 +1361,6 @@ export async function runSupporterBillingSchedule(env,nowMs=Date.now()){
  }
  const expiredCredits=await expirePurchasedCredits(env,db);
  await recoverCustomPriceChanges(env,db);
- await refreshSupporterSnapshotSafely(env,db,subscriptionSummariesByCustomer,'billing_schedule');
  return {retried,paid,failed,suspended,expiredCredits};
 }
 

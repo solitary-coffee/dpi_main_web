@@ -1,6 +1,6 @@
 import { requireSession, assertCsrf, assertSameOrigin, readJson, fetchGuildChannels } from './reuse.js';
 import { authenticateNewsletterAdmin } from './access.js';
-import { adminBillingAction, adminDisciplinaryBillingAction, billingAction, billingReady, createBillingCustomer, creditsByCustomer, customerSubscriptionSummaries, expireSupporterPendingCheckouts, publicPlans, reconcilePaidCheckoutSubscription, sendSupporterDisciplinaryNotification, subscriptionSummariesByCustomer, createCustomCheckout, expireCustomCheckout, cancelCustomSubscription,verifiedCustomSubscription,createCustomDifferenceCheckout,settleCustomPriceChange,recoverCustomPriceChanges } from './supporter-billing.js';
+import { adminBillingAction, adminDisciplinaryBillingAction, billingAction, billingReady, createBillingCustomer, creditsByCustomer, customerSubscriptionSummaries, grantCreditOnce, expireSupporterPendingCheckouts, publicPlans, reconcilePaidCheckoutSubscription, sendSupporterDisciplinaryNotification, subscriptionSummariesByCustomer, createCustomCheckout, expireCustomCheckout, cancelCustomSubscription,verifiedCustomSubscription,createCustomDifferenceCheckout,settleCustomPriceChange,recoverCustomPriceChanges } from './supporter-billing.js';
 import { getCustomPlan,customLocked,customPublic,normalizeCustomPlan,enrichCustomSubscriptions } from './supporter-custom.js';
 import { customChangeQuote,currentCustomChange,customChangePublic,stageCustomChange } from './supporter-custom-change.js';
 import { refreshSupporterSnapshotSafely } from './supporter-snapshot.js';
@@ -61,23 +61,30 @@ export async function supporterCreditMetrics(db,billingRows=[],creditBalances=ne
   ORDER BY discord_user_id,CASE WHEN expires_at IS NULL THEN 1 ELSE 0 END,expires_at,id`).all();
  const grouped=new Map();
  for(const lot of lots.results||[]){const group=grouped.get(lot.discord_user_id)||[];group.push(lot);grouped.set(lot.discord_user_id,group);}
+ // Read-only: this backs a GET admin view, so consumption is estimated in memory
+ // and never written to the ledger (a partial/failed Stripe read must not consume lots).
+ const remainingById=new Map((lots.results||[]).map(lot=>[lot.id,Math.max(0,Number(lot.remaining_amount)||0)]));
  if(stripeAvailable){
   for(const [uid,userLots] of grouped){
-   let tracked=userLots.reduce((sum,lot)=>sum+Math.max(0,Number(lot.remaining_amount)||0),0);
-   let consumed=Math.max(0,tracked-(balancesByUser.get(uid)||0));
+   if(!balancesByUser.has(uid))continue;
+   let tracked=userLots.reduce((sum,lot)=>sum+remainingById.get(lot.id),0);
+   let consumed=Math.max(0,tracked-balancesByUser.get(uid));
    for(const lot of userLots){
     if(consumed<=0)break;
-    const current=Math.max(0,Number(lot.remaining_amount)||0),used=Math.min(current,consumed),remaining=current-used;
-    const result=await db.prepare(`UPDATE supporter_credit_lots SET remaining_amount=?,status=?,updated_at=?
-     WHERE id=? AND remaining_amount=? AND status='active'`).bind(remaining,remaining?'active':'consumed',now,lot.id,current).run();
-    if(result.meta?.changes)consumed-=used;
+    const current=remainingById.get(lot.id),used=Math.min(current,consumed);
+    remainingById.set(lot.id,current-used);consumed-=used;
    }
   }
  }
- const [active,topups,expired]=await Promise.all([
-  db.prepare(`SELECT COALESCE(SUM(remaining_amount),0) AS balance,COUNT(DISTINCT discord_user_id) AS users,
-   MIN(expires_at) AS next_expiry,COALESCE(SUM(CASE WHEN expires_at<=? THEN remaining_amount ELSE 0 END),0) AS expiring_30d
-   FROM supporter_credit_lots WHERE source_type='purchase' AND status='active' AND remaining_amount>0`).bind(now+30*86400).first(),
+ const purchaseLots=(lots.results||[]).filter(lot=>lot.source_type==='purchase'&&remainingById.get(lot.id)>0);
+ const expiries=purchaseLots.map(lot=>Number(lot.expires_at)).filter(value=>Number.isFinite(value)&&value>0);
+ const active={
+  balance:purchaseLots.reduce((sum,lot)=>sum+remainingById.get(lot.id),0),
+  users:new Set(purchaseLots.map(lot=>lot.discord_user_id)).size,
+  next_expiry:expiries.length?Math.min(...expiries):null,
+  expiring_30d:purchaseLots.filter(lot=>Number.isFinite(Number(lot.expires_at))&&lot.expires_at!==null&&Number(lot.expires_at)<=now+30*86400).reduce((sum,lot)=>sum+remainingById.get(lot.id),0),
+ };
+ const [topups,expired]=await Promise.all([
   db.prepare(`SELECT COALESCE(SUM(amount-refunded_amount),0) AS net_purchased,
    COUNT(DISTINCT CASE WHEN status NOT IN ('pending','failed') THEN discord_user_id END) AS purchasers
    FROM supporter_credit_topups WHERE status NOT IN ('pending','failed')`).first(),
@@ -234,7 +241,7 @@ async function createCompensationCampaign(env,db,admin,input){
  return compensationCampaignView(await db.prepare('SELECT * FROM supporter_credit_campaigns WHERE id=?').bind(campaignId).first());
 }
 
-async function processCompensationCampaign(env,db,admin,campaignId,limit=10){
+export async function processCompensationCampaign(env,db,admin,campaignId,limit=10){
  const campaign=await db.prepare('SELECT * FROM supporter_credit_campaigns WHERE id=?').bind(campaignId).first();
  if(!campaign)throw Object.assign(new Error('補償クレジット配布が見つかりません。'),{status:404});
  if(['completed','partial','failed'].includes(campaign.status))return compensationCampaignView(campaign);
@@ -258,18 +265,28 @@ async function processCompensationCampaign(env,db,admin,campaignId,limit=10){
      ON CONFLICT(discord_user_id) DO UPDATE SET customer_id=COALESCE(supporter_billing.customer_id,excluded.customer_id)`).bind(recipient.discord_user_id,customer.id).run();
     customerId=(await db.prepare('SELECT customer_id FROM supporter_billing WHERE discord_user_id=?').bind(recipient.discord_user_id).first())?.customer_id;
    }
-   const result=await adminBillingAction(env,customerId,recipient.discord_user_id,{action:'grant_credit',amount:Number(campaign.amount),reason:campaign.reason,requestId:recipient.request_id});
-   const credit=result.creditEvent,now=Math.floor(Date.now()/1000);
-   await db.batch([
+   // The grant is claimed in D1 before Stripe is called, so a resumed batch
+   // never credits the same recipient twice after Stripe's 24h idempotency window.
+   const amount=Number(campaign.amount),now=Math.floor(Date.now()/1000);
+   const record=(transactionId,balanceAfter)=>[
     db.prepare(`INSERT INTO supporter_credit_events
      (id,discord_user_id,credit_delta,balance_after,stripe_transaction_id,reason,actor,created_at)
-     VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING`).bind(recipient.request_id,recipient.discord_user_id,credit.delta,credit.balanceAfter,credit.stripeTransactionId,campaign.reason,admin.email,new Date(now*1000).toISOString()),
+     VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING`).bind(recipient.request_id,recipient.discord_user_id,amount,balanceAfter,transactionId,campaign.reason,admin.email,new Date(now*1000).toISOString()),
     db.prepare(`INSERT INTO supporter_credit_lots
      (id,discord_user_id,source_type,source_id,original_amount,remaining_amount,expires_at,status,created_at,updated_at)
-     VALUES(?,?,'admin',?,?,?,?, 'active',?,?) ON CONFLICT(source_type,source_id) DO NOTHING`).bind(recipient.lot_id,recipient.discord_user_id,recipient.lot_id,Number(campaign.amount),Number(campaign.amount),Number(campaign.expires_at),now,now),
+     VALUES(?,?,'admin',?,?,?,?, 'active',?,?) ON CONFLICT(source_type,source_id) DO NOTHING`).bind(recipient.lot_id,recipient.discord_user_id,recipient.lot_id,amount,amount,Number(campaign.expires_at),now,now),
     db.prepare(`UPDATE supporter_credit_campaign_recipients SET status='credited',stripe_transaction_id=?,balance_after=?,credited_at=?,error_message=NULL
-     WHERE campaign_id=? AND discord_user_id=? AND status='pending'`).bind(credit.stripeTransactionId,credit.balanceAfter,now,campaignId,recipient.discord_user_id),
-   ]);
+     WHERE campaign_id=? AND discord_user_id=? AND status='pending'`).bind(transactionId,balanceAfter,now,campaignId,recipient.discord_user_id),
+   ];
+   const grant=await grantCreditOnce(env,db,{
+    grantKey:recipient.lot_id,kind:'compensation',uid:recipient.discord_user_id,customer:customerId,amount,
+    params:{amount:String(-amount),currency:'jpy',description:`DPI-Bot credit grant: ${campaign.reason}`.slice(0,500),
+     'metadata[dpi_user]':recipient.discord_user_id,'metadata[dpi_credit_action]':'grant_credit','metadata[dpi_admin_reason]':campaign.reason},
+    idempotencyKey:`dpi-admin-grant_credit-${recipient.request_id}`,
+    record:(transaction,balanceAfter)=>record(transaction.id,balanceAfter),
+   });
+   // Recording is idempotent; repeat it only to finish a recipient whose grant was already recorded.
+   if(grant.alreadyRecorded)await db.batch(record(grant.transactionId,grant.balanceAfter));
   }catch(error){
    const finalAttempt=attempt+1>=3;
    await db.prepare(`UPDATE supporter_credit_campaign_recipients SET status=?,error_message=?
