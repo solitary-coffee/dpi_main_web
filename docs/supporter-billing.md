@@ -8,6 +8,8 @@ Secrets: STRIPE_SECRET_KEY（テスト用）、STRIPE_WEBHOOK_SECRET。秘密値
 
 vars: SUPPORTER_BILLING_MODE=test、SUPPORTER_PUBLIC_ORIGIN=https://dpi-bot.com、SUPPORTER_CONSENT_VERSION=<同意文書の改定日>、STRIPE_PRICE_SUPPORTER、STRIPE_PRICE_PLUS、STRIPE_PRICE_PRO、STRIPE_PRICE_ADDON、STRIPE_PORTAL_CONFIG、SUPPORTER_PUBLIC_ENABLED=false、SUPPORTER_TEST_USER_IDS=<許可するDiscordユーザーIDをカンマ区切り>。
 
+画像配信ルール（schemaVersion 4）は `SUPPORTER_IMAGE_RULES_ENABLED=1` のときだけ有効（既定オフ）。デプロイ順序とスキーマは [supporter-image-rules.md](supporter-image-rules.md) を参照。
+
 `STRIPE_SECRET_KEY`、`STRIPE_WEBHOOK_SECRET`、全Price ID、Portal設定ID、テストモード指定がそろったときだけ決済を有効にする。不足時は申込ボタンを無効にして不足理由を表示し、APIも503を返す。秘密値はCloudflare Worker `main-dpi` のSecretsへ登録し、通常のvarsやGitには保存しない。
 
 限定公開中は `/site/supporter/` とサポーターAPIをDiscordユーザーIDの許可リストで保護する。未認証・未許可ユーザーには一律404を返し、画面レスポンスには `X-Robots-Tag: noindex, nofollow, noarchive` を付与する。Cloudflare Access認証済み管理者は画面資産のみ確認できるが、ユーザー操作にはDiscordログインも必要。`SUPPORTER_PUBLIC_ENABLED=true` は一般公開時だけ設定する。空値や未設定は閉鎖扱い。

@@ -1,0 +1,223 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {readFile} from 'node:fs/promises';
+import {normalizeSupporterRules, supporterOptions, supporterAdminDetails} from '../worker/supporter.js';
+import {buildSupporterSnapshot} from '../worker/supporter-snapshot.js';
+import {PLAN_CATALOG, publicPlans} from '../worker/supporter-billing.js';
+import {geographicEntitlements} from '../worker/supporter-geo.js';
+import {PLAN_FEATURES, FEATURE_NAMES, planFeatures, hasFeature, imageTier} from '../site/supporter/plan-features.js';
+import {imageRulesEnabled} from '../worker/supporter-image-rules.js';
+
+const guilds=[{id:'12345678901234567',name:'DPI Test'}];
+const CHANNEL='98765432109876543';
+const active=planId=>({status:'active',recognizedPlan:true,planId});
+const custom=(extra={})=>({status:'active',recognizedPlan:true,planId:'custom',managedCustom:true,municipalityBranching:false,contentExtraction:false,...extra});
+const limitsFor=(...subscriptions)=>({servers:5,channels:20,rules:30,complexConditions:false,multiDestination:false,...planFeatures(subscriptions),...geographicEntitlements(subscriptions)});
+const ENABLED={imageRules:true};
+const base={name:'画像',guildId:guilds[0].id,channelId:CHANNEL,channelIds:[CHANNEL]};
+const radar={...base,type:'hires-radar',region:'kanto-koshin',linearRainband:true,radarCondition:'scheduled',deliveryIntervalHours:'3'};
+const tsunami={...base,type:'tsunami-map',region:'all',includeTables:true,enlargedArea:false};
+const weather={...base,type:'weather-map',region:'kanto-koshin',products:['VPWW55','VPWW58'],minSeverity:'warning'};
+const catalogue={prefectures:[],districts:[],municipalities:[{code:'1310100',prefectureCode:'13'},{code:'1310200',prefectureCode:'13'},{code:'0110000',prefectureCode:'01'}]};
+
+test('plan features are defined once and attached to the plan catalogue',()=>{
+ assert.equal(PLAN_CATALOG.supporter.features,PLAN_FEATURES.supporter);
+ assert.equal(PLAN_CATALOG.plus.features,PLAN_FEATURES.plus);
+ assert.equal(PLAN_CATALOG.pro.features,PLAN_FEATURES.pro);
+ assert.ok(publicPlans().every(plan=>plan.features&&!('priceEnv' in plan)));
+ const enabled=id=>FEATURE_NAMES.filter(name=>PLAN_FEATURES[id][name]);
+ assert.deepEqual(enabled('supporter'),[]);
+ assert.deepEqual(enabled('plus'),['rainfallThreshold','prefectureScope','imageDelivery']);
+ assert.deepEqual(enabled('pro'),FEATURE_NAMES);
+ for(const name of ['imageDelivery','hiresRadarThreshold','tsunamiEnlarged','weatherMunicipality'])assert.equal(PLAN_FEATURES.custom[name],true,name);
+ // Existing behaviour: custom geography is decided by the administrator's flags.
+ assert.equal(planFeatures([custom()]).municipalityScope,false);
+ assert.equal(planFeatures([custom({municipalityBranching:true})]).municipalityScope,true);
+ assert.equal(planFeatures([{...active('pro'),status:'canceled'}]).imageDelivery,false);
+ assert.equal(planFeatures([{...active('pro'),recognizedPlan:false}]).imageDelivery,false);
+ assert.equal(planFeatures([{...active('plus'),status:'past_due'}]).rainfallThreshold,true);
+ assert.equal(planFeatures([custom({status:'past_due'})]).imageDelivery,false);
+ assert.equal(hasFeature(planFeatures([active('plus')]),'hiresRadarThreshold'),false);
+ assert.equal(imageTier([active('supporter')]),'');
+ assert.equal(imageTier([active('plus')]),'plus');
+ assert.equal(imageTier([active('plus'),active('pro')]),'pro');
+ assert.equal(imageTier([active('pro'),custom()]),'custom');
+});
+
+test('the dashboard and Worker share the same plan feature module',async()=>{
+ const [app,billing,geo,snapshot,supporter]=await Promise.all(['site/supporter/app.js','worker/supporter-billing.js','worker/supporter-geo.js','worker/supporter-snapshot.js','worker/supporter.js'].map(path=>readFile(new URL('../'+path,import.meta.url),'utf8')));
+ assert.match(app,/from '\.\/plan-features\.js'/);
+ for(const source of [billing,geo,snapshot,supporter])assert.match(source,/from '\.\.\/site\/supporter\/plan-features\.js'/);
+ for(const source of [app,billing,geo,snapshot,supporter])assert.doesNotMatch(source,/\['plus','pro'\]\.includes/);
+});
+
+test('image rule options are hidden and saving is rejected while the flag is off',()=>{
+ assert.equal(imageRulesEnabled({}),false);
+ assert.equal(imageRulesEnabled({SUPPORTER_IMAGE_RULES_ENABLED:'true'}),false);
+ assert.equal(imageRulesEnabled({SUPPORTER_IMAGE_RULES_ENABLED:'1'}),true);
+ const off=supporterOptions({});
+ assert.equal(off.imageRulesEnabled,false);
+ assert.equal(off.imageRuleTypes,undefined);
+ const on=supporterOptions({SUPPORTER_IMAGE_RULES_ENABLED:'1'});
+ assert.deepEqual(on.imageRuleTypes,[['hires-radar','雨雲レーダー（高解像度版）'],['tsunami-map','津波警報・注意報（図・表）'],['weather-map','気象警報（図）']]);
+ for(const rule of [radar,tsunami,weather]){
+  assert.throws(()=>normalizeSupporterRules([rule],guilds,limitsFor(active('pro'))),/準備中/);
+  assert.throws(()=>normalizeSupporterRules([rule],guilds,limitsFor(active('pro')),null,{imageRules:false}),/準備中/);
+ }
+});
+
+test('Basic cannot save any image rule',()=>{
+ for(const rule of [radar,tsunami,weather])assert.throws(()=>normalizeSupporterRules([rule],guilds,limitsFor(active('supporter')),catalogue,ENABLED),/Plus以上/);
+});
+
+test('Plus saves region-level image rules but not Pro-only options',()=>{
+ const limits=limitsFor(active('plus'));
+ const [r,t,w]=normalizeSupporterRules([radar,tsunami,weather],guilds,limits,catalogue,ENABLED);
+ assert.deepEqual({...r,name:undefined},{name:undefined,guildId:guilds[0].id,channelId:CHANNEL,channelIds:[CHANNEL],type:'hires-radar',conditionLogic:'and',conditions:[],region:'kanto-koshin',linearRainband:true,radarCondition:'scheduled',rainfallThresholdMmPerHour:null,deliveryIntervalHours:3});
+ assert.deepEqual([t.includeTables,t.enlargedArea,t.region],[true,false,'all']);
+ assert.deepEqual([w.products,w.minSeverity,w.prefecture,w.municipalities,w.municipalityDetail],[['VPWW55','VPWW58'],'warning',null,[],false]);
+ assert.throws(()=>normalizeSupporterRules([{...radar,radarCondition:'rainfall-threshold',rainfallThresholdMmPerHour:'30'}],guilds,limits,catalogue,ENABLED),/Pro以上/);
+ assert.throws(()=>normalizeSupporterRules([{...tsunami,enlargedArea:true}],guilds,limits,catalogue,ENABLED),/Pro以上/);
+ assert.throws(()=>normalizeSupporterRules([{...weather,prefecture:'13'}],guilds,limits,catalogue,ENABLED),/Pro以上/);
+ assert.throws(()=>normalizeSupporterRules([{...weather,municipalityDetail:true}],guilds,limits,catalogue,ENABLED),/Pro以上/);
+ // Conditions / OR are ignored for image types rather than stored.
+ const ignored=normalizeSupporterRules([{...tsunami,conditionLogic:'or',conditions:[{kind:'region',value:'tohoku'}]}],guilds,limits,catalogue,ENABLED)[0];
+ assert.deepEqual([ignored.conditionLogic,ignored.conditions],['and',[]]);
+});
+
+test('Pro and custom save every image option, with strict field validation',()=>{
+ for(const limits of [limitsFor(active('pro')),limitsFor(custom())]){
+  const [r,t,w]=normalizeSupporterRules([
+   {...radar,radarCondition:'rainfall-threshold',rainfallThresholdMmPerHour:'50',deliveryIntervalHours:'12'},
+   {...tsunami,enlargedArea:true,includeTables:false},
+   {...weather,minSeverity:'advisory',prefecture:'13',municipalities:['1310200','1310100','1310100'],municipalityDetail:true},
+  ],guilds,limits,catalogue,ENABLED);
+  assert.deepEqual([r.radarCondition,r.rainfallThresholdMmPerHour,r.deliveryIntervalHours],['rainfall-threshold',50,12]);
+  assert.deepEqual([t.enlargedArea,t.includeTables],[true,false]);
+  assert.deepEqual([w.prefecture,w.municipalities,w.municipalityDetail,w.minSeverity],['13',['1310200','1310100'],true,'advisory']);
+ }
+ const limits=limitsFor(active('pro'));
+ const bad=[
+  [{...radar,radarCondition:'rainfall-threshold',rainfallThresholdMmPerHour:'25'}],
+  [{...radar,radarCondition:'rain-detected'}],
+  [{...radar,deliveryIntervalHours:'5'}],
+  [{...radar,region:'kanto'}],
+  [{...radar,linearRainband:'yes'}],
+  [{...weather,products:[]}],
+  [{...weather,products:['VPWW61']}],
+  [{...weather,minSeverity:'special'}],
+  [{...weather,prefecture:'01'}],
+  [{...weather,prefecture:'48',region:'all'}],
+  [{...weather,municipalities:['1310100']}],
+  [{...weather,prefecture:'13',municipalities:['0110000']}],
+  [{...weather,prefecture:'13',municipalities:['131010']}],
+  [{...weather,prefecture:'13',municipalities:Array.from({length:51},(_,i)=>String(1310100+i))}],
+ ];
+ for(const rules of bad)assert.throws(()=>normalizeSupporterRules(rules,guilds,limits,catalogue,ENABLED),undefined,JSON.stringify(rules[0]));
+ // Nationwide weather maps may still narrow to any prefecture.
+ assert.equal(normalizeSupporterRules([{...weather,region:'all',prefecture:'01'}],guilds,limits,catalogue,ENABLED)[0].prefecture,'01');
+});
+
+test('image rules count toward the existing rule, channel and server limits',()=>{
+ const limits={...limitsFor(active('plus')),rules:2,channels:1,servers:1};
+ assert.throws(()=>normalizeSupporterRules([radar,tsunami,weather],guilds,limits,catalogue,ENABLED),/2件まで/);
+ assert.throws(()=>normalizeSupporterRules([radar,{...tsunami,channelId:'98765432109876544',channelIds:['98765432109876544']}],guilds,limits,catalogue,ENABLED),/1チャンネル/);
+ assert.throws(()=>normalizeSupporterRules([{...radar,channelIds:[CHANNEL,'98765432109876544']}],guilds,{...limits,channels:5},catalogue,ENABLED),/PROプラン/);
+});
+
+function snapshotDatabase(rules){
+ return {prepare(sql){
+  if(sql.includes('supporter_custom_plans'))return {async all(){return {results:[]};}};
+  return {async all(){return {results:[{discord_user_id:'637850681666961408',customer_id:'cus_1',revision:3,settings_json:JSON.stringify({rules})}]};}};
+ }};
+}
+const proRules=[
+ {...radar,conditionLogic:'and',conditions:[],radarCondition:'rainfall-threshold',rainfallThresholdMmPerHour:30,deliveryIntervalHours:1},
+ {...tsunami,conditionLogic:'and',conditions:[],enlargedArea:true},
+ {...weather,conditionLogic:'and',conditions:[],prefecture:'13',municipalities:['1310100'],municipalityDetail:true},
+ {...weather,name:'広域',conditionLogic:'and',conditions:[],prefecture:null,municipalities:[],municipalityDetail:true},
+ {...base,type:'earthquake',region:'all',detail:'all',conditionLogic:'and',conditions:[]},
+];
+const build=(plan,env={SUPPORTER_IMAGE_RULES_ENABLED:'1'},rules=proRules)=>buildSupporterSnapshot(snapshotDatabase(rules),env,async()=>new Map([['cus_1',[plan]]]),1_800_000_000_000);
+
+test('snapshot v4 carries image rules with the account tier',async()=>{
+ const snapshot=await build(active('pro'));
+ assert.equal(snapshot.schemaVersion,4);
+ assert.deepEqual(snapshot.rules.map(rule=>rule.type),['hires-radar','tsunami-map','weather-map','weather-map','earthquake']);
+ const [r,t,w,wide]=snapshot.rules;
+ for(const rule of [r,t,w,wide]){
+  assert.equal(rule.tier,'pro');
+  assert.match(rule.id,/^rule-[0-9a-f]{16}$/);
+  assert.deepEqual(rule.channelIds,[CHANNEL]);
+  assert.equal('conditions' in rule,false);
+ }
+ assert.deepEqual([r.radarCondition,r.rainfallThresholdMmPerHour,r.linearRainband,r.deliveryIntervalHours],['rainfall-threshold',30,true,1]);
+ assert.equal(t.enlargedArea,true);
+ assert.deepEqual([w.prefecture,w.municipalities,w.municipalityDetail,w.products,w.minSeverity],['13',['1310100'],true,['VPWW55','VPWW58'],'warning']);
+ assert.equal('prefecture' in wide,false);
+ assert.equal('tier' in snapshot.rules[4],false);
+ assert.equal((await build(custom())).rules[0].tier,'custom');
+});
+
+test('snapshot keeps the v1-v3 behaviour when no image rule is published',async()=>{
+ const earthquakeOnly=[proRules[4]];
+ assert.equal((await build(active('pro'),undefined,earthquakeOnly)).schemaVersion,1);
+ // Flag off acts as a kill switch: image rules are withheld and the version stays < 4.
+ const off=await build(active('pro'),{});
+ assert.equal(off.schemaVersion,1);
+ assert.deepEqual(off.rules.map(rule=>rule.type),['earthquake']);
+ const v3=await build(active('pro'),undefined,[{...proRules[4],type:'eew',sendFinalReport:false}]);
+ assert.equal(v3.schemaVersion,3);
+});
+
+test('downgrades exclude image rules instead of widening Pro-only filters',async()=>{
+ const plus=await build(active('plus'));
+ assert.equal(plus.schemaVersion,4);
+ // Threshold radar and municipality-scoped weather maps are suspended, not widened.
+ assert.deepEqual(plus.rules.map(rule=>rule.type),['tsunami-map','weather-map','earthquake']);
+ const [t,w]=plus.rules;
+ assert.equal(t.tier,'plus');
+ assert.equal(t.enlargedArea,false);
+ assert.equal(w.municipalityDetail,false);
+ assert.equal('prefecture' in w,false);
+ const basic=await build(active('supporter'));
+ assert.equal(basic.schemaVersion,1);
+ assert.deepEqual(basic.rules.map(rule=>rule.type),['earthquake']);
+});
+
+test('admin details describe image rule settings',()=>{
+ const details=supporterAdminDetails({discord_user_id:'1',settings_json:JSON.stringify({rules:proRules}),guilds_json:'[]'});
+ const labels=rule=>Object.fromEntries(rule.details.map(item=>[item.label,item.value]));
+ const [r,t,w]=details.rules.map(labels);
+ assert.equal(r['情報種別'],'雨雲レーダー（高解像度版）');
+ assert.equal(r['線状降水帯の表示'],'有効');
+ assert.equal(r['1時間降水量'],'30mm/h以上');
+ assert.equal(t['情報種別'],'津波警報・注意報（図・表）');
+ assert.equal(t['発表地域拡大版'],'有効（Pro）');
+ assert.equal(w['情報種別'],'気象警報（図）');
+ assert.equal(w['対象の警報・注意報'],'大雨、暴風雪・暴風');
+ assert.equal(w['都道府県（Pro）'],'東京都');
+ assert.equal(w['市区町村（気象庁コード・Pro）'],'1310100');
+ assert.equal(r['詳細種別'],undefined);
+});
+
+test('comparison table lists the image delivery rows as upcoming with the plan split',async()=>{
+ const html=await readFile(new URL('../site/supporter/plans.html',import.meta.url),'utf8');
+ assert.match(html,/画像配信（準備中/);
+ const row=label=>html.match(new RegExp(`<th scope="row">${label}[^<]*</th>((?:<td>[^<]*</td>){4})`))?.[1].match(/<td>([^<]*)<\/td>/g).map(cell=>cell.replace(/<\/?td>/g,''));
+ assert.deepEqual(row('雨雲レーダー（高解像度版）：全国・地方'),['—','○','○','○']);
+ assert.deepEqual(row('雨雲レーダー（高解像度版）：閾値以上'),['—','—','○','○']);
+ assert.deepEqual(row('津波警報・注意報の図・表：全国・地方'),['—','○','○','○']);
+ assert.deepEqual(row('津波警報・注意報の図・表：発表地域拡大版'),['—','—','○','○']);
+ assert.deepEqual(row('気象警報の図：全国・地方'),['—','○','○','○']);
+ assert.deepEqual(row('気象警報の図：都道府県・市区町村'),['—','—','○','○']);
+});
+
+test('dashboard offers image types only when the server enables them',async()=>{
+ const [app,html]=await Promise.all(['site/supporter/app.js','site/supporter/index.html'].map(path=>readFile(new URL('../'+path,import.meta.url),'utf8')));
+ assert.match(app,/if\(options\?\.imageRulesEnabled\)return \[\.\.\.TYPES/);
+ assert.match(app,/function imageRuleFields\(article,rule\)/);
+ for(const key of ['linearRainband','includeTables','enlargedArea','municipalityDetail','minSeverity','hiresRadarThresholds','weatherMapProducts'])assert.ok(app.includes(key),key);
+ assert.match(app,/Pro以上/);
+ assert.match(html,/id="image-rules-note" class="rules-lock hidden"/);
+});

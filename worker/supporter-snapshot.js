@@ -1,7 +1,9 @@
 import { geographicEntitlements, geographicRuleAllowed } from './supporter-geo.js';
 import { enrichCustomGroup } from './supporter-custom.js';
+import { planFeatures, hasFeature, imageTier } from '../site/supporter/plan-features.js';
+import { IMAGE_RULE_TYPES, isImageRuleType, imageRulesEnabled, imageRuleSnapshotFields } from './supporter-image-rules.js';
 const ACTIVE_SUBSCRIPTION_STATUSES = new Set(['active', 'trialing', 'past_due', 'unpaid', 'paused']);
-const ALLOWED_RULE_TYPES = new Set(['earthquake', 'eew', 'weather', 'rain-radar']);
+const ALLOWED_RULE_TYPES = new Set(['earthquake', 'eew', 'weather', 'rain-radar', ...IMAGE_RULE_TYPES]);
 const SNAPSHOT_TTL_SECONDS = 30 * 60 * 60;
 const MAX_RULES = 10_000;
 const MAX_RESPONSE_BYTES = 128 * 1024;
@@ -55,12 +57,15 @@ export async function buildSupporterSnapshot(db, env, loadSubscriptions, nowMs =
     const customerIds = [...new Set(accounts.map(row => clean(row.customer_id)).filter(Boolean))];
     const grouped = await enrichCustomGroup(db,accounts,await loadSubscriptions(env, customerIds));
     const rules = [];
+    const imagesEnabled = imageRulesEnabled(env);
     for (const row of accounts) {
         const subscriptions = grouped.get(row.customer_id) || [];
         const entitled = subscriptions.some(item => item?.recognizedPlan !== false && ACTIVE_SUBSCRIPTION_STATUSES.has(item?.status));
         if (!entitled) continue;
         const geographicAccess = geographicEntitlements(subscriptions);
-        const rainfallThresholdAllowed=subscriptions.some(item=>item?.recognizedPlan!==false && ACTIVE_SUBSCRIPTION_STATUSES.has(item?.status) && (['plus','pro'].includes(item.planId)||item.managedCustom===true));
+        const features = planFeatures(subscriptions);
+        const rainfallThresholdAllowed = hasFeature(features, 'rainfallThreshold');
+        const tier = imageTier(subscriptions);
         const custom=subscriptions.find(item=>item?.managedCustom===true&&['active','trialing'].includes(item.status));
         const allRules=rulesFromSettings(row.settings_json);
         // Fail closed on unapproved custom-plan combinations, without deleting settings.
@@ -75,6 +80,17 @@ export async function buildSupporterSnapshot(db, env, loadSubscriptions, nowMs =
         }
         if(custom&&(guilds.size>custom.servers||channels.size>custom.channels||allRules.some(rule=>(!custom.complexConditions&&(rule.conditionLogic==='or'||rule.conditions?.length))||(!custom.multiDestination&&Array.isArray(rule.channelIds)&&rule.channelIds.length>1))))continue;
         for (const [index, rule] of allRules.entries()) {
+            if (isImageRuleType(rule?.type)) {
+                // Image rules ship only while the rollout flag is on (kill switch) and
+                // only for Plus/Pro/custom; Pro-only filters are never widened on downgrade.
+                if (!imagesEnabled) continue;
+                const fields = imageRuleSnapshotFields(rule, features, tier);
+                if (!fields) continue;
+                const id = `rule-${await digestPrefix(`${row.discord_user_id}:${Number(row.revision) || 0}:${index + 1}`)}`;
+                const base = normalizedRule(rule, id);
+                if (base) rules.push({id, name: clean(rule.name).slice(0, 80), type: base.type, guildId: base.guildId, channelId: base.channelId, channelIds: base.channelIds, ...fields});
+                continue;
+            }
             // Never broaden a previously paid geographic filter on downgrade.
             // Suspend incompatible rules until the customer chooses a new scope.
             if (!geographicRuleAllowed(rule, geographicAccess)) continue;
@@ -92,7 +108,8 @@ export async function buildSupporterSnapshot(db, env, loadSubscriptions, nowMs =
     return {
         // V2 explicitly prevents old delivery workers from interpreting new
         // municipality filters as broad region-only routes during rollout.
-        schemaVersion: rules.some(rule => rule.type === 'eew' && rule.sendFinalReport === false) ? 3 : rules.some(rule => ['prefecture','district','municipality'].some(key => rule[key] && rule[key] !== 'all') || rule.strictMunicipality === true) ? 2 : 1,
+        // V4 carries paid image rules; older home servers reject unknown rule types.
+        schemaVersion: rules.some(rule => isImageRuleType(rule.type)) ? 4 : rules.some(rule => rule.type === 'eew' && rule.sendFinalReport === false) ? 3 : rules.some(rule => ['prefecture','district','municipality'].some(key => rule[key] && rule[key] !== 'all') || rule.strictMunicipality === true) ? 2 : 1,
         version: `supporter-${generatedAtMs}-${await digestPrefix(canonicalRules)}`,
         generatedAt,
         expiresAt: generatedAt + SNAPSHOT_TTL_SECONDS,

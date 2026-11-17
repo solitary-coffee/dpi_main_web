@@ -35,7 +35,8 @@ test('the user page shows an active plan banner, plan framing and the comparison
  assert.match(js,/function highlightCurrentPlans/);
  assert.match(js,/highlightCurrentPlans\(subscriptions,customPlan\)/);
  assert.match(js,/is-current-plan/);
- assert.match(js,/municipality:!!custom\?\.municipalityBranching\|\|geographicPlans\.has\('pro'\)/);
+ // Municipality entitlement (Pro or custom municipalityBranching) now comes from the shared plan-features.js table.
+ assert.match(js,/municipality:features\.municipalityScope/);
  assert.match(js,/市区町村指定を解除する/);
  assert.match(js,/より広い範囲が対象になります/);
  assert.match(css,/\.plans article\.is-current-plan/);

@@ -1,10 +1,12 @@
+import { planFeatures } from './plan-features.js';
+
 let session;
 let revision = 0;
 let rules = [];
 let options;
 let areaCatalogue={municipalities:[],districts:[]};
 let areaCatalogueFailed=false;
-let entitlements = {servers:1,channels:2,rules:5,complexConditions:false,multiDestination:false,prefecture:false,municipality:false,strictMunicipality:false,rainfallThreshold:false};
+let entitlements = {servers:1,channels:2,rules:5,complexConditions:false,multiDestination:false,...featureEntitlements([])};
 let hasConfigurableContract = false;
 let billingAvailable = false;
 let accountSuspended = false;
@@ -23,6 +25,20 @@ const $ = id => document.getElementById(id);
 const status = text => { $('status').textContent = text; };
 const INTENSITIES = [['1','1'],['2','2'],['3','3'],['4','4'],['5-','5弱'],['5+','5強'],['6-','6弱'],['6+','6強'],['7','7']];
 const TYPES = [['earthquake','地震情報'],['eew','緊急地震速報'],['weather','気象情報'],['rain-radar','雨雲レーダー']];
+// Paid image rules; offered only when /api/supporter/options reports imageRulesEnabled.
+const IMAGE_TYPES = [['hires-radar','雨雲レーダー（高解像度版）'],['tsunami-map','津波警報・注意報（図・表）'],['weather-map','気象警報（図）']];
+const isImageType = type => IMAGE_TYPES.some(([value]) => value === type);
+const WEATHER_MAP_PRODUCT_IDS = ['VPWW55','VPWW56','VPWW57','VPWW58','VPWW59','VPWW60'];
+// Client mirror of the server entitlements; the feature table itself is shared (plan-features.js).
+function featureEntitlements(active){
+ const features=planFeatures(active);
+ return {...features,prefecture:features.prefectureScope,municipality:features.municipalityScope,strictMunicipality:features.strictMunicipality};
+}
+function typeChoices(rule){
+ if(options?.imageRulesEnabled)return [...TYPES,...(options.imageRuleTypes||IMAGE_TYPES)];
+ const saved=IMAGE_TYPES.find(([value])=>value===rule?.type);
+ return saved?[...TYPES,[saved[0],`${saved[1]}（準備中）`]]:TYPES;
+}
 const WEATHER_ALERT_DETAILS = new Set(['heavy-rain-level','landslide-level','flood-level','storm-surge-level']);
 const WEATHER_WARNING_DETAILS = new Set(['storm-blizzard-warning','wave-warning','heavy-snow-warning','other-advisory']);
 
@@ -98,9 +114,9 @@ function field(article, rule, key, label, values, attributes = {}) {
    try { await loadChannels(rule.guildId, true); if(!different)status(''); } catch (error) { status(error.message); }
    render();
   } else if (key === 'type' || key === 'detail' || key === 'intensityMode' || key === 'magnitudeMode' || key === 'conditionLogic' || key === 'radarCondition' || key === 'region' || key === 'prefecture' || key === 'district' || key === 'municipality') {
-   if (key === 'type') {rule.detail = 'all';rule.conditions=[];}
-   if (key === 'region') {rule.prefecture='all';rule.district='all';rule.municipality='all';rule.strictMunicipality=false;}
-   if (key === 'prefecture') {rule.district='all';rule.municipality='all';rule.strictMunicipality=false;}
+   if (key === 'type') {rule.detail = 'all';rule.conditions=[];rule.radarCondition=rule.type==='hires-radar'?'scheduled':'all';rule.rainfallThresholdMmPerHour=rule.type==='hires-radar'?'10':'';if(isImageType(rule.type))rule.conditionLogic='and';}
+   if (key === 'region') {rule.prefecture='all';rule.district='all';rule.municipality='all';rule.strictMunicipality=false;rule.municipalities=[];}
+   if (key === 'prefecture') {rule.district='all';rule.municipality='all';rule.strictMunicipality=false;rule.municipalities=[];}
    if (key === 'district') {rule.municipality='all';rule.strictMunicipality=false;}
    if (key === 'municipality' && input.value==='all')rule.strictMunicipality=false;
    render();
@@ -197,7 +213,7 @@ function additionalConditionsField(article,rule){
 }
 
 function normalizeRule(rule) {
- const type = TYPES.some(([value]) => value === rule.type) ? rule.type : 'earthquake';
+ const type = TYPES.some(([value]) => value === rule.type) || isImageType(rule.type) ? rule.type : 'earthquake';
  const detail = type === 'eew' && rule.detail === 'intensity-change' ? 'forecast' : (rule.detail || 'all');
  return {
   ...rule,
@@ -216,7 +232,14 @@ function normalizeRule(rule) {
   weatherLevel: rule.weatherLevel || 'all',
   warningLevel: rule.warningLevel || 'all',
   eewWarningAreaMode: rule.eewWarningAreaMode || 'all',
-  radarCondition: rule.radarCondition || 'all',
+  radarCondition: rule.radarCondition || (type==='hires-radar'?'scheduled':'all'),
+  linearRainband: rule.linearRainband===true,
+  includeTables: rule.includeTables!==false,
+  enlargedArea: rule.enlargedArea===true,
+  products: Array.isArray(rule.products)&&rule.products.length?rule.products.filter(id=>WEATHER_MAP_PRODUCT_IDS.includes(id)):[...WEATHER_MAP_PRODUCT_IDS],
+  minSeverity: rule.minSeverity==='advisory'?'advisory':'warning',
+  municipalities: Array.isArray(rule.municipalities)?rule.municipalities.map(String):[],
+  municipalityDetail: rule.municipalityDetail===true,
   rainfallThresholdMmPerHour: rule.rainfallThresholdMmPerHour ?? '',
   deliveryIntervalHours: String(rule.deliveryIntervalHours || '1'),
   channelIds: Array.isArray(rule.channelIds)&&rule.channelIds.length?rule.channelIds:[rule.channelId].filter(Boolean),
@@ -293,6 +316,106 @@ function geoScopeFields(container,rule){
  }
 }
 
+function removeButton(index){
+ const remove = document.createElement('button');
+ remove.type = 'button';
+ remove.className = 'danger';
+ remove.textContent = '削除';
+ remove.onclick = () => { rules.splice(index, 1); render(); };
+ return remove;
+}
+
+function upgradeNote(container,text){
+ const note=document.createElement('p');note.className='geo-upgrade';note.textContent=text;container.append(note);return note;
+}
+
+function checkboxField(container,rule,key,text,disabled=false){
+ const label=document.createElement('label');label.className='geo-strict-option';
+ const checkbox=document.createElement('input');checkbox.type='checkbox';checkbox.checked=rule[key]===true;checkbox.disabled=disabled;
+ checkbox.onchange=()=>{rule[key]=checkbox.checked;};
+ const description=document.createElement('span');description.textContent=text;
+ label.append(checkbox,description);container.append(label);
+ return checkbox;
+}
+
+function checkboxGroup(container,legendText,choices,selected,onChange,limit=Infinity){
+ const wrapper=document.createElement('fieldset');wrapper.className='multi-channel-field';
+ const legend=document.createElement('legend');legend.textContent=legendText;wrapper.append(legend);
+ const list=document.createElement('div');list.className='channel-check-list';
+ for(const [value,text] of choices){
+  const label=document.createElement('label');label.className='channel-check-option';
+  const checkbox=document.createElement('input');checkbox.type='checkbox';checkbox.value=value;checkbox.checked=selected.includes(value);
+  checkbox.onchange=()=>{
+   const next=checkbox.checked?[...selected,value]:selected.filter(item=>item!==value);
+   if(next.length>limit){checkbox.checked=false;status(`選択できるのは${limit}件までです。`);return;}
+   selected=next;onChange(next);
+  };
+  const name=document.createElement('span');name.textContent=text;label.append(checkbox,name);list.append(label);
+ }
+ wrapper.append(list);container.append(wrapper);
+ return wrapper;
+}
+
+// Per-type settings of the paid image rules (hires-radar / tsunami-map / weather-map).
+function imageRuleFields(article,rule){
+ const box=document.createElement('div');box.className='rule-condition-fields';
+ article.append(box);
+ if(!options.imageRulesEnabled){
+  upgradeNote(box,'画像配信ルールは現在準備中のため配信されません。このルールを削除してから通知設定を保存してください。');
+  return;
+ }
+ if(!entitlements.imageDelivery)upgradeNote(box,'画像配信（雨雲レーダー高解像度版・津波・気象警報の図）はPlus以上のプランで利用できます。現在の契約では配信されません。');
+ field(box,rule,'region','対象地方（全国・地方）',options.regions);
+ if(rule.type==='hires-radar'){
+  if(!['scheduled','rainfall-threshold'].includes(rule.radarCondition))rule.radarCondition='scheduled';
+  checkboxField(box,rule,'linearRainband','線状降水帯の発生情報を重ねて表示する');
+  const conditions=(options.hiresRadarConditions||[]).map(([id,text])=>[id,id==='rainfall-threshold'&&!entitlements.hiresRadarThreshold?`${text}（Pro以上）`:text]);
+  const condition=field(box,rule,'radarCondition','配信条件',conditions);
+  const thresholdOption=condition.querySelector('option[value="rainfall-threshold"]');
+  if(thresholdOption&&!entitlements.hiresRadarThreshold&&rule.radarCondition!=='rainfall-threshold')thresholdOption.disabled=true;
+  if(!entitlements.hiresRadarThreshold){
+   upgradeNote(box,rule.radarCondition==='rainfall-threshold'
+    ?'保存済みの閾値配信は現在の契約では配信されません（定時配信へ自動で広げることはありません）。Proへ変更するか、配信条件を選び直してください。'
+    :'閾値以上での配信はPro以上のプランで利用できます。');
+  }
+  if(rule.radarCondition==='rainfall-threshold'){
+   const thresholds=options.hiresRadarThresholds||[];
+   if(!thresholds.some(([id])=>id===String(rule.rainfallThresholdMmPerHour)))rule.rainfallThresholdMmPerHour=thresholds[0]?.[0]||'10';
+   else rule.rainfallThresholdMmPerHour=String(rule.rainfallThresholdMmPerHour);
+   field(box,rule,'rainfallThresholdMmPerHour','1時間降水量の閾値',thresholds).disabled=!entitlements.hiresRadarThreshold;
+  }
+  field(box,rule,'deliveryIntervalHours','配信頻度',options.hiresRadarIntervals||[]);
+  return;
+ }
+ if(rule.type==='tsunami-map'){
+  checkboxField(box,rule,'includeTables','津波予報区の表を添付する');
+  const enlarged=checkboxField(box,rule,'enlargedArea',entitlements.tsunamiEnlarged?'発表地域の拡大図を追加する':'発表地域の拡大図を追加する（Pro以上）',!entitlements.tsunamiEnlarged&&rule.enlargedArea!==true);
+  if(!entitlements.tsunamiEnlarged){
+   upgradeNote(box,rule.enlargedArea===true?'発表地域拡大版は現在の契約では添付されません。Proへ変更するか、チェックを外して保存してください。':'発表地域拡大版はPro以上のプランで利用できます。');
+   if(rule.enlargedArea!==true)enlarged.checked=false;
+  }
+  upgradeNote(box,'選択した地方に津波注意報以上が発表されたときに配信します。');
+  return;
+ }
+ checkboxGroup(box,'対象の警報・注意報（1つ以上）',options.weatherMapProducts||[],rule.products,next=>{rule.products=next;});
+ field(box,rule,'minSeverity','配信基準',options.weatherMapSeverities||[]);
+ const proScoped=(rule.prefecture&&rule.prefecture!=='all')||rule.municipalities.length>0||rule.municipalityDetail;
+ if(!entitlements.weatherMunicipality){
+  upgradeNote(box,proScoped
+   ?'保存済みの都道府県・市区町村の指定は現在の契約では配信されません（地方全域へ自動で広げることはありません）。Proへ変更するか、ルールを作り直してください。'
+   :'都道府県・市区町村の指定と市区町村の詳細はPro以上のプランで利用できます。');
+  return;
+ }
+ const prefectures=(options.prefectures||[]).filter(item=>rule.region==='all'||item.region===rule.region).map(item=>[item.code,item.name]);
+ field(box,rule,'prefecture','都道府県（Pro）',[['all','指定しない（地方全域）'],...prefectures]);
+ if(rule.prefecture&&rule.prefecture!=='all'){
+  const cities=areaCatalogue.municipalities.filter(item=>item.prefectureCode===rule.prefecture).map(item=>[item.code,item.name]);
+  if(areaCatalogueFailed||!cities.length)upgradeNote(box,'気象庁の市区町村データを取得できませんでした。地域一覧を再読み込みしてください。');
+  else checkboxGroup(box,`市区町村（Pro・最大${options.maxWeatherMunicipalities||50}件・未選択なら都道府県全域）`,cities,rule.municipalities,next=>{rule.municipalities=next;},options.maxWeatherMunicipalities||50);
+ }
+ checkboxField(box,rule,'municipalityDetail','市区町村ごとの詳細を表示する（Pro）');
+}
+
 function render() {
  $('rules').replaceChildren();
  if(!hasConfigurableContract)return;
@@ -311,7 +434,13 @@ function render() {
    article.append(warning);
   }
   channelField(article, rule);
-  field(article, rule, 'type', '情報種別', TYPES);
+  field(article, rule, 'type', '情報種別', typeChoices(rule));
+  if(isImageType(rule.type)){
+   imageRuleFields(article,rule);
+   article.append(removeButton(index));
+   $('rules').append(article);
+   return;
+  }
   if(rule.type!=='rain-radar')field(article, rule, 'detail', '詳細', detailOptions(rule.type));
   if(entitlements.complexConditions)field(article, rule, 'conditionLogic', '条件の組み合わせ', [['and','すべて満たす（AND）'],['or','いずれかを満たす（OR）']]);
   if (rule.type === 'eew'){
@@ -354,12 +483,7 @@ function render() {
   }
   article.append(conditionFields);
   if(entitlements.complexConditions)additionalConditionsField(article,rule);
-  const remove = document.createElement('button');
-  remove.type = 'button';
-  remove.className = 'danger';
-  remove.textContent = '削除';
-  remove.onclick = () => { rules.splice(index, 1); render(); };
-  article.append(remove);
+  article.append(removeButton(index));
   $('rules').append(article);
  });
 }
@@ -380,6 +504,7 @@ async function load() {
  }
  $('user').textContent = session.user.username;
  options = await api('/api/supporter/options');
+ $('image-rules-note')?.classList.toggle('hidden',options.imageRulesEnabled!==true);
  try{const data=await api('/api/supporter/areas');areaCatalogue={municipalities:data.municipalities||[],districts:data.districts||[]};areaCatalogueFailed=false;}
  catch(error){areaCatalogue={municipalities:[],districts:[]};areaCatalogueFailed=true;status(error.message);}
  const {account,billingEnabled} = await api('/api/supporter/account');
@@ -807,14 +932,12 @@ function renderContracts(subscriptions,dunning={},customPlan=null,customCheckout
  updateTopupSignupAvailability();
  if (!subscriptions.length) {
   if(!customPlanLocked)contract.textContent = '現在の契約はありません。';
-  entitlements={servers:1,channels:2,rules:5,complexConditions:false,multiDestination:false,prefecture:false,municipality:false,strictMunicipality:false,rainfallThreshold:false};
+  entitlements={servers:1,channels:2,rules:5,complexConditions:false,multiDestination:false,...featureEntitlements([])};
   if(options)setRuleAccess(false);
   return;
  }
  const active=subscriptions.filter(item=>item.recognizedPlan!==false&&['active','trialing','past_due','unpaid','paused'].includes(item.status));
- const geographicPlans=new Set(active.map(item=>item.planId));
- const custom=active.find(item=>item.managedCustom===true);
- entitlements={...active.reduce((limits,item)=>({servers:Math.max(limits.servers,Number(item.servers)||1),channels:Math.max(limits.channels,Number(item.channels)||2),rules:Math.max(limits.rules,Number(item.rules)||5),complexConditions:limits.complexConditions||item.complexConditions===true,multiDestination:limits.multiDestination||item.multiDestination===true,rainfallThreshold:limits.rainfallThreshold||['plus','pro'].includes(item.planId)||item.managedCustom===true}),{servers:1,channels:2,rules:5,complexConditions:false,multiDestination:false,rainfallThreshold:false}),prefecture:!!custom?.municipalityBranching||geographicPlans.has('plus')||geographicPlans.has('pro'),municipality:!!custom?.municipalityBranching||geographicPlans.has('pro'),strictMunicipality:!!custom?.contentExtraction||geographicPlans.has('pro')};
+ entitlements={...active.reduce((limits,item)=>({servers:Math.max(limits.servers,Number(item.servers)||1),channels:Math.max(limits.channels,Number(item.channels)||2),rules:Math.max(limits.rules,Number(item.rules)||5),complexConditions:limits.complexConditions||item.complexConditions===true,multiDestination:limits.multiDestination||item.multiDestination===true}),{servers:1,channels:2,rules:5,complexConditions:false,multiDestination:false}),...featureEntitlements(active)};
  const current=active[0]||subscriptions[0];
  if(dunning?.usageSuspended){const warning=document.createElement('p');warning.className='billing-suspension';warning.textContent='月末再決済を確認できなかったため、有料プランの通知設定は利用停止中です。契約管理画面からお支払いを完了してください。';contract.append(warning);}
  if(current){

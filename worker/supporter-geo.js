@@ -1,3 +1,4 @@
+import { planFeatures, hasFeature } from '../site/supporter/plan-features.js';
 // Geographic catalogue shared by dashboard validation and the delivery snapshot.
 // JMA's class20s identifiers are 7-digit warning-area codes, not arbitrary city names.
 export const PREFECTURES = Object.freeze([
@@ -45,9 +46,8 @@ export async function loadSupporterAreaCatalogue(now=Date.now()){
 }
 
 export function geographicEntitlements(subscriptions=[]){
- const plans=new Set(subscriptions.filter(s=>s?.recognizedPlan!==false&&['active','trialing','past_due','unpaid','paused'].includes(s?.status)).map(s=>s.planId));
- const custom=subscriptions.find(s=>s?.planId==='custom'&&s?.recognizedPlan===true&&['active','trialing'].includes(s?.status));
- return {prefecture:!!custom?.municipalityBranching||plans.has('plus')||plans.has('pro'),municipality:!!custom?.municipalityBranching||plans.has('pro'),strictMunicipality:!!custom?.contentExtraction||plans.has('pro')};
+ const features=planFeatures(subscriptions);
+ return {prefecture:hasFeature(features,'prefectureScope'),municipality:hasFeature(features,'municipalityScope'),strictMunicipality:hasFeature(features,'strictMunicipality')};
 }
 
 export function normalizeGeographicRule(rule,region,limits,catalogue){
