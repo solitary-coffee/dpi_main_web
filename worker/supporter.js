@@ -5,6 +5,8 @@ import { getCustomPlan,customLocked,customPublic,normalizeCustomPlan,enrichCusto
 import { customChangeQuote,currentCustomChange,customChangePublic,stageCustomChange } from './supporter-custom-change.js';
 import { refreshSupporterSnapshotSafely } from './supporter-snapshot.js';
 import { PREFECTURES, loadSupporterAreaCatalogue, geographicEntitlements, normalizeGeographicRule } from './supporter-geo.js';
+import { planFeatures } from '../site/supporter/plan-features.js';
+import { imageRulesEnabled, isImageRuleType, imageRuleOptions, normalizeImageRuleFields, IMAGE_RULE_TYPE_OPTIONS, HIRES_RADAR_CONDITIONS, WEATHER_MAP_PRODUCTS, WEATHER_MAP_SEVERITIES } from './supporter-image-rules.js';
 
 const response = (data, status = 200) => Response.json(data, {status, headers: {'Cache-Control':'no-store'}});
 const notFound = () => new Response('Not Found', {
@@ -394,7 +396,7 @@ const DETAILS = {
 };
 const WEATHER_ALERT_DETAILS = new Set(['heavy-rain-level','landslide-level','flood-level','storm-surge-level']);
 const WEATHER_WARNING_DETAILS = new Set(['storm-blizzard-warning','wave-warning','heavy-snow-warning','other-advisory']);
-const SUPPORTER_TYPE_LABELS = Object.freeze({earthquake:'地震情報',eew:'緊急地震速報',weather:'気象情報','rain-radar':'雨雲レーダー'});
+const SUPPORTER_TYPE_LABELS = Object.freeze({earthquake:'地震情報',eew:'緊急地震速報',weather:'気象情報','rain-radar':'雨雲レーダー',...Object.fromEntries(IMAGE_RULE_TYPE_OPTIONS)});
 const INTENSITY_LABELS = Object.freeze({'1':'震度1','2':'震度2','3':'震度3','4':'震度4','5-':'震度5弱','5+':'震度5強','6-':'震度6弱','6+':'震度6強','7':'震度7'});
 
 function optionLabel(options, value, fallback = '未設定') {
@@ -421,6 +423,31 @@ function thresholdLabel(mode, value, kind) {
  return `M${Number(value)}以上`;
 }
 
+function imageRuleAdminDetails(rule, type) {
+ if(type==='hires-radar'){
+  const threshold=clean(rule?.radarCondition)==='rainfall-threshold';
+  return [
+   {label:'線状降水帯の表示',value:rule?.linearRainband===true?'有効':'無効'},
+   {label:'配信条件',value:optionLabel(HIRES_RADAR_CONDITIONS,clean(rule?.radarCondition)||'scheduled')+(threshold?'（Pro）':'')},
+   ...(threshold?[{label:'1時間降水量',value:`${Number(rule?.rainfallThresholdMmPerHour)}mm/h以上`}]:[]),
+   {label:'配信頻度',value:`${Number(rule?.deliveryIntervalHours)||1}時間ごと`},
+  ];
+ }
+ if(type==='tsunami-map')return [
+  {label:'津波予報区の表',value:rule?.includeTables===false?'添付しない':'添付する'},
+  {label:'発表地域拡大版',value:rule?.enlargedArea===true?'有効（Pro）':'無効'},
+ ];
+ const products=Array.isArray(rule?.products)?rule.products.map(id=>optionLabel(WEATHER_MAP_PRODUCTS,clean(id))).join('、'):'';
+ const details=[
+  {label:'対象の警報・注意報',value:products||'未設定'},
+  {label:'配信基準',value:optionLabel(WEATHER_MAP_SEVERITIES,clean(rule?.minSeverity)||'warning')},
+ ];
+ if(clean(rule?.prefecture)&&clean(rule.prefecture)!=='all')details.push({label:'都道府県（Pro）',value:PREFECTURES.find(row=>row.code===clean(rule.prefecture))?.name||clean(rule.prefecture)});
+ if(Array.isArray(rule?.municipalities)&&rule.municipalities.length)details.push({label:'市区町村（気象庁コード・Pro）',value:rule.municipalities.map(clean).join('、')});
+ details.push({label:'市区町村の詳細',value:rule?.municipalityDetail===true?'有効（Pro）':'無効'});
+ return details;
+}
+
 export function supporterAdminDetails(row, channelsByGuild = {}) {
  let settings={};let guilds=[];
  try{settings=JSON.parse(row.settings_json||'{}');}catch{/* Keep an empty rule set for malformed legacy data. */}
@@ -440,11 +467,17 @@ export function supporterAdminDetails(row, channelsByGuild = {}) {
    const channels=Array.isArray(channelsByGuild[guildId])?channelsByGuild[guildId]:[];
    const details=[
     {label:'情報種別',value:SUPPORTER_TYPE_LABELS[type]||type||'未設定'},
+   ];
+   if(isImageRuleType(type)){
+    details.push({label:'対象地方',value:optionLabel(SUPPORTER_REGIONS,clean(rule?.region)||'all')});
+    details.push(...imageRuleAdminDetails(rule,type));
+   }else details.push(
     {label:'詳細種別',value:type==='rain-radar'?'雨雲レーダー':optionLabel(type==='earthquake'?EARTHQUAKE_DETAILS:type==='eew'?EEW_DETAILS:WEATHER_DETAILS,clean(rule?.detail)||'all')},
     {label:'対象地方',value:optionLabel(SUPPORTER_REGIONS,clean(rule?.region)||'all')},
     {label:'条件の組み合わせ',value:clean(rule?.conditionLogic)==='or'?'いずれかを満たす（OR）':'すべて満たす（AND）'},
     ...(type==='eew'?[{label:'最終報を送信',value:rule?.sendFinalReport===false?'震度が変化した場合のみ':'送信する（初期値）'}]:[]),
-   ];
+   );
+   if(!isImageRuleType(type)){
    if(clean(rule?.prefecture)&&clean(rule.prefecture)!=='all')details.push({label:'都道府県',value:PREFECTURES.find(row=>row.code===clean(rule.prefecture))?.name||clean(rule.prefecture)});
    if(clean(rule?.district)&&clean(rule.district)!=='all')details.push({label:'北海道内の地方区分',value:clean(rule.district)});
    if(clean(rule?.municipality)&&clean(rule.municipality)!=='all')details.push({label:'市区町村（気象庁コード）',value:clean(rule.municipality)});
@@ -460,6 +493,7 @@ export function supporterAdminDetails(row, channelsByGuild = {}) {
     details.push({label:'震度条件',value:thresholdLabel(clean(rule?.intensityMode)||'all',rule?.intensity,'intensity')});
     details.push({label:'マグニチュード条件',value:thresholdLabel(clean(rule?.magnitudeMode)||'all',rule?.magnitudeMin,'magnitude')});
     if(type==='eew'&&clean(rule?.detail)==='warning')details.push({label:'警報地方条件',value:optionLabel(EEW_WARNING_AREA_MODES,clean(rule?.eewWarningAreaMode)||'all')});
+   }
    }
    const additional=Array.isArray(rule?.conditions)?rule.conditions:[];
    additional.forEach((condition,conditionIndex)=>details.push({label:`追加条件 ${conditionIndex+1}`,value:adminConditionLabel(condition,type)}));
@@ -516,7 +550,7 @@ function normalizeAdditionalConditions(input,type,complexConditions){
  return unique;
 }
 
-export function normalizeSupporterRules(input, guilds, limits = {servers:1,channels:2,rules:5,complexConditions:false,multiDestination:false}, catalogue = null) {
+export function normalizeSupporterRules(input, guilds, limits = {servers:1,channels:2,rules:5,complexConditions:false,multiDestination:false}, catalogue = null, {imageRules = false} = {}) {
  const ruleLimit=Math.max(1,Number(limits.rules)||5);
  if (!Array.isArray(input) || input.length > ruleLimit) throw Object.assign(new Error(`通知ルールは${ruleLimit}件までです。`),{status:400});
  const rules = input.map(rule => {
@@ -526,6 +560,15 @@ export function normalizeSupporterRules(input, guilds, limits = {servers:1,chann
   const channelIds=[...new Set(requestedChannelIds.length?requestedChannelIds:[clean(rule?.channelId)])];
   const channelId=channelIds[0]||'';
   const type = clean(rule?.type);
+  if (isImageRuleType(type)) {
+   // Image rules are gated by SUPPORTER_IMAGE_RULES_ENABLED (default off).
+   if (!imageRules) throw Object.assign(new Error('画像配信ルールは現在準備中のため保存できません。該当するルールを削除してから保存してください。'),{status:400});
+   if (!name || name.length > 80 || !guilds.some(g=>g.id===guildId) || !channelIds.length || channelIds.some(id=>!/^\d{17,20}$/.test(id)))
+    throw Object.assign(new Error('入力内容とサーバー管理権限を確認してください。'),{status:400});
+   if(channelIds.length>1&&!limits.multiDestination)throw Object.assign(new Error('1つのルールから複数チャンネルへの配信はPROプランで利用できます。'),{status:400});
+   // Conditions and OR logic do not apply to image rules.
+   return {name,guildId,channelId,channelIds,type,conditionLogic:'and',conditions:[],...normalizeImageRuleFields(rule,type,limits,catalogue)};
+  }
   const region = clean(rule?.region) || 'all';
   const conditionLogic=clean(rule?.conditionLogic)||'and';
   const geographic=normalizeGeographicRule(rule,region,limits,catalogue);
@@ -580,6 +623,12 @@ export function normalizeSupporterRules(input, guilds, limits = {servers:1,chann
  return rules;
 }
 
+export function supporterOptions(env) {
+ const base={regions:SUPPORTER_REGIONS,prefectures:PREFECTURES,weatherLevels:WEATHER_LEVELS,warningLevels:WARNING_LEVELS,earthquakeDetails:EARTHQUAKE_DETAILS,eewDetails:EEW_DETAILS,eewWarningAreaModes:EEW_WARNING_AREA_MODES,weatherDetails:WEATHER_DETAILS,thresholdModes:THRESHOLD_MODES,rainRadarConditions:RAIN_RADAR_CONDITIONS,rainRadarIntervals:RAIN_RADAR_INTERVALS};
+ // Image rule types are only offered once SUPPORTER_IMAGE_RULES_ENABLED === "1".
+ return imageRulesEnabled(env)?{...base,imageRulesEnabled:true,...imageRuleOptions()}:{...base,imageRulesEnabled:false};
+}
+
 async function supporterLimits(env, db, uid) {
  const fallback = {servers:1,channels:2,rules:5,complexConditions:false,multiDestination:false,rainfallThreshold:false};
  if (!billingReady(env)) throw Object.assign(new Error('決済設定を確認できないため、通知設定を保存できません。'),{status:503});
@@ -595,7 +644,8 @@ async function supporterLimits(env, db, uid) {
   const summaries=enrichCustomSubscriptions(await customerSubscriptionSummaries(env,row.customer_id),custom);
   const active = summaries.filter(item=>item.recognizedPlan!==false&&['active','trialing','past_due','unpaid','paused'].includes(item.status));
   if (!active.length) throw Object.assign(new Error('通知設定は有効な契約を確認してから利用できます。'),{status:409});
-  return {...active.reduce((limits,item)=>({servers:Math.max(limits.servers,Number(item.servers)||1),channels:Math.max(limits.channels,Number(item.channels)||2),rules:Math.max(limits.rules,Number(item.rules)||5),complexConditions:limits.complexConditions||item.complexConditions===true,multiDestination:limits.multiDestination||item.multiDestination===true,rainfallThreshold:limits.rainfallThreshold||['plus','pro'].includes(item.planId)||item.managedCustom===true}),fallback),...geographicEntitlements(active)};
+  // Plan features (rainfallThreshold, imageDelivery, ...) come from one shared table.
+  return {...active.reduce((limits,item)=>({servers:Math.max(limits.servers,Number(item.servers)||1),channels:Math.max(limits.channels,Number(item.channels)||2),rules:Math.max(limits.rules,Number(item.rules)||5),complexConditions:limits.complexConditions||item.complexConditions===true,multiDestination:limits.multiDestination||item.multiDestination===true}),fallback),...planFeatures(active),...geographicEntitlements(active)};
  } catch(error) { if(error?.status===409)throw error;throw Object.assign(new Error('契約上限を確認できませんでした。時間をおいて再試行してください。'),{status:503}); }
 }
 
@@ -1001,7 +1051,7 @@ export async function handleSupporterRequest(request, env, ctx) {
    return response({billingEnabled:false, deliveryEnabled:false, plans:publicPlans(), addons:{channel:{yen:200,channels:3},server:{yen:200,servers:2},rule:{yen:200,rules:3},prorated:false},billingDay:26});
   }
   if (path === '/api/supporter/options' && request.method === 'GET') {
-   return response({regions:SUPPORTER_REGIONS,prefectures:PREFECTURES,weatherLevels:WEATHER_LEVELS,warningLevels:WARNING_LEVELS,earthquakeDetails:EARTHQUAKE_DETAILS,eewDetails:EEW_DETAILS,eewWarningAreaModes:EEW_WARNING_AREA_MODES,weatherDetails:WEATHER_DETAILS,thresholdModes:THRESHOLD_MODES,rainRadarConditions:RAIN_RADAR_CONDITIONS,rainRadarIntervals:RAIN_RADAR_INTERVALS});
+   return response(supporterOptions(env));
   }
   if (path === '/api/supporter/areas' && request.method === 'GET') {
    const areas=await loadSupporterAreaCatalogue();
@@ -1046,9 +1096,9 @@ export async function handleSupporterRequest(request, env, ctx) {
    if (!Number.isInteger(input.revision)) return response({message:'更新情報が正しくありません。再読み込みしてください。'},400);
    const guilds = JSON.parse(session.guilds_json);
    const limits = await supporterLimits(env,db,uid);
-   const needsAreaCatalogue=Array.isArray(input.rules)&&input.rules.some(rule=>rule?.municipality&&rule.municipality!=='all'||rule?.district&&rule.district!=='all');
+   const needsAreaCatalogue=Array.isArray(input.rules)&&input.rules.some(rule=>rule?.municipality&&rule.municipality!=='all'||rule?.district&&rule.district!=='all'||Array.isArray(rule?.municipalities)&&rule.municipalities.length>0);
    const catalogue=needsAreaCatalogue?await loadSupporterAreaCatalogue():{prefectures:PREFECTURES,municipalities:[],districts:[]};
-   const rules = normalizeSupporterRules(input.rules, guilds, limits, catalogue);
+   const rules = normalizeSupporterRules(input.rules, guilds, limits, catalogue, {imageRules:imageRulesEnabled(env)});
    await assertRuleChannels(rules, env);
    const result = await db.prepare('UPDATE supporter_accounts SET settings_json=?, revision=revision+1, updated_at=? WHERE discord_user_id=? AND revision=?').bind(JSON.stringify({rules}),new Date().toISOString(),uid,input.revision).run();
    if (!result.meta.changes) return response({message:'未登録、または別画面で更新されています。再読み込みしてください。'},409);
