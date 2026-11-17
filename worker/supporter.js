@@ -550,7 +550,17 @@ function normalizeAdditionalConditions(input,type,complexConditions){
  return unique;
 }
 
-export function normalizeSupporterRules(input, guilds, limits = {servers:1,channels:2,rules:5,complexConditions:false,multiDestination:false}, catalogue = null, {imageRules = false} = {}) {
+// While the image flag is off, an image rule that is identical to an already stored one is kept
+// as stored (so customers can still save their other rules); new or edited image rules are refused.
+function storedImageRuleMatch(rule, storedImageRules) {
+ for (const stored of storedImageRules || []) {
+  const keys = Object.keys(stored);
+  if (keys.every(key => JSON.stringify(rule?.[key] ?? null) === JSON.stringify(stored[key] ?? null))) return stored;
+ }
+ return null;
+}
+
+export function normalizeSupporterRules(input, guilds, limits = {servers:1,channels:2,rules:5,complexConditions:false,multiDestination:false}, catalogue = null, {imageRules = false, storedImageRules = []} = {}) {
  const ruleLimit=Math.max(1,Number(limits.rules)||5);
  if (!Array.isArray(input) || input.length > ruleLimit) throw Object.assign(new Error(`通知ルールは${ruleLimit}件までです。`),{status:400});
  const rules = input.map(rule => {
@@ -562,7 +572,11 @@ export function normalizeSupporterRules(input, guilds, limits = {servers:1,chann
   const type = clean(rule?.type);
   if (isImageRuleType(type)) {
    // Image rules are gated by SUPPORTER_IMAGE_RULES_ENABLED (default off).
-   if (!imageRules) throw Object.assign(new Error('画像配信ルールは現在準備中のため保存できません。該当するルールを削除してから保存してください。'),{status:400});
+   if (!imageRules) {
+    const kept = storedImageRuleMatch(rule, storedImageRules);
+    if (kept && guilds.some(g=>g.id===kept.guildId)) return kept;
+    throw Object.assign(new Error('画像配信ルールは現在準備中のため、新規作成・変更はできません。'),{status:400});
+   }
    if (!name || name.length > 80 || !guilds.some(g=>g.id===guildId) || !channelIds.length || channelIds.some(id=>!/^\d{17,20}$/.test(id)))
     throw Object.assign(new Error('入力内容とサーバー管理権限を確認してください。'),{status:400});
    if(channelIds.length>1&&!limits.multiDestination)throw Object.assign(new Error('1つのルールから複数チャンネルへの配信はPROプランで利用できます。'),{status:400});
@@ -1098,7 +1112,13 @@ export async function handleSupporterRequest(request, env, ctx) {
    const limits = await supporterLimits(env,db,uid);
    const needsAreaCatalogue=Array.isArray(input.rules)&&input.rules.some(rule=>rule?.municipality&&rule.municipality!=='all'||rule?.district&&rule.district!=='all'||Array.isArray(rule?.municipalities)&&rule.municipalities.length>0);
    const catalogue=needsAreaCatalogue?await loadSupporterAreaCatalogue():{prefectures:PREFECTURES,municipalities:[],districts:[]};
-   const rules = normalizeSupporterRules(input.rules, guilds, limits, catalogue, {imageRules:imageRulesEnabled(env)});
+   const imageRules = imageRulesEnabled(env);
+   let storedImageRules = [];
+   if (!imageRules) {
+    const stored = await db.prepare('SELECT settings_json FROM supporter_accounts WHERE discord_user_id=?').bind(uid).first();
+    try { storedImageRules = (JSON.parse(stored?.settings_json || '{}').rules || []).filter(rule => isImageRuleType(rule?.type)); } catch { storedImageRules = []; }
+   }
+   const rules = normalizeSupporterRules(input.rules, guilds, limits, catalogue, {imageRules, storedImageRules});
    await assertRuleChannels(rules, env);
    const result = await db.prepare('UPDATE supporter_accounts SET settings_json=?, revision=revision+1, updated_at=? WHERE discord_user_id=? AND revision=?').bind(JSON.stringify({rules}),new Date().toISOString(),uid,input.revision).run();
    if (!result.meta.changes) return response({message:'未登録、または別画面で更新されています。再読み込みしてください。'},409);
