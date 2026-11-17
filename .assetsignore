@@ -10,6 +10,8 @@ wrangler.jsonc
 /README.md
 /aws/
 /scripts/
+/google-apps-script/
+/MAINTENANCE.md
 /node_modules/
 **/.*
 **/*.py
