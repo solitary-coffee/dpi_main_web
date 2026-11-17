@@ -278,6 +278,10 @@ def _validate_supporter_snapshot(value, now=None):
     current = int(time.time() if now is None else now)
     if not version or generated_at <= 0 or expires_at <= current + 60 or expires_at > current + 172_800:
         raise ValueError("有料プラン配信設定の有効期限を確認してください。")
+    # The ACTIVE pointer only accepts newer generatedAt values: one future timestamp would block
+    # every later publication until the pointer expires and paid delivery stops.
+    if generated_at > current + 300 or generated_at >= expires_at:
+        raise ValueError("有料プラン配信設定の作成時刻を確認してください。")
     rules = value.get("rules")
     if not isinstance(rules, list) or len(rules) > 10_000:
         raise ValueError("有料プラン配信ルール数を確認してください。")
