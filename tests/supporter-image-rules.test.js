@@ -221,3 +221,14 @@ test('dashboard offers image types only when the server enables them',async()=>{
  assert.match(app,/Pro以上/);
  assert.match(html,/id="image-rules-note" class="rules-lock hidden"/);
 });
+
+test('flag off keeps an unchanged stored image rule but refuses new or edited ones',()=>{
+ const limits=limitsFor(active('pro'));
+ const [stored]=normalizeSupporterRules([tsunami],guilds,limits,null,ENABLED);
+ const quake={...base,type:'earthquake',region:'all',detail:'all',intensityMode:'all'};
+ const saved=normalizeSupporterRules([stored,quake],guilds,limits,null,{imageRules:false,storedImageRules:[stored]});
+ assert.deepEqual(saved[0],stored);
+ assert.equal(saved[1].type,'earthquake');
+ assert.throws(()=>normalizeSupporterRules([{...stored,region:'okinawa'}],guilds,limits,null,{imageRules:false,storedImageRules:[stored]}),/準備中/);
+ assert.throws(()=>normalizeSupporterRules([radar],guilds,limits,null,{imageRules:false,storedImageRules:[stored]}),/準備中/);
+});
