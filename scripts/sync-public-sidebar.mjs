@@ -31,7 +31,6 @@ const menuItems = [
     ['/site/reuse/', '二次利用申請', 'reuse'],
     null,
     ['/site/invi/index.html', 'BOTを招待', 'invi'],
-    ['/site/buy/index.html', 'ご支援のお願い', 'buy'],
     ['/terms/index.html', '利用規約等', 'terms'],
     ['/site/supp/index.html', 'お問い合わせ', 'supp'],
 ];
