@@ -25,7 +25,14 @@ export const WEATHER_MAP_PRODUCTS = Object.freeze([
  ['VPWW58', '暴風雪・暴風'],
  ['VPWW59', '波浪'],
  ['VPWW60', '大雪'],
+ // Opt-in extras (Plus+): never part of the default selection. VPWW61 is delivered as a
+ // table; VPHW50 (VPHW51 sightings included) and VPBS50 are delivered as maps.
+ ['VPWW61', 'その他注意報（一覧表）'],
+ ['VPHW50', '竜巻注意情報（気象防災速報）'],
+ ['VPBS50', '線状降水帯（発生・直前予測）'],
 ]);
+// Initial selection for a new weather-map rule: the VPWW55..VPWW60 warning maps only.
+export const WEATHER_MAP_DEFAULT_PRODUCTS = Object.freeze(['VPWW55', 'VPWW56', 'VPWW57', 'VPWW58', 'VPWW59', 'VPWW60']);
 export const WEATHER_MAP_SEVERITIES = Object.freeze([
  ['warning', '警報以上'],
  ['advisory', '注意報以上'],
@@ -59,6 +66,7 @@ export function imageRuleOptions() {
   hiresRadarThresholds: HIRES_RADAR_THRESHOLDS,
   hiresRadarIntervals: HIRES_RADAR_INTERVALS,
   weatherMapProducts: WEATHER_MAP_PRODUCTS,
+  weatherMapDefaultProducts: WEATHER_MAP_DEFAULT_PRODUCTS,
   weatherMapSeverities: WEATHER_MAP_SEVERITIES,
   maxWeatherMunicipalities: MAX_WEATHER_MUNICIPALITIES,
  };

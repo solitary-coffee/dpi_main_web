@@ -28,7 +28,9 @@ const TYPES = [['earthquake','地震情報'],['eew','緊急地震速報'],['weat
 // Paid image rules; offered only when /api/supporter/options reports imageRulesEnabled.
 const IMAGE_TYPES = [['hires-radar','雨雲レーダー（高解像度版）'],['tsunami-map','津波警報・注意報（図・表）'],['weather-map','気象警報（図）']];
 const isImageType = type => IMAGE_TYPES.some(([value]) => value === type);
-const WEATHER_MAP_PRODUCT_IDS = ['VPWW55','VPWW56','VPWW57','VPWW58','VPWW59','VPWW60'];
+// Default (new rule) selection stays VPWW55..VPWW60; VPWW61/VPHW50/VPBS50 are opt-in.
+const WEATHER_MAP_DEFAULT_PRODUCT_IDS = ['VPWW55','VPWW56','VPWW57','VPWW58','VPWW59','VPWW60'];
+const WEATHER_MAP_PRODUCT_IDS = [...WEATHER_MAP_DEFAULT_PRODUCT_IDS,'VPWW61','VPHW50','VPBS50'];
 // Client mirror of the server entitlements; the feature table itself is shared (plan-features.js).
 function featureEntitlements(active){
  const features=planFeatures(active);
@@ -236,7 +238,7 @@ function normalizeRule(rule) {
   linearRainband: rule.linearRainband===true,
   includeTables: rule.includeTables!==false,
   enlargedArea: rule.enlargedArea===true,
-  products: Array.isArray(rule.products)&&rule.products.length?rule.products.filter(id=>WEATHER_MAP_PRODUCT_IDS.includes(id)):[...WEATHER_MAP_PRODUCT_IDS],
+  products: Array.isArray(rule.products)&&rule.products.length?rule.products.filter(id=>WEATHER_MAP_PRODUCT_IDS.includes(id)):[...WEATHER_MAP_DEFAULT_PRODUCT_IDS],
   minSeverity: rule.minSeverity==='advisory'?'advisory':'warning',
   municipalities: Array.isArray(rule.municipalities)?rule.municipalities.map(String):[],
   municipalityDetail: rule.municipalityDetail===true,
@@ -398,6 +400,7 @@ function imageRuleFields(article,rule){
   return;
  }
  checkboxGroup(box,'対象の警報・注意報（1つ以上）',options.weatherMapProducts||[],rule.products,next=>{rule.products=next;});
+ upgradeNote(box,'その他注意報は一覧表、竜巻注意情報と線状降水帯は図で配信します（いずれも選択した場合のみ）。');
  field(box,rule,'minSeverity','配信基準',options.weatherMapSeverities||[]);
  const proScoped=(rule.prefecture&&rule.prefecture!=='all')||rule.municipalities.length>0||rule.municipalityDetail;
  if(!entitlements.weatherMunicipality){
