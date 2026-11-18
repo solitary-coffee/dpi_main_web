@@ -269,7 +269,7 @@ def _handle_action(body):
 
 
 def _validate_supporter_snapshot(value, now=None):
-    # v4 adds paid image rules (hires-radar / tsunami-map / weather-map); v1-v3 stay valid.
+    # v4 adds paid image rules (hires-radar / tsunami-map / weather-map / earthquake-map); v1-v3 stay valid.
     if not isinstance(value, dict) or int(value.get("schemaVersion", 0)) not in (1, 2, 3, 4):
         raise ValueError("有料プラン配信設定の形式を確認してください。")
     version = _clean(value.get("version"), 128)
@@ -285,8 +285,9 @@ def _validate_supporter_snapshot(value, now=None):
     rules = value.get("rules")
     if not isinstance(rules, list) or len(rules) > 10_000:
         raise ValueError("有料プラン配信ルール数を確認してください。")
-    allowed_types = {"earthquake", "eew", "weather", "rain-radar", "hires-radar", "tsunami-map", "weather-map"}
-    image_types = {"hires-radar", "tsunami-map", "weather-map"}
+    allowed_types = {"earthquake", "eew", "weather", "rain-radar", "hires-radar", "tsunami-map", "weather-map",
+                     "earthquake-map"}
+    image_types = {"hires-radar", "tsunami-map", "weather-map", "earthquake-map"}
     image_tiers = {"plus", "pro", "custom"}
     image_regions = {"all", "hokkaido", "tohoku", "kanto-koshin", "hokuriku", "tokai", "kinki",
                      "chugoku", "shikoku", "kyushu-north", "kyushu-south-amami", "okinawa"}

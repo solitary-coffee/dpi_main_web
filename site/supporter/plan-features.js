@@ -11,10 +11,11 @@ export const FEATURE_NAMES = Object.freeze([
  'prefectureScope',     // prefecture-level geographic scope (Plus+)
  'municipalityScope',   // municipality-level geographic scope (Pro+)
  'strictMunicipality',  // municipality-only text extraction (Pro+)
- 'imageDelivery',       // image rule types: hires-radar / tsunami-map / weather-map (Plus+)
+ 'imageDelivery',       // image rule types: hires-radar / tsunami-map / weather-map / earthquake-map (Plus+)
  'hiresRadarThreshold', // hires-radar: deliver when rainfall >= threshold (Pro+)
  'tsunamiEnlarged',     // tsunami-map: enlarged images of the announced regions (Pro+)
  'weatherMunicipality', // weather-map: prefecture / municipality selection and detail (Pro+)
+ 'earthquakeMapFilter', // earthquake-map: intensity thresholds (national / per region) and map centre (Pro+)
 ]);
 
 const featureSet = enabled => Object.freeze(Object.fromEntries(FEATURE_NAMES.map(name => [name, enabled.includes(name)])));
@@ -26,7 +27,7 @@ export const PLAN_FEATURES = Object.freeze({
  pro: featureSet(FEATURE_NAMES),
  // Geographic scope of a custom plan is decided per contract by the administrator
  // (municipalityBranching / contentExtraction); image features match Pro.
- custom: featureSet(['rainfallThreshold', 'imageDelivery', 'hiresRadarThreshold', 'tsunamiEnlarged', 'weatherMunicipality']),
+ custom: featureSet(['rainfallThreshold', 'imageDelivery', 'hiresRadarThreshold', 'tsunamiEnlarged', 'weatherMunicipality', 'earthquakeMapFilter']),
 });
 
 function isCustom(item) {

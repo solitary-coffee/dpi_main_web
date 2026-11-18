@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """Safely enable v1/v2/v3/v4 supporter snapshot publishing in the deployed AWS Lambda.
 
-Schema v4 adds the paid image rules (hires-radar / tsunami-map / weather-map).
+Schema v4 adds the paid image rules (hires-radar / tsunami-map / weather-map, and since
+2026-11-18 earthquake-map). A Lambda that already runs the first v4 validator (without
+earthquake-map) is upgraded too; it would otherwise reject every snapshot that contains an
+earthquake-map rule and the ACTIVE pointer would stop advancing.
 Deploy order: home server (dpi_code) FIRST -> this Lambda patch -> website.
 Keep SUPPORTER_IMAGE_RULES_ENABLED off on the website until every home server
 understands v4: an old home server rejects unknown rule types and would stop
@@ -33,12 +36,16 @@ import zipfile
 NAME = "dpi-channel-directory-api"
 REGION = "ap-northeast-1"
 VALIDATOR = "_validate_supporter_snapshot"
-# Validator shapes this script knows how to upgrade (v1-only and the v3 patch).
+V4_CHECK = 'int(value.get("schemaVersion", 0)) not in (1, 2, 3, 4)'
+# Validator shapes this script knows how to upgrade (v1-only, the v3 patch, and the first v4
+# validator that predates earthquake-map).
 KNOWN_CHECKS = (
     'int(value.get("schemaVersion", 0)) != 1',
     'int(value.get("schemaVersion", 0)) not in (1, 2, 3)',
+    V4_CHECK,
 )
-V4_CHECK = 'int(value.get("schemaVersion", 0)) not in (1, 2, 3, 4)'
+# Marker of the current target validator (all four image rule types).
+CURRENT_MARKER = '"earthquake-map"'
 LOCAL_SOURCE = Path(__file__).resolve().with_name("lambda_function.py")
 
 
@@ -57,7 +64,7 @@ def function_source(source, name):
 
 def target_validator():
     validator = function_source(LOCAL_SOURCE.read_text(encoding="utf-8"), VALIDATOR)
-    if V4_CHECK not in validator or '"hires-radar"' not in validator:
+    if V4_CHECK not in validator or '"hires-radar"' not in validator or CURRENT_MARKER not in validator:
         raise RuntimeError("Local lambda_function.py is not the v4 validator")
     return validator
 
@@ -65,7 +72,7 @@ def target_validator():
 def patch(source, validator=None):
     validator = validator or target_validator()
     live = function_source(source, VALIDATOR)
-    if V4_CHECK in live and '"hires-radar"' in live:
+    if V4_CHECK in live and '"hires-radar"' in live and CURRENT_MARKER in live:
         return source, False
     if sum(check in live for check in KNOWN_CHECKS) != 1 or '"rain-radar"' not in live:
         raise RuntimeError("Unrecognized deployed validator; refusing update")
@@ -124,7 +131,7 @@ def verify(source):
                                   (4, {**eew, "channelIds": ["invalid"]})):
         if outcome(bad_version, bad_rule) is not None:
             raise RuntimeError("Validator accepted a malformed rule")
-    for kind in ("hires-radar", "tsunami-map"):
+    for kind in ("hires-radar", "tsunami-map", "earthquake-map"):
         if outcome(4, {"type": kind, "region": "all", "tier": "plus"}) is None:
             raise RuntimeError(f"v4 {kind} rule was rejected")
     found[5] = "rejected"
