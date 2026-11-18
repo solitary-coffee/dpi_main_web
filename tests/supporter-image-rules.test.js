@@ -59,7 +59,7 @@ test('image rule options are hidden and saving is rejected while the flag is off
  assert.equal(off.imageRulesEnabled,false);
  assert.equal(off.imageRuleTypes,undefined);
  const on=supporterOptions({SUPPORTER_IMAGE_RULES_ENABLED:'1'});
- assert.deepEqual(on.imageRuleTypes,[['hires-radar','雨雲レーダー（高解像度版）'],['tsunami-map','津波警報・注意報（図・表）'],['weather-map','気象警報（図）']]);
+ assert.deepEqual(on.imageRuleTypes,[['hires-radar','雨雲レーダー（高解像度版）'],['tsunami-map','津波警報・注意報（図・表）'],['weather-map','気象警報（図）'],['earthquake-map','地震情報（図）']]);
  for(const rule of [radar,tsunami,weather]){
   assert.throws(()=>normalizeSupporterRules([rule],guilds,limitsFor(active('pro'))),/準備中/);
   assert.throws(()=>normalizeSupporterRules([rule],guilds,limitsFor(active('pro')),null,{imageRules:false}),/準備中/);

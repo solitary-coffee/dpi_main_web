@@ -56,7 +56,7 @@ test('default selection stays VPWW55-60 on the server and in the dashboard',asyn
  const source=await readFile(new URL('../site/supporter/app.js',import.meta.url),'utf8');
  assert.match(source,/const WEATHER_MAP_DEFAULT_PRODUCT_IDS = \['VPWW55','VPWW56','VPWW57','VPWW58','VPWW59','VPWW60'\];/);
  assert.match(source,/const WEATHER_MAP_PRODUCT_IDS = \[\.\.\.WEATHER_MAP_DEFAULT_PRODUCT_IDS,'VPWW61','VPHW50','VPBS50'\];/);
- assert.match(source,/:\[\.\.\.WEATHER_MAP_DEFAULT_PRODUCT_IDS\],/);
+ assert.match(source,/:\[\.\.\.WEATHER_MAP_DEFAULT_PRODUCT_IDS\]/);
  assert.match(source,/その他注意報は一覧表、竜巻注意情報と線状降水帯は図で配信します/);
 });
 

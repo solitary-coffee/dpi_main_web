@@ -44,6 +44,8 @@ RADAR = {"type": "hires-radar", "region": "kanto-koshin", "tier": "pro", "linear
 TSUNAMI = {"type": "tsunami-map", "region": "all", "tier": "plus", "includeTables": True, "enlargedArea": False}
 WEATHER = {"type": "weather-map", "region": "kanto-koshin", "tier": "custom", "products": ["VPWW55"],
            "minSeverity": "warning", "prefecture": "13", "municipalities": ["1310100"], "municipalityDetail": True}
+QUAKE_MAP = {"type": "earthquake-map", "region": "all", "tier": "pro", "products": ["VXSE51", "VXSE53"],
+             "minIntensity": "5-", "regionMinIntensity": {"kanto-koshin": "3"}, "centerMunicipality": "1310100"}
 
 
 class RepositoryLambdaV4Tests(unittest.TestCase):
@@ -74,7 +76,41 @@ class RepositoryLambdaV4Tests(unittest.TestCase):
                 self.validate(value, NOW)
 
 
+    def test_v4_accepts_earthquake_map_and_keeps_fields(self):
+        plus = {"type": "earthquake-map", "region": "all", "tier": "plus", "products": ["VXSE52"]}
+        result = self.validate(snapshot(4, QUAKE_MAP, plus, EARTHQUAKE), NOW)
+        self.assertEqual([rule["type"] for rule in result["rules"]], ["earthquake-map", "earthquake-map", "earthquake"])
+        self.assertEqual(result["rules"][0]["regionMinIntensity"], {"kanto-koshin": "3"})
+        self.assertEqual(result["rules"][0]["centerMunicipality"], "1310100")
+        self.assertEqual(result["rules"][1]["products"], ["VXSE52"])
+        for bad in (snapshot(3, QUAKE_MAP), snapshot(4, {**QUAKE_MAP, "tier": "supporter"}),
+                    snapshot(4, {**QUAKE_MAP, "region": "kanto"})):
+            with self.assertRaises(ValueError):
+                self.validate(bad, NOW)
+
+
+def first_v4_source():
+    """The repository Lambda as first deployed for v4 (before earthquake-map was allowed)."""
+    source = (ROOT / "aws/channel-directory-api/lambda_function.py").read_text(encoding="utf-8")
+    old = source.replace(',\n                     "earthquake-map"}', '}').replace(', "earthquake-map"}', '}')
+    assert '"earthquake-map"' not in deploy_schema_v4.function_source(old, "_validate_supporter_snapshot")
+    return old
+
+
 class LambdaSnapshotV4PatchTests(unittest.TestCase):
+    def test_first_v4_validator_is_upgraded_for_earthquake_map(self):
+        live = first_v4_source()
+        updated, changed = deploy_schema_v4.patch(live)
+        self.assertTrue(changed)
+        self.assertIn('"earthquake-map"', deploy_schema_v4.function_source(updated, "_validate_supporter_snapshot"))
+        self.assertEqual(deploy_schema_v4.verify(updated),
+                         {1: "accepted", 2: "accepted", 3: "accepted", 4: "accepted", 5: "rejected"})
+        self.assertFalse(deploy_schema_v4.patch(updated)[1])
+        # Everything outside the validator is untouched.
+        self.assertEqual(updated.replace(deploy_schema_v4.function_source(updated, "_validate_supporter_snapshot"), ""),
+                         live.replace(deploy_schema_v4.function_source(live, "_validate_supporter_snapshot"), ""))
+
+
     def test_v1_and_v3_live_validators_are_upgraded(self):
         v3, _ = deploy_schema_v3.patch(V1_SOURCE)
         for live in (V1_SOURCE, v3):

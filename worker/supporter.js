@@ -6,7 +6,7 @@ import { customChangeQuote,currentCustomChange,customChangePublic,stageCustomCha
 import { refreshSupporterSnapshotSafely } from './supporter-snapshot.js';
 import { PREFECTURES, loadSupporterAreaCatalogue, geographicEntitlements, normalizeGeographicRule } from './supporter-geo.js';
 import { planFeatures } from '../site/supporter/plan-features.js';
-import { imageRulesEnabled, isImageRuleType, imageRuleOptions, normalizeImageRuleFields, IMAGE_RULE_TYPE_OPTIONS, HIRES_RADAR_CONDITIONS, WEATHER_MAP_PRODUCTS, WEATHER_MAP_SEVERITIES } from './supporter-image-rules.js';
+import { imageRulesEnabled, isImageRuleType, imageRuleOptions, normalizeImageRuleFields, loadEarthquakeMunicipalities, IMAGE_RULE_TYPE_OPTIONS, HIRES_RADAR_CONDITIONS, WEATHER_MAP_PRODUCTS, WEATHER_MAP_SEVERITIES, EARTHQUAKE_MAP_PRODUCTS, EARTHQUAKE_MAP_INTENSITIES } from './supporter-image-rules.js';
 
 const response = (data, status = 200) => Response.json(data, {status, headers: {'Cache-Control':'no-store'}});
 const notFound = () => new Response('Not Found', {
@@ -454,6 +454,16 @@ function imageRuleAdminDetails(rule, type) {
   {label:'津波予報区の表',value:rule?.includeTables===false?'添付しない':'添付する'},
   {label:'発表地域拡大版',value:rule?.enlargedArea===true?'有効（Pro）':'無効'},
  ];
+ if(type==='earthquake-map'){
+  const kinds=Array.isArray(rule?.products)?rule.products.map(id=>optionLabel(EARTHQUAKE_MAP_PRODUCTS,clean(id))).join('、'):'';
+  const regional=rule?.regionMinIntensity&&typeof rule.regionMinIntensity==='object'&&!Array.isArray(rule.regionMinIntensity)?Object.entries(rule.regionMinIntensity):[];
+  return [
+   {label:'送る情報の種類',value:kinds||'すべて（震度速報・震源・各地の震度）'},
+   {label:'震度のしきい値（全国）',value:clean(rule?.minIntensity)?`${optionLabel(EARTHQUAKE_MAP_INTENSITIES,clean(rule.minIntensity))}（Pro）`:'指定なし'},
+   {label:'地方別の震度しきい値',value:regional.length?regional.map(([region,value])=>`${optionLabel(SUPPORTER_REGIONS,region)}：${optionLabel(EARTHQUAKE_MAP_INTENSITIES,clean(value))}`).join('、')+'（Pro）':'指定なし'},
+   {label:'地図の中心にする市区町村',value:clean(rule?.centerMunicipality)?`${clean(rule.centerMunicipality)}（Pro）`:'指定なし（自動）'},
+  ];
+ }
  const products=Array.isArray(rule?.products)?rule.products.map(id=>optionLabel(WEATHER_MAP_PRODUCTS,clean(id))).join('、'):'';
  const details=[
   {label:'対象の警報・注意報',value:products||'未設定'},
@@ -486,7 +496,7 @@ export function supporterAdminDetails(row, channelsByGuild = {}) {
     {label:'情報種別',value:SUPPORTER_TYPE_LABELS[type]||type||'未設定'},
    ];
    if(isImageRuleType(type)){
-    details.push({label:'対象地方',value:optionLabel(SUPPORTER_REGIONS,clean(rule?.region)||'all')});
+    if(type!=='earthquake-map')details.push({label:'対象地方',value:optionLabel(SUPPORTER_REGIONS,clean(rule?.region)||'all')});
     details.push(...imageRuleAdminDetails(rule,type));
    }else details.push(
     {label:'詳細種別',value:type==='rain-radar'?'雨雲レーダー':optionLabel(type==='earthquake'?EARTHQUAKE_DETAILS:type==='eew'?EEW_DETAILS:WEATHER_DETAILS,clean(rule?.detail)||'all')},
@@ -1129,6 +1139,9 @@ export async function handleSupporterRequest(request, env, ctx) {
    const limits = await supporterLimits(env,db,uid);
    const needsAreaCatalogue=Array.isArray(input.rules)&&input.rules.some(rule=>rule?.municipality&&rule.municipality!=='all'||rule?.district&&rule.district!=='all'||Array.isArray(rule?.municipalities)&&rule.municipalities.length>0);
    const catalogue=needsAreaCatalogue?await loadSupporterAreaCatalogue():{prefectures:PREFECTURES,municipalities:[],districts:[]};
+   // earthquake-map centre municipalities are checked against the static list shipped with the site.
+   const needsEarthquakeList=Array.isArray(input.rules)&&input.rules.some(rule=>clean(rule?.type)==='earthquake-map'&&clean(rule?.centerMunicipality)&&clean(rule.centerMunicipality)!=='all');
+   if(needsEarthquakeList&&imageRulesEnabled(env))catalogue.earthquakeMunicipalities=await loadEarthquakeMunicipalities(env,request.url);
    const imageRules = imageRulesEnabled(env);
    let storedImageRules = [];
    if (!imageRules) {

@@ -6,6 +6,9 @@ let rules = [];
 let options;
 let areaCatalogue={municipalities:[],districts:[]};
 let areaCatalogueFailed=false;
+// earthquake-map centre municipalities (static JSON, loaded on first use): {prefectureCode: [[code,name],...]}
+let earthquakeCities=null;
+let earthquakeCitiesState='idle';
 let entitlements = {servers:1,channels:2,rules:5,complexConditions:false,multiDestination:false,...featureEntitlements([])};
 let hasConfigurableContract = false;
 let billingAvailable = false;
@@ -26,11 +29,14 @@ const status = text => { $('status').textContent = text; };
 const INTENSITIES = [['1','1'],['2','2'],['3','3'],['4','4'],['5-','5弱'],['5+','5強'],['6-','6弱'],['6+','6強'],['7','7']];
 const TYPES = [['earthquake','地震情報'],['eew','緊急地震速報'],['weather','気象情報'],['rain-radar','雨雲レーダー']];
 // Paid image rules; offered only when /api/supporter/options reports imageRulesEnabled.
-const IMAGE_TYPES = [['hires-radar','雨雲レーダー（高解像度版）'],['tsunami-map','津波警報・注意報（図・表）'],['weather-map','気象警報（図）']];
+const IMAGE_TYPES = [['hires-radar','雨雲レーダー（高解像度版）'],['tsunami-map','津波警報・注意報（図・表）'],['weather-map','気象警報（図）'],['earthquake-map','地震情報（図）']];
 const isImageType = type => IMAGE_TYPES.some(([value]) => value === type);
 // Default (new rule) selection stays VPWW55..VPWW60; VPWW61/VPHW50/VPBS50 are opt-in.
 const WEATHER_MAP_DEFAULT_PRODUCT_IDS = ['VPWW55','VPWW56','VPWW57','VPWW58','VPWW59','VPWW60'];
 const WEATHER_MAP_PRODUCT_IDS = [...WEATHER_MAP_DEFAULT_PRODUCT_IDS,'VPWW61','VPHW50','VPBS50'];
+// earthquake-map: 震度速報 / 震源に関する情報 / 各地の震度. A new rule selects all three.
+const EARTHQUAKE_MAP_PRODUCT_IDS = ['VXSE51','VXSE52','VXSE53'];
+const defaultProducts = type => type==='earthquake-map'?[...EARTHQUAKE_MAP_PRODUCT_IDS]:[...WEATHER_MAP_DEFAULT_PRODUCT_IDS];
 // Client mirror of the server entitlements; the feature table itself is shared (plan-features.js).
 function featureEntitlements(active){
  const features=planFeatures(active);
@@ -116,7 +122,7 @@ function field(article, rule, key, label, values, attributes = {}) {
    try { await loadChannels(rule.guildId, true); if(!different)status(''); } catch (error) { status(error.message); }
    render();
   } else if (key === 'type' || key === 'detail' || key === 'intensityMode' || key === 'magnitudeMode' || key === 'conditionLogic' || key === 'radarCondition' || key === 'region' || key === 'prefecture' || key === 'district' || key === 'municipality') {
-   if (key === 'type') {rule.detail = 'all';rule.conditions=[];rule.radarCondition=rule.type==='hires-radar'?'scheduled':'all';rule.rainfallThresholdMmPerHour=rule.type==='hires-radar'?'10':'';if(isImageType(rule.type))rule.conditionLogic='and';}
+   if (key === 'type') {rule.detail = 'all';rule.conditions=[];rule.radarCondition=rule.type==='hires-radar'?'scheduled':'all';rule.rainfallThresholdMmPerHour=rule.type==='hires-radar'?'10':'';rule.products=defaultProducts(rule.type);if(isImageType(rule.type))rule.conditionLogic='and';}
    if (key === 'region') {rule.prefecture='all';rule.district='all';rule.municipality='all';rule.strictMunicipality=false;rule.municipalities=[];}
    if (key === 'prefecture') {rule.district='all';rule.municipality='all';rule.strictMunicipality=false;rule.municipalities=[];}
    if (key === 'district') {rule.municipality='all';rule.strictMunicipality=false;}
@@ -238,7 +244,11 @@ function normalizeRule(rule) {
   linearRainband: rule.linearRainband===true,
   includeTables: rule.includeTables!==false,
   enlargedArea: rule.enlargedArea===true,
-  products: Array.isArray(rule.products)&&rule.products.length?rule.products.filter(id=>WEATHER_MAP_PRODUCT_IDS.includes(id)):[...WEATHER_MAP_DEFAULT_PRODUCT_IDS],
+  products: Array.isArray(rule.products)&&rule.products.length?rule.products.filter(id=>(type==='earthquake-map'?EARTHQUAKE_MAP_PRODUCT_IDS:WEATHER_MAP_PRODUCT_IDS).includes(id)):defaultProducts(type),
+  minIntensity: typeof rule.minIntensity==='string'?rule.minIntensity:'',
+  regionMinIntensity: rule.regionMinIntensity&&typeof rule.regionMinIntensity==='object'&&!Array.isArray(rule.regionMinIntensity)?{...rule.regionMinIntensity}:{},
+  centerMunicipality: typeof rule.centerMunicipality==='string'?rule.centerMunicipality:'',
+  centerPrefecture: typeof rule.centerPrefecture==='string'?rule.centerPrefecture:(typeof rule.centerMunicipality==='string'?rule.centerMunicipality.slice(0,2):''),
   minSeverity: rule.minSeverity==='advisory'?'advisory':'warning',
   municipalities: Array.isArray(rule.municipalities)?rule.municipalities.map(String):[],
   municipalityDetail: rule.municipalityDetail===true,
@@ -358,7 +368,74 @@ function checkboxGroup(container,legendText,choices,selected,onChange,limit=Infi
  return wrapper;
 }
 
-// Per-type settings of the paid image rules (hires-radar / tsunami-map / weather-map).
+function plainSelect(container,label,values,current,onChange){
+ const wrapper=document.createElement('label');
+ const caption=document.createElement('span');caption.textContent=label;
+ const input=document.createElement('select');selectOptions(input,values,current);
+ input.onchange=()=>onChange(input.value);
+ wrapper.append(caption,input);container.append(wrapper);
+ return input;
+}
+
+async function loadEarthquakeCities(){
+ if(earthquakeCitiesState!=='idle')return;
+ earthquakeCitiesState='loading';
+ try{
+  const response=await fetch(options?.earthquakeMunicipalitiesPath||'/site/supporter/earthquake-municipalities.json',{credentials:'same-origin',headers:{Accept:'application/json'}});
+  if(!response.ok)throw new Error('unavailable');
+  const data=await response.json();
+  earthquakeCities=data?.prefectures&&typeof data.prefectures==='object'?data.prefectures:{};
+  earthquakeCitiesState='ready';
+ }catch{earthquakeCities=null;earthquakeCitiesState='failed';}
+ render();
+}
+
+// earthquake-map (地震情報の図). Plus: the kinds of info only. Pro: thresholds and the map centre.
+// Pro-only values are never sent for a Plus rule (the home server would drop the whole rule).
+function earthquakeMapFields(box,rule){
+ checkboxGroup(box,'送る地震情報の種類（1つ以上）',options.earthquakeMapProducts||[],rule.products,next=>{rule.products=next;});
+ upgradeNote(box,'選択した種類の地震情報が発表されるたびに、震度分布や震源を描いた図を配信します。');
+ const proSaved=Boolean(rule.minIntensity)||Object.values(rule.regionMinIntensity||{}).some(Boolean)||Boolean(rule.centerMunicipality);
+ if(!entitlements.earthquakeMapFilter){
+  if(proSaved){
+   upgradeNote(box,'保存済みの震度のしきい値・地図の中心の指定は現在の契約では使えません（しきい値のあるルールは、すべての地震へ自動で広げずに配信を止めています）。Proへ変更するか、Pro限定の設定を解除して保存してください。');
+   const clear=document.createElement('button');clear.type='button';clear.textContent='Pro限定の設定を解除する';
+   clear.onclick=()=>{rule.minIntensity='';rule.regionMinIntensity={};rule.centerMunicipality='';rule.centerPrefecture='';render();};
+   box.append(clear);
+  }else upgradeNote(box,'震度のしきい値（全国・地方別）と地図の中心にする市区町村の指定はPro以上のプランで利用できます。');
+  return;
+ }
+ const intensities=options.earthquakeMapIntensities||[];
+ plainSelect(box,'震度のしきい値（全国の最大震度・Pro）',[['','指定しない'],...intensities],rule.minIntensity,value=>{rule.minIntensity=value;});
+ const regional=document.createElement('fieldset');regional.className='multi-channel-field';
+ const legend=document.createElement('legend');legend.textContent='地方別の震度しきい値（Pro・その地方の府県で観測した最大震度で判定）';regional.append(legend);
+ const regionLabels=new Map((options.regions||[]).map(([id,text])=>[id,text]));
+ const grid=document.createElement('div');grid.className='rule-condition-fields';
+ for(const region of options.earthquakeMapRegions||[]){
+  plainSelect(grid,regionLabels.get(region)||region,[['','指定しない'],...intensities],rule.regionMinIntensity?.[region]||'',value=>{
+   const next={...rule.regionMinIntensity};
+   if(value)next[region]=value;else delete next[region];
+   rule.regionMinIntensity=next;
+  });
+ }
+ regional.append(grid);box.append(regional);
+ upgradeNote(box,'しきい値を1つも指定しない場合は、選択した種類の地震情報をすべて配信します。複数指定した場合は、いずれか1つを満たすと配信します。震源に関する情報は、同じ地震の震度速報の震度で判定します。');
+ const prefectures=(options.prefectures||[]).map(item=>[item.code,item.name]);
+ plainSelect(box,'地図の中心にする市区町村：都道府県（Pro）',[['','指定しない（震度分布に合わせて自動）'],...prefectures],rule.centerPrefecture||'',value=>{rule.centerPrefecture=value;rule.centerMunicipality='';render();});
+ if(rule.centerPrefecture){
+  if(earthquakeCitiesState==='idle'||earthquakeCitiesState==='loading'){
+   upgradeNote(box,'市区町村の一覧を読み込んでいます…');
+   loadEarthquakeCities();
+  }else if(earthquakeCitiesState==='failed'||!Array.isArray(earthquakeCities?.[rule.centerPrefecture])){
+   upgradeNote(box,'市区町村の一覧を取得できませんでした。ページを再読み込みしてください。');
+  }else{
+   plainSelect(box,'地図の中心にする市区町村（Pro）',[['','市区町村を選択してください'],...earthquakeCities[rule.centerPrefecture]],rule.centerMunicipality||'',value=>{rule.centerMunicipality=value;});
+   upgradeNote(box,'指定した市区町村を地図の中心にし、最大震度を観測した地域と震源も入るように範囲を広げます。市区町村を選ばない場合は自動で決めます。');
+  }
+ }
+}
+
+// Per-type settings of the paid image rules (hires-radar / tsunami-map / weather-map / earthquake-map).
 function imageRuleFields(article,rule){
  const box=document.createElement('div');box.className='rule-condition-fields';
  article.append(box);
@@ -366,7 +443,8 @@ function imageRuleFields(article,rule){
   upgradeNote(box,'画像配信ルールは現在準備中のため配信されません。このルールを削除してから通知設定を保存してください。');
   return;
  }
- if(!entitlements.imageDelivery)upgradeNote(box,'画像配信（雨雲レーダー高解像度版・津波・気象警報の図）はPlus以上のプランで利用できます。現在の契約では配信されません。');
+ if(!entitlements.imageDelivery)upgradeNote(box,'画像配信（雨雲レーダー高解像度版・津波・気象警報の図・地震情報の図）はPlus以上のプランで利用できます。現在の契約では配信されません。');
+ if(rule.type==='earthquake-map'){earthquakeMapFields(box,rule);return;}
  field(box,rule,'region','対象地方（全国・地方）',options.regions);
  if(rule.type==='hires-radar'){
   if(!['scheduled','rainfall-threshold'].includes(rule.radarCondition))rule.radarCondition='scheduled';
