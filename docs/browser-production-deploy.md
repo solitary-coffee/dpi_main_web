@@ -96,12 +96,15 @@ Cloudflare Accessでログインし、次を確認する。
 8. `https://dpi-bot.com/site/status-admin/` でコンポーネント、インシデント、メンテナンスを確認する。最初はコンポーネント状態を変更せず一覧取得だけを確認する
 9. `https://dpi-bot.com/site/xml-admin/` でDMDATA過去受信を20件取得し、1件だけXMLへ読み込む。配信済み・未配信・未対応形式の表示を確認し、実配信前に配信枠と経路を再確認する
 10. `https://dpi-bot.com/site/delivery-flow-admin/` で上流API、自宅サーバー、東京・大阪の高速系統、SQS、バックアップ系統を確認する。待機用EC2の停止が異常件数に入らないことを確認する
+11. `https://dpi-bot.com/site/cdn-admin/` で有料画像CDN（R2・S3 + CloudFront）の保存量、今月のアップロード数、稼働状態、送信方式、推定費用（月末見込み・予算500円）を確認する。集計はBotの画像ワーカーが1時間ごとに非公開R2バケット `dpi-image-cdn-meta` の `admin-stats.json` へ保存し、main-dpi はR2バインディング `IMAGE_CDN_META`（`wrangler.jsonc`）で読み取るだけ（画像の公開バケットはバインドしない）
 
-Cloudflare AccessのSelf-hosted applicationには、ほかの管理画面と同じポリシーで次の2パスを追加する。
+Cloudflare AccessのSelf-hosted applicationには、ほかの管理画面と同じポリシーで次のパスを追加する。
 
 - `https://dpi-bot.com/site/status-admin`
 - `https://dpi-bot.com/site/status-admin/*`
 - `https://dpi-bot.com/site/delivery-flow-admin`
 - `https://dpi-bot.com/site/delivery-flow-admin/*`
+- `https://dpi-bot.com/site/cdn-admin`
+- `https://dpi-bot.com/site/cdn-admin/*`
 
 管理操作はすべて上記Web画面から行う。日常運用でCloudflareやAWSのコンソールを開く必要はない。
