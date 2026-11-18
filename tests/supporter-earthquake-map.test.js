@@ -7,7 +7,7 @@ import {geographicEntitlements} from '../worker/supporter-geo.js';
 import {isPrivateAssetPath} from '../worker/private-assets.js';
 import {planFeatures, PLAN_FEATURES} from '../site/supporter/plan-features.js';
 import {
- EARTHQUAKE_MAP_PRODUCTS, EARTHQUAKE_MAP_INTENSITIES, EARTHQUAKE_MAP_REGION_IDS, EARTHQUAKE_MUNICIPALITIES_PATH,
+ EARTHQUAKE_MAP_PRODUCTS, EARTHQUAKE_MAP_INTENSITIES, EARTHQUAKE_MAP_LG_CLASSES, EARTHQUAKE_MAP_REGION_IDS, EARTHQUAKE_MUNICIPALITIES_PATH,
  imageRuleSnapshotFields, parseEarthquakeMunicipalities, loadEarthquakeMunicipalities,
 } from '../worker/supporter-image-rules.js';
 
@@ -25,7 +25,8 @@ const PRO_FIELDS=['minIntensity','regionMinIntensity','centerMunicipality'];
 
 test('earthquake-map ids match what the home server parser accepts',()=>{
  // dpi_code Di/supporter_image_rules.py: EARTHQUAKE_PRODUCTS / EARTHQUAKE_INTENSITIES / REGION_IDS.
- assert.deepEqual(EARTHQUAKE_MAP_PRODUCTS.map(([id])=>id),['VXSE51','VXSE52','VXSE53']);
+ assert.deepEqual(EARTHQUAKE_MAP_PRODUCTS.map(([id])=>id),['VXSE51','VXSE52','VXSE53','VXSE62']);
+ assert.deepEqual(EARTHQUAKE_MAP_LG_CLASSES.map(([id])=>id),['1','2','3','4']);
  assert.deepEqual(EARTHQUAKE_MAP_INTENSITIES.map(([id])=>id),['1','2','3','4','5-','5+','6-','6+','7']);
  assert.deepEqual([...EARTHQUAKE_MAP_REGION_IDS],['hokkaido','tohoku','kanto-koshin','hokuriku','tokai','kinki','chugoku','shikoku','kyushu-north','kyushu-south-amami','okinawa']);
  const options=supporterOptions({SUPPORTER_IMAGE_RULES_ENABLED:'1'});
@@ -42,10 +43,10 @@ test('earthquake-map ids match what the home server parser accepts',()=>{
 test('Plus saves earthquake-map kinds only; region is fixed to all',()=>{
  const limits=limitsFor(active('plus'));
  const [all,picked]=normalizeSupporterRules([quake(),quake({products:['VXSE53','VXSE51'],minIntensity:'',regionMinIntensity:{tohoku:''},centerMunicipality:''})],guilds,limits,catalogue,ENABLED);
- assert.deepEqual([all.region,all.products,all.minIntensity,all.regionMinIntensity,all.centerMunicipality],['all',['VXSE51','VXSE52','VXSE53'],null,{},null]);
+ assert.deepEqual([all.region,all.products,all.minIntensity,all.regionMinIntensity,all.minLgInt,all.centerMunicipality],['all',['VXSE51','VXSE52','VXSE53','VXSE62'],null,{},null,null]);
  assert.deepEqual([all.conditionLogic,all.conditions],['and',[]]);
  assert.deepEqual(picked.products,['VXSE51','VXSE53']);
- for(const extra of [{minIntensity:'3'},{regionMinIntensity:{tohoku:'4'}},{centerMunicipality:'1310100'}])
+ for(const extra of [{minIntensity:'3'},{regionMinIntensity:{tohoku:'4'}},{minLgInt:'2'},{centerMunicipality:'1310100'}])
   assert.throws(()=>normalizeSupporterRules([quake(extra)],guilds,limits,catalogue,ENABLED),/Pro以上/,JSON.stringify(extra));
  assert.throws(()=>normalizeSupporterRules([quake()],guilds,limitsFor(active('supporter')),catalogue,ENABLED),/Plus以上/);
 });
@@ -163,4 +164,18 @@ test('dashboard and comparison page describe the earthquake maps with the Plus/P
  assert.match(index,/地震情報の図/);
  // Still private: no donation / payment wording added, no public switch flipped.
  assert.doesNotMatch(html+index,/寄付|支援金|donat/i);
+});
+
+test('VXSE62 (長周期地震動) product and the Pro minLgInt threshold',async()=>{
+ const pro=limitsFor(active('pro'));
+ const [rule]=normalizeSupporterRules([quake({products:['VXSE62'],minLgInt:'3'})],guilds,pro,catalogue,ENABLED);
+ assert.deepEqual([rule.products,rule.minLgInt],[['VXSE62'],'3']);
+ for(const extra of [{minLgInt:'0'},{minLgInt:'5'},{minLgInt:'階級3'},{minLgInt:'2.5'}])
+  assert.throws(()=>normalizeSupporterRules([quake(extra)],guilds,pro,catalogue,ENABLED),/長周期/,JSON.stringify(extra));
+ const rules=[stored({name:'長周期',products:['VXSE53','VXSE62'],minLgInt:'2'})];
+ const snap=plan=>buildSupporterSnapshot(snapshotDatabase(rules),{SUPPORTER_IMAGE_RULES_ENABLED:'1'},async()=>new Map([['cus_1',[plan]]]),1_800_000_000_000);
+ const [sent]=(await snap(active('pro'))).rules;
+ assert.deepEqual([sent.products,sent.minLgInt],[['VXSE53','VXSE62'],'2']);
+ // Plus: a threshold rule is suspended, never widened.
+ assert.deepEqual((await snap(active('plus'))).rules,[]);
 });

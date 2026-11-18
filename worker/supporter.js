@@ -458,8 +458,9 @@ function imageRuleAdminDetails(rule, type) {
   const kinds=Array.isArray(rule?.products)?rule.products.map(id=>optionLabel(EARTHQUAKE_MAP_PRODUCTS,clean(id))).join('、'):'';
   const regional=rule?.regionMinIntensity&&typeof rule.regionMinIntensity==='object'&&!Array.isArray(rule.regionMinIntensity)?Object.entries(rule.regionMinIntensity):[];
   return [
-   {label:'送る情報の種類',value:kinds||'すべて（震度速報・震源・各地の震度）'},
+   {label:'送る情報の種類',value:kinds||'すべて（震度速報・震源・各地の震度・長周期地震動）'},
    {label:'震度のしきい値（全国）',value:clean(rule?.minIntensity)?`${optionLabel(EARTHQUAKE_MAP_INTENSITIES,clean(rule.minIntensity))}（Pro）`:'指定なし'},
+   {label:'長周期地震動階級のしきい値',value:clean(rule?.minLgInt)?`長周期地震動階級${clean(rule.minLgInt)}以上（Pro）`:'指定なし'},
    {label:'地方別の震度しきい値',value:regional.length?regional.map(([region,value])=>`${optionLabel(SUPPORTER_REGIONS,region)}：${optionLabel(EARTHQUAKE_MAP_INTENSITIES,clean(value))}`).join('、')+'（Pro）':'指定なし'},
    {label:'地図の中心にする市区町村',value:clean(rule?.centerMunicipality)?`${clean(rule.centerMunicipality)}（Pro）`:'指定なし（自動）'},
   ];

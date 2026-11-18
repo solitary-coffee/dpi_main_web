@@ -47,6 +47,11 @@ export const EARTHQUAKE_MAP_PRODUCTS = Object.freeze([
  ['VXSE51', '震度速報'],
  ['VXSE52', '震源に関する情報'],
  ['VXSE53', '震源・震度に関する情報（各地の震度）'],
+ ['VXSE62', '長周期地震動に関する観測情報'],
+]);
+// Pro: 長周期地震動階級のしきい値（VXSE62 だけに効き、震度のしきい値と OR）。Di/supporter_image_rules.py minLgInt と同じ値。
+export const EARTHQUAKE_MAP_LG_CLASSES = Object.freeze([
+ ['1', '長周期地震動階級1以上'], ['2', '長周期地震動階級2以上'], ['3', '長周期地震動階級3以上'], ['4', '長周期地震動階級4'],
 ]);
 export const EARTHQUAKE_MAP_INTENSITIES = Object.freeze([
  ['1', '震度1以上'], ['2', '震度2以上'], ['3', '震度3以上'], ['4', '震度4以上'],
@@ -68,6 +73,7 @@ const EQ_PRODUCTS = EARTHQUAKE_MAP_PRODUCTS.map(([id]) => id);
 const EQ_PRODUCT_SET = new Set(EQ_PRODUCTS);
 const EQ_INTENSITY_SET = new Set(EARTHQUAKE_MAP_INTENSITIES.map(([id]) => id));
 const EQ_REGION_SET = new Set(EARTHQUAKE_MAP_REGION_IDS);
+const EQ_LG_SET = new Set(EARTHQUAKE_MAP_LG_CLASSES.map(([id]) => id));
 const reject = message => { throw Object.assign(new Error(message), {status: 400}); };
 const clean = value => typeof value === 'string' ? value.trim() : (typeof value === 'number' ? String(value) : '');
 
@@ -94,6 +100,7 @@ export function imageRuleOptions() {
   maxWeatherMunicipalities: MAX_WEATHER_MUNICIPALITIES,
   earthquakeMapProducts: EARTHQUAKE_MAP_PRODUCTS,
   earthquakeMapIntensities: EARTHQUAKE_MAP_INTENSITIES,
+  earthquakeMapLgClasses: EARTHQUAKE_MAP_LG_CLASSES,
   earthquakeMapRegions: EARTHQUAKE_MAP_REGION_IDS,
   earthquakeMunicipalitiesPath: EARTHQUAKE_MUNICIPALITIES_PATH,
  };
@@ -152,16 +159,19 @@ function normalizeEarthquakeMapFields(rule, limits, catalogue) {
   if (threshold) regionMinIntensity[region] = threshold;
  }
  const ordered = Object.fromEntries(EARTHQUAKE_MAP_REGION_IDS.filter(id => id in regionMinIntensity).map(id => [id, regionMinIntensity[id]]));
+ const lgText = clean(rule?.minLgInt);
+ const minLgInt = lgText && lgText !== 'all' ? lgText : null;
+ if (minLgInt && !EQ_LG_SET.has(minLgInt)) reject('地震情報（図）の長周期地震動階級のしきい値を確認してください。');
  const centerText = clean(rule?.centerMunicipality);
  const centerMunicipality = centerText && centerText !== 'all' ? centerText : null;
- if ((minIntensity || Object.keys(ordered).length || centerMunicipality) && !hasFeature(limits, 'earthquakeMapFilter'))
-  reject('地震情報（図）の震度のしきい値・地方別のしきい値・地図の中心にする市区町村はPro以上のプランで利用できます。');
+ if ((minIntensity || Object.keys(ordered).length || minLgInt || centerMunicipality) && !hasFeature(limits, 'earthquakeMapFilter'))
+  reject('地震情報（図）の震度・長周期地震動階級のしきい値・地方別のしきい値・地図の中心にする市区町村はPro以上のプランで利用できます。');
  if (centerMunicipality) {
   const known = catalogue?.earthquakeMunicipalities;
   if (!/^\d{7}$/.test(centerMunicipality) || !(known instanceof Map) || !known.has(centerMunicipality))
    reject('地図の中心にする市区町村を一覧から選び直してください。');
  }
- return {region: 'all', products, minIntensity, regionMinIntensity: ordered, centerMunicipality};
+ return {region: 'all', products, minIntensity, regionMinIntensity: ordered, minLgInt, centerMunicipality};
 }
 
 function bool(value, fallback = false) {
@@ -282,14 +292,18 @@ function earthquakeMapSnapshotFields(rule, features, tier) {
   regionMinIntensity[region] = threshold;
  }
  const regions = EARTHQUAKE_MAP_REGION_IDS.filter(id => id in regionMinIntensity);
+ const lgText = clean(rule?.minLgInt);
+ const minLgInt = lgText && lgText !== 'all' ? lgText : null;
+ if (minLgInt && !EQ_LG_SET.has(minLgInt)) return null;
  const pro = hasFeature(features, 'earthquakeMapFilter') && (tier === 'pro' || tier === 'custom');
- if ((minIntensity || regions.length) && !pro) return null;
+ if ((minIntensity || regions.length || minLgInt) && !pro) return null;
  const centre = clean(rule?.centerMunicipality);
  const centerMunicipality = pro && /^\d{7}$/.test(centre) ? centre : null;
  return {
   region: 'all', tier, products,
   ...(minIntensity ? {minIntensity} : {}),
   ...(regions.length ? {regionMinIntensity: Object.fromEntries(regions.map(id => [id, regionMinIntensity[id]]))} : {}),
+  ...(minLgInt ? {minLgInt} : {}),
   ...(centerMunicipality ? {centerMunicipality} : {}),
  };
 }

@@ -35,7 +35,7 @@ const isImageType = type => IMAGE_TYPES.some(([value]) => value === type);
 const WEATHER_MAP_DEFAULT_PRODUCT_IDS = ['VPWW55','VPWW56','VPWW57','VPWW58','VPWW59','VPWW60'];
 const WEATHER_MAP_PRODUCT_IDS = [...WEATHER_MAP_DEFAULT_PRODUCT_IDS,'VPWW61','VPHW50','VPBS50'];
 // earthquake-map: 震度速報 / 震源に関する情報 / 各地の震度. A new rule selects all three.
-const EARTHQUAKE_MAP_PRODUCT_IDS = ['VXSE51','VXSE52','VXSE53'];
+const EARTHQUAKE_MAP_PRODUCT_IDS = ['VXSE51','VXSE52','VXSE53','VXSE62'];
 const defaultProducts = type => type==='earthquake-map'?[...EARTHQUAKE_MAP_PRODUCT_IDS]:[...WEATHER_MAP_DEFAULT_PRODUCT_IDS];
 // Client mirror of the server entitlements; the feature table itself is shared (plan-features.js).
 function featureEntitlements(active){
@@ -246,6 +246,7 @@ function normalizeRule(rule) {
   enlargedArea: rule.enlargedArea===true,
   products: Array.isArray(rule.products)&&rule.products.length?rule.products.filter(id=>(type==='earthquake-map'?EARTHQUAKE_MAP_PRODUCT_IDS:WEATHER_MAP_PRODUCT_IDS).includes(id)):defaultProducts(type),
   minIntensity: typeof rule.minIntensity==='string'?rule.minIntensity:'',
+  minLgInt: typeof rule.minLgInt==='string'?rule.minLgInt:'',
   regionMinIntensity: rule.regionMinIntensity&&typeof rule.regionMinIntensity==='object'&&!Array.isArray(rule.regionMinIntensity)?{...rule.regionMinIntensity}:{},
   centerMunicipality: typeof rule.centerMunicipality==='string'?rule.centerMunicipality:'',
   centerPrefecture: typeof rule.centerPrefecture==='string'?rule.centerPrefecture:(typeof rule.centerMunicipality==='string'?rule.centerMunicipality.slice(0,2):''),
@@ -395,14 +396,14 @@ async function loadEarthquakeCities(){
 function earthquakeMapFields(box,rule){
  checkboxGroup(box,'送る地震情報の種類（1つ以上）',options.earthquakeMapProducts||[],rule.products,next=>{rule.products=next;});
  upgradeNote(box,'選択した種類の地震情報が発表されるたびに、震度分布や震源を描いた図を配信します。');
- const proSaved=Boolean(rule.minIntensity)||Object.values(rule.regionMinIntensity||{}).some(Boolean)||Boolean(rule.centerMunicipality);
+ const proSaved=Boolean(rule.minIntensity)||Object.values(rule.regionMinIntensity||{}).some(Boolean)||Boolean(rule.minLgInt)||Boolean(rule.centerMunicipality);
  if(!entitlements.earthquakeMapFilter){
   if(proSaved){
    upgradeNote(box,'保存済みの震度のしきい値・地図の中心の指定は現在の契約では使えません（しきい値のあるルールは、すべての地震へ自動で広げずに配信を止めています）。Proへ変更するか、Pro限定の設定を解除して保存してください。');
    const clear=document.createElement('button');clear.type='button';clear.textContent='Pro限定の設定を解除する';
-   clear.onclick=()=>{rule.minIntensity='';rule.regionMinIntensity={};rule.centerMunicipality='';rule.centerPrefecture='';render();};
+   clear.onclick=()=>{rule.minIntensity='';rule.regionMinIntensity={};rule.minLgInt='';rule.centerMunicipality='';rule.centerPrefecture='';render();};
    box.append(clear);
-  }else upgradeNote(box,'震度のしきい値（全国・地方別）と地図の中心にする市区町村の指定はPro以上のプランで利用できます。');
+  }else upgradeNote(box,'震度・長周期地震動階級のしきい値（全国・地方別）と地図の中心にする市区町村の指定はPro以上のプランで利用できます。');
   return;
  }
  const intensities=options.earthquakeMapIntensities||[];
@@ -419,7 +420,8 @@ function earthquakeMapFields(box,rule){
   });
  }
  regional.append(grid);box.append(regional);
- upgradeNote(box,'しきい値を1つも指定しない場合は、選択した種類の地震情報をすべて配信します。複数指定した場合は、いずれか1つを満たすと配信します。震源に関する情報は、同じ地震の震度速報の震度で判定します。');
+ plainSelect(box,'長周期地震動階級のしきい値（長周期地震動に関する観測情報だけに適用・Pro）',[['','指定しない'],...(options.earthquakeMapLgClasses||[])],rule.minLgInt||'',value=>{rule.minLgInt=value;});
+ upgradeNote(box,'しきい値を1つも指定しない場合は、選択した種類の地震情報をすべて配信します。複数指定した場合は、いずれか1つを満たすと配信します。震源に関する情報は、同じ地震の震度速報の震度で判定します。長周期地震動階級のしきい値は長周期地震動に関する観測情報だけに使い、震度速報・震源・各地の震度の配信には影響しません。');
  const prefectures=(options.prefectures||[]).map(item=>[item.code,item.name]);
  plainSelect(box,'地図の中心にする市区町村：都道府県（Pro）',[['','指定しない（震度分布に合わせて自動）'],...prefectures],rule.centerPrefecture||'',value=>{rule.centerPrefecture=value;rule.centerMunicipality='';render();});
  if(rule.centerPrefecture){
