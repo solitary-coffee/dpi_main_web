@@ -36,7 +36,21 @@ Worker 変数 `SUPPORTER_IMAGE_RULES_ENABLED` が `"1"` のときだけ有効に
 |---|---|
 | `hires-radar` | `linearRainband`（真偽値）、`radarCondition`（`scheduled` または `rainfall-threshold`。`rainfall-threshold` は Pro 以上）、`rainfallThresholdMmPerHour`（10・20・30・50・80 のいずれか。閾値配信のときだけ使用）、`deliveryIntervalHours`（1・2・3・6・12・24 のいずれか） |
 | `tsunami-map` | `includeTables`（真偽値、初期値は true）、`enlargedArea`（真偽値、Pro 以上）。指定した地方に注意報以上が発表されたときに配信します。 |
-| `weather-map` | `products`（`VPWW55`〜`VPWW60` から1件以上）、`minSeverity`（`warning` または `advisory`）。Pro 以上では、`prefecture`（`"01"`〜`"47"`）、`municipalities`（その都道府県内の7桁の気象庁コード、最大50件）、`municipalityDetail` も指定できます。都道府県を指定しない場合、スナップショットには `prefecture` を含めません。 |
+| `weather-map` | `products`（下表の ID から1件以上）、`minSeverity`（`warning` または `advisory`）。Pro 以上では、`prefecture`（`"01"`〜`"47"`）、`municipalities`（その都道府県内の7桁の気象庁コード、最大50件）、`municipalityDetail` も指定できます。都道府県を指定しない場合、スナップショットには `prefecture` を含めません。 |
+
+`weather-map` の `products` に指定できる ID は次のとおりです。すべて Plus 以上で利用できます（都道府県・市区町村の指定などの Pro 限定項目は従来どおり Pro 以上）。新規ルールの初期選択は `VPWW55`〜`VPWW60` だけです。`VPWW61`・`VPHW50`・`VPBS50` は明示的に選択した場合だけ配信し、既存ルールに自動で追加することはありません。
+
+| ID | 表示名 | 配信形式 |
+|---|---|---|
+| `VPWW55` | 大雨 | 図 |
+| `VPWW56` | 土砂災害 | 図 |
+| `VPWW57` | 高潮 | 図 |
+| `VPWW58` | 暴風雪・暴風 | 図 |
+| `VPWW59` | 波浪 | 図 |
+| `VPWW60` | 大雪 | 図 |
+| `VPWW61` | その他注意報（一覧表） | 表 |
+| `VPHW50` | 竜巻注意情報（気象防災速報） | 図（気象防災速報（竜巻注意）／（竜巻目撃）。目撃情報付きの VPHW51 を含む） |
+| `VPBS50` | 線状降水帯（発生・直前予測） | 図（気象防災速報（線状降水帯発生）／（線状降水帯直前予測）） |
 
 検証処理は次のファイルにあります。
 

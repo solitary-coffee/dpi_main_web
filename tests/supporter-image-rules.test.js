@@ -104,7 +104,7 @@ test('Pro and custom save every image option, with strict field validation',()=>
   [{...radar,region:'kanto'}],
   [{...radar,linearRainband:'yes'}],
   [{...weather,products:[]}],
-  [{...weather,products:['VPWW61']}],
+  [{...weather,products:['VPWW62']}],
   [{...weather,minSeverity:'special'}],
   [{...weather,prefecture:'01'}],
   [{...weather,prefecture:'48',region:'all'}],
