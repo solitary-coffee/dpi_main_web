@@ -33,7 +33,6 @@ const expectedMenu = [
     ['/site/survey/', '利用者アンケート'],
     ['/site/reuse/', '二次利用申請'],
     ['/site/invi/index.html', 'BOTを招待'],
-    ['/site/buy/index.html', 'ご支援のお願い'],
     ['/terms/index.html', '利用規約等'],
     ['/site/supp/index.html', 'お問い合わせ'],
 ];
