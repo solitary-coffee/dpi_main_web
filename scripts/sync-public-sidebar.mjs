@@ -17,6 +17,7 @@ const excluded = new Set([
     'site/mail-admin/index.html',
     'site/reuse-admin/index.html',
     'site/supporter-admin/index.html',
+    'site/cdn-admin/index.html',
 ]);
 
 const menuItems = [

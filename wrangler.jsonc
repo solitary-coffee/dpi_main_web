@@ -19,6 +19,13 @@
     }
   ],
 
+  "r2_buckets": [
+    {
+      "binding": "IMAGE_CDN_META",
+      "bucket_name": "dpi-image-cdn-meta"
+    }
+  ],
+
   "send_email": [
     {
       "name": "CONTACT_EMAIL"

@@ -1,5 +1,6 @@
 import { AccessAuthError, authenticateNewsletterAdmin } from './access.js';
 import { DELIVERY_CATALOG } from './delivery-catalog.js';
+import { CdnAdminError, cdnAdminStats } from './cdn-admin.js';
 
 const JSON_HEADERS = Object.freeze({
     'Content-Type': 'application/json; charset=utf-8',
@@ -18,6 +19,7 @@ const ADMIN_ASSET_ROOTS = Object.freeze([
     '/site/status-admin',
     '/site/delivery-admin',
     '/site/delivery-flow-admin',
+    '/site/cdn-admin',
 ]);
 
 class AdminCenterError extends Error {
@@ -39,7 +41,8 @@ export async function handleAdminCenterRequest(request, env) {
     const isDeliveryFlowApi = pathname === '/site/delivery-flow-admin/api/summary';
     const isTestDeliveryApi = pathname === '/site/system-admin/api/test-delivery';
     const isAuditApi = pathname === '/site/system-admin/audit/api/logs';
-    const isApi = isSummaryApi || isActionApi || isDeliveryStatsApi || isDmdataHistoryApi || isDeliveryFlowApi || isTestDeliveryApi || isAuditApi;
+    const isCdnStatsApi = pathname === '/site/cdn-admin/api/stats';
+    const isApi = isSummaryApi || isActionApi || isDeliveryStatsApi || isDmdataHistoryApi || isDeliveryFlowApi || isTestDeliveryApi || isAuditApi || isCdnStatsApi;
     const assetRoot = !isApi ? ADMIN_ASSET_ROOTS.find((root) => pathname === root || pathname.startsWith(`${root}/`)) : null;
     const isAsset = Boolean(assetRoot);
     if (!isApi && !isAsset) return null;
@@ -88,6 +91,12 @@ export async function handleAdminCenterRequest(request, env) {
             }
             return await auditLogSummary(url, env, admin);
         }
+        if (isCdnStatsApi) {
+            if (request.method !== 'GET') {
+                return jsonResponse({ success: false, message: '許可されていない操作です。' }, 405, { Allow: 'GET' });
+            }
+            return jsonResponse(await cdnAdminStats(env, admin));
+        }
         if (!['GET', 'HEAD'].includes(request.method)) {
             throw new AdminCenterError(405, '許可されていない操作です。', 'method_not_allowed');
         }
@@ -109,10 +118,9 @@ export async function handleAdminCenterRequest(request, env) {
         return new Response(asset.body, { status: asset.status, statusText: asset.statusText, headers });
     } catch (error) {
         const status = Number(error?.status) || 500;
-        const message = error instanceof AccessAuthError || error instanceof AdminCenterError
-            ? error.publicMessage
-            : '統合管理情報を取得できませんでした。';
-        if (!(error instanceof AccessAuthError) && !(error instanceof AdminCenterError)) {
+        const known = error instanceof AccessAuthError || error instanceof AdminCenterError || error instanceof CdnAdminError;
+        const message = known ? error.publicMessage : '統合管理情報を取得できませんでした。';
+        if (!known) {
             console.error('Admin center request failed', { errorName: error?.name || 'Error' });
         }
         return jsonResponse({ success: false, message, code: error?.code || 'internal_error' }, status);
@@ -168,6 +176,7 @@ async function systemSummary(env, admin) {
             { label: '監査ログ', href: '/site/system-admin/audit/' },
             { label: '二次利用申請管理', href: '/site/reuse-admin/' },
             { label: '有料プラン管理', href: '/site/supporter-admin/' },
+            { label: '画像CDN', href: '/site/cdn-admin/' },
             { label: 'お知らせ一括配信', href: '/site/mail-admin/' },
             { label: 'Discordお知らせ', href: '/site/discord-admin/' },
             { label: '配信先検索', href: '/site/channel-admin/' },

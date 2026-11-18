@@ -1,0 +1,23 @@
+/* 画像CDN 管理画面（admin-center/style.css の上に重ねる） */
+.cdn-updated { margin: 0; }
+.cdn-notice { margin: 0 0 14px; padding: 12px; border-left: 4px solid #ffce6a; background: #3a321f; color: #fff4cf; }
+.cdn-notice[hidden] { display: none; }
+.cdn-metric strong { font-size: 1.6rem; overflow-wrap: anywhere; }
+.cdn-metric small { margin-top: 6px; }
+.cdn-metric.cdn-good strong { color: #78dea6; }
+.cdn-metric.cdn-warn strong { color: #ffce6a; }
+.cdn-metric.cdn-bad strong { color: #ff8f86; }
+.cdn-card-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+.cdn-card { display: grid; gap: 8px; align-content: start; min-width: 0; margin: 0; padding: 16px; border: 1px solid #5d6772; border-radius: 8px; background: #333940; }
+.cdn-card-label { color: #c8d0d8; font-size: .86rem; }
+.cdn-card strong { color: #8acaff; font-size: 1.35rem; overflow-wrap: anywhere; }
+.cdn-card small { font-size: .8rem; }
+#budget-bar .cdn-card { margin-bottom: 14px; }
+.cdn-bar { position: relative; height: 10px; overflow: hidden; border-radius: 999px; background: #20252a; }
+.cdn-bar-fill { display: block; height: 100%; width: 0; border-radius: 999px; background: #78dea6; }
+.cdn-bar-fill.cdn-warn { background: #ffce6a; }
+.cdn-bar-fill.cdn-bad { background: #ff8f86; }
+.cdn-total-row td { border-top: 2px solid #75bfff; font-weight: 800; }
+@media (max-width: 680px) {
+    .cdn-card-grid { grid-template-columns: 1fr; }
+}

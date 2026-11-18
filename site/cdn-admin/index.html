@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="robots" content="noindex,nofollow">
+    <title>画像CDN - DPI-Bot</title>
+    <link rel="icon" href="../../img/dpi.png" type="image/png">
+    <link rel="stylesheet" href="../admin-shell.css">
+    <link rel="stylesheet" href="../admin-center/style.css">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body class="admin-shell">
+    <button id="menu-toggle-btn" type="button" aria-label="メニューを開く"><span></span><span></span><span></span></button>
+    <div class="overlay"></div>
+    <div class="page-container">
+        <nav class="sidebar" aria-label="管理メニュー">
+            <div class="sidebar-header"><h2>管理メニュー</h2></div>
+            <ul>
+                <li><a href="/">公式サイト</a></li>
+                <li><a href="/site/admin-center/">統合管理センター</a></li>
+                <li><a href="/site/system-admin/">システム運用</a></li>
+                <li><a href="/site/ec2-admin/">EC2管理</a></li>
+                <li><a href="/site/xml-admin/">XML配信</a></li>
+                <li><a href="/site/status-admin/">ステータス管理</a></li>
+                <li><a href="/site/delivery-admin/">配信統計</a></li>
+                <li><a href="/site/delivery-flow-admin/">配信系統</a></li>
+                <li><a href="/site/system-admin/audit/">監査ログ</a></li>
+                <li><a href="/site/channel-admin/">配信先検索</a></li>
+                <li><a href="/site/reuse-admin/">二次利用申請管理</a></li>
+                <li><a href="/site/supporter-admin/">有料プラン管理</a></li>
+                <li><a href="/site/cdn-admin/" class="active" aria-current="page">画像CDN</a></li>
+                <li><a href="/site/mail-admin/">メール配信管理</a></li>
+                <li><a href="/site/discord-admin/">Discordお知らせ管理</a></li>
+                <li><a href="/site/ip-admin/">IP遮断管理</a></li>
+                <li><a href="/cdn-cgi/access/logout">ログアウト</a></li>
+            </ul>
+        </nav>
+        <main class="main-content">
+            <header class="topbar">
+                <div><p class="eyebrow">IMAGE CDN</p><h1>画像CDN</h1><p class="muted">有料画像の保存先（Cloudflare R2・予備のAWS S3 + CloudFront）の使用量・稼働状態・推定費用です。60秒ごとに自動更新します。</p></div>
+                <div class="admin-bar"><span id="admin-email"></span><button id="refresh-btn" type="button">最新情報に更新</button></div>
+            </header>
+            <div id="global-status" class="status" role="alert" aria-live="assertive"></div>
+
+            <section aria-labelledby="overview-title">
+                <div class="section-heading"><div><p class="eyebrow">OVERVIEW</p><h2 id="overview-title">概要</h2></div><p id="updated-at" class="cdn-updated"></p></div>
+                <p id="stale-notice" class="cdn-notice" hidden></p>
+                <div id="overview-cards" class="metric-grid"></div>
+            </section>
+
+            <section aria-labelledby="r2-title">
+                <div class="section-heading"><div><p class="eyebrow">CLOUDFLARE R2</p><h2 id="r2-title">R2（主な保存先）</h2></div><p id="r2-note"></p></div>
+                <div id="r2-cards" class="cdn-card-grid"></div>
+            </section>
+
+            <section aria-labelledby="aws-title">
+                <div class="section-heading"><div><p class="eyebrow">AWS S3 + CLOUDFRONT</p><h2 id="aws-title">AWS（予備の保存先）</h2></div><p id="aws-note"></p></div>
+                <div id="aws-cards" class="cdn-card-grid"></div>
+            </section>
+
+            <section aria-labelledby="health-title">
+                <div class="section-heading"><div><p class="eyebrow">HEALTH</p><h2 id="health-title">稼働状態</h2></div><p id="health-note"></p></div>
+                <div class="table-wrap"><table><thead><tr><th>保存先</th><th>状態</th><th>理由</th><th>最終確認</th><th>24時間のDOWN回数</th><th>最後のDOWN</th></tr></thead><tbody id="health-rows"></tbody></table></div>
+            </section>
+
+            <section aria-labelledby="modes-title">
+                <div class="section-heading"><div><p class="eyebrow">SEND MODES</p><h2 id="modes-title">送信方式の内訳</h2></div><p id="modes-note"></p></div>
+                <div class="table-wrap"><table><thead><tr><th>配信経路／画像</th><th>過去24時間</th><th>今月</th></tr></thead><tbody id="mode-rows"></tbody></table></div>
+            </section>
+
+            <section aria-labelledby="cost-title">
+                <div class="section-heading"><div><p class="eyebrow">ESTIMATED COST</p><h2 id="cost-title">今月の推定費用（月末見込み）</h2></div><p id="cost-note"></p></div>
+                <div id="budget-bar"></div>
+                <div class="table-wrap"><table><thead><tr><th>保存先</th><th>内訳</th><th>算出方法</th><th>米ドル</th><th>円</th></tr></thead><tbody id="cost-rows"></tbody></table></div>
+            </section>
+        </main>
+    </div>
+    <script src="../../script.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>
