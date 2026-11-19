@@ -22,7 +22,7 @@ function run(command, args, { capture = false } = {}) {
         cwd: root, encoding: 'utf8', shell: process.platform === 'win32',
         stdio: capture ? ['ignore', 'pipe', 'pipe'] : 'inherit',
     });
-    return { status: result.status ?? 1, out: `${result.stdout || ''}${result.stderr || ''}` };
+    return { status: result.status ?? 1, stdout: result.stdout || '', out: `${result.stdout || ''}${result.stderr || ''}` };
 }
 
 function step(title) {
@@ -35,12 +35,12 @@ function fail(message) {
 }
 
 step('版の確認');
-const branch = run('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { capture: true }).out.trim();
+const branch = run('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { capture: true }).stdout.trim();
 if (branch !== 'main') fail(`main ブランチではありません（今は ${branch}）。`);
-if (run('git', ['status', '--porcelain'], { capture: true }).out.trim()) fail('未コミットの変更があります。');
+if (run('git', ['status', '--porcelain'], { capture: true }).stdout.trim()) fail('未コミットの変更があります。');
 run('git', ['fetch', '-q', 'origin', 'main'], { capture: true });
-const local = run('git', ['rev-parse', 'HEAD'], { capture: true }).out.trim();
-const remote = run('git', ['rev-parse', 'origin/main'], { capture: true }).out.trim();
+const local = run('git', ['rev-parse', 'HEAD'], { capture: true }).stdout.trim();
+const remote = run('git', ['rev-parse', 'origin/main'], { capture: true }).stdout.trim();
 if (local !== remote) fail('origin/main と版が違います。git pull してから実行してください。');
 console.log(`main ${local.slice(0, 7)}`);
 
