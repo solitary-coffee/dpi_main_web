@@ -1,0 +1,72 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { handleSupporterRequest } from '../worker/supporter.js';
+import { reviewAccessConfigured, reviewCookie, reviewCookieValid } from '../worker/supporter-review.js';
+
+const PASSWORD = 'correct-horse-battery';
+const baseEnv = () => ({
+ SUPPORTER_PUBLIC_ENABLED: 'false',
+ SUPPORTER_REVIEW_USER: 'reviewer',
+ SUPPORTER_REVIEW_PASSWORD: PASSWORD,
+ ASSETS: {fetch: () => new Response('<html>plans</html>', {headers: {'content-type': 'text/html'}})},
+});
+const basic = (user, password) => 'Basic ' + btoa(String.fromCharCode(...new TextEncoder().encode(`${user}:${password}`)));
+const page = headers => new Request('https://dpi-bot.com/site/supporter/', {headers});
+
+test('審査用の認証は、ユーザー名と12文字以上のパスワードがそろったときだけ有効', () => {
+ assert.equal(reviewAccessConfigured({}), false);
+ assert.equal(reviewAccessConfigured({SUPPORTER_REVIEW_USER: 'a', SUPPORTER_REVIEW_PASSWORD: 'short'}), false);
+ assert.equal(reviewAccessConfigured(baseEnv()), true);
+});
+
+test('未設定なら従来どおり 404（パスワード入力も出さない）', async () => {
+ const env = {...baseEnv(), SUPPORTER_REVIEW_USER: '', SUPPORTER_REVIEW_PASSWORD: ''};
+ const response = await handleSupporterRequest(page({}), env);
+ assert.equal(response.status, 404);
+ assert.equal(response.headers.get('WWW-Authenticate'), null);
+});
+
+test('設定済みなら未認証の閲覧にはユーザー名・パスワードを求める', async () => {
+ const response = await handleSupporterRequest(page({}), baseEnv());
+ assert.equal(response.status, 401);
+ assert.match(response.headers.get('WWW-Authenticate'), /^Basic realm=/);
+ assert.equal(response.headers.get('X-Robots-Tag'), 'noindex, nofollow, noarchive');
+});
+
+test('誤ったユーザー名・パスワードでは画面を返さない', async () => {
+ for (const [user, password] of [['reviewer', 'wrong-password-123'], ['someone', PASSWORD], ['', '']]) {
+  const response = await handleSupporterRequest(page({Authorization: basic(user, password)}), baseEnv());
+  assert.equal(response.status, 401);
+  assert.equal(response.headers.get('Set-Cookie'), null);
+ }
+});
+
+test('正しいユーザー名・パスワードで画面を返し、署名付き Cookie を発行する', async () => {
+ const env = baseEnv();
+ const response = await handleSupporterRequest(page({Authorization: basic('reviewer', PASSWORD)}), env);
+ assert.equal(response.status, 200);
+ assert.equal(await response.text(), '<html>plans</html>');
+ const cookie = response.headers.get('Set-Cookie');
+ assert.match(cookie, /^__Host-dpi_supporter_review=\d+\.[0-9a-f]{64};/);
+ assert.match(cookie, /Secure; HttpOnly; SameSite=Lax/);
+ assert.equal(response.headers.get('Cache-Control'), 'private, no-store');
+ const again = await handleSupporterRequest(page({Cookie: cookie.split(';')[0]}), env);
+ assert.equal(again.status, 200);
+});
+
+test('Cookie は改ざん・期限切れ・パスワード変更で無効になる', async () => {
+ const env = baseEnv();
+ const cookie = (await reviewCookie(env)).split(';')[0];
+ const request = value => new Request('https://dpi-bot.com/', {headers: {Cookie: value}});
+ assert.equal(await reviewCookieValid(request(cookie), env), true);
+ assert.equal(await reviewCookieValid(request(cookie.replace(/.$/, c => c === '0' ? '1' : '0')), env), false);
+ assert.equal(await reviewCookieValid(request(cookie), env, Date.now() + 13 * 3600 * 1000), false);
+ assert.equal(await reviewCookieValid(request(cookie), {...env, SUPPORTER_REVIEW_PASSWORD: 'another-password-xyz'}), false);
+});
+
+test('API は Discord ログインが必要なまま（審査用 Cookie だけでは通らない）', async () => {
+ const env = baseEnv();
+ const cookie = (await reviewCookie(env)).split(';')[0];
+ const response = await handleSupporterRequest(new Request('https://dpi-bot.com/api/supporter/plans', {headers: {Cookie: cookie}}), env);
+ assert.equal(response.status, 404);
+});

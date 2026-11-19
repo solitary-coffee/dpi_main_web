@@ -6,6 +6,7 @@ import { customChangeQuote,currentCustomChange,customChangePublic,stageCustomCha
 import { refreshSupporterSnapshotSafely } from './supporter-snapshot.js';
 import { PREFECTURES, loadSupporterAreaCatalogue, geographicEntitlements, normalizeGeographicRule } from './supporter-geo.js';
 import { planFeatures } from '../site/supporter/plan-features.js';
+import { basicCredentialsValid, reviewAccessConfigured, reviewChallenge, reviewCookie, reviewCookieValid } from './supporter-review.js';
 import { imageRulesEnabled, isImageRuleType, imageRuleOptions, normalizeImageRuleFields, loadEarthquakeMunicipalities, IMAGE_RULE_TYPE_OPTIONS, HIRES_RADAR_CONDITIONS, WEATHER_MAP_PRODUCTS, WEATHER_MAP_SEVERITIES, EARTHQUAKE_MAP_PRODUCTS, EARTHQUAKE_MAP_INTENSITIES } from './supporter-image-rules.js';
 
 const response = (data, status = 200) => Response.json(data, {status, headers: {'Cache-Control':'no-store'}});
@@ -716,6 +717,7 @@ export function supporterTestUserAllowed(env, discordUserId) {
 async function supporterSite(request, env, db) {
  const method = request.method.toUpperCase();
  if (!['GET', 'HEAD'].includes(method)) return notFound();
+ let reviewSetCookie = null;
  // Comparison assets and the contract dashboard share the same access gate.
  // Never bypass authentication for plans.html or its associated stylesheet.
  if (!supporterPublicEnabled(env)) {
@@ -730,11 +732,18 @@ async function supporterSite(request, env, db) {
     allowed = true;
    } catch { /* Return the same 404 for every unauthorized visitor. */ }
   }
+  // 決済サービスの審査用：ユーザー名・パスワードが設定されているときだけ入力を求める。
+  if (!allowed && reviewAccessConfigured(env)) {
+   if (await reviewCookieValid(request, env)) allowed = true;
+   else if (await basicCredentialsValid(request, env)) { allowed = true; reviewSetCookie = await reviewCookie(env); }
+   else return reviewChallenge();
+  }
   if (!allowed) return notFound();
  }
  const asset = await env.ASSETS.fetch(request);
  const headers = new Headers(asset.headers);
  headers.set('Cache-Control', 'private, no-store');
+ if (reviewSetCookie) headers.append('Set-Cookie', reviewSetCookie);
  if (!supporterPublicEnabled(env)) headers.set('X-Robots-Tag', 'noindex, nofollow, noarchive');
  return new Response(asset.body, {status: asset.status, statusText: asset.statusText, headers});
 }
@@ -1088,7 +1097,7 @@ export async function handleSupporterRequest(request, env, ctx) {
   try { session = await requireSession(request, {...env,REUSE_DB:db}); }
   catch (error) { if (!supporterPublicEnabled(env)) return notFound(); throw error; }
   const uid = session.discord_user_id;
-  if (!supporterTestUserAllowed(env, uid)) return notFound();
+  if (!supporterTestUserAllowed(env, uid) && !(await reviewCookieValid(request, env))) return notFound();
   if (path === '/api/supporter/plans' && request.method === 'GET') {
    return response({billingEnabled:false, deliveryEnabled:false, plans:publicPlans(), addons:{channel:{yen:200,channels:3},server:{yen:200,servers:2},rule:{yen:200,rules:3},prorated:false},billingDay:26});
   }
