@@ -100,3 +100,24 @@ test('プランの支払いページでは PayPay を除外し、クレジット
  // 通常の申込み・カスタムプランの初回・カスタムプランの差額も除外する
  assert.equal((source.match(/\.\.\.SUBSCRIPTION_EXCLUDED_PAYMENT_METHODS/g) || []).length, 3);
 });
+
+test('テスト支払いの結果（チャージ額・プラン・支払い方法）を返し、ほかの支払いの情報は返さない', async t => {
+ const originalFetch = globalThis.fetch;
+ t.after(() => { globalThis.fetch = originalFetch; });
+ const sessions = {
+  cs_test_credit00001: {status: 'complete', payment_status: 'paid', amount_total: 3000, metadata: {dpi_checkout_kind: 'preview_demo', dpi_preview_credit_amount: '3000'}, payment_intent: {payment_method: {type: 'paypay'}}},
+  cs_test_plan0000001: {status: 'complete', payment_status: 'paid', amount_total: 800, metadata: {dpi_checkout_kind: 'preview_demo', dpi_plan: 'plus'}, payment_intent: {payment_method: {type: 'card'}}},
+  cs_test_realuser001: {status: 'complete', payment_status: 'paid', amount_total: 800, metadata: {dpi_checkout_kind: 'initial_subscription', dpi_user: '637850681666961408'}},
+ };
+ let lastUrl = '';
+ globalThis.fetch = async url => { lastUrl = String(url); const id = lastUrl.split('/checkout/sessions/')[1].split('?')[0]; return Response.json(sessions[id]); };
+ const env = {...billingEnv, SUPPORTER_PREVIEW_OPEN: 'true'};
+ const get = id => handleSupporterRequest(new Request(`https://dpi-bot.com/api/supporter/preview-checkout/result?session_id=${id}`), env);
+ assert.deepEqual(await (await get('cs_test_credit00001')).json(), {kind: 'credit', completed: true, amount: 3000, planName: null, paymentMethod: 'PayPay'});
+ assert.match(lastUrl, /expand%5B%5D=payment_intent\.payment_method|expand\[\]=payment_intent\.payment_method/);
+ assert.deepEqual(await (await get('cs_test_plan0000001')).json(), {kind: 'plan', completed: true, amount: 800, planName: 'Plus', paymentMethod: 'カード'});
+ const other = await get('cs_test_realuser001');
+ assert.equal(other.status, 404);
+ assert.doesNotMatch(await other.text(), /637850681666961408/);
+ assert.equal((await get('cs_live_abc')).status, 400);
+});
