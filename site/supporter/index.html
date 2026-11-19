@@ -45,6 +45,17 @@
    </div>
    <p id="status" class="form-status" role="status" aria-live="polite"></p>
    <div id="account-enforcement" class="billing-suspension hidden" role="alert"></div>
+   <!-- テスト公開中だけ：ログイン不要のテスト支払い（正式公開時に削除） -->
+   <section id="preview-checkout" class="section preview-checkout" aria-labelledby="preview-checkout-title">
+    <h2 id="preview-checkout-title">ログインせずにテスト支払いページを見る</h2>
+    <p>Discordへのログインなしで、お支払いページ（Stripeのテストモード）へ進めます。誰の契約にも登録されず、通知の配信も始まりません。テストモードのため請求はされません。</p>
+    <div class="preview-checkout-buttons">
+     <button type="button" class="secondary-btn" data-preview-plan="supporter">BASIC（月額300円）</button>
+     <button type="button" class="secondary-btn" data-preview-plan="plus">Plus（月額800円）</button>
+     <button type="button" class="secondary-btn" data-preview-plan="pro">Pro（月額1,280円）</button>
+    </div>
+    <p id="preview-checkout-status" class="help" role="status" aria-live="polite"></p>
+   </section>
    <section class="section basic-hero">
     <p class="eyebrow">PAID PLAN DASHBOARD</p>
     <h2>通知を、自分たちに合わせる。</h2>
@@ -97,5 +108,6 @@
  <dialog id="billing-preview-dialog" aria-labelledby="billing-preview-title"><div class="billing-preview-panel"><h2 id="billing-preview-title">契約変更の確認</h2><div id="billing-preview-content"></div><div class="confirmation-actions"><button id="billing-preview-cancel" class="secondary-btn" type="button">戻る</button><button id="billing-preview-confirm" class="primary-btn" type="button">変更を確定</button></div></div></dialog>
  <script src="../../script.js"></script>
  <script type="module" src="app.js"></script>
+ <script src="/site/supporter/preview-checkout.js" defer></script>
 </body>
 </html>
