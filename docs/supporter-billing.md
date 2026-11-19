@@ -14,6 +14,13 @@ vars: SUPPORTER_BILLING_MODE=test、SUPPORTER_PUBLIC_ORIGIN=https://dpi-bot.com�
 
 限定公開中は `/site/supporter/` とサポーターAPIをDiscordユーザーIDの許可リストで保護する。未認証・未許可ユーザーには一律404を返し、画面レスポンスには `X-Robots-Tag: noindex, nofollow, noarchive` を付与する。Cloudflare Access認証済み管理者は画面資産のみ確認できるが、ユーザー操作にはDiscordログインも必要。`SUPPORTER_PUBLIC_ENABLED=true` は一般公開時だけ設定する。空値や未設定は閉鎖扱い。
 
+決済サービスの審査など、許可リスト外の人に画面を見せる場合は、Worker Secrets の `SUPPORTER_REVIEW_USER` と `SUPPORTER_REVIEW_PASSWORD` を設定する。
+
+- パスワードは12文字以上にする。2つがそろったときだけ有効になる。
+- 有効なときは、未許可の閲覧者に404ではなくユーザー名・パスワードの入力（HTTP Basic 認証）を求める。
+- 認証に成功したブラウザには12時間有効な署名付きCookieを発行する。その間は、Discordログイン後のサポーターAPIも許可リスト外のユーザーで利用できる（決済はテストモードのまま）。
+- 審査が終わったら `npx wrangler secret delete SUPPORTER_REVIEW_PASSWORD` で無効化する。パスワードを変えると、発行済みのCookieも無効になる。
+
 価格はJPYで、BASIC月額300円、Plus月額800円、Pro月額1,280円。追加チャンネル3件・追加サーバー2件・追加通知ルール3件の各パックにつき月額200円。税込総額として価格を登録し、追加税を自動加算する設定は使用しない。Portalは支払方法変更、請求履歴、期間末解約を有効にし、プラン・数量変更はDPI-Bot側の確認画面から行う。
 
 アップグレード前は `POST /v1/invoices/create_preview` で基本プランの差額だけを見積もり、同じ `proration_date` を確定時のSubscription更新に使用する。確認画面では旧プランの未使用分（返金相当額）、新プランの残期間分、その差額を分けて表示する。ダウングレードまたは利用枠の削減はSubscription Scheduleへ予約し、返金・日割り精算を行わず、現在の契約期間終了後の26日から適用する。追加オプションの即時変更は `proration_behavior=none` とする。
