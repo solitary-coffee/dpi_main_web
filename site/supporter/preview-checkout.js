@@ -15,7 +15,9 @@
     const response = await fetch('/api/supporter/preview-checkout', {
      method: 'POST', credentials: 'same-origin',
      headers: {'Content-Type': 'application/json', Accept: 'application/json'},
-     body: JSON.stringify({plan: button.dataset.previewPlan}),
+     body: JSON.stringify(button.dataset.previewPlan === 'credit'
+      ? {plan: 'credit', amount: Number(document.getElementById('preview-credit-amount')?.value)}
+      : {plan: button.dataset.previewPlan}),
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok || typeof data.url !== 'string' || !data.url.startsWith('https://checkout.stripe.com/')) {

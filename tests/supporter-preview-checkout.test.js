@@ -67,3 +67,21 @@ test('画面にログイン不要のテスト支払いボタンがある', async
  for (const plan of ['supporter', 'plus', 'pro']) assert.match(html, new RegExp(`data-preview-plan="${plan}"`));
  assert.match(html, /preview-checkout\.js/);
 });
+
+test('ログインなしのクレジットチャージは指定金額のテスト決済を作り、範囲外は断る', async t => {
+ const originalFetch = globalThis.fetch;
+ t.after(() => { globalThis.fetch = originalFetch; });
+ const sent = [];
+ globalThis.fetch = async (url, options) => { sent.push(new URLSearchParams(options.body)); return Response.json({url: 'https://checkout.stripe.com/c/pay/cs_test_2'}); };
+ const env = {...billingEnv, SUPPORTER_PREVIEW_OPEN: 'true'};
+ const ok = await handleSupporterRequest(post({plan: 'credit', amount: 3000}), env);
+ assert.equal(ok.status, 200);
+ assert.equal(sent[0].get('line_items[0][price_data][unit_amount]'), '3000');
+ assert.equal(sent[0].get('metadata[dpi_checkout_kind]'), 'preview_demo');
+ assert.equal(sent[0].get('metadata[dpi_user]'), null);
+ assert.equal(sent[0].get('customer'), null);
+ for (const amount of [499, 100001, 1000.5, 'abc']) {
+  assert.equal((await handleSupporterRequest(post({plan: 'credit', amount}), env)).status, 400);
+ }
+ assert.equal(sent.length, 1);
+});
