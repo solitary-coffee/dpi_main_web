@@ -29,6 +29,9 @@ export const PLAN_CATALOG=Object.freeze({
 });
 // テスト公開中だけの「ログイン不要のテスト支払い」。誰の契約にも紐づけず（customer・dpi_user なし）、
 // Webhook でも dpi_checkout_kind=preview_demo は何も反映しない。テストモードの鍵でだけ動く。
+// プラン（サブスク）関連の支払いページでは PayPay を出さない（次回以降の自動課金に使えないため）。
+// クレジットチャージなど 1 回払いでは使える。
+export const SUBSCRIPTION_EXCLUDED_PAYMENT_METHODS=Object.freeze({'excluded_payment_method_types[0]':'paypay'});
 export async function createPreviewCheckout(env,plan,input={}){
  // plan='credit' はクレジットチャージのテスト（金額は通常のチャージと同じ範囲）。クレジットは付与しない。
  const credit=plan==='credit';
@@ -37,7 +40,7 @@ export async function createPreviewCheckout(env,plan,input={}){
  const amount=credit?normalizeCreditTopupAmount(input?.amount):definition.yen;
  if(!billingReady(env))fail('テスト支払いページを用意できません。時間をおいて再試行してください。',503);
  const origin=env.SUPPORTER_PUBLIC_ORIGIN||'https://dpi-bot.com';
- const session=await stripe(env,'checkout/sessions',{mode:'payment',
+ const session=await stripe(env,'checkout/sessions',{mode:'payment',...(credit?{}:SUBSCRIPTION_EXCLUDED_PAYMENT_METHODS),
   'line_items[0][price_data][currency]':'jpy','line_items[0][price_data][unit_amount]':String(amount),
   'line_items[0][price_data][product_data][name]':credit?`DPI-Bot クレジット ${amount.toLocaleString('ja-JP')}ポイント（テスト決済）`:`DPI-Bot ${definition.name}プラン 月額（テスト決済）`,'line_items[0][quantity]':'1',
   'metadata[dpi_checkout_kind]':'preview_demo',[credit?'metadata[dpi_preview_credit_amount]':'metadata[dpi_plan]']:credit?String(amount):definition.id,
@@ -943,7 +946,7 @@ export async function billingAction(request,env,db,uid,input={}){
  }
  row=await recoverStaleCheckoutAttempt(db,uid,row);
  // Persist exact parameters and key before network IO. Concurrent clicks share one session.
- const params={mode:'payment',customer:row.customer_id,client_reference_id:uid,
+ const params={mode:'payment',customer:row.customer_id,client_reference_id:uid,...SUBSCRIPTION_EXCLUDED_PAYMENT_METHODS,
   'payment_intent_data[setup_future_usage]':'off_session','payment_intent_data[metadata][dpi_user]':uid,
   'metadata[dpi_checkout_kind]':'initial_subscription','metadata[dpi_user]':uid,'metadata[dpi_plan]':choice.plan,
   'metadata[dpi_legal_consent_version]':legalConsentVersion,'metadata[dpi_channel_packs]':String(choice.channelPacks),
@@ -1396,7 +1399,7 @@ export function customInitialCheckoutParams(customer,uid,offer,requestId,now=Dat
  const amount=Number(offer.confirmed_yen)*schedule.initialMonths;
  if(!Number.isSafeInteger(amount)||amount>2000000)fail('初回の請求額が上限を超えています。',409);
  return {
-  mode:'payment',customer,client_reference_id:uid,
+  mode:'payment',customer,client_reference_id:uid,...SUBSCRIPTION_EXCLUDED_PAYMENT_METHODS,
   'line_items[0][price_data][currency]':'jpy',
   'line_items[0][price_data][unit_amount]':String(amount),
   'line_items[0][price_data][product_data][name]':`${String(offer.name||'カスタムプラン').slice(0,55)} 初回利用料`,
@@ -1497,7 +1500,7 @@ export async function createCustomDifferenceCheckout(env,customer,uid,offer,chan
  const amount=Number(change.amount_due_yen);
  const origin=actionOrigin(env),now=Math.floor(Date.now()/1000);
  const checkout=await stripe(env,'checkout/sessions',{
-  mode:'payment',customer,client_reference_id:uid,
+  mode:'payment',customer,client_reference_id:uid,...SUBSCRIPTION_EXCLUDED_PAYMENT_METHODS,
   'line_items[0][price_data][currency]':'jpy',
   'line_items[0][price_data][unit_amount]':String(amount),
   'line_items[0][price_data][product_data][name]':`${offer.name} 当月分変更差額`.slice(0,80),

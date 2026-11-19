@@ -225,7 +225,8 @@ test('paid plans stay separate from secondary-use applications and private in na
  assert.match(basicHtml,/BASIC/);
  assert.doesNotMatch(basicHtml,/service-dashboard/);
  assert.doesNotMatch(basicHtml,/<nav[\s\S]*?<a href="\/site\/supporter\//);
- assert.doesNotMatch(billingSource,/payment_method_types/);
+ // 支払い方法の指定はダッシュボードに任せる（コードで列挙しない）。除外（プランでの PayPay）だけは許す。
+ assert.doesNotMatch(billingSource,/(?<!excluded_)payment_method_types/);
  assert.match(billingSource,/payment_intent_data\[setup_future_usage\].*off_session/);
  assert.match(billingSource,/初回利用料（当月分・翌月分の2か月分）/);
  assert.match(billingSource,/invoices\/create_preview/);
