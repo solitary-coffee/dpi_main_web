@@ -29,15 +29,18 @@ export const PLAN_CATALOG=Object.freeze({
 });
 // テスト公開中だけの「ログイン不要のテスト支払い」。誰の契約にも紐づけず（customer・dpi_user なし）、
 // Webhook でも dpi_checkout_kind=preview_demo は何も反映しない。テストモードの鍵でだけ動く。
-export async function createPreviewCheckout(env,plan){
- const definition=PLAN_CATALOG[plan];
- if(!definition)fail('プランを選び直してください。');
+export async function createPreviewCheckout(env,plan,input={}){
+ // plan='credit' はクレジットチャージのテスト（金額は通常のチャージと同じ範囲）。クレジットは付与しない。
+ const credit=plan==='credit';
+ const definition=credit?null:PLAN_CATALOG[plan];
+ if(!credit&&!definition)fail('プランを選び直してください。');
+ const amount=credit?normalizeCreditTopupAmount(input?.amount):definition.yen;
  if(!billingReady(env))fail('テスト支払いページを用意できません。時間をおいて再試行してください。',503);
  const origin=env.SUPPORTER_PUBLIC_ORIGIN||'https://dpi-bot.com';
  const session=await stripe(env,'checkout/sessions',{mode:'payment',
-  'line_items[0][price_data][currency]':'jpy','line_items[0][price_data][unit_amount]':String(definition.yen),
-  'line_items[0][price_data][product_data][name]':`DPI-Bot ${definition.name}プラン 月額（テスト決済）`,'line_items[0][quantity]':'1',
-  'metadata[dpi_checkout_kind]':'preview_demo','metadata[dpi_plan]':definition.id,
+  'line_items[0][price_data][currency]':'jpy','line_items[0][price_data][unit_amount]':String(amount),
+  'line_items[0][price_data][product_data][name]':credit?`DPI-Bot クレジット ${amount.toLocaleString('ja-JP')}ポイント（テスト決済）`:`DPI-Bot ${definition.name}プラン 月額（テスト決済）`,'line_items[0][quantity]':'1',
+  'metadata[dpi_checkout_kind]':'preview_demo',[credit?'metadata[dpi_preview_credit_amount]':'metadata[dpi_plan]']:credit?String(amount):definition.id,
   success_url:`${origin}/site/supporter/?preview_checkout=completed`,cancel_url:`${origin}/site/supporter/?preview_checkout=canceled`,
   expires_at:String(Math.floor(Date.now()/1000)+1800),integration_identifier:integrationIdentifier('dpi_preview_')},`dpi-preview-${crypto.randomUUID()}`);
  if(!session?.url)fail('テスト支払いページを用意できませんでした。',502);

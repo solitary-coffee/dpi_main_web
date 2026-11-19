@@ -79,3 +79,6 @@
 /* ログイン不要のテスト支払い（テスト公開中だけ） */
 .preview-checkout{border:1px dashed #e0b84a}
 .preview-checkout-buttons{display:flex;flex-wrap:wrap;gap:10px;margin-top:10px}
+.preview-checkout-subtitle{margin:18px 0 4px;font-size:1rem}
+.preview-credit-label{display:flex;align-items:center;gap:8px}
+.preview-credit-label input{width:9em}

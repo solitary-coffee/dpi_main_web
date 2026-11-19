@@ -1101,7 +1101,7 @@ export async function handleSupporterRequest(request, env, ctx) {
    if (request.method !== 'POST') return response({message:'Method not allowed'},405);
    assertSameOrigin(request);
    const input = await readJson(request);
-   return response(await createPreviewCheckout(env, clean(input?.plan)));
+   return response(await createPreviewCheckout(env, clean(input?.plan), input));
   }
   if (path === '/api/supporter/plans' && request.method === 'GET' && (supporterPublicEnabled(env) || supporterPreviewOpen(env))) {
    return response({billingEnabled:false, deliveryEnabled:false, plans:publicPlans(), addons:{channel:{yen:200,channels:3},server:{yen:200,servers:2},rule:{yen:200,rules:3},prorated:false},billingDay:26});

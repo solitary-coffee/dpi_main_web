@@ -54,6 +54,12 @@
      <button type="button" class="secondary-btn" data-preview-plan="plus">Plus（月額800円）</button>
      <button type="button" class="secondary-btn" data-preview-plan="pro">Pro（月額1,280円）</button>
     </div>
+    <h3 class="preview-checkout-subtitle">クレジットチャージ（ログイン不要）</h3>
+    <p class="help">500〜100,000円の範囲で金額を指定して、チャージのテスト支払いページへ進めます。クレジットは付与されません。</p>
+    <div class="preview-checkout-buttons">
+     <label class="preview-credit-label">チャージ金額（円）<input id="preview-credit-amount" type="number" inputmode="numeric" min="500" max="100000" step="1" value="1000"></label>
+     <button type="button" class="secondary-btn" data-preview-plan="credit">クレジットをチャージ（テスト）</button>
+    </div>
     <p id="preview-checkout-status" class="help" role="status" aria-live="polite"></p>
    </section>
    <section class="section basic-hero">
