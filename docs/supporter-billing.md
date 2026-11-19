@@ -22,6 +22,10 @@ vars: SUPPORTER_BILLING_MODE=test、SUPPORTER_PUBLIC_ORIGIN=https://dpi-bot.com�
 - 画面には「テスト段階」の注意書き（`.preview-notice`）を表示する。正式公開時に削除する。
 - 配信スナップショットに含めるのは、許可リスト（`SUPPORTER_TEST_USER_IDS`）の利用者と、`SUPPORTER_PREVIEW_OPENED_AT` より前に登録したアカウントだけ。テスト公開後に登録した人の設定やテスト決済は、配信に使わない。
 - 開始時刻が未設定のときは、許可リストの利用者だけを含める。
+- ログインしなくても `POST /api/supporter/preview-checkout`（画面の「ログインせずにテスト支払いページを見る」）から、Stripe テストモードの支払いページへ進める。
+  - customer・`dpi_user` を付けない単発の支払い（`dpi_checkout_kind=preview_demo`）にする。
+  - Webhook では何も反映しない（契約・クレジット・通知なし）。
+  - テストモードの鍵のときだけ動く。
 
 決済サービスの審査など、許可リスト外の人に画面を見せる場合は、Worker Secrets の `SUPPORTER_REVIEW_USER` と `SUPPORTER_REVIEW_PASSWORD` を設定する。
 

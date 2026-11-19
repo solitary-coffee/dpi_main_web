@@ -27,6 +27,22 @@ export const PLAN_CATALOG=Object.freeze({
  plus:Object.freeze({id:'plus',name:'Plus',yen:800,channels:10,servers:3,rules:15,complexConditions:false,multiDestination:false,priceEnv:'STRIPE_PRICE_PLUS',features:PLAN_FEATURES.plus}),
  pro:Object.freeze({id:'pro',name:'Pro',yen:1280,channels:20,servers:5,rules:30,complexConditions:true,multiDestination:true,priceEnv:'STRIPE_PRICE_PRO',features:PLAN_FEATURES.pro}),
 });
+// テスト公開中だけの「ログイン不要のテスト支払い」。誰の契約にも紐づけず（customer・dpi_user なし）、
+// Webhook でも dpi_checkout_kind=preview_demo は何も反映しない。テストモードの鍵でだけ動く。
+export async function createPreviewCheckout(env,plan){
+ const definition=PLAN_CATALOG[plan];
+ if(!definition)fail('プランを選び直してください。');
+ if(!billingReady(env))fail('テスト支払いページを用意できません。時間をおいて再試行してください。',503);
+ const origin=env.SUPPORTER_PUBLIC_ORIGIN||'https://dpi-bot.com';
+ const session=await stripe(env,'checkout/sessions',{mode:'payment',
+  'line_items[0][price_data][currency]':'jpy','line_items[0][price_data][unit_amount]':String(definition.yen),
+  'line_items[0][price_data][product_data][name]':`DPI-Bot ${definition.name}プラン 月額（テスト決済）`,'line_items[0][quantity]':'1',
+  'metadata[dpi_checkout_kind]':'preview_demo','metadata[dpi_plan]':definition.id,
+  success_url:`${origin}/site/supporter/?preview_checkout=completed`,cancel_url:`${origin}/site/supporter/?preview_checkout=canceled`,
+  expires_at:String(Math.floor(Date.now()/1000)+1800),integration_identifier:integrationIdentifier('dpi_preview_')},`dpi-preview-${crypto.randomUUID()}`);
+ if(!session?.url)fail('テスト支払いページを用意できませんでした。',502);
+ return {url:session.url};
+}
 export function publicPlans(){return Object.values(PLAN_CATALOG).map(({priceEnv,...plan})=>plan);}
 function planDefinition(plan){const value=PLAN_CATALOG[plan];if(!value)fail('プランまたは追加オプション数が不正です。');return value;}
 function planPrice(env,plan){const definition=planDefinition(plan);const price=env[definition.priceEnv];if(!price)fail(`${definition.name}プランの決済設定が完了していません。`,503);return price;}
@@ -1240,7 +1256,10 @@ export async function billingWebhook(request,env,ctx){
  if(alreadyProcessed)return json({received:true});
  if(['checkout.session.completed','checkout.session.async_payment_succeeded'].includes(event.type)){
   const session=event.data?.object;
-  if(await rejectDisciplinedCheckout(env,db,session)){
+  if(checkoutMetadata(session).dpi_checkout_kind==='preview_demo'){
+   // ログイン不要のテスト支払い（テスト公開中の確認用）。契約・クレジット・通知には何も反映しない。
+   console.log('Preview checkout completed (no-op)',{sessionId:clean(session?.id)});
+  }else if(await rejectDisciplinedCheckout(env,db,session)){
    console.warn('Checkout completed after disciplinary action and was rejected',{sessionId:clean(session?.id),uid:clean(checkoutMetadata(session).dpi_user||session?.client_reference_id)});
   }else if(checkoutMetadata(session).dpi_checkout_kind==='custom_change'){
    const metadata=checkoutMetadata(session),uid=clean(metadata.dpi_user),changeId=clean(metadata.dpi_change_request);
