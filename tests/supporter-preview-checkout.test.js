@@ -85,3 +85,18 @@ test('ログインなしのクレジットチャージは指定金額のテス�
  }
  assert.equal(sent.length, 1);
 });
+
+test('プランの支払いページでは PayPay を除外し、クレジットチャージでは除外しない', async t => {
+ const originalFetch = globalThis.fetch;
+ t.after(() => { globalThis.fetch = originalFetch; });
+ const sent = [];
+ globalThis.fetch = async (url, options) => { sent.push(new URLSearchParams(options.body)); return Response.json({url: 'https://checkout.stripe.com/c/pay/cs_test_3'}); };
+ const env = {...billingEnv, SUPPORTER_PREVIEW_OPEN: 'true'};
+ await handleSupporterRequest(post({plan: 'pro'}), env);
+ await handleSupporterRequest(post({plan: 'credit', amount: 1000}), env);
+ assert.equal(sent[0].get('excluded_payment_method_types[0]'), 'paypay');
+ assert.equal(sent[1].get('excluded_payment_method_types[0]'), null);
+ const source = await readFile(new URL('../worker/supporter-billing.js', import.meta.url), 'utf8');
+ // 通常の申込み・カスタムプランの初回・カスタムプランの差額も除外する
+ assert.equal((source.match(/\.\.\.SUBSCRIPTION_EXCLUDED_PAYMENT_METHODS/g) || []).length, 3);
+});
