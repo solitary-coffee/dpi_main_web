@@ -234,8 +234,9 @@ async function auditLogSummary(url, env, admin) {
             && (!actor || String(item.actor || '').toLowerCase().includes(actor))
             && (!action || String(item.action || '').toLowerCase().includes(action))
             && (!query || haystack.includes(query))
-            && (!from || at >= `${from}T00:00:00`)
-            && (!to || at <= `${to}T23:59:59.999`);
+            // 入力は日本時間の日付。記録は UTC の ISO 文字列なので JST に合わせて比較する。
+            && (!from || at >= jstDayBoundary(from, false))
+            && (!to || at <= jstDayBoundary(to, true));
     });
     const limit = boundedInteger(url.searchParams.get('limit'), 100, 20, 200);
     const offset = boundedInteger(url.searchParams.get('offset'), 0, 0, Math.max(0, filtered.length));
@@ -575,3 +576,8 @@ function jsonResponse(body, status = 200, extraHeaders = {}) {
 }
 
 export const __test = Object.freeze({ groupedCounts, countApprovedDeliverySlots });
+
+function jstDayBoundary(day, endOfDay) {
+    const date = new Date(`${day}T${endOfDay ? '23:59:59.999' : '00:00:00'}+09:00`);
+    return Number.isNaN(date.getTime()) ? (endOfDay ? `${day}T23:59:59.999` : `${day}T00:00:00`) : date.toISOString();
+}

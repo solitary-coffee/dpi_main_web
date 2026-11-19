@@ -514,7 +514,15 @@ async function recoverStaleCheckoutAttempt(db,uid,row){
   WHERE discord_user_id=? AND checkout_key=?`).bind(uid,row.checkout_key).run();
  return await db.prepare('SELECT * FROM supporter_billing WHERE discord_user_id=?').bind(uid).first();
 }
-async function subscriptions(env,customer){return (await stripe(env,`subscriptions?customer=${encodeURIComponent(customer)}&status=all&limit=100`)).data.filter(s=>!['canceled','incomplete_expired'].includes(s.status));}
+async function allSubscriptions(env,customer){return (await stripe(env,`subscriptions?customer=${encodeURIComponent(customer)}&status=all&limit=100`)).data||[];}
+function liveSubscriptions(list){return (list||[]).filter(s=>!['canceled','incomplete_expired'].includes(s.status));}
+async function subscriptions(env,customer){return liveSubscriptions(await allSubscriptions(env,customer));}
+// 初回決済の Checkout から既に契約を作ったか（解約済みの契約も含めて判定）。
+// 作った後に解約された Checkout を「Webhook 取りこぼし」とみなして契約を作り直さないための判定。
+export function checkoutConsumed(allSubs,session){
+ const id=clean(session?.id),created=Number(session?.created||0);
+ return (allSubs||[]).some(s=>(id&&(s?.metadata?.dpi_initial_session===id||s?.metadata?.dpi_custom_initial_session===id))||(created>0&&Number(s?.created||0)>=created));
+}
 async function checkoutDiscipline(db,uid,session){
  if(!db||!uid)return null;
  const account=await db.prepare('SELECT account_status FROM supporter_accounts WHERE discord_user_id=?').bind(uid).first();
@@ -538,7 +546,10 @@ export async function rejectDisciplinedCheckout(env,db,session){
 export async function expireSupporterPendingCheckouts(env,db,uid,requestId){
  const billing=await db.prepare('SELECT checkout_id FROM supporter_billing WHERE discord_user_id=?').bind(uid).first();
  const topups=await db.prepare(`SELECT checkout_session_id FROM supporter_credit_topups WHERE discord_user_id=? AND status='pending' AND checkout_session_id IS NOT NULL LIMIT 20`).bind(uid).all();
- const ids=[...new Set([clean(billing?.checkout_id),...(topups.results||[]).map(row=>clean(row.checkout_session_id))].filter(Boolean))];let expired=0;
+ // カスタムプランの初回決済・差額決済の支払いURLも、処分後に支払われないよう失効させる。
+ const custom=await db.prepare(`SELECT stripe_checkout_id FROM supporter_custom_plans WHERE discord_user_id=? AND status='offered' AND stripe_checkout_id IS NOT NULL`).bind(uid).first();
+ const changes=await db.prepare(`SELECT checkout_session_id FROM supporter_custom_plan_changes WHERE discord_user_id=? AND status='pending' AND checkout_session_id IS NOT NULL LIMIT 20`).bind(uid).all();
+ const ids=[...new Set([clean(billing?.checkout_id),clean(custom?.stripe_checkout_id),...(changes.results||[]).map(row=>clean(row.checkout_session_id)),...(topups.results||[]).map(row=>clean(row.checkout_session_id))].filter(Boolean))];let expired=0;
  for(const id of ids){
   const session=await stripe(env,`checkout/sessions/${encodeURIComponent(id)}`);
   if(session.status==='open'){await stripe(env,`checkout/sessions/${encodeURIComponent(id)}/expire`,{},`dpi-discipline-expire-${requestId}-${id}`);expired+=1;}
@@ -547,6 +558,8 @@ export async function expireSupporterPendingCheckouts(env,db,uid,requestId){
  await db.batch([
   db.prepare('UPDATE supporter_billing SET checkout_key=NULL,checkout_id=NULL,checkout_params=NULL,dirty=1 WHERE discord_user_id=?').bind(uid),
   db.prepare(`UPDATE supporter_credit_topups SET status='failed',updated_at=? WHERE discord_user_id=? AND status='pending'`).bind(now,uid),
+  db.prepare(`UPDATE supporter_custom_plans SET stripe_checkout_id=NULL,checkout_expires_at=NULL,updated_at=? WHERE discord_user_id=? AND status='offered' AND stripe_checkout_id IS NOT NULL`).bind(new Date(now*1000).toISOString(),uid),
+  db.prepare(`UPDATE supporter_custom_plan_changes SET status='canceled',updated_at=? WHERE discord_user_id=? AND status='pending'`).bind(new Date(now*1000).toISOString(),uid),
  ]);
  return expired;
 }
@@ -585,12 +598,16 @@ export async function provisionPaidCheckoutSubscription(env,session){
  if(session?.mode!=='payment'||metadata.dpi_checkout_kind!=='initial_subscription'||session.payment_status!=='paid')return null;
  const customer=typeof session.customer==='string'?session.customer:session.customer?.id;
  if(!customer)fail('初回決済の顧客情報を確認できませんでした。',502);
- const existing=await subscriptions(env,customer);
+ const all=await allSubscriptions(env,customer),existing=liveSubscriptions(all);
  if(existing.length)return existing[0];
+ // 解約済みの契約がこの Checkout 以降に作られていれば、もう使用済み。Webhook の再送や
+ // 冪等キー（24時間）切れの後に、解約した人へ新しい月額契約を作らない。
+ if(checkoutConsumed(all,session))return null;
  const paymentIntentId=typeof session.payment_intent==='string'?session.payment_intent:session.payment_intent?.id;
  if(!paymentIntentId)fail('初回決済情報を確認できませんでした。',502);
  const paymentIntent=await stripe(env,`payment_intents/${encodeURIComponent(paymentIntentId)}`);
  const params=paidCheckoutSubscriptionParams(env,session,paymentIntent);
+ params['metadata[dpi_initial_session]']=String(session.id||'');
  return await stripe(env,'subscriptions',params,`dpi-initial-subscription-v2-${session.id}`);
 }
 function recoverablePaidCheckout(session,customer,uid){
@@ -600,25 +617,30 @@ function recoverablePaidCheckout(session,customer,uid){
 }
 export async function reconcilePaidCheckoutSubscription(env,customer,uid,db=null){
  if(!customer||!uid||!billingReady(env))return {subscription:null,recovered:false,checkoutId:null};
- const existing=await subscriptions(env,customer);
+ const all=await allSubscriptions(env,customer),existing=liveSubscriptions(all);
  if(existing.length)return {subscription:existing[0],recovered:false,checkoutId:null};
  const result=await stripe(env,`checkout/sessions?customer=${encodeURIComponent(customer)}&limit=20`);
+ // 既に契約を作った（その後に解約・処分された）Checkout は復旧の対象外。返金判定にも回さない。
+ const unconsumed=(result.data||[]).filter(item=>!checkoutConsumed(all,item));
  if(db){
-  const custom=(result.data||[]).filter(item=>
+  const custom=unconsumed.filter(item=>
    item.mode==='payment'&&item.status==='complete'&&item.payment_status==='paid'
    &&checkoutMetadata(item).dpi_checkout_kind==='custom_subscription_initial'
    &&stripeId(item.customer)===customer&&checkoutMetadata(item).dpi_user===uid)
    .sort((a,b)=>Number(b.created||0)-Number(a.created||0));
   for(const item of custom){
    if(await rejectDisciplinedCheckout(env,db,item))continue;
-   const sub=await provisionCustomPaidCheckoutSubscription(env,db,item);
+   let sub=null;
+   // 停止・再提示されたカスタムプランの古い決済で 409 が出ても、契約画面（status）全体を止めない。
+   try{sub=await provisionCustomPaidCheckoutSubscription(env,db,item);}
+   catch(error){console.error('Custom checkout recovery skipped',{sessionId:clean(item?.id),status:error?.status||null});continue;}
    if(sub){
     await syncCustomWithStripe(db,uid,customer,await customerSubscriptionSummaries(env,customer));
     return {subscription:sub,recovered:true,checkoutId:item.id};
    }
   }
  }
- const candidates=(result.data||[]).filter(item=>recoverablePaidCheckout(item,customer,uid)).sort((a,b)=>Number(b.created||0)-Number(a.created||0));
+ const candidates=unconsumed.filter(item=>recoverablePaidCheckout(item,customer,uid)).sort((a,b)=>Number(b.created||0)-Number(a.created||0));
  let session=null;for(const candidate of candidates){if(db&&await rejectDisciplinedCheckout(env,db,candidate))continue;session=candidate;break;}
  if(!session)return {subscription:null,recovered:false,checkoutId:null};
  const subscription=await provisionPaidCheckoutSubscription(env,session);
@@ -675,15 +697,26 @@ export async function provisionCreditFundedSignup(env,db,uid,customer,choice,inp
   return {subscription:recoveredBefore,amount,balanceAfter,requestId:attempt.request_id,recovered:true};
  }
  if(before.length){await db.prepare(`UPDATE supporter_credit_signups SET status='failed',updated_at=? WHERE request_id=? AND status='pending'`).bind(now,attempt.request_id).run();fail('契約が存在します。「プラン・オプションを更新」をご利用ください。',409);}
- const credits=await customerCredits(env,customer);
- if(credits<amount){await db.prepare(`UPDATE supporter_credit_signups SET status='failed',updated_at=? WHERE request_id=? AND status='pending'`).bind(now,attempt.request_id).run();fail(`クレジット残高が不足しています。申込みには${amount.toLocaleString('ja-JP')}クレジット必要です。`,409);}
+ // 前回この申込みで引き落とし済み（debited）なら、もう一度引き落とさず契約作成だけをやり直す。
+ // 冪等キーは24時間で切れるため、再引き落としすると二重に減る。
+ const alreadyDebited=attempt.status==='debited'&&!!attempt.balance_transaction_id;
+ if(!alreadyDebited){
+  const credits=await customerCredits(env,customer);
+  if(credits<amount){await db.prepare(`UPDATE supporter_credit_signups SET status='failed',updated_at=? WHERE request_id=? AND status='pending'`).bind(now,attempt.request_id).run();fail(`クレジット残高が不足しています。申込みには${amount.toLocaleString('ja-JP')}クレジット必要です。`,409);}
+ }
  let transaction=null;
  try{
-  transaction=await stripe(env,`customers/${encodeURIComponent(customer)}/balance_transactions`,{
-   amount:String(amount),currency:'jpy',description:`DPI-Bot initial plan payment: ${attempt.request_id}`,
-   'metadata[dpi_user]':uid,'metadata[dpi_credit_action]':'initial_plan_payment','metadata[dpi_credit_signup_request_id]':attempt.request_id,
-  },`dpi-credit-signup-debit-${attempt.request_id}`);
-  const balanceAfter=creditsFromBalance(transaction.ending_balance);
+  let balanceAfter;
+  if(alreadyDebited){
+   transaction={id:attempt.balance_transaction_id};
+   balanceAfter=await customerCredits(env,customer);
+  }else{
+   transaction=await stripe(env,`customers/${encodeURIComponent(customer)}/balance_transactions`,{
+    amount:String(amount),currency:'jpy',description:`DPI-Bot initial plan payment: ${attempt.request_id}`,
+    'metadata[dpi_user]':uid,'metadata[dpi_credit_action]':'initial_plan_payment','metadata[dpi_credit_signup_request_id]':attempt.request_id,
+   },`dpi-credit-signup-debit-${attempt.request_id}`);
+   balanceAfter=creditsFromBalance(transaction.ending_balance);
+  }
   await db.prepare(`UPDATE supporter_credit_signups SET balance_transaction_id=?,status='debited',updated_at=? WHERE request_id=? AND status IN ('pending','debited')`).bind(transaction.id,now,attempt.request_id).run();
   const params=creditSignupSubscriptionParams(env,customer,uid,choice,schedule,legalConsentVersion,attempt.request_id);
   const subscription=await stripe(env,'subscriptions',params,`dpi-credit-signup-subscription-${attempt.request_id}`);
@@ -693,7 +726,10 @@ export async function provisionCreditFundedSignup(env,db,uid,customer,choice,inp
   catch(error){console.error('Credit signup email failed',{requestId:attempt.request_id,errorName:error?.name||'Error'});}
   return {subscription,amount,balanceAfter,requestId:attempt.request_id,recovered:false};
  }catch(error){
-  const recovered=creditSignupSubscription(await subscriptions(env,customer),attempt.request_id);
+  // 契約の有無を確認できないときは払い戻さず debited のまま残す（次回の申込みで引き落とし無しに再開できる）。
+  let recovered=null;
+  try{recovered=creditSignupSubscription(await subscriptions(env,customer),attempt.request_id);}
+  catch(lookupError){console.error('Credit signup recovery lookup failed',{requestId:attempt.request_id,errorName:lookupError?.name||'Error'});throw error;}
   if(recovered){
    const balanceAfter=await customerCredits(env,customer);
    const recoveredTransactionId=transaction?.id||attempt.balance_transaction_id;
@@ -924,8 +960,8 @@ export async function billingAction(request,env,db,uid,input={}){
   return json({url:checkout.url,amount,credits:amount,expiresAt:checkout.expires_at||now+86400,mode:'test'});
  }
  const choice=selection(input);
- const recovery=await reconcilePaidCheckoutSubscription(env,row.customer_id,uid);
- const existing=await subscriptions(env,row.customer_id);
+ const recovery=await reconcilePaidCheckoutSubscription(env,row.customer_id,uid,db);
+ const allExisting=await allSubscriptions(env,row.customer_id),existing=liveSubscriptions(allExisting);
  if(action==='preview-update'){
   const current=activeSubscription(existing);
   if(!current)return json({message:'更新できる契約がありません。先にプランを申し込んでください。'},409);
@@ -982,6 +1018,12 @@ export async function billingAction(request,env,db,uid,input={}){
  const checkout=row.checkout_id?await stripe(env,`checkout/sessions/${encodeURIComponent(row.checkout_id)}`):await stripe(env,'checkout/sessions',saved,`dpi-checkout-${row.checkout_key}`);
  await db.prepare('UPDATE supporter_billing SET checkout_id=? WHERE discord_user_id=? AND checkout_key=?').bind(checkout.id,uid,row.checkout_key).run();
  if(checkout.status==='expired'){await db.prepare('UPDATE supporter_billing SET checkout_key=NULL,checkout_id=NULL,checkout_params=NULL WHERE discord_user_id=? AND checkout_key=?').bind(uid,row.checkout_key).run();return json({message:'前の決済画面が期限切れです。再度お試しください。'},409);}
+ // 以前の申込み（完了済み・契約作成済み・その後解約）の Checkout が残っていると、解約後の再申込みが
+ // 「決済結果を確認中」のまま進めなくなる。使用済みなら記録を消して、もう一度押してもらう。
+ if(checkout.status==='complete'&&checkoutConsumed(allExisting,checkout)){
+  await db.prepare('UPDATE supporter_billing SET checkout_key=NULL,checkout_id=NULL,checkout_params=NULL WHERE discord_user_id=? AND checkout_key=?').bind(uid,row.checkout_key).run();
+  return json({message:'前回のお申込みは完了済みでした。もう一度「申し込む」を押してください。'},409);
+ }
  if(checkout.status!=='open')return json({message:'決済結果を確認中です。契約状態を更新してください。'},409);
  if(saved['metadata[dpi_plan]']!==params['metadata[dpi_plan]']||saved['metadata[dpi_channel_packs]']!==params['metadata[dpi_channel_packs]']||saved['metadata[dpi_server_packs]']!==params['metadata[dpi_server_packs]']||String(saved['metadata[dpi_rule_packs]']||0)!==params['metadata[dpi_rule_packs]'])return json({message:'別の条件で決済画面を作成済みです。期限切れ後に変更できます（最大1時間）。'},409);
  return json({url:checkout.url,mode:'test'});
@@ -1337,7 +1379,17 @@ export async function billingWebhook(request,env,ctx){
     const customer=typeof subscription.customer==='string'?subscription.customer:subscription.customer?.id;
     if(billing?.customer_id===customer)await syncCustomWithStripe(db,uid,customer,await customerSubscriptionSummaries(env,customer));
    }
-  }else if(summary.recognizedPlan&&['active','trialing','past_due','unpaid','paused'].includes(subscription?.status))await reconcileStoredRulesForCustomer(db,subscription.customer,summary);
+  }else if(summary.recognizedPlan&&['active','trialing','past_due','unpaid','paused'].includes(subscription?.status)){
+   // 再送された古いイベント本文の上限でルールを削らない。上限は Stripe の現在の契約から取り直す。
+   const customer=stripeId(subscription.customer);
+   const live=(await customerSubscriptionSummaries(env,customer)).filter(item=>item.recognizedPlan!==false&&['active','trialing','past_due','unpaid','paused'].includes(item.status));
+   if(live.length&&!live.some(item=>item.customId))await reconcileStoredRulesForCustomer(db,customer,combinedLimits(live));
+  }
+ }
+ if(event.type==='customer.subscription.deleted'){
+  // 終了した契約の未払い記録を閉じる。残したままだと、後で新しく契約して支払っても利用停止のままになる。
+  const subscriptionId=clean(event.data?.object?.id);
+  if(subscriptionId)await db.prepare(`UPDATE supporter_dunning SET status='closed',updated_at=? WHERE subscription_id=? AND status IN ('retry_scheduled','retrying','suspend_scheduled','suspended')`).bind(Math.floor(Date.now()/1000),subscriptionId).run();
  }
  // Events invalidate a cache only; status always comes from Stripe, never from stale event payloads.
  await db.batch([db.prepare('INSERT INTO supporter_stripe_events(id,received_at) VALUES(?,?) ON CONFLICT DO NOTHING').bind(event.id,Date.now()),db.prepare('UPDATE supporter_billing SET dirty=1 WHERE customer_id=?').bind(eventCustomerId(event))]);
@@ -1650,6 +1702,13 @@ export async function provisionCustomPaidCheckoutSubscription(env,db,session){
  const uid=clean(meta.dpi_user),customer=stripeId(session.customer);
  if(!/^\d{17,20}$/.test(uid)||!customer||session.client_reference_id!==uid)
   fail('カスタム契約の決済対象者が一致しません。',409);
+ {
+  // 既にこの決済から契約を作っていれば（解約済みでも）作り直さない。Webhook の再送で 409 を繰り返さない。
+  const all=await allSubscriptions(env,customer);
+  const prior=liveSubscriptions(all).find(x=>x.metadata?.dpi_custom_initial_session===session.id);
+  if(prior)return prior;
+  if(all.some(x=>x.metadata?.dpi_custom_initial_session===session.id))return null;
+ }
  const offer=await getCustomPlan(db,uid);
  const billing=await db.prepare('SELECT customer_id FROM supporter_billing WHERE discord_user_id=?').bind(uid).first();
  const monthly=Number(meta.dpi_custom_monthly_yen),months=Number(meta.dpi_initial_months);

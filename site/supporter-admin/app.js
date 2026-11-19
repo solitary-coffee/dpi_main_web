@@ -341,8 +341,8 @@ async function submitAction(event) {
  event.preventDefault();
  if(!selectedAccount)return;
  const action=$('action-kind').value;
- const destructive=['refund_latest','cancel_immediately','remove_credit','confiscate_credit','disciplinary_cancel','ban_account','reset_checkout_state'].includes(action);
- if(destructive&&!window.confirm(action==='refund_latest'?'返金は取り消せません。指定額を返金しますか？':action==='remove_credit'?'指定したクレジットを削除しますか？':action==='confiscate_credit'?'実行時点の全クレジットを没収します。元に戻せません。実行しますか？':action==='disciplinary_cancel'?'処分①を実行します。全契約の即時解除・残クレジット全没収・返金なしで、ユーザーへ通知メールを送信します。実行しますか？':action==='ban_account'?'処分②を実行します。全契約の即時解除・残クレジット全没収後、再申込み不可のBAN状態にします。実行しますか？':action==='reset_checkout_state'?'決済途中データをD1から削除します。Stripe Customerと契約情報は保持されます。実行しますか？':'契約は直ちに終了します。本当に実行しますか？'))return;
+ const destructive=['refund_latest','cancel_immediately','remove_credit','confiscate_credit','disciplinary_cancel','ban_account','reset_checkout_state','grant_credit','create_payment_link','change_subscription'].includes(action);
+ if(destructive&&!window.confirm(action==='refund_latest'?'返金は取り消せません。指定額を返金しますか？':action==='remove_credit'?'指定したクレジットを削除しますか？':action==='confiscate_credit'?'実行時点の全クレジットを没収します。元に戻せません。実行しますか？':action==='disciplinary_cancel'?'処分①を実行します。全契約の即時解除・残クレジット全没収・返金なしで、ユーザーへ通知メールを送信します。実行しますか？':action==='ban_account'?'処分②を実行します。全契約の即時解除・残クレジット全没収後、再申込み不可のBAN状態にします。実行しますか？':action==='reset_checkout_state'?'決済途中データをD1から削除します。Stripe Customerと契約情報は保持されます。実行しますか？':action==='grant_credit'?`${selectedAccount.discordUserId} に ${Number($('action-amount').value)||0} クレジットを付与します。実行しますか？`:action==='create_payment_link'?`${selectedAccount.discordUserId} 向けに ${Number($('action-amount').value)||0} 円の支払いURLを作成します。実行しますか？`:action==='change_subscription'?`${selectedAccount.discordUserId} の契約内容を変更します。実行しますか？`:'契約は直ちに終了します。本当に実行しますか？'))return;
  const payload={discordUserId:selectedAccount.discordUserId,confirmDiscordUserId:$('confirm-discord-id').value.trim(),action,reason:$('action-reason').value.trim(),requestId:actionRequestId||crypto.randomUUID()};
  if(action==='change_subscription'){payload.plan=$('change-plan').value;payload.channelPacks=Number($('change-packs').value);payload.serverPacks=Number($('change-server-packs').value);payload.rulePacks=Number($('change-rule-packs').value);}
  if(['refund_latest','create_payment_link','grant_credit','remove_credit'].includes(action))payload.amount=Number($('action-amount').value);
@@ -359,7 +359,8 @@ async function submitAction(event) {
   if(data.emailStatus==='skipped')result.append(document.createElement('br'),element('span','billing-error','処分は完了しましたが、送信可能なメールアドレスまたはメール設定がありません。'));
   if(data.url){const link=paymentLink(data.url);result.append(document.createElement('br'),link);}
   setStatus(data.message,'success');
-  actionRequestId='';
+  // 成功後に同じ入力のまま再実行して二重付与しないよう、入力を空にする。
+  actionRequestId='';$('action-amount').value='';$('action-reason').value='';$('confirm-discord-id').value='';
   await loadAccounts();
  } catch(error){$('action-result').textContent=error.message;setStatus(error.message,'error');}
  finally{button.disabled=false;}

@@ -159,7 +159,10 @@ function validateIncident(input, isMaintenance, incidentId) {
     }
     if (!IMPACTS.has(impact)) throw new StatuspageAdminError(400, '影響度を選択してください。', 'invalid_impact');
     const componentIds = uniqueIds(input.componentIds);
-    const componentStatus = clean(input.componentStatus, 40) || (isMaintenance ? 'under_maintenance' : 'degraded_performance');
+    // 解決・完了にしたのに、編集フォームの初期値（障害・メンテナンス中）でコンポーネントが残らないようにする。
+    const closing = status === 'resolved' || status === 'completed';
+    const componentStatus = closing ? 'operational'
+        : (clean(input.componentStatus, 40) || (isMaintenance ? 'under_maintenance' : 'degraded_performance'));
     if (!COMPONENT_STATUSES.has(componentStatus)) throw new StatuspageAdminError(400, '対象コンポーネントの状態を選択してください。', 'invalid_component_status');
     const incident = {
         name,

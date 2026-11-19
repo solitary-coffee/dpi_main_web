@@ -235,10 +235,15 @@ async function executeReview(action) {
     const label = statusLabels[action.action];
     setStatus('審査結果を保存し、メールを送信しています…', 'info');
     try {
-        await api(`/site/reuse-admin/api/applications/${action.app.id}/review`, { method: 'POST', body: JSON.stringify({ action: action.action, message: action.message }) });
-        setStatus(`審査結果「${label}」を保存し、メールを送信しました。`, 'success');
+        const result = await api(`/site/reuse-admin/api/applications/${action.app.id}/review`, { method: 'POST', body: JSON.stringify({ action: action.action, message: action.message }) });
+        if (result && result.emailSent === false) setStatus(result.message || `審査結果「${label}」は保存しましたが、メールを送れませんでした。`, 'error');
+        else setStatus(`審査結果「${label}」を保存し、メールを送信しました。`, 'success');
         await loadApplications();
-    } catch (error) { setStatus(error.message, 'error'); action.button.disabled = false; }
+    } catch (error) {
+        setStatus(error.message, 'error'); action.button.disabled = false;
+        // 失敗時も一覧を取り直し、画面と実際の状態がずれないようにする。
+        await loadApplications().catch(() => {});
+    }
 }
 
 function openAdminConfirmation(action) {

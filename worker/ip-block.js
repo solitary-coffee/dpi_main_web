@@ -134,8 +134,10 @@ async function loadDatabaseRules(env) {
             errorCode: error?.code || 'unknown',
             errorMessage: cleanText(error?.message, 200) || 'unknown',
         });
-        databaseRuleCache.set(database, { expiresAt: Date.now() + DATABASE_CACHE_MS, rules: [] });
-        return [];
+        // D1 の一時障害で遮断ルールが「なし」にならないよう、前回読めたルールを短時間使い続ける。
+        const previous = databaseRuleCache.get(database)?.rules || [];
+        databaseRuleCache.set(database, { expiresAt: Date.now() + 5_000, rules: previous });
+        return previous;
     }
 }
 
