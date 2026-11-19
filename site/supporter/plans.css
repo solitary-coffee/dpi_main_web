@@ -54,3 +54,9 @@
 
 .comparison-future-note{margin:10px 0 18px;padding:12px 16px;border-left:4px solid var(--blue);background:var(--panel-soft);color:var(--text);font-weight:650}
 .delivery-category li{margin:8px 0;line-height:1.65}
+
+/* テスト公開中の注意書き */
+.preview-notice{margin:14px 0 22px;padding:14px 18px;border:1px solid #e0b84a;border-left:6px solid #e0b84a;border-radius:9px;background:#3d3418;color:#fff4d6;line-height:1.7}
+.preview-notice strong{display:block;margin-bottom:4px;font-size:1.05rem;color:#ffd96a}
+.preview-notice ul{margin:0;padding-left:1.3em}
+.preview-notice li{margin:2px 0}
