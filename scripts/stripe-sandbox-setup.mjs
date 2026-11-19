@@ -7,6 +7,7 @@
 //    - 月額の料金 4 つ（BASIC 300 円・Plus 800 円・Pro 1,280 円・追加オプション 200 円、税込・JPY）
 //    - カスタマーポータルの設定（支払い方法の変更・請求履歴・期間末解約。プラン変更は無効）
 //    - Webhook の送信先（https://dpi-bot.com/api/supporter/stripe/webhook、13 イベント）
+//    - 既定の支払い方法の設定で、設定できる支払い方法をすべて有効化（PayPay を含む）
 // 3. wrangler.jsonc の料金 ID・ポータル ID を書き換え、Worker Secrets の
 //    STRIPE_SECRET_KEY と STRIPE_WEBHOOK_SECRET を登録する（値は画面に出さない）。
 // 本番キー（sk_live_ / rk_live_）は受け付けない。
@@ -64,6 +65,33 @@ function putSecret(name, value) {
  if (result.status !== 0) throw new Error(`${name} の登録に失敗しました: ${(result.stderr || result.stdout || '').trim().slice(-300)}`);
 }
 
+// 既定の支払い方法の設定（Checkout がコードで方法を指定しないときに使われる）で、
+// 設定できる支払い方法をすべて「オン」にする。実際に表示されるかは Stripe が決済ごとに判断する
+// （例：PayPay は 1 回払いのクレジットチャージでは表示、次回以降の自動課金が必要なプラン申込みでは非表示）。
+async function enableAllPaymentMethods() {
+ const list = await stripe('GET', 'payment_method_configurations?limit=100');
+ const config = (list.data || []).find(item => item.is_default && !item.parent) || (list.data || []).find(item => item.is_default);
+ if (!config) {
+  console.log('注意: 既定の支払い方法の設定が見つかりません。ダッシュボードの「設定 → 支払い方法」で有効化してください。');
+  return;
+ }
+ const enabled = [], failed = [];
+ for (const [method, value] of Object.entries(config)) {
+  if (!value || typeof value !== 'object' || !value.display_preference) continue;
+  if (value.display_preference.value === 'on') { enabled.push(method); continue; }
+  try {
+   await stripe('POST', `payment_method_configurations/${config.id}`, {[`${method}[display_preference][preference]`]: 'on'});
+   enabled.push(method);
+  } catch (error) {
+   failed.push(`${method}（${error.message.replace(/^.*でエラー: /, '').slice(0, 80)}）`);
+  }
+ }
+ console.log(`有効化: 支払い方法 ${enabled.length} 種類 → ${enabled.join(', ')}`);
+ if (enabled.includes('paypay')) console.log('  PayPay は有効です（クレジットチャージなどの 1 回払いで表示されます）。');
+ else console.log('  注意: PayPay を有効にできませんでした。ダッシュボードの「設定 → 支払い方法」で確認してください。');
+ if (failed.length) console.log(`  有効にできなかったもの（この国・通貨では使えない等）: ${failed.join(' / ')}`);
+}
+
 async function main() {
  KEY = await askHidden('Stripe サンドボックスのシークレットキー（sk_test_... / rk_test_...）: ');
  if (/^(?:sk|rk)_live_/.test(KEY)) throw new Error('本番キーは使えません。サンドボックス（テスト）のキーを入力してください。');
@@ -107,6 +135,9 @@ async function main() {
  EVENTS.forEach((event, index) => { webhookParams[`enabled_events[${index}]`] = event; });
  const webhook = await stripe('POST', 'webhook_endpoints', webhookParams);
  console.log(`作成: Webhook 送信先 → ${webhook.id}（${EVENTS.length} イベント）`);
+
+ try { await enableAllPaymentMethods(); }
+ catch (error) { console.log(`注意: 支払い方法を有効化できませんでした（${error.message}）。ダッシュボードの「設定 → 支払い方法」で有効にしてください。`); }
 
  const configPath = path.join(root, 'wrangler.jsonc');
  let config = await readFile(configPath, 'utf8');
