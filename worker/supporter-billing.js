@@ -44,10 +44,28 @@ export async function createPreviewCheckout(env,plan,input={}){
   'line_items[0][price_data][currency]':'jpy','line_items[0][price_data][unit_amount]':String(amount),
   'line_items[0][price_data][product_data][name]':credit?`DPI-Bot クレジット ${amount.toLocaleString('ja-JP')}ポイント（テスト決済）`:`DPI-Bot ${definition.name}プラン 月額（テスト決済）`,'line_items[0][quantity]':'1',
   'metadata[dpi_checkout_kind]':'preview_demo',[credit?'metadata[dpi_preview_credit_amount]':'metadata[dpi_plan]']:credit?String(amount):definition.id,
-  success_url:`${origin}/site/supporter/?preview_checkout=completed`,cancel_url:`${origin}/site/supporter/?preview_checkout=canceled`,
+  success_url:`${origin}/site/supporter/?preview_checkout=completed&session_id={CHECKOUT_SESSION_ID}#preview-checkout`,cancel_url:`${origin}/site/supporter/?preview_checkout=canceled#preview-checkout`,
   expires_at:String(Math.floor(Date.now()/1000)+1800),integration_identifier:integrationIdentifier('dpi_preview_')},`dpi-preview-${crypto.randomUUID()}`);
  if(!session?.url)fail('テスト支払いページを用意できませんでした。',502);
  return {url:session.url};
+}
+// ログイン不要のテスト支払いから戻ったときの結果表示用。preview_demo の支払いだけを返し、個人情報は返さない。
+const PAYMENT_METHOD_LABELS=Object.freeze({card:'カード',paypay:'PayPay',link:'Link',konbini:'コンビニ',customer_balance:'銀行振込'});
+export async function previewCheckoutResult(env,sessionId){
+ if(!/^cs_test_[A-Za-z0-9_]{10,200}$/.test(String(sessionId||'')))fail('支払い結果を確認できません。',400);
+ const session=await stripe(env,`checkout/sessions/${encodeURIComponent(sessionId)}?expand[]=payment_intent.payment_method`);
+ const metadata=checkoutMetadata(session);
+ if(metadata.dpi_checkout_kind!=='preview_demo')fail('支払い結果を確認できません。',404);
+ const credit=Boolean(metadata.dpi_preview_credit_amount);
+ const plan=PLAN_CATALOG[metadata.dpi_plan];
+ const methodType=session?.payment_intent?.payment_method?.type||'';
+ return {
+  kind:credit?'credit':'plan',
+  completed:session?.status==='complete'&&session?.payment_status==='paid',
+  amount:Number(session?.amount_total||0),
+  planName:credit?null:(plan?.name||null),
+  paymentMethod:PAYMENT_METHOD_LABELS[methodType]||methodType||null,
+ };
 }
 export function publicPlans(){return Object.values(PLAN_CATALOG).map(({priceEnv,...plan})=>plan);}
 function planDefinition(plan){const value=PLAN_CATALOG[plan];if(!value)fail('プランまたは追加オプション数が不正です。');return value;}
