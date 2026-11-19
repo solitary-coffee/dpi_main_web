@@ -69,3 +69,9 @@
 .plan-section .option-cards{grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
 .billing-options{grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
 @media(max-width:768px){.plan-section .option-cards,.billing-options{grid-template-columns:1fr}}
+
+/* テスト公開中の注意書き */
+.preview-notice{margin:14px 0 22px;padding:14px 18px;border:1px solid #e0b84a;border-left:6px solid #e0b84a;border-radius:9px;background:#3d3418;color:#fff4d6;line-height:1.7}
+.preview-notice strong{display:block;margin-bottom:4px;font-size:1.05rem;color:#ffd96a}
+.preview-notice ul{margin:0;padding-left:1.3em}
+.preview-notice li{margin:2px 0}

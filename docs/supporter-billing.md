@@ -14,6 +14,15 @@ vars: SUPPORTER_BILLING_MODE=test、SUPPORTER_PUBLIC_ORIGIN=https://dpi-bot.com�
 
 限定公開中は `/site/supporter/` とサポーターAPIをDiscordユーザーIDの許可リストで保護する。未認証・未許可ユーザーには一律404を返し、画面レスポンスには `X-Robots-Tag: noindex, nofollow, noarchive` を付与する。Cloudflare Access認証済み管理者は画面資産のみ確認できるが、ユーザー操作にはDiscordログインも必要。`SUPPORTER_PUBLIC_ENABLED=true` は一般公開時だけ設定する。空値や未設定は閉鎖扱い。
 
+**テスト公開（2026-11-19〜）**
+
+`SUPPORTER_PREVIEW_OPEN=true` のときは、リンクを知っている人なら誰でも、パスワードなしで画面と API を使える。
+
+- 検索避け（`X-Robots-Tag: noindex`）は維持し、トップページなど公開ページからはリンクしない。
+- 画面には「テスト段階」の注意書き（`.preview-notice`）を表示する。正式公開時に削除する。
+- 配信スナップショットに含めるのは、許可リスト（`SUPPORTER_TEST_USER_IDS`）の利用者と、`SUPPORTER_PREVIEW_OPENED_AT` より前に登録したアカウントだけ。テスト公開後に登録した人の設定やテスト決済は、配信に使わない。
+- 開始時刻が未設定のときは、許可リストの利用者だけを含める。
+
 決済サービスの審査など、許可リスト外の人に画面を見せる場合は、Worker Secrets の `SUPPORTER_REVIEW_USER` と `SUPPORTER_REVIEW_PASSWORD` を設定する。
 
 - パスワードは12文字以上にする。2つがそろったときだけ有効になる。

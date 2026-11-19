@@ -70,3 +70,10 @@ test('API は Discord ログインが必要なまま（審査用 Cookie だけ�
  const response = await handleSupporterRequest(new Request('https://dpi-bot.com/api/supporter/plans', {headers: {Cookie: cookie}}), env);
  assert.equal(response.status, 404);
 });
+
+test('テスト公開中はパスワードなしで画面を返し、検索避けを維持する', async () => {
+ const env = {...baseEnv(), SUPPORTER_PREVIEW_OPEN: 'true'};
+ const response = await handleSupporterRequest(page({}), env);
+ assert.equal(response.status, 200);
+ assert.equal(response.headers.get('X-Robots-Tag'), 'noindex, nofollow, noarchive');
+});

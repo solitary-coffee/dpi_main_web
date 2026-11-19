@@ -71,7 +71,7 @@ test('comparison page and CSS share the paid dashboard access gate',async()=>{
  assert.match(html,/カスタムを相談する/);
  assert.match(html,/別途.*二次利用申請/s);
  assert.ok(js.includes('async function supporterSite(request, env, db)'));
- assert.ok(js.includes('if (!supporterPublicEnabled(env)) {'));
+ assert.ok(js.includes('if (!supporterPublicEnabled(env) && !supporterPreviewOpen(env)) {'));
  assert.ok(!js.includes('publicComparison'));
  assert.ok(js.includes('supporterTestUserAllowed(env, session.discord_user_id)'));
  assert.ok(js.includes('authenticateNewsletterAdmin(request, env)'));

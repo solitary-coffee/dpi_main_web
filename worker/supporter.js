@@ -705,8 +705,12 @@ async function assertRuleChannels(rules, env) {
 export function supporterPublicEnabled(env) {
  return clean(env.SUPPORTER_PUBLIC_ENABLED).toLowerCase() === 'true';
 }
+// テスト公開：リンクを知っている人は誰でも画面と API を使える（検索避けは維持、配信には使わない）。
+export function supporterPreviewOpen(env) {
+ return clean(env.SUPPORTER_PREVIEW_OPEN).toLowerCase() === 'true';
+}
 export function supporterTestUserAllowed(env, discordUserId) {
- if (supporterPublicEnabled(env)) return true;
+ if (supporterPublicEnabled(env) || supporterPreviewOpen(env)) return true;
  const allowed = new Set(clean(env.SUPPORTER_TEST_USER_IDS)
   .split(',')
   .map(value => value.trim())
@@ -720,7 +724,7 @@ async function supporterSite(request, env, db) {
  let reviewSetCookie = null;
  // Comparison assets and the contract dashboard share the same access gate.
  // Never bypass authentication for plans.html or its associated stylesheet.
- if (!supporterPublicEnabled(env)) {
+ if (!supporterPublicEnabled(env) && !supporterPreviewOpen(env)) {
   let allowed = false;
   try {
    const session = await requireSession(request, {...env, REUSE_DB: db});
@@ -1090,12 +1094,12 @@ export async function handleSupporterRequest(request, env, ctx) {
    if ((headers.get('content-type')||'').includes('text/html')) headers.set('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'");
    return new Response(asset.body,{status:asset.status,statusText:asset.statusText,headers});
   }
-  if (path === '/api/supporter/plans' && request.method === 'GET' && supporterPublicEnabled(env)) {
+  if (path === '/api/supporter/plans' && request.method === 'GET' && (supporterPublicEnabled(env) || supporterPreviewOpen(env))) {
    return response({billingEnabled:false, deliveryEnabled:false, plans:publicPlans(), addons:{channel:{yen:200,channels:3},server:{yen:200,servers:2},rule:{yen:200,rules:3},prorated:false},billingDay:26});
   }
   let session;
   try { session = await requireSession(request, {...env,REUSE_DB:db}); }
-  catch (error) { if (!supporterPublicEnabled(env)) return notFound(); throw error; }
+  catch (error) { if (!supporterPublicEnabled(env) && !supporterPreviewOpen(env)) return notFound(); throw error; }
   const uid = session.discord_user_id;
   if (!supporterTestUserAllowed(env, uid) && !(await reviewCookieValid(request, env))) return notFound();
   if (path === '/api/supporter/plans' && request.method === 'GET') {

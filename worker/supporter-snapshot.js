@@ -8,6 +8,20 @@ const SNAPSHOT_TTL_SECONDS = 30 * 60 * 60;
 const MAX_RULES = 10_000;
 const MAX_RESPONSE_BYTES = 128 * 1024;
 
+// テスト公開中（SUPPORTER_PREVIEW_OPEN=true かつ一般公開前）は、許可リスト（SUPPORTER_TEST_USER_IDS）の
+// 利用者と、テスト公開を始めた時刻（SUPPORTER_PREVIEW_OPENED_AT）より前に登録済みのアカウントだけを
+// 配信対象にする。テスト公開後に外部の人が登録・テスト決済をしても本番の配信には使わない。
+// 開始時刻が未設定・不正なら、許可リストの利用者だけにする（安全側）。
+function snapshotUserAllowed(env, row) {
+    const flag = name => String(env[name] ?? '').trim().toLowerCase() === 'true';
+    if (flag('SUPPORTER_PUBLIC_ENABLED') || !flag('SUPPORTER_PREVIEW_OPEN')) return true;
+    const allowed = new Set(String(env.SUPPORTER_TEST_USER_IDS ?? '').split(',').map(value => value.trim()).filter(value => /^\d{17,20}$/.test(value)));
+    if (allowed.has(String(row?.discord_user_id || ''))) return true;
+    const openedAt = Date.parse(String(env.SUPPORTER_PREVIEW_OPENED_AT ?? ''));
+    const registeredAt = Date.parse(String(row?.registered_at ?? ''));
+    return Number.isFinite(openedAt) && Number.isFinite(registeredAt) && registeredAt < openedAt;
+}
+
 function clean(value) {
     return typeof value === 'string' ? value.trim() : '';
 }
@@ -44,7 +58,7 @@ async function digestPrefix(value) {
 }
 
 export async function buildSupporterSnapshot(db, env, loadSubscriptions, nowMs = Date.now()) {
-    const rows = await db.prepare(`SELECT a.discord_user_id,a.settings_json,a.revision,b.customer_id
+    const rows = await db.prepare(`SELECT a.discord_user_id,a.settings_json,a.revision,a.registered_at,b.customer_id
         FROM supporter_accounts a
         JOIN supporter_billing b ON b.discord_user_id=a.discord_user_id
         WHERE a.account_status='active' AND b.customer_id IS NOT NULL
@@ -53,7 +67,7 @@ export async function buildSupporterSnapshot(db, env, loadSubscriptions, nowMs =
             WHERE d.customer_id=b.customer_id AND d.status='suspended'
           )
         ORDER BY a.discord_user_id`).all();
-    const accounts = rows.results || [];
+    const accounts = (rows.results || []).filter(row => snapshotUserAllowed(env, row));
     const customerIds = [...new Set(accounts.map(row => clean(row.customer_id)).filter(Boolean))];
     const grouped = await enrichCustomGroup(db,accounts,await loadSubscriptions(env, customerIds));
     const rules = [];
