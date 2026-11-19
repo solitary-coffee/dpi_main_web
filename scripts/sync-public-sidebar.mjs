@@ -18,6 +18,7 @@ const excluded = new Set([
     'site/reuse-admin/index.html',
     'site/supporter-admin/index.html',
     'site/cdn-admin/index.html',
+    'site/supporter-admin/stats.html',
 ]);
 
 const menuItems = [
@@ -74,13 +75,53 @@ function menuHtml(relativePath, indent) {
     }).join('\n');
 }
 
+// 公開ページ共通のフッター（本文 main の末尾）。特定商取引法に基づく表記などへのリンクを置く。
+// 各ページの style.css に依存しないよう、色は周囲の文字色を継承するインラインスタイルにする。
+const FOOTER_START = '<!-- dpi-public-footer:start -->';
+const FOOTER_END = '<!-- dpi-public-footer:end -->';
+const footerLinks = [
+    ['/terms/terms.html', '利用規約'],
+    ['/terms/policy.html', 'プライバシーポリシー'],
+    ['/terms/Specified.html', '特定商取引法に基づく表記'],
+    ['/site/supp/index.html', 'お問い合わせ'],
+];
+
+function footerHtml(indent) {
+    const linkStyle = 'color:inherit;text-decoration:underline;text-underline-offset:2px';
+    const links = footerLinks
+        .map(([href, label]) => `${indent}        <a href="${href}" style="${linkStyle}">${label}</a>`)
+        .join(`\n${indent}        <span aria-hidden="true">｜</span>\n`);
+    return [
+        `${indent}${FOOTER_START}`,
+        `${indent}<footer class="site-footer" style="margin-top:48px;padding:20px 0 8px;border-top:1px solid rgba(128,128,128,.35);font-size:13px;line-height:1.9;opacity:.85;text-align:center">`,
+        `${indent}    <nav aria-label="サイト情報" style="display:flex;flex-wrap:wrap;justify-content:center;gap:4px 10px">`,
+        links,
+        `${indent}    </nav>`,
+        `${indent}    <p style="margin:6px 0 0">&copy; DPI-Bot</p>`,
+        `${indent}</footer>`,
+        `${indent}${FOOTER_END}`,
+    ].join('\n');
+}
+
+function withFooter(source) {
+    const block = new RegExp(`[ \\t]*${FOOTER_START}[\\s\\S]*?${FOOTER_END}\\r?\\n?`, 'u');
+    const base = source.replace(block, '');
+    const close = base.lastIndexOf('</main>');
+    if (close < 0) return source;
+    const lineStart = base.lastIndexOf('\n', close) + 1;
+    const mainIndent = base.slice(lineStart, close).match(/^\s*/u)?.[0] || '';
+    const eol = source.includes('\r\n') ? '\r\n' : '\n';
+    const html = footerHtml(`${mainIndent}    `).split('\n').join(eol);
+    return `${base.slice(0, lineStart)}${html}${eol}${base.slice(lineStart)}`;
+}
+
 let updated = 0;
 for (const file of await htmlFiles(root)) {
     const relativePath = path.relative(root, file).split(path.sep).join('/');
     if (excluded.has(relativePath)) continue;
     const source = await readFile(file, 'utf8');
     if (!/<nav class="sidebar(?:"|\s)/u.test(source)) continue;
-    const next = source.replace(
+    const next = withFooter(source).replace(
         /(<nav class="sidebar[^>]*>[\s\S]*?<ul>)[\s\S]*?(<\/ul>)/u,
         (match, start, end) => {
             const lineStart = source.lastIndexOf('\n', source.indexOf(match)) + 1;
