@@ -64,7 +64,7 @@ async function stripe(env,path,params,key,method=params?'POST':'GET'){
  }
  if(!r.ok){
   const detail=String(result?.error?.message||'').replace(/[\r\n\t]/g,' ').slice(0,300);
-  console.error('Stripe API request failed',{path,status:r.status,requestId:r.headers.get('request-id')||'',type:result?.error?.type||'',code:result?.error?.code||'',param:result?.error?.param||''});
+  console.error('Stripe API request failed',{path,status:r.status,requestId:r.headers.get('request-id')||'',type:result?.error?.type||'',code:result?.error?.code||'',param:result?.error?.param||'',message:String(result?.error?.message||'').slice(0,300)});
   throw Object.assign(new Error(detail&&env.SUPPORTER_BILLING_MODE==='test'?`Stripeテスト環境が決済情報を拒否しました: ${detail}`:'Stripeへの接続に失敗しました。時間をおいて再試行してください。'),{status:502,stripeStatus:r.status,stripeCode:clean(result?.error?.code)});
  }
  if(result.livemode===true)fail('本番決済は無効です。',503);
