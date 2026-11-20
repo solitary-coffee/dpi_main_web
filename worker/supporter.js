@@ -204,7 +204,7 @@ function compensationCampaignView(row){
 async function compensationTargets(env,db,targetType,targetValue){
  const rows=await db.prepare(`SELECT a.discord_user_id,a.billing_email,b.customer_id
   FROM supporter_accounts a LEFT JOIN supporter_billing b ON b.discord_user_id=a.discord_user_id
-  WHERE b.customer_id IS NOT NULL OR COALESCE(a.billing_email,'')<>''
+  WHERE COALESCE(a.account_status,'active')<>'suspended' AND (b.customer_id IS NOT NULL OR COALESCE(a.billing_email,'')<>'')
   ORDER BY a.discord_user_id`).all();
  let targets=rows.results||[];
  if(targetType==='user')targets=targets.filter(row=>row.discord_user_id===targetValue);
@@ -220,7 +220,11 @@ async function createCompensationCampaign(env,db,admin,input){
  const campaignId=clean(input.requestId),targetType=clean(input.targetType),targetValue=clean(input.targetValue),amount=Number(input.amount),reason=clean(input.reason),expiresAt=Number(input.expiresAt);
  if(!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(campaignId))throw Object.assign(new Error('配布リクエストを確認できません。再読み込みしてください。'),{status:400});
  const existing=await db.prepare('SELECT * FROM supporter_credit_campaigns WHERE id=?').bind(campaignId).first();
- if(existing)return compensationCampaignView(existing);
+ if(existing){
+  if(clean(existing.target_type)!==targetType||(targetType!=='all'&&clean(existing.target_value||'')!==targetValue)||Number(existing.amount)!==amount)
+   throw Object.assign(new Error('この配布リクエストは別の内容で作成済みです。画面を再読み込みしてください。'),{status:409});
+  return compensationCampaignView(existing);
+ }
  if(!['all','user','plan'].includes(targetType))throw Object.assign(new Error('配布対象を確認してください。'),{status:400});
  if(targetType==='user'&&!/^\d{17,20}$/.test(targetValue))throw Object.assign(new Error('対象ユーザーのDiscord IDを確認してください。'),{status:400});
  if(targetType==='plan'&&!['supporter','plus','pro'].includes(targetValue))throw Object.assign(new Error('対象プランを確認してください。'),{status:400});
@@ -599,6 +603,8 @@ export function normalizeSupporterRules(input, guilds, limits = {servers:1,chann
   const requestedChannelIds=Array.isArray(rule?.channelIds)?rule.channelIds.map(clean).filter(Boolean):[];
   const channelIds=[...new Set(requestedChannelIds.length?requestedChannelIds:[clean(rule?.channelId)])];
   const channelId=channelIds[0]||'';
+  // 配信用スナップショット（AWS・Bot）は1ルール20チャンネルまで。超えると全員分の更新が拒否されるため保存時に止める。
+  if(channelIds.length>20)throw Object.assign(new Error('1つのルールの配信先は20チャンネルまでです。ルールを分けてください。'),{status:400});
   const type = clean(rule?.type);
   if (isImageRuleType(type)) {
    // Image rules are gated by SUPPORTER_IMAGE_RULES_ENABLED (default off).
@@ -683,7 +689,7 @@ async function supporterLimits(env, db, uid) {
  try {
   const suspension = await db.prepare(`SELECT invoice_id FROM supporter_dunning WHERE customer_id=? AND status='suspended' LIMIT 1`).bind(row.customer_id).first();
   if (suspension) throw Object.assign(new Error('月末再決済を確認できなかったため、有料プランの通知設定は利用停止中です。契約管理画面からお支払いを完了してください。'),{status:409});
-  await reconcilePaidCheckoutSubscription(env,row.customer_id,uid);
+  await reconcilePaidCheckoutSubscription(env,row.customer_id,uid,db);
   const custom=await getCustomPlan(db,uid);
   const summaries=enrichCustomSubscriptions(await customerSubscriptionSummaries(env,row.customer_id),custom);
   const active = summaries.filter(item=>item.recognizedPlan!==false&&['active','trialing','past_due','unpaid','paused'].includes(item.status));
@@ -793,7 +799,8 @@ export async function handleSupporterRequest(request, env, ctx) {
     const account=await db.prepare(`SELECT a.discord_user_id,a.billing_email,a.account_status,b.customer_id
      FROM supporter_accounts a LEFT JOIN supporter_billing b ON b.discord_user_id=a.discord_user_id WHERE a.discord_user_id=?`).bind(uid).first();
     if(!account)return response({message:'対象ユーザーは有料プランに未登録です。'},404);
-    assertSupporterAccountActive(account);
+    // BAN 後の後片付け（カスタムプランの停止・変更取消）はできるようにする。
+    if(!['cancel','cancel-change'].includes(clean(input.action)))assertSupporterAccountActive(account);
     let current=await getCustomPlan(db,uid);
     if(['preview','save'].includes(input.action)){
      const next=normalizeCustomPlan(input);
@@ -946,6 +953,7 @@ export async function handleSupporterRequest(request, env, ctx) {
      FROM supporter_accounts a LEFT JOIN supporter_billing b ON b.discord_user_id=a.discord_user_id
      WHERE a.discord_user_id=?`).bind(uid).first();
     if (!account) return response({message:'対象の有料プラン登録者が見つかりません。'},404);
+    if(account.account_status==='suspended'&&['grant_credit','create_payment_link','change_subscription'].includes(input.action))return response({message:'BAN中のアカウントには実行できません。先にBANを解除してください。'},409);
     if(input.action==='change_subscription'&&customLocked(await getCustomPlan(db,uid)))return response({message:'カスタムプランを提供中です。変更にはカスタムプラン設定をご利用ください。'},409);
     if (['disciplinary_cancel','ban_account','unban_account'].includes(input.action)) {
      const requestId=clean(input.requestId),reason=clean(input.reason),action=clean(input.action),now=Math.floor(Date.now()/1000);
@@ -1161,7 +1169,8 @@ export async function handleSupporterRequest(request, env, ctx) {
    return response({success:true});
   }
   if (path === '/api/supporter/settings' && request.method === 'PUT') {
-   const input = await readJson(request);
+   // ルール追加パックやカスタムプラン（最大500ルール）では 32KB を超えるため、設定保存だけ上限を広げる。
+   const input = await readJson(request, 1024 * 1024);
    if (!Number.isInteger(input.revision)) return response({message:'更新情報が正しくありません。再読み込みしてください。'},400);
    const guilds = JSON.parse(session.guilds_json);
    const limits = await supporterLimits(env,db,uid);

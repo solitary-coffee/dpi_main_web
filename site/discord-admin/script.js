@@ -149,7 +149,8 @@ function renderCampaigns() {
         if (['draft', 'queuing'].includes(campaign.status)) {
             const button = el('button', 'primary-btn', '配信を開始'); button.type = 'button'; button.addEventListener('click', () => sendCampaign(campaign, button)); actions.append(button);
         }
-        if (['draft', 'queuing', 'sending'].includes(campaign.status)) {
+        // 送信中（AWS が一括送信中）は取り消せないため、ボタンを出さない。
+        if (['draft', 'queuing'].includes(campaign.status)) {
             const button = el('button', 'danger-btn', '未送信分を取消'); button.type = 'button'; button.addEventListener('click', () => cancelCampaign(campaign, button)); actions.append(button);
         }
         card.append(actions); container.append(card);

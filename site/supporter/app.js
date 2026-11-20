@@ -604,7 +604,7 @@ async function load() {
  if (account) {
   revision = account.revision;
   rules = savedRules(account);
-  await Promise.all([...new Set(rules.map(rule => rule.guildId).filter(Boolean))].map(guildId => loadChannels(guildId)));
+  await Promise.allSettled([...new Set(rules.map(rule => rule.guildId).filter(Boolean))].map(guildId => loadChannels(guildId)));
   render();
   if(billingEnabled){
    try{
@@ -613,7 +613,7 @@ async function load() {
     if(billingState.rulesAdjustment?.changed){
      revision=Number(billingState.rulesAdjustment.revision)||revision;
      rules=(billingState.rulesAdjustment.rules||[]).map(normalizeRule);
-     await Promise.all([...new Set(rules.map(rule=>rule.guildId).filter(Boolean))].map(guildId=>loadChannels(guildId)));
+     await Promise.allSettled([...new Set(rules.map(rule=>rule.guildId).filter(Boolean))].map(guildId=>loadChannels(guildId)));
      render();
      const removed=Number(billingState.rulesAdjustment.removedRules||0),destinations=Number(billingState.rulesAdjustment.removedDestinations||0),simplified=Number(billingState.rulesAdjustment.simplifiedRules||0);
      status(`契約上限の変更を反映しました。${removed?`下側の通知ルールを${removed}件削除しました。`:''}${destinations?`上限を超える通知先を${destinations}件解除しました。`:''}${simplified?`下位プラン向けに${simplified}件の条件を調整しました。`:''}`);
@@ -665,9 +665,14 @@ $('add').onclick = run(async () => {
 });
 $('save').onclick = run(async () => {
  if(!hasConfigurableContract)return status('通知設定は有料プランの契約後に利用できます。');
- const data = await api('/api/supporter/settings','PUT',{revision,rules});
- revision = data.revision;
- status('通知設定を保存しました。');
+ const saveButton=$('save');
+ if(saveButton.disabled)return;
+ saveButton.disabled=true;
+ try{
+  const data = await api('/api/supporter/settings','PUT',{revision,rules});
+  revision = data.revision;
+  status('通知設定を保存しました。');
+ }finally{saveButton.disabled=!hasConfigurableContract;}
 });
 
 const billing = $('billing');

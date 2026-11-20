@@ -18,6 +18,8 @@ p{white-space:pre-wrap;line-height:1.9;color:#ccd7e9}small{display:block;margin-
 export async function publicMaintenanceGate(req,env,siteKey){
  const path=new URL(req.url).pathname;
  if(path==='/api'||path.startsWith('/api/'))return null;
+ // 管理画面はメンテナンス中にこそ使う（Statuspage 更新・IP 緊急解除など）。認証は各管理ハンドラが Access で行う。
+ if(/^\/site\/(?:[a-z0-9-]+-admin|admin-center)(?:\/|$)/.test(path)||path==='/site/admin-shell.css')return null;
  if(!env?.DPI_MAINTENANCE_KV)return null; // Stage safely before the shared KV binding exists.
  let rule;
  try{

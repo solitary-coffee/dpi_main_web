@@ -80,7 +80,7 @@ test('配信系統はEC2とLambda・SQSバックアップを分離しSQS稼働�
     assert.match(source, /"priority": "優先1"[\s\S]*"priority": "優先2"[\s\S]*"priority": "優先3"/u);
     assert.match(source, /"label": "高速判定・分散"[\s\S]*"label": "MRSC所有権判定"[\s\S]*"label": "Discord配信Lambda"/u);
     assert.match(source, /"label": "EC2"[\s\S]*"label": "受付API・HA制御"[\s\S]*"label": "高速判定・分散"/u);
-    const flowGraph = source.match(/"flowGraph": \{([\s\S]*?)\n\s+\},\n\s+"costPolicy"/u)?.[1] || '';
+    const flowGraph = source.match(/"flowGraph": \{([\s\S]*?)\r?\n\s+\},\r?\n\s+"costPolicy"/u)?.[1] || '';
     assert.match(flowGraph, /"sources"/u);
     assert.match(flowGraph, /"paths"/u);
     assert.match(flowGraph, /"gate"/u);

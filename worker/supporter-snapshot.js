@@ -1,5 +1,6 @@
 import { geographicEntitlements, geographicRuleAllowed } from './supporter-geo.js';
 import { enrichCustomGroup } from './supporter-custom.js';
+import { billingReady } from './supporter-billing.js';
 import { planFeatures, hasFeature, imageTier } from '../site/supporter/plan-features.js';
 import { IMAGE_RULE_TYPES, isImageRuleType, imageRulesEnabled, imageRuleSnapshotFields } from './supporter-image-rules.js';
 const ACTIVE_SUBSCRIPTION_STATUSES = new Set(['active', 'trialing', 'past_due', 'unpaid', 'paused']);
@@ -42,12 +43,14 @@ function normalizedRule(rule, id) {
         ? rule.channelIds
         : [rule.channelId]).map(clean).filter(value => /^\d{17,20}$/.test(value)))];
     if (!/^\d{17,20}$/.test(guildId) || !channelIds.length) return null;
+    // 保存済みの古いデータに21件以上あっても、スナップショット全体（全利用者分）が拒否されないよう20件で切る。
+    const limitedChannelIds = channelIds.slice(0, 20);
     return {
         ...rule,
         id,
         guildId,
-        channelId: channelIds[0],
-        channelIds,
+        channelId: limitedChannelIds[0],
+        channelIds: limitedChannelIds,
     };
 }
 
@@ -177,7 +180,11 @@ export async function publishSupporterSnapshot(env, snapshot) {
         clearTimeout(timeout);
     }
     const result = await readBoundedJson(response);
-    if (!response.ok || result?.success !== true) throw new Error('Supporter snapshot publisher rejected the update');
+    if (!response.ok || result?.success !== true) {
+        // 拒否理由を残す（30時間で期限切れになり全員の配信が止まるため、原因を追えるように）。
+        console.error('Supporter snapshot rejected', {status: response.status, message: String(result?.message || result?.error || '').slice(0, 200)});
+        throw new Error('Supporter snapshot publisher rejected the update');
+    }
     return {published: result.published === true, version: clean(result.version) || snapshot.version};
 }
 
@@ -185,6 +192,8 @@ export async function refreshSupporterSnapshot(env, db, loadSubscriptions, nowMs
     if (!clean(env.AWS_CHANNEL_DIRECTORY_URL) || !clean(env.AWS_CHANNEL_DIRECTORY_TOKEN)) {
         return {published: false, reason: 'not_configured'};
     }
+    // 決済設定が無い状態では契約一覧が空になり、「ルール0件」の正しいスナップショットとして全員の配信を止めてしまう。
+    if (!billingReady(env)) return {published: false, reason: 'billing_not_ready'};
     const snapshot = await buildSupporterSnapshot(db, env, loadSubscriptions, nowMs);
     return {...await publishSupporterSnapshot(env, snapshot), snapshot};
 }

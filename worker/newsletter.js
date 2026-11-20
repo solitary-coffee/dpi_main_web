@@ -1237,8 +1237,9 @@ async function cancelCampaign(request, env, campaignId, admin, surface = 'mail')
 
     const now = new Date().toISOString();
     const campaignResult = await env.NEWSLETTER_DB.prepare(
+        // Discord お知らせは AWS が一括送信するため、送信中に取り消しても止まらない（完了時に上書きもされる）。
         `UPDATE newsletter_campaigns SET status = 'cancelled', completed_at = ?, updated_at = ?
-         WHERE id = ? AND status IN ('draft', 'queuing', 'sending')`,
+         WHERE id = ? AND status IN (${surface === 'discord' ? "'draft', 'queuing'" : "'draft', 'queuing', 'sending'"})`,
     ).bind(now, now, campaignId).run();
     if (!statementChangedRows(campaignResult)) {
         throw new NewsletterError(409, 'この配信は取り消せません。', 'campaign_not_cancellable');

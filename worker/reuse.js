@@ -619,6 +619,17 @@ async function reviewApplication(request, env, admin, id) {
     if (action === 'stopped' && application.status !== 'stop_requested') {
         throw new ReuseError(409, '利用停止申請中の申請だけを停止確定できます。', 'invalid_review_transition');
     }
+    // 停止確定・却下済みの申請を、利用者の再申請なしに「許可」へ戻さない。
+    const ALLOWED_REVIEW_TRANSITIONS = {
+        pending: ['approved', 'rejected', 'changes_requested'],
+        resubmitted: ['approved', 'rejected', 'changes_requested'],
+        changes_requested: ['approved', 'rejected', 'changes_requested'],
+        stop_requested: ['stopped', 'approved'],
+        approved: ['stopped', 'changes_requested', 'rejected'],
+    };
+    if (!(ALLOWED_REVIEW_TRANSITIONS[application.status] || []).includes(action)) {
+        throw new ReuseError(409, `現在の状態（${STATUS_LABELS[application.status] || application.status}）からは変更できません。`, 'invalid_review_transition');
+    }
 
     const now = new Date().toISOString();
     const manageToken = randomToken(32);
@@ -636,8 +647,16 @@ async function reviewApplication(request, env, admin, id) {
          VALUES (?, ?, ?, ?, ?, ?)`,
     ).bind(crypto.randomUUID(), id, action, admin.email, message, now).run();
 
-    await sendResultEmail(env, { ...application, status: action, admin_message: message, manageToken });
-    return jsonResponse({ success: true, status: action, statusLabel: STATUS_LABELS[action] });
+    // 審査結果はもう保存済み（古い管理URLは無効）。メールだけ失敗した場合は「保存済み・未送信」と返し、
+    // 管理者が再実行してトークンを作り直し続けることがないようにする。
+    try {
+        await sendResultEmail(env, { ...application, status: action, admin_message: message, manageToken });
+    } catch (error) {
+        console.error('Reuse result email failed after review was saved', { id, errorName: error?.name || 'Error' });
+        return jsonResponse({ success: true, emailSent: false, status: action, statusLabel: STATUS_LABELS[action],
+            message: '審査結果は保存しましたが、結果メールを送れませんでした。個別メールで申請者へ連絡してください。' });
+    }
+    return jsonResponse({ success: true, emailSent: true, status: action, statusLabel: STATUS_LABELS[action] });
 }
 
 async function sendAdminApplicationMessage(request, env, admin, id) {
@@ -1193,18 +1212,22 @@ export function assertCsrf(request, session) {
     }
 }
 
-export async function readJson(request) {
+export async function readJson(request, maxBytes = MAX_JSON_BYTES) {
     const type = request.headers.get('content-type') || '';
     if (!type.toLowerCase().startsWith('application/json')) {
         throw new ReuseError(415, '送信形式が正しくありません。', 'invalid_content_type');
     }
     const length = Number(request.headers.get('content-length') || 0);
-    if (length > MAX_JSON_BYTES) throw new ReuseError(413, '送信データが大きすぎます。', 'request_too_large');
+    if (length > maxBytes) throw new ReuseError(413, '送信データが大きすぎます。', 'request_too_large');
     const text = await request.text();
-    if (new TextEncoder().encode(text).byteLength > MAX_JSON_BYTES) {
+    if (new TextEncoder().encode(text).byteLength > maxBytes) {
         throw new ReuseError(413, '送信データが大きすぎます。', 'request_too_large');
     }
-    try { return JSON.parse(text); } catch { throw new ReuseError(400, '入力内容を読み取れません。', 'invalid_json'); }
+    let value;
+    try { value = JSON.parse(text); } catch { throw new ReuseError(400, '入力内容を読み取れません。', 'invalid_json'); }
+    // null・数値・配列は各 API が input.xxx を読むと TypeError（503）になるため、ここで 400 にする。
+    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new ReuseError(400, '入力内容を読み取れません。', 'invalid_json');
+    return value;
 }
 
 function canManageGuild(guild) {
