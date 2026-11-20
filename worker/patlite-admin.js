@@ -4,14 +4,20 @@
 //   D1（REUSE_DB）の patlite_state に 1 行だけ上書き保存する。
 // - GET /site/patlite-admin/api/state : 管理ページ（Chrome の Web Serial で Arduino を操作する）が読む。
 //   認証は admin-center.js（Cloudflare Access + ADMIN_EMAILS）で済ませてから呼ぶこと。
-// - POST /site/patlite-admin/api/settings : 一時停止（何時間か全部消す）・夜間モード（重大だけ表示）・
+// - POST /site/patlite-admin/api/settings : 一時停止（何時間か全部消す）・時間帯設定（旧・夜間モード。決めた時間は
+//   「重大のみ」か「中以上」だけ表示）・一時的な絞り込み（今から N 時間は「重大のみ」か「中以上」）・
 //   イルミネーション試験の設定を保存する（管理者のみ。D1 の patlite_settings に 1 行）。
+// - POST /site/patlite-admin/api/device : 積層灯ページが Arduino の強制停止の状態を知らせる（patlite_device に 1 行）。
 // - 履歴: 送信のたびに前回との差（出た項目・消えた項目）を patlite_history に書く。ブリッジからの送信が
 //   LINK_GAP_SECONDS 以上途切れた時間帯も kind = link_lost で残す。GET /site/patlite-admin/api/history で読む。
+//   一時停止・無期限停止・強制停止・時間帯設定・一時的な絞り込みで積層灯に出さなかった項目も記録し、
+//   その理由（例: 「一時停止により無連動」）を suppressed に残す（理由は site/patlite-admin/logic.js で決める）。
 // - 遠隔操作: POST /site/patlite-admin/api/command（ack / fullstop_on / fullstop_off / illum）で依頼を D1 の
 //   patlite_commands に積み、state の応答に未実行の依頼を含める。積層灯ページが実行して
 //   POST /site/patlite-admin/api/command/done で完了にする（done を先に取ったページだけが実行する）。
 // 色・点滅・表示時間の決まりはページ側（site/patlite-admin/logic.js）と Arduino の EEPROM 設定で決める。
+
+import { LEGEND, policyFor, suppressionReason } from '../site/patlite-admin/logic.js';
 
 const INGEST_PATH = '/api/patlite/ingest';
 const MAX_BODY_BYTES = 64 * 1024;
@@ -23,11 +29,15 @@ const LINK_GAP_SECONDS = 180;
 const HISTORY_RETENTION_SECONDS = 90 * 24 * 3600;
 const MAX_HISTORY_ROWS = 500;
 export const COMMAND_TTL_SECONDS = 120;
+export const DEVICE_STALE_SECONDS = 15 * 60;   // 積層灯ページは 5 分ごとに知らせる。これより古い強制停止は使わない
 const COMMANDS = new Set(['ack', 'fullstop_on', 'fullstop_off', 'illum']);
 export const DEFAULT_SETTINGS = Object.freeze({
     snoozeUntil: null,
     snoozeForever: false,
-    night: Object.freeze({ enabled: false, start: '22:00', end: '07:00' }),
+    // 時間帯設定（旧・夜間モード）。level: critical = 重大のみ / medium = 中以上（以前の設定は level が無いので重大のみ）
+    night: Object.freeze({ enabled: false, start: '22:00', end: '07:00', level: 'critical' }),
+    // 一時的な絞り込み: until（UNIX 秒）までは level の段階だけ点ける
+    filter: Object.freeze({ until: null, level: 'critical' }),
     illumination: Object.freeze({ daily: false, seconds: 20 }),
 });
 
@@ -64,7 +74,8 @@ export async function handlePatliteIngest(request, env) {
     const generatedAt = finiteNumber(payload.generated_at);
     const receivedAt = Date.now() / 1000;
     try {
-        await recordHistory(database, conditions, receivedAt);
+        const [settings, device] = await Promise.all([readSettings(database).catch(() => null), readDevice(database, receivedAt)]);
+        await recordHistory(database, conditions, receivedAt, { settings, device });
     } catch (error) {
         console.error('patlite history write failed', { errorName: error?.name || 'Error' });   // 履歴の失敗で状態の保存は止めない
     }
@@ -91,6 +102,7 @@ export async function patliteAdminState(env, admin) {
         success: true,
         admin: admin?.email || '',
         settings: await readSettings(database),
+        device: await readDevice(database),
         serverTime: Date.now() / 1000,
         receivedAt: row ? finiteNumber(row.received_at) : null,
         generatedAt: row ? finiteNumber(row.generated_at) : null,
@@ -175,14 +187,43 @@ export async function patliteAdminCommandDone(request, env, admin) {
     return { success: true, id, claimed };
 }
 
-// 前回からの差だけを書く: 新しく出た項目は INSERT、消えた項目は ended_at を入れる
-export async function recordHistory(database, conditions, now) {
+// Arduino の強制停止の状態（積層灯ページが知らせたもの）。古い・読めないときは強制停止していない扱い
+export async function readDevice(database, now = Date.now() / 1000) {
+    try {
+        const row = await database.prepare('SELECT full_stop, reported_at FROM patlite_device WHERE id = 1').first();
+        const reportedAt = finiteNumber(row?.reported_at);
+        const fresh = reportedAt !== null && now - reportedAt <= DEVICE_STALE_SECONDS;
+        return { fullStop: fresh && Number(row?.full_stop) === 1, reportedAt };
+    } catch {
+        return { fullStop: false, reportedAt: null };   // テーブルが無い（マイグレーション前）など
+    }
+}
+
+// 積層灯ページから: Arduino が強制停止中か（変わったときと 5 分ごと）
+export async function patliteAdminDevice(request, env, admin) {
+    sameOriginJson(request);
+    const payload = await readSmallJson(request);
+    if (typeof payload.fullStop !== 'boolean') throw new PatliteAdminError(400, '強制停止の状態を確認してください。', 'invalid_device');
+    const database = env.REUSE_DB;
+    if (!database) throw new PatliteAdminError(503, 'D1（REUSE_DB）が設定されていません。', 'database_not_configured');
+    const now = Date.now() / 1000;
+    await database.prepare(`INSERT INTO patlite_device (id, full_stop, reported_at, reported_by) VALUES (1, ?1, ?2, ?3)
+        ON CONFLICT(id) DO UPDATE SET full_stop = excluded.full_stop, reported_at = excluded.reported_at, reported_by = excluded.reported_by`)
+        .bind(payload.fullStop ? 1 : 0, now, String(admin?.email || '').slice(0, 200)).run();
+    return { success: true, device: { fullStop: payload.fullStop, reportedAt: now } };
+}
+
+// 前回からの差だけを書く: 新しく出た項目は INSERT、消えた項目は ended_at を入れる。
+// context.settings / context.device から、新しく出た項目を積層灯に出さなかった理由（無連動の理由）を決めて suppressed に残す
+export async function recordHistory(database, conditions, now, context = {}) {
+    const policy = policyFor(context.settings || null, now, context.device || null);
+    const reasonFor = (kind) => suppressionReason(LEGEND[kind], policy) || null;
     const previous = await database.prepare('SELECT received_at FROM patlite_state WHERE id = 1').first();
     const lastReceived = finiteNumber(previous?.received_at);
     const statements = [];
     if (lastReceived !== null && now - lastReceived > LINK_GAP_SECONDS) {
-        statements.push(database.prepare('INSERT INTO patlite_history (cid, kind, title, started_at, ended_at) VALUES (?1, ?2, ?3, ?4, ?5)')
-            .bind('link_lost', 'link_lost', '自宅のブリッジからの送信が途切れた', lastReceived + LINK_GAP_SECONDS, now));
+        statements.push(database.prepare('INSERT INTO patlite_history (cid, kind, title, started_at, ended_at, suppressed) VALUES (?1, ?2, ?3, ?4, ?5, ?6)')
+            .bind('link_lost', 'link_lost', '自宅のブリッジからの送信が途切れた', lastReceived + LINK_GAP_SECONDS, now, reasonFor('link_lost')));
     }
     const open = (await database.prepare('SELECT row_id, cid FROM patlite_history WHERE ended_at IS NULL').all()).results || [];
     const openIds = new Map(open.map((row) => [String(row.cid), row.row_id]));
@@ -193,8 +234,8 @@ export async function recordHistory(database, conditions, now) {
     for (const [cid, condition] of current) {
         if (openIds.has(cid)) continue;
         const started = condition.since !== null && condition.since <= now && condition.since > now - 7 * 24 * 3600 ? condition.since : now;
-        statements.push(database.prepare('INSERT INTO patlite_history (cid, kind, title, started_at, ended_at) VALUES (?1, ?2, ?3, ?4, NULL)')
-            .bind(cid, condition.kind, condition.title || condition.kind, started));
+        statements.push(database.prepare('INSERT INTO patlite_history (cid, kind, title, started_at, ended_at, suppressed) VALUES (?1, ?2, ?3, ?4, NULL, ?5)')
+            .bind(cid, condition.kind, condition.title || condition.kind, started, reasonFor(condition.kind)));
     }
     if (Math.random() < 0.01) {
         statements.push(database.prepare('DELETE FROM patlite_history WHERE ended_at IS NOT NULL AND ended_at < ?1').bind(now - HISTORY_RETENTION_SECONDS));
@@ -208,11 +249,12 @@ export async function patliteAdminHistory(env, url) {
     if (!database) throw new PatliteAdminError(503, 'D1（REUSE_DB）が設定されていません。', 'database_not_configured');
     const days = Math.min(90, Math.max(1, Math.round(Number(url.searchParams.get('days')) || 7)));
     const since = Date.now() / 1000 - days * 86400;
-    const result = await database.prepare(`SELECT cid, kind, title, started_at, ended_at FROM patlite_history
+    const result = await database.prepare(`SELECT cid, kind, title, started_at, ended_at, suppressed FROM patlite_history
         WHERE started_at >= ?1 OR ended_at IS NULL OR ended_at >= ?1 ORDER BY started_at DESC LIMIT ?2`).bind(since, MAX_HISTORY_ROWS).all();
     const rows = (result.results || []).map((row) => ({
         id: String(row.cid), kind: String(row.kind), title: String(row.title),
         startedAt: finiteNumber(row.started_at), endedAt: finiteNumber(row.ended_at),
+        suppressed: row.suppressed ? String(row.suppressed) : '',   // 積層灯に出さなかった理由（出したときは空）
     }));
     return { success: true, days, serverTime: Date.now() / 1000, rows, truncated: rows.length >= MAX_HISTORY_ROWS };
 }
@@ -220,6 +262,8 @@ export async function patliteAdminHistory(env, url) {
 export function normalizeSettings(raw, nowSeconds = Date.now() / 1000) {
     const source = raw && typeof raw === 'object' ? raw : {};
     const night = source.night && typeof source.night === 'object' ? source.night : {};
+    const filter = source.filter && typeof source.filter === 'object' ? source.filter : {};
+    const filterUntil = finiteNumber(filter.until);
     const illumination = source.illumination && typeof source.illumination === 'object' ? source.illumination : {};
     const snooze = finiteNumber(source.snoozeUntil);
     const seconds = Math.round(Number(illumination.seconds));
@@ -232,6 +276,12 @@ export function normalizeSettings(raw, nowSeconds = Date.now() / 1000) {
             enabled: night.enabled === true,
             start: TIME_PATTERN.test(String(night.start)) ? String(night.start) : DEFAULT_SETTINGS.night.start,
             end: TIME_PATTERN.test(String(night.end)) ? String(night.end) : DEFAULT_SETTINGS.night.end,
+            level: levelCode(night.level),
+        },
+        // 一時的な絞り込み（最長 7 日。過ぎたものは持たない）
+        filter: {
+            until: filterUntil && filterUntil > nowSeconds ? Math.min(filterUntil, nowSeconds + MAX_SNOOZE_SECONDS) : null,
+            level: levelCode(filter.level),
         },
         illumination: {
             daily: illumination.daily === true,
@@ -239,6 +289,8 @@ export function normalizeSettings(raw, nowSeconds = Date.now() / 1000) {
         },
     };
 }
+
+const levelCode = (value) => (value === 'medium' ? 'medium' : 'critical');
 
 async function readSettings(database) {
     const row = await database.prepare('SELECT body FROM patlite_settings WHERE id = 1').first();

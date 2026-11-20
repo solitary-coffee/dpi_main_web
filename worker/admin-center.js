@@ -1,7 +1,7 @@
 import { AccessAuthError, authenticateNewsletterAdmin } from './access.js';
 import { DELIVERY_CATALOG } from './delivery-catalog.js';
 import { CdnAdminError, cdnAdminStats } from './cdn-admin.js';
-import { PatliteAdminError, patliteAdminCommand, patliteAdminCommandDone, patliteAdminHistory, patliteAdminSaveSettings, patliteAdminState } from './patlite-admin.js';
+import { PatliteAdminError, patliteAdminCommand, patliteAdminCommandDone, patliteAdminDevice, patliteAdminHistory, patliteAdminSaveSettings, patliteAdminState } from './patlite-admin.js';
 
 const JSON_HEADERS = Object.freeze({
     'Content-Type': 'application/json; charset=utf-8',
@@ -50,7 +50,8 @@ export async function handleAdminCenterRequest(request, env) {
     const isPatliteHistoryApi = pathname === '/site/patlite-admin/api/history';
     const isPatliteCommandApi = pathname === '/site/patlite-admin/api/command';
     const isPatliteCommandDoneApi = pathname === '/site/patlite-admin/api/command/done';
-    const isApi = isPatliteStateApi || isPatliteSettingsApi || isPatliteHistoryApi || isPatliteCommandApi || isPatliteCommandDoneApi || isSummaryApi || isActionApi || isDeliveryStatsApi || isDmdataHistoryApi || isDeliveryFlowApi || isTestDeliveryApi || isAuditApi || isCdnStatsApi;
+    const isPatliteDeviceApi = pathname === '/site/patlite-admin/api/device';
+    const isApi = isPatliteStateApi || isPatliteSettingsApi || isPatliteHistoryApi || isPatliteCommandApi || isPatliteCommandDoneApi || isPatliteDeviceApi || isSummaryApi || isActionApi || isDeliveryStatsApi || isDmdataHistoryApi || isDeliveryFlowApi || isTestDeliveryApi || isAuditApi || isCdnStatsApi;
     const assetRoot = !isApi ? ADMIN_ASSET_ROOTS.find((root) => pathname === root || pathname.startsWith(`${root}/`)) : null;
     const isAsset = Boolean(assetRoot);
     if (!isApi && !isAsset) return null;
@@ -116,6 +117,12 @@ export async function handleAdminCenterRequest(request, env) {
                 return jsonResponse({ success: false, message: '許可されていない操作です。' }, 405, { Allow: 'POST' });
             }
             return jsonResponse(isPatliteCommandApi ? await patliteAdminCommand(request, env, admin) : await patliteAdminCommandDone(request, env, admin));
+        }
+        if (isPatliteDeviceApi) {
+            if (request.method !== 'POST') {
+                return jsonResponse({ success: false, message: '許可されていない操作です。' }, 405, { Allow: 'POST' });
+            }
+            return jsonResponse(await patliteAdminDevice(request, env, admin));
         }
         if (isPatliteHistoryApi) {
             if (request.method !== 'GET') {

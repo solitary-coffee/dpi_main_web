@@ -1,12 +1,14 @@
 // 操作盤: 使っていないスマホ（Galaxy など）を常時表示の操作パネルにする。
-//   - 5 秒ごとに積層灯の状態（/site/patlite-admin/api/state）を読み、点く色・いま起きていること・一時停止/夜間モードを表示
+//   - 5 秒ごとに積層灯の状態（/site/patlite-admin/api/state）を読み、点く色・いま起きていること・一時停止/絞り込み/時間帯設定を表示
 //   - 1 分ごとに直近 24 時間の履歴（/site/patlite-admin/api/history?days=1）を表示
 //   - 2 分ごとに直近 24 時間の配信統計（/site/delivery-admin/api/summary?period=24h。AWS の監視テーブル）を表示
 //   - 積層灯の操作（確認・強制停止）は「遠隔操作の依頼」として積む（/site/patlite-admin/api/command）。
 //     Arduino をつないだ PC / Chromebook の積層灯ページが 5 秒以内に受け取って実行する
-//   - 一時停止・夜間モードはサイトの設定（/site/patlite-admin/api/settings）を直接変える
+//   - 一時停止・時間帯設定（旧・夜間モード）・一時的な絞り込み（今から N 時間は重大のみ／中以上）は
+//     サイトの設定（/site/patlite-admin/api/settings）を直接変える
 //   - 強制停止・一時停止は 1 秒長押しで実行（誤操作防止）。画面を消さない（Screen Wake Lock）
-import { COLORS, COLOR_NAMES, LEGEND, PatliteEngine, policyFor, snoozeText } from '../patlite-admin/logic.js';
+//   - 色の一覧（重大 / 中 / 軽）を左の情報欄のいちばん下に出す
+import { COLORS, COLOR_NAMES, FILTER_LEVELS, LEGEND, PatliteEngine, colorText, filterText, flashText, legendByLevel, policyFor, snoozeText } from '../patlite-admin/logic.js';
 
 const STATE_API = '/site/patlite-admin/api/state';
 const HISTORY_API = '/site/patlite-admin/api/history?days=1';
@@ -18,12 +20,14 @@ const EVENT_LABELS = { eew: 'EEW', keiho: 'EEW警報', eew_sind: 'EEW震度', zi
 const HOLD_MS = 1000;   // data-hold の秒数を掛ける（無期限停止は 3 秒）
 const MAX_CUSTOM_HOURS = 168;
 const COMMAND_LABELS = { ack: '確認', fullstop_on: '強制停止', fullstop_off: '強制停止の解除' };
+const COMMAND_NOTES = { ack: '積層灯ページが 5 秒以内に受け取り、その 3 秒後に消灯' };
 const WAKE_KEY = 'control-deck-wake';
 
 const $ = (id) => document.getElementById(id);
 const nowSeconds = () => Date.now() / 1000;
 const esc = (value) => String(value ?? '').replace(/[&<>"']/gu, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
 const engine = new PatliteEngine(nowSeconds());
+const shortTime = (seconds) => new Date(seconds * 1000).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
 const state = { settings: null, receivedAt: null, lastOk: null, error: '', wakeLock: null, wantWake: false, toastTimer: null };
 
 function toast(text, tone = 'good') {
@@ -58,21 +62,26 @@ function render() {
     const { lamps, shown } = engine.pattern(now);
     $('lamps').innerHTML = COLORS.map((color) => `<span class="deck-lamp ${color} ${lamps[color]}" title="${COLOR_NAMES[color]}: ${{ off: '消灯', on: '点灯', flash: '点滅' }[lamps[color]]}"></span>`).join('');
     $('conditions').innerHTML = shown.length ? shown.map((item) => {
-        const color = item.colors[0] || 'white';
-        const why = item.suppressed || (item.acked ? '確認済み' : !item.lit ? '表示時間外' : item.flashing ? '点滅' : '点灯');
-        return `<li><span class="deck-chip deck-lamp ${color} on"></span><span${item.lit ? '' : ' class="deck-dim"'}>${esc(item.title)}（${esc(why)}）</span></li>`;
+        const why = item.suppressed || (item.acked ? '確認済み' : !item.lit ? (item.repeat ? '表示時間外' : '表示を終えた') : item.flashing ? '点滅' : '点灯');
+        return `<li>${chipsFor(item.colors)}<span class="deck-level deck-level-${esc(item.level)}">${esc(item.level)}</span><span${item.lit ? '' : ' class="deck-dim"'}>${esc(item.title)}（${esc(why)}）</span></li>`;
     }).join('') : '<li class="deck-muted">すべて正常（消灯）</li>';
     const policy = policyFor(state.settings, now);
     const notes = [];
     if (state.error) notes.push(state.error);
     if (state.receivedAt) notes.push(`自宅から最終受信 ${new Date(state.receivedAt * 1000).toLocaleTimeString('ja-JP', { hour12: false })}`);
     if (policy.snoozed) notes.push(snoozeText(state.settings, now));
-    else if (policy.night) notes.push('夜間モード中（重大だけ）');
+    else if (filterText(state.settings, now)) notes.push(filterText(state.settings, now));
+    if (policy.fullStop) notes.push('強制停止中');
     $('status').textContent = notes.join(' / ') || '読み込み中…';
     $('status').classList.toggle('bad', Boolean(state.error));
     const nightOn = Boolean(state.settings?.night?.enabled);
-    $('night-label').textContent = `夜間モード: ${nightOn ? 'ON' : 'OFF'}`;
+    const nightLevel = FILTER_LEVELS[state.settings?.night?.level === 'medium' ? 'medium' : 'critical'].label;
+    $('night-label').innerHTML = `時間帯設定: ${nightOn ? 'ON' : 'OFF'}<small>${nightOn ? `${esc(state.settings.night.start)}〜${esc(state.settings.night.end)} ${esc(nightLevel)}` : 'タップで切り替え'}</small>`;
     $('night-tile').classList.toggle('active', nightOn);
+    $('filter-label').innerHTML = policy.temporary
+        ? `${esc(FILTER_LEVELS[policy.temporary].label)}<small>${esc(shortTime(policy.temporaryUntil))} まで</small>`
+        : '絞り込み<small>重大のみ・中以上</small>';
+    $('filter-tile').classList.toggle('active', Boolean(policy.temporary));
     $('wake-label').textContent = `画面を消さない: ${state.wakeLock ? 'ON' : 'OFF'}`;
     $('wake-tile').classList.toggle('active', Boolean(state.wakeLock));
 }
@@ -86,6 +95,7 @@ async function loadState() {
         engine.update(Array.isArray(data.conditions) ? data.conditions : [], state.receivedAt, offset, now);
         state.settings = data.settings || null;
         engine.settings = state.settings;
+        engine.device = data.device || null;
         state.lastOk = now;
         state.error = '';
     } catch (error) {
@@ -106,14 +116,26 @@ async function loadHistory() {
         const rows = (data.rows || []).slice(0, 8);
         const now = Number(data.serverTime) || nowSeconds();
         $('history').innerHTML = rows.length ? rows.map((row) => {
-            const color = LEGEND[row.kind]?.colors?.[0] || 'white';
             const time = new Date(row.startedAt * 1000).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
             const end = row.endedAt === null ? '継続中' : `${duration(row.endedAt - row.startedAt)}で復帰`;
-            return `<li><span class="deck-time">${time}</span><span class="deck-chip deck-lamp ${color} on"></span><span>${esc(row.title)}<span class="deck-dim">（${row.endedAt === null ? `${end}・${duration(now - row.startedAt)}` : end}）</span></span></li>`;
+            const muted = row.suppressed ? `<span class="deck-muted-reason">${esc(row.suppressed)}</span>` : '';
+            return `<li><span class="deck-time">${time}</span>${chipsFor(LEGEND[row.kind]?.colors || ['white'])}<span>${esc(row.title)}<span class="deck-dim">（${row.endedAt === null ? `${end}・${duration(now - row.startedAt)}` : end}）</span>${muted}</span></li>`;
         }).join('') : '<li class="deck-muted">24時間以内の記録はありません</li>';
     } catch (error) {
         $('history').innerHTML = `<li class="deck-muted">履歴を読めません（${esc(error.message)}）</li>`;
     }
+}
+
+// 色見本（2 色の組み合わせは 2 つ並べる）
+function chipsFor(colors, flashing = false) {
+    return `<span class="deck-chips">${colors.map((color) => `<span class="deck-chip deck-lamp ${color} ${flashing ? 'flash' : 'on'}" title="${COLOR_NAMES[color]}"></span>`).join('')}</span>`;
+}
+
+// 色の一覧（重大 / 中 / 軽）。点滅するものは見本も点滅
+function renderLegend() {
+    $('legend').innerHTML = legendByLevel().map(({ level, items }) => `<li class="deck-legend-head"><span class="deck-level deck-level-${esc(level)}">${esc(level)}</span></li>${
+        items.map((value) => `<li>${chipsFor(value.colors, value.flashSeconds !== 0)}<span>${esc(value.label.split('（')[0])}<span class="deck-dim">（${esc(colorText(value.colors))}・${esc(flashText(value.flashSeconds))}）</span></span></li>`).join('')
+    }`).join('');
 }
 
 // ---------------- 配信の統計 ----------------
@@ -192,7 +214,7 @@ function renderDelivery() {
 async function sendCommand(command) {
     try {
         await api(COMMAND_API, { command });
-        toast(`${COMMAND_LABELS[command]}を送りました（積層灯ページが 5 秒以内に実行）`);
+        toast(`${COMMAND_LABELS[command]}を送りました（${COMMAND_NOTES[command] || '積層灯ページが 5 秒以内に実行'}）`);
     } catch (error) {
         toast(`${COMMAND_LABELS[command]}を送れませんでした: ${error.message}`, 'bad');
     }
@@ -244,6 +266,34 @@ function snoozeHours(hours) {
         `${label}、積層灯の自動表示を止めました`);
 }
 
+// 絞り込み: 「今から N 時間は 重大のみ／中以上」を選ぶ画面
+function openFilter() {
+    const dialog = $('filter-dialog');
+    const policy = policyFor(state.settings, nowSeconds());
+    $('filter-level').value = policy.temporary || 'critical';
+    if (typeof dialog.showModal !== 'function') {
+        const answer = window.prompt('何時間「重大のみ」にしますか？（0.5〜168。0 で解除）', '3');
+        if (answer !== null) {
+            if (Number(answer) === 0) clearFilter();
+            else filterHours(Number(answer), 'critical');
+        }
+        return;
+    }
+    dialog.returnValue = '';
+    dialog.showModal();
+}
+
+function filterHours(hours, level) {
+    if (!Number.isFinite(hours) || hours <= 0) { toast('時間を正しく入れてください', 'bad'); return undefined; }
+    const value = Math.min(MAX_CUSTOM_HOURS, Math.max(0.5, Math.round(hours * 2) / 2));
+    const label = value >= 24 && value % 24 === 0 ? `${value / 24}日` : `${value}時間`;
+    return saveSettings({ filter: { until: nowSeconds() + Math.round(value * 3600), level } }, `${label}、${FILTER_LEVELS[level].label}にしました`);
+}
+
+function clearFilter() {
+    return saveSettings({ filter: { until: null, level: 'critical' } }, '絞り込みを解除しました');
+}
+
 // data-hold のタイルは長押しで実行（data-hold の秒数。離したら取り消し）
 function bindTile(tile) {
     if (!tile.dataset.hold) {
@@ -285,9 +335,19 @@ async function toggleWake() {
 function start() {
     for (const tile of document.querySelectorAll('.deck-tile[data-command], .deck-tile[data-snooze]')) bindTile(tile);
     $('night-tile').addEventListener('click', () => {
-        const night = { ...(state.settings?.night || { start: '22:00', end: '07:00' }) };
+        const night = { ...(state.settings?.night || { start: '22:00', end: '07:00', level: 'critical' }) };
         night.enabled = !night.enabled;
-        saveSettings({ night }, `夜間モードを${night.enabled ? 'ON' : 'OFF'}にしました（${night.start}〜${night.end}）`);
+        const level = FILTER_LEVELS[night.level === 'medium' ? 'medium' : 'critical'].label;
+        saveSettings({ night }, `時間帯設定を${night.enabled ? 'ON' : 'OFF'}にしました（${night.start}〜${night.end} ${level}）`);
+    });
+    $('filter-tile').addEventListener('click', openFilter);
+    const filterDialog = $('filter-dialog');
+    for (const button of filterDialog.querySelectorAll('[data-filter-hours]')) {
+        button.addEventListener('click', () => { $('filter-hours').value = button.dataset.filterHours; });
+    }
+    filterDialog.addEventListener('close', () => {
+        if (filterDialog.returnValue === 'ok') filterHours(Number($('filter-hours').value), $('filter-level').value === 'medium' ? 'medium' : 'critical');
+        else if (filterDialog.returnValue === 'clear') clearFilter();
     });
     $('wake-tile').addEventListener('click', toggleWake);
     const customDialog = $('custom-dialog');
@@ -297,7 +357,6 @@ function start() {
     customDialog.addEventListener('close', () => {
         if (customDialog.returnValue === 'ok') snoozeHours(Number($('custom-hours').value));
     });
-    $('refresh-tile').addEventListener('click', () => { loadState(); loadHistory(); loadDelivery(); toast('最新の情報を読み込みました'); });
     $('delivery-types').addEventListener('click', (event) => {
         const chip = event.target.closest('[data-type]');
         if (!chip) return;
@@ -315,6 +374,7 @@ function start() {
     });
     if (state.wantWake) requestWakeLock();
     renderClock();
+    renderLegend();
     setInterval(renderClock, 1000);
     loadState();
     loadHistory();

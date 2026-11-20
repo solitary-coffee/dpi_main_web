@@ -19,7 +19,7 @@
 .patlite-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 6px; }
 .patlite-config { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
 .patlite-config label { display: grid; gap: 6px; color: #c8d0d8; font-size: .9rem; }
-.patlite-config input { min-width: 0; padding: 8px; border: 1px solid #5d6772; border-radius: 6px; background: #20252a; color: #fff; font: inherit; }
+.patlite-config input, .patlite-config select { min-width: 0; padding: 8px; border: 1px solid #5d6772; border-radius: 6px; background: #20252a; color: #fff; font: inherit; }
 .patlite-config small { color: #9aa7b5; }
 .patlite-config label.patlite-check { display: flex; align-items: center; gap: 8px; }
 .patlite-config label.patlite-check input { width: auto; }
@@ -31,3 +31,16 @@
 .patlite-help summary { cursor: pointer; font-weight: 700; }
 .patlite-help ol { margin: 8px 0 0; padding-left: 20px; }
 .patlite-help code { overflow-wrap: anywhere; }
+.patlite-subhead { margin: 16px 0 6px; font-size: 1rem; color: #e6edf3; }
+/* 色の一覧（段階ごと） */
+.patlite-legend { display: grid; gap: 14px; }
+.patlite-legend h3 { margin: 0 0 6px; font-size: 1rem; }
+.patlite-swatches { display: inline-flex; gap: 4px; vertical-align: middle; }
+.patlite-swatch { display: inline-block; width: 22px; height: 22px; border: 1px solid #5d6772; border-radius: 50%; }
+.patlite-swatch.patlite-swatch-flash { animation: patlite-blink 1s steps(1) infinite; }
+@media (prefers-reduced-motion: reduce) { .patlite-swatch.patlite-swatch-flash { animation: none; outline: 2px dashed #fff; outline-offset: 1px; } }
+.patlite-level { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: .8rem; font-weight: 800; white-space: nowrap; }
+.patlite-level-重大 { background: #ff4d4f; color: #fff; }
+.patlite-level-中 { background: #ffb020; color: #111; }
+.patlite-level-軽 { background: #5d6772; color: #fff; }
+.patlite-suppressed { color: #ffce6a; }
