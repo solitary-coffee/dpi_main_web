@@ -1,0 +1,27 @@
+/* 積層灯 管理画面（admin-center/style.css の上に重ねる） */
+.patlite-connection { margin: 0 0 14px; padding: 12px; border-left: 4px solid #75bfff; background: #24303b; color: #e6f2ff; overflow-wrap: anywhere; }
+.patlite-connection.patlite-good { border-color: #78dea6; background: #1f3329; color: #dcffe9; }
+.patlite-connection.patlite-warn { border-color: #ffce6a; background: #3a321f; color: #fff4cf; }
+.patlite-connection.patlite-bad { border-color: #ff8f86; background: #3b2222; color: #ffe1de; }
+.patlite-tower { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 12px; }
+.patlite-lamp { display: flex; align-items: center; justify-content: center; width: 72px; height: 44px; border: 1px solid #5d6772; border-radius: 8px; color: #111; font-weight: 800; opacity: .22; }
+.patlite-lamp.patlite-mode-on, .patlite-lamp.patlite-mode-flash { opacity: 1; }
+.patlite-lamp.patlite-mode-flash { animation: patlite-blink 1s steps(1) infinite; }
+@keyframes patlite-blink { 50% { opacity: .22; } }
+@media (prefers-reduced-motion: reduce) { .patlite-lamp.patlite-mode-flash { animation: none; outline: 3px dashed #fff; } }
+.patlite-red { background: #ff4d4f; }
+.patlite-yellow { background: #ffb020; }
+.patlite-green { background: #3ccf6e; }
+.patlite-blue { background: #3b82f6; }
+.patlite-white { background: #f2f2f2; }
+.patlite-chip { display: inline-block; width: 14px; height: 14px; margin-right: 3px; border-radius: 3px; vertical-align: middle; }
+.patlite-planned { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 0 0 8px; color: #c8d0d8; font-size: .86rem; }
+.patlite-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 6px; }
+.patlite-config { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+.patlite-config label { display: grid; gap: 6px; color: #c8d0d8; font-size: .9rem; }
+.patlite-config input { min-width: 0; padding: 8px; border: 1px solid #5d6772; border-radius: 6px; background: #20252a; color: #fff; font: inherit; }
+.patlite-config small { color: #9aa7b5; }
+@media (max-width: 680px) {
+    .patlite-lamp { width: 56px; }
+    .patlite-config { grid-template-columns: 1fr; }
+}
