@@ -50,6 +50,8 @@
                 <p id="planned" class="patlite-planned"></p>
                 <p id="meta" class="muted"></p>
                 <div class="patlite-actions">
+                    <button id="ack-btn" type="button" data-needs-serial>確認（いま点いているものを消す）</button>
+                    <button id="fullstop-btn" type="button" data-needs-serial>強制停止 / 解除</button>
                     <button id="resume-btn" type="button">自動表示に戻す</button>
                     <button id="all-off-btn" type="button" data-needs-serial>全部消す（60秒）</button>
                     <button id="test-red" type="button" data-needs-serial>赤を試す</button>
@@ -58,7 +60,7 @@
                     <button id="test-blue" type="button" data-needs-serial>青を試す</button>
                     <button id="test-white" type="button" data-needs-serial>白を試す</button>
                 </div>
-                <p class="muted">「試す」は 10 秒間その色を点滅させ、その後は自動表示に戻ります。Arduino のボタンは、短押しで確認（5秒後にいま点いているものを消す。その間ボタンの LED が赤）、2秒以上の長押しで強制停止（全停止の切り替え）です。Arduino は Ver.2.2 以降が必要です。</p>
+                <p class="muted">「試す」は 10 秒間その色を点滅させ、その後は自動表示に戻ります。上の「確認」「強制停止 / 解除」は Arduino のボタンと同じ働きです（ボタンが使えないときの代わり）。Arduino のボタンは、短押しで確認（5秒後にいま点いているものを消す。その間ボタンの LED が赤）、2秒以上の長押しで強制停止（全停止の切り替え）です。Arduino は Ver.2.2 以降が必要です。</p>
             </section>
 
             <section aria-labelledby="pause-title">
