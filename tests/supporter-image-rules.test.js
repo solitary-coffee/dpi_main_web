@@ -26,8 +26,11 @@ test('plan features are defined once and attached to the plan catalogue',()=>{
  assert.equal(PLAN_CATALOG.pro.features,PLAN_FEATURES.pro);
  assert.ok(publicPlans().every(plan=>plan.features&&!('priceEnv' in plan)));
  const enabled=id=>FEATURE_NAMES.filter(name=>PLAN_FEATURES[id][name]);
- assert.deepEqual(enabled('supporter'),[]);
- assert.deepEqual(enabled('plus'),['rainfallThreshold','prefectureScope','imageDelivery']);
+ // Basic: only the 緊急地震速報（警報）の図 (national).
+ assert.deepEqual(enabled('supporter'),['eewMap']);
+ assert.deepEqual(enabled('plus'),['rainfallThreshold','prefectureScope','eewMap','eewMapRegion','weatherMap','warningTableNational','hiresRadar','tsunamiMap','earthquakeMap']);
+ assert.equal(PLAN_FEATURES.supporter.imageDelivery,true);
+ assert.equal(PLAN_FEATURES.supporter.hiresRadar,false);
  assert.deepEqual(enabled('pro'),FEATURE_NAMES);
  for(const name of ['imageDelivery','hiresRadarThreshold','tsunamiEnlarged','weatherMunicipality'])assert.equal(PLAN_FEATURES.custom[name],true,name);
  // Existing behaviour: custom geography is decided by the administrator's flags.
@@ -38,7 +41,8 @@ test('plan features are defined once and attached to the plan catalogue',()=>{
  assert.equal(planFeatures([{...active('plus'),status:'past_due'}]).rainfallThreshold,true);
  assert.equal(planFeatures([custom({status:'past_due'})]).imageDelivery,false);
  assert.equal(hasFeature(planFeatures([active('plus')]),'hiresRadarThreshold'),false);
- assert.equal(imageTier([active('supporter')]),'');
+ assert.equal(imageTier([active('supporter')]),'supporter');
+ assert.equal(imageTier([]),'');
  assert.equal(imageTier([active('plus')]),'plus');
  assert.equal(imageTier([active('plus'),active('pro')]),'pro');
  assert.equal(imageTier([active('pro'),custom()]),'custom');
@@ -201,16 +205,29 @@ test('admin details describe image rule settings',()=>{
  assert.equal(r['詳細種別'],undefined);
 });
 
-test('comparison table lists the image delivery rows as upcoming with the plan split',async()=>{
+test('comparison table lists the image delivery rows with the plan split (custom: per contract)',async()=>{
  const html=await readFile(new URL('../site/supporter/plans.html',import.meta.url),'utf8');
- assert.match(html,/画像配信（準備中/);
+ assert.doesNotMatch(html,/準備中/);
  const row=label=>html.match(new RegExp(`<th scope="row">${label}[^<]*</th>((?:<td>[^<]*</td>){4})`))?.[1].match(/<td>([^<]*)<\/td>/g).map(cell=>cell.replace(/<\/?td>/g,''));
- assert.deepEqual(row('雨雲レーダー（高解像度版）：全国・地方'),['—','○','○','○']);
- assert.deepEqual(row('雨雲レーダー（高解像度版）：閾値以上'),['—','—','○','○']);
- assert.deepEqual(row('津波警報・注意報の図・表：全国・地方'),['—','○','○','○']);
- assert.deepEqual(row('津波警報・注意報の図・表：発表地域拡大版'),['—','—','○','○']);
- assert.deepEqual(row('気象警報の図：全国・地方'),['—','○','○','○']);
- assert.deepEqual(row('気象警報の図：都道府県・市区町村'),['—','—','○','○']);
+ const C='契約による';
+ assert.deepEqual(row('緊急地震速報（警報）の図：全国'),['○','○','○',C]);
+ assert.deepEqual(row('緊急地震速報（警報）の図：地方を選ぶ'),['—','○','○',C]);
+ assert.deepEqual(row('雨雲レーダー（高解像度版）：全国・地方'),['—','○','○',C]);
+ assert.deepEqual(row('雨雲レーダー（高解像度版）：閾値以上'),['—','—','○',C]);
+ assert.deepEqual(row('津波警報・注意報の図・表：全国・地方'),['—','○','○',C]);
+ assert.deepEqual(row('津波警報・注意報の図・表：発表地域拡大版'),['—','—','○',C]);
+ assert.deepEqual(row('気象警報の図：全国・地方'),['—','○','○',C]);
+ assert.deepEqual(row('気象警報の図：都道府県・市区町村'),['—','—','○',C]);
+ assert.deepEqual(row('警報・注意報の表：全国の表'),['—','○','○',C]);
+ assert.deepEqual(row('警報・注意報の表：地方の表'),['—','—','○',C]);
+ assert.deepEqual(row('警報・注意報の表：時系列の表'),['—','—','○',C]);
+ assert.deepEqual(row('警報・注意報の表：発表のたびに毎回'),['—','—','○',C]);
+ assert.deepEqual(row('月額（税込）'),['300円','800円','1,280円','個別見積もり']);
+ assert.equal(row('追加チャンネル（3件）／追加サーバー（2件）／追加ルール（3件）')[3],'個別');
+ // Every other row of the custom column is decided by the contract.
+ const customCells=[...html.matchAll(/<tr><th scope="row">([^<]*)<\/th>(?:<td>[^<]*<\/td>){3}<td>([^<]*)<\/td><\/tr>/g)];
+ assert.ok(customCells.length>25);
+ for(const [,label,cell] of customCells)if(!label.startsWith('月額')&&!label.startsWith('追加チャンネル'))assert.equal(cell,C,label);
 });
 
 test('dashboard offers image types only when the server enables them',async()=>{

@@ -1,3 +1,5 @@
+import { FEATURE_DEFINITIONS, FEATURE_SECTIONS, PLAN_FEATURE_NAMES, missingFeatureDependency, featureLabel } from '../supporter/plan-features.js';
+
 let accounts = [];
 let selectedAccount = null;
 let creditSummary = null;
@@ -22,18 +24,16 @@ document.addEventListener('DOMContentLoaded', () => {
   $('custom-open').setAttribute('aria-expanded',String(details.open));
   $('custom-open').textContent=details.open?'カスタム設定を閉じる':'カスタムプラン設定';
  });
- for(const id of ['custom-complex','custom-city','custom-extract','custom-multi']){
-  $(id).addEventListener('change',syncCustomToggles);
- }
- syncCustomToggles();
+ renderCustomFeatureGroups();
+ for(const button of document.querySelectorAll('[data-preset]'))button.addEventListener('click',()=>applyFeaturePreset(button.dataset.preset));
+ applyFeaturePreset('pro');
  $('custom-form').addEventListener('submit',event=>{event.preventDefault();submitCustom('save');});
  $('custom-load').addEventListener('click',loadCustom);
  $('custom-checkout').addEventListener('click',()=>submitCustom('checkout'));
  $('custom-cancel-change').addEventListener('click',()=>submitCustom('cancel-change'));
 
  $('custom-cancel').addEventListener('click',()=>submitCustom('cancel'));
- for(const id of ['custom-channels','custom-servers','custom-rules','custom-complex','custom-city','custom-extract','custom-multi','custom-reuse'])$(id).addEventListener('input',updateCustomEstimate);
- $('custom-city').addEventListener('change',()=>{if(!$('custom-city').checked)$('custom-extract').checked=false;syncCustomToggles();updateCustomEstimate();});
+ for(const id of ['custom-channels','custom-servers','custom-rules','custom-reuse'])$(id).addEventListener('input',updateCustomEstimate);
  updateCustomEstimate();
  $('account-search').addEventListener('input', renderAccounts);
  $('detail-close').addEventListener('click', () => $('detail-dialog').close());
@@ -47,20 +47,59 @@ document.addEventListener('DOMContentLoaded', () => {
  loadAccounts();
 });
 
-function syncCustomToggles(){
- const extraction=$('custom-extract');
- extraction.disabled=!$('custom-city').checked;
- if(extraction.disabled)extraction.checked=false;
- for(const status of document.querySelectorAll('.custom-toggle-status[data-for]')){
-  const input=$(status.dataset.for);
-  if(!input)continue;
-  status.textContent=input.checked?'ON':'OFF';
+// Custom contract features: one checkbox per feature of plan-features.js, grouped by section.
+const PLAN_TAG={supporter:'Basic',plus:'Plus',pro:'Pro'};
+function featureBoxes(){return [...document.querySelectorAll('#custom-feature-groups input[data-feature]')];}
+function selectedFeatures(){return featureBoxes().filter(box=>box.checked).map(box=>box.dataset.feature).sort();}
+function renderCustomFeatureGroups(){
+ const root=$('custom-feature-groups');root.replaceChildren();
+ for(const [section,title] of FEATURE_SECTIONS){
+  const group=document.createElement('fieldset');group.className='custom-feature-group';
+  const legend=document.createElement('legend');legend.textContent=section==='text'?title:`画像配信：${title}`;group.append(legend);
+  for(const item of FEATURE_DEFINITIONS.filter(definition=>definition.section===section)){
+   const label=document.createElement('label');label.className='custom-feature-option';
+   const box=document.createElement('input');box.type='checkbox';box.dataset.feature=item.name;
+   box.addEventListener('change',()=>{syncFeatureDependencies(item.name,box.checked);updateCustomEstimate();});
+   const text=document.createElement('span');text.textContent=item.label;
+   const tag=document.createElement('small');tag.className='custom-feature-plan';tag.textContent=`${PLAN_TAG[item.plan]}以上`;
+   label.append(box,text,tag);group.append(label);
+  }
+  root.append(group);
  }
+}
+// Turning a feature on also turns on what it needs; turning one off also turns off what needs it.
+function syncFeatureDependencies(name,checked){
+ const boxes=new Map(featureBoxes().map(box=>[box.dataset.feature,box]));
+ if(checked){
+  const requires=FEATURE_DEFINITIONS.find(item=>item.name===name)?.requires||[];
+  if(requires.length&&!requires.some(item=>boxes.get(item)?.checked)){boxes.get(requires[0]).checked=true;syncFeatureDependencies(requires[0],true);}
+ }else{
+  for(const item of FEATURE_DEFINITIONS){
+   if(!item.requires.length||!boxes.get(item.name)?.checked)continue;
+   if(!item.requires.some(required=>boxes.get(required)?.checked)){boxes.get(item.name).checked=false;syncFeatureDependencies(item.name,false);}
+  }
+ }
+ updateFeatureCount();
+}
+function setFeatures(names){
+ const wanted=new Set(names);
+ for(const box of featureBoxes())box.checked=wanted.has(box.dataset.feature);
+ updateFeatureCount();
+}
+function applyFeaturePreset(preset){
+ setFeatures(preset==='none'?[]:PLAN_FEATURE_NAMES[preset]||[]);
+ updateCustomEstimate();
+}
+function updateFeatureCount(){
+ const selected=selectedFeatures();
+ const same=Object.entries(PLAN_FEATURE_NAMES).find(([,names])=>names.length===selected.length&&names.every(name=>selected.includes(name)));
+ $('custom-feature-count').textContent=`オン：${selected.length}／${FEATURE_DEFINITIONS.length}件`+(same?`（${PLAN_TAG[same[0]]}と同じ）`:selected.length?'（個別設定）':'');
 }
 function openCustomForAccount(account){
  if(!account)return;
  // Always remove another account's pending form edits before switching users.
  $('custom-form').reset();
+ applyFeaturePreset('pro');
  $('custom-settings-details').open=true;
  $('custom-uid').value=account.discordUserId;
  $('custom-confirm').value=account.discordUserId;
@@ -68,7 +107,7 @@ function openCustomForAccount(account){
  loadedCustomRevision=null;
  customRequestId='';
  if(account.customPlan)loadCustom();
- else{$('custom-result').textContent='新規カスタムプランを設定できます。設定内容を確認して保存してください。';syncCustomToggles();updateCustomEstimate();}
+ else{$('custom-result').textContent='新規カスタムプランを設定できます。設定内容を確認して保存してください。';updateCustomEstimate();}
  $('custom-settings-details').scrollIntoView({behavior:'smooth',block:'start'});
 }
 function element(tag, className = '', text = '') {
@@ -381,14 +420,14 @@ function customPayload(){
   discordUserId:$('custom-uid').value.trim(),confirmDiscordUserId:$('custom-confirm').value.trim(),
   name:$('custom-name').value.trim(),channels:Number($('custom-channels').value),servers:Number($('custom-servers').value),
   rules:Number($('custom-rules').value),monthlyYen:Number($('custom-price').value),
-  complexConditions:$('custom-complex').checked,municipalityBranching:$('custom-city').checked,
-  contentExtraction:$('custom-extract').checked,multiDestination:$('custom-multi').checked,
+  features:selectedFeatures(),
   secondaryReuse:$('custom-reuse').checked,reason:$('custom-reason').value.trim(),
   requestId:customRequestId||crypto.randomUUID(),
  };
 }
 function updateCustomEstimate(){
- const p=customPayload(),base=p.complexConditions||p.contentExtraction?1280:p.municipalityBranching||p.channels>2||p.servers>1||p.rules>5?800:300;
+ const p=customPayload(),has=name=>p.features.includes(name);
+ const base=has('complexConditions')||has('strictMunicipality')?1280:has('municipalityScope')||p.channels>2||p.servers>1||p.rules>5?800:300;
  const defaults=base===1280?[20,5,30]:base===800?[10,3,15]:[2,1,5];
  const price=base+Math.ceil(Math.max(0,p.channels-defaults[0])/3)*200+Math.max(0,p.servers-defaults[1])*200+Math.ceil(Math.max(0,p.rules-defaults[2])/5)*100+(p.secondaryReuse?200:0);
  $('custom-estimate').textContent=Number.isFinite(price)?`${price.toLocaleString('ja-JP')}円／月（参考値）`:'—';
@@ -400,9 +439,9 @@ function loadCustom(){
  if(!p){$('custom-result').textContent='カスタムプランは未設定です。';return;}
  $('custom-name').value=p.name;
  for(const [id,value] of [['custom-channels',p.channels],['custom-servers',p.servers],['custom-rules',p.rules],['custom-price',p.monthlyYen]])$(id).value=String(value);
- for(const [id,value] of [['custom-complex',p.complexConditions],['custom-city',p.municipalityBranching],['custom-extract',p.contentExtraction],['custom-multi',p.multiDestination],['custom-reuse',p.secondaryReuse]])$(id).checked=value===true;
+ $('custom-reuse').checked=p.secondaryReuse===true;
+ setFeatures(Array.isArray(p.features)?p.features:[]);
  loadedCustomRevision=Number(p.revision);
- syncCustomToggles();
  $('custom-result').textContent=`現在の状態：${p.status}／更新日：${p.updatedAt||'不明'}。契約中でも管理者は料金を変更できます。`;
  if(account.pendingCustomChange){
   const c=account.pendingCustomChange;
@@ -418,6 +457,8 @@ async function submitCustom(action){
   $('custom-result').textContent='Discord IDと確認欄を一致させてください。';return;
  }
  if(payload.reason.length<5){$('custom-result').textContent='理由を5文字以上入力してください。';return;}
+ const missing=missingFeatureDependency(payload.features);
+ if(missing){$('custom-result').textContent=`「${featureLabel(missing.name)}」には「${missing.requires.map(featureLabel).join('」または「')}」も必要です。`;return;}
  if(action==='save'&&!$('custom-form').reportValidity())return;
  if(action==='cancel'&&!window.confirm('このユーザーのカスタム契約を停止します。Stripeの契約も即時解約され、返金は自動実行しません。続行しますか？'))return;
  if(action==='cancel-change'&&!window.confirm('未決済の当月差額請求を無効化し、既存契約を維持しますか？'))return;

@@ -67,10 +67,19 @@
      <label>チャンネル上限<input id="custom-channels" type="number" min="1" max="200" value="20" required></label>
      <label>サーバー上限<input id="custom-servers" type="number" min="1" max="50" value="5" required></label>
      <label>ルール上限<input id="custom-rules" type="number" min="1" max="500" value="30" required></label>
-     <label class="custom-toggle"><input id="custom-complex" type="checkbox" role="switch"><span class="custom-toggle-copy">複雑条件（AND/OR・追加条件）を利用可能</span><span class="custom-toggle-status" data-for="custom-complex" aria-hidden="true">OFF</span></label>
-     <label class="custom-toggle"><input id="custom-city" type="checkbox" role="switch"><span class="custom-toggle-copy">市区町村単位の分岐を利用可能</span><span class="custom-toggle-status" data-for="custom-city" aria-hidden="true">OFF</span></label>
-     <label class="custom-toggle"><input id="custom-extract" type="checkbox" role="switch"><span class="custom-toggle-copy">配信本文を指定市区町村だけに抽出可能</span><span class="custom-toggle-status" data-for="custom-extract" aria-hidden="true">OFF</span></label>
-     <label class="custom-toggle"><input id="custom-multi" type="checkbox" role="switch"><span class="custom-toggle-copy">1ルールから複数チャンネルへの配信を許可</span><span class="custom-toggle-status" data-for="custom-multi" aria-hidden="true">OFF</span></label>
+     <fieldset id="custom-features" class="custom-features">
+      <legend>この契約で使える機能</legend>
+      <div class="custom-feature-presets" role="group" aria-label="機能をまとめて設定">
+       <span>まとめて設定：</span>
+       <button type="button" class="secondary-btn" data-preset="pro">Proと同じ</button>
+       <button type="button" class="secondary-btn" data-preset="plus">Plusと同じ</button>
+       <button type="button" class="secondary-btn" data-preset="supporter">Basicと同じ</button>
+       <button type="button" class="secondary-btn" data-preset="none">すべてオフ</button>
+      </div>
+      <p id="custom-feature-count" class="custom-feature-count" role="status" aria-live="polite"></p>
+      <div id="custom-feature-groups" class="custom-feature-groups"></div>
+      <p class="custom-feature-help">上位の機能をオンにすると、必要な機能も自動でオンになります（例：市区町村単位の指定 → 都道府県単位の指定）。料金・上限（チャンネル・サーバー・ルール数）はまとめて設定では変わりません。</p>
+     </fieldset>
      <label class="custom-checkbox"><input id="custom-reuse" type="checkbox"><span>二次利用を契約上許容（別途申請・審査は必須）</span></label>
      <p>参考月額概算：<strong id="custom-estimate">—</strong></p>
      <label>管理者が確定する月額（税込・円）<input id="custom-price" type="number" min="100" max="1000000" step="1" value="1280" required></label>

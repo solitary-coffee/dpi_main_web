@@ -84,3 +84,5 @@
 .preview-credit-label input{width:9em}
 .preview-result-ok{padding:10px 12px;border-radius:8px;background:#203f34;color:#d9f7e4;font-weight:700}
 .preview-result-ng{padding:10px 12px;border-radius:8px;background:#3d2a1e;color:#ffe2c4;font-weight:700}
+/* 画像配信ルール：補足の一言と見本の画像 */
+.rule-help{margin:0;padding:6px 10px;border-left:3px solid #6caee8;color:var(--muted);font-size:.9rem}.rule-preview{display:flex;flex-wrap:wrap;gap:12px}.rule-preview-item{position:relative;margin:0;flex:1 1 220px;max-width:360px;padding:8px;border:1px solid var(--line);border-radius:7px;background:var(--panel)}.rule-preview-item img{display:block;width:100%;height:auto;border-radius:4px}.rule-preview-item figcaption{margin-top:6px;color:var(--muted);font-size:.82rem}.rule-preview-label{position:absolute;top:12px;left:12px;padding:2px 8px;border-radius:999px;background:#24445d;color:#dff1ff;font-size:.78rem;font-weight:700}

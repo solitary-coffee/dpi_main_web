@@ -1,17 +1,37 @@
-// Paid image delivery rules (snapshot schemaVersion 4): hires-radar / tsunami-map / weather-map / earthquake-map.
-// The home server (dpi_code Di/supporter_image_rules.py) re-validates every field and
-// re-checks Pro-only options against `tier`; these definitions must stay in sync with it.
+// Paid image delivery rules (snapshot schemaVersion 4): hires-radar / tsunami-map / weather-map /
+// earthquake-map / eew-map / warning-table.
+// The home server (dpi_code Di/supporter_image_rules.py) re-validates every field and re-checks
+// the paid options against `features` (sorted feature names of the owner, see plan-features.js)
+// or, on an older home server, against `tier`; these definitions must stay in sync with it.
 import { PREFECTURES } from './supporter-geo.js';
-import { hasFeature } from '../site/supporter/plan-features.js';
+import { hasFeature, imageTypeAllowed, featureList } from '../site/supporter/plan-features.js';
 
-export const IMAGE_RULE_TYPES = Object.freeze(['hires-radar', 'tsunami-map', 'weather-map', 'earthquake-map']);
+export const IMAGE_RULE_TYPES = Object.freeze(['hires-radar', 'tsunami-map', 'weather-map', 'earthquake-map', 'eew-map', 'warning-table']);
 export const IMAGE_RULE_TYPE_SET = new Set(IMAGE_RULE_TYPES);
+// Types that need a home server and AWS Lambda that know them (SUPPORTER_IMAGE_RULES_V2_ENABLED).
+export const IMAGE_RULE_TYPES_V2 = Object.freeze(['eew-map', 'warning-table']);
+const V2_TYPE_SET = new Set(IMAGE_RULE_TYPES_V2);
 export const IMAGE_RULE_TYPE_OPTIONS = Object.freeze([
  ['hires-radar', '雨雲レーダー（高解像度版）'],
  ['tsunami-map', '津波警報・注意報（図・表）'],
  ['weather-map', '気象警報（図）'],
  ['earthquake-map', '地震情報（図）'],
+ ['eew-map', '緊急地震速報（警報）の図'],
+ ['warning-table', '警報・注意報の表'],
 ]);
+// tsunami-map outputs: the map and the table can be sent to different channels by separate rules.
+export const TSUNAMI_MAP_OUTPUTS = Object.freeze([['map', '図'], ['table', '表']]);
+// warning-table: national / regional = VPWS50（集約通報）, timeseries = VPWP50（時系列）.
+export const WARNING_TABLE_KINDS = Object.freeze([
+ ['national', '全国の表'],
+ ['regional', '地方の表'],
+ ['timeseries', '時系列の表'],
+]);
+export const WARNING_TABLE_DELIVER_ON = Object.freeze([
+ ['changed', '内容が変わったときだけ'],
+ ['every', '発表のたびに毎回'],
+]);
+const WARNING_TABLE_FEATURE = Object.freeze({national: 'warningTableNational', regional: 'warningTableRegional', timeseries: 'warningTableTimeseries'});
 export const IMAGE_REGION_IDS = Object.freeze(['all', 'hokkaido', 'tohoku', 'kanto-koshin', 'hokuriku', 'tokai', 'kinki', 'chugoku', 'shikoku', 'kyushu-north', 'kyushu-south-amami', 'okinawa']);
 export const HIRES_RADAR_CONDITIONS = Object.freeze([
  ['scheduled', '定時配信'],
@@ -70,7 +90,11 @@ const PRODUCTS = WEATHER_MAP_PRODUCTS.map(([id]) => id);
 const PRODUCT_SET = new Set(PRODUCTS);
 const SEVERITIES = new Set(WEATHER_MAP_SEVERITIES.map(([id]) => id));
 const EQ_PRODUCTS = EARTHQUAKE_MAP_PRODUCTS.map(([id]) => id);
-const EQ_PRODUCT_SET = new Set(EQ_PRODUCTS);
+// Legacy hidden option: VXSE43（緊急地震速報（警報））inside earthquake-map. Never offered any more
+// (use the eew-map type); kept valid so rules saved with it keep working (needs eewMap).
+const EEW_WARNING_PRODUCT = 'VXSE43';
+const EQ_PRODUCTS_WITH_LEGACY = [...EQ_PRODUCTS, EEW_WARNING_PRODUCT];
+const EQ_PRODUCT_SET = new Set(EQ_PRODUCTS_WITH_LEGACY);
 const EQ_INTENSITY_SET = new Set(EARTHQUAKE_MAP_INTENSITIES.map(([id]) => id));
 const EQ_REGION_SET = new Set(EARTHQUAKE_MAP_REGION_IDS);
 const EQ_LG_SET = new Set(EARTHQUAKE_MAP_LG_CLASSES.map(([id]) => id));
@@ -83,13 +107,26 @@ export function imageRulesEnabled(env) {
  return clean(env?.SUPPORTER_IMAGE_RULES_ENABLED) === '1';
 }
 
+// Default off: eew-map / warning-table are offered and published only once every home server
+// and the AWS Lambda validator know these types (an unknown type rejects the WHOLE snapshot).
+export function imageRulesV2Enabled(env) {
+ return clean(env?.SUPPORTER_IMAGE_RULES_V2_ENABLED) === '1';
+}
+
 export function isImageRuleType(type) {
  return IMAGE_RULE_TYPE_SET.has(clean(type));
 }
 
-export function imageRuleOptions() {
+export function isImageRuleV2Type(type) {
+ return V2_TYPE_SET.has(clean(type));
+}
+
+export function imageRuleOptions(v2 = false) {
  return {
-  imageRuleTypes: IMAGE_RULE_TYPE_OPTIONS,
+  imageRuleTypes: v2 ? IMAGE_RULE_TYPE_OPTIONS : IMAGE_RULE_TYPE_OPTIONS.filter(([id]) => !V2_TYPE_SET.has(id)),
+  tsunamiMapOutputs: TSUNAMI_MAP_OUTPUTS,
+  warningTableKinds: WARNING_TABLE_KINDS,
+  warningTableDeliverOn: WARNING_TABLE_DELIVER_ON,
   imageRegions: IMAGE_REGION_IDS,
   hiresRadarConditions: HIRES_RADAR_CONDITIONS,
   hiresRadarThresholds: HIRES_RADAR_THRESHOLDS,
@@ -147,7 +184,8 @@ function normalizeEarthquakeMapFields(rule, limits, catalogue) {
  if (rule?.products !== undefined && rule?.products !== null) {
   const requested = Array.isArray(rule.products) ? rule.products.map(clean) : [];
   if (!requested.length || requested.some(id => !EQ_PRODUCT_SET.has(id))) reject('地震情報（図）で送る情報の種類を1つ以上選択してください。');
-  products = EQ_PRODUCTS.filter(id => requested.includes(id));
+  products = EQ_PRODUCTS_WITH_LEGACY.filter(id => requested.includes(id));
+  if (products.includes(EEW_WARNING_PRODUCT) && !hasFeature(limits, 'eewMap')) reject('緊急地震速報（警報）の図は「緊急地震速報（警報）の図」の配信ルールで設定してください。');
  }
  const minIntensity = earthquakeIntensity(rule?.minIntensity, '地震情報（図）の震度のしきい値を確認してください。');
  const rawRegions = rule?.regionMinIntensity ?? {};
@@ -180,11 +218,64 @@ function bool(value, fallback = false) {
  reject('画像配信ルールのON/OFF設定を確認してください。');
 }
 
+function regionList(value, message) {
+ if (value === undefined || value === null) return [];
+ if (!Array.isArray(value)) reject(message);
+ const requested = value.map(clean).filter(id => id && id !== 'all');
+ if (requested.some(id => !EQ_REGION_SET.has(id))) reject(message);
+ return EARTHQUAKE_MAP_REGION_IDS.filter(id => requested.includes(id));
+}
+
+// eew-map: the same map image for every rule; `regions` only decides WHEN it is sent.
+// [] = every 緊急地震速報（警報）(national, Basic+); regions = only when one of them becomes a
+// target area (also when a later report adds it; Plus+ feature eewMapRegion).
+function normalizeEewMapFields(rule, limits) {
+ const regions = regionList(rule?.regions, '緊急地震速報（警報）の図の対象地方を確認してください。');
+ if (regions.length && !hasFeature(limits, 'eewMapRegion')) reject('緊急地震速報（警報）の図で地方を選ぶ設定はPlus以上のプランで利用できます。');
+ return {region: 'all', regions};
+}
+
+// warning-table: tables ⊆ national/regional/timeseries, regions for regional/timeseries,
+// deliverOn changed (default) | every (Pro+), showAllAreas.
+function normalizeWarningTableFields(rule, limits) {
+ const requested = Array.isArray(rule?.tables) ? rule.tables.map(clean) : [];
+ const kinds = WARNING_TABLE_KINDS.map(([id]) => id);
+ if (!requested.length || requested.some(id => !kinds.includes(id))) reject('警報・注意報の表で送る表を1つ以上選択してください。');
+ const tables = kinds.filter(id => requested.includes(id));
+ for (const table of tables) {
+  if (!hasFeature(limits, WARNING_TABLE_FEATURE[table])) reject(table === 'national' ? '警報・注意報の表（全国）はPlus以上のプランで利用できます。' : '警報・注意報の表の地方の表・時系列の表はPro以上のプランで利用できます。');
+ }
+ const needsRegions = tables.includes('regional') || tables.includes('timeseries');
+ const regions = needsRegions ? regionList(rule?.regions, '警報・注意報の表の対象地方を確認してください。') : [];
+ if (needsRegions && !regions.length) reject('地方の表・時系列の表を送る地方を1つ以上選択してください。');
+ const deliverOn = clean(rule?.deliverOn) || 'changed';
+ if (!WARNING_TABLE_DELIVER_ON.some(([id]) => id === deliverOn)) reject('警報・注意報の表の配信のタイミングを確認してください。');
+ if (deliverOn === 'every' && !hasFeature(limits, 'warningTableEvery')) reject('警報・注意報の表を毎回配信する設定はPro以上のプランで利用できます。');
+ return {region: 'all', tables, regions, deliverOn, showAllAreas: bool(rule?.showAllAreas)};
+}
+
+// tsunami-map outputs (absent = both, as before; legacy includeTables:false = map only).
+function tsunamiOutputs(rule) {
+ if (rule?.outputs === undefined || rule?.outputs === null) return bool(rule?.includeTables, true) ? ['map', 'table'] : ['map'];
+ const requested = Array.isArray(rule.outputs) ? rule.outputs.map(clean) : [];
+ const ids = TSUNAMI_MAP_OUTPUTS.map(([id]) => id);
+ if (!requested.length || requested.some(id => !ids.includes(id))) reject('津波警報・注意報で送るもの（図・表）を1つ以上選択してください。');
+ return ids.filter(id => requested.includes(id));
+}
+
+const TYPE_UPGRADE_MESSAGE = Object.freeze({
+ 'eew-map': '緊急地震速報（警報）の図は現在の契約では利用できません。',
+ 'warning-table': '警報・注意報の表はPlus以上のプランで利用できます。',
+});
+
 // Validate the type-specific fields of an image rule against the account's features.
 // `limits` carries the plan features (planFeatures()) merged into supporterLimits().
 export function normalizeImageRuleFields(rule, type, limits = {}, catalogue = null) {
- if (!hasFeature(limits, 'imageDelivery')) reject('画像配信ルールはPlus以上のプランで利用できます。');
+ if (!IMAGE_RULE_TYPE_SET.has(type)) reject('情報種別を確認してください。');
+ if (!imageTypeAllowed(limits, type)) reject(TYPE_UPGRADE_MESSAGE[type] || 'この画像配信ルールはPlus以上のプランで利用できます。');
  if (type === 'earthquake-map') return normalizeEarthquakeMapFields(rule, limits, catalogue);
+ if (type === 'eew-map') return normalizeEewMapFields(rule, limits);
+ if (type === 'warning-table') return normalizeWarningTableFields(rule, limits);
  const region = clean(rule?.region) || 'all';
  if (!REGIONS.has(region)) reject('画像配信の対象地方を確認してください。');
  if (type === 'hires-radar') {
@@ -203,9 +294,11 @@ export function normalizeImageRuleFields(rule, type, limits = {}, catalogue = nu
   return {region, linearRainband: bool(rule?.linearRainband), radarCondition, rainfallThresholdMmPerHour, deliveryIntervalHours};
  }
  if (type === 'tsunami-map') {
-  const enlargedArea = bool(rule?.enlargedArea);
+  const outputs = tsunamiOutputs(rule);
+  // The enlarged images are maps: they are only attached to a rule that sends the map.
+  const enlargedArea = bool(rule?.enlargedArea) && outputs.includes('map');
   if (enlargedArea && !hasFeature(limits, 'tsunamiEnlarged')) reject('津波の発表地域拡大版はPro以上のプランで利用できます。');
-  return {region, includeTables: bool(rule?.includeTables, true), enlargedArea};
+  return {region, outputs, includeTables: outputs.includes('table'), enlargedArea};
  }
  if (type !== 'weather-map') reject('情報種別を確認してください。');
  const requested = Array.isArray(rule?.products) ? rule.products.map(clean) : [];
@@ -237,10 +330,25 @@ export function normalizeImageRuleFields(rule, type, limits = {}, catalogue = nu
 // because the current contract no longer covers it. Never silently widen a paid
 // filter (threshold / prefecture / municipalities); purely additive extras
 // (enlarged tsunami map, municipality detail) are dropped instead.
+// Every returned object carries `tier` (older home servers) and `features` (the owner's sorted
+// feature names; newer home servers check paid options against it instead of tier).
 export function imageRuleSnapshotFields(rule, features, tier) {
+ const fields = imageRuleSnapshotFieldsOnly(rule, features, tier);
+ return fields ? {...fields, features: featureList(features)} : null;
+}
+
+function imageRuleSnapshotFieldsOnly(rule, features, tier) {
  const type = clean(rule?.type);
- if (!IMAGE_RULE_TYPE_SET.has(type) || !tier || !hasFeature(features, 'imageDelivery')) return null;
+ if (!IMAGE_RULE_TYPE_SET.has(type) || !tier || !imageTypeAllowed(features, type)) return null;
  if (type === 'earthquake-map') return earthquakeMapSnapshotFields(rule, features, tier);
+ if (type === 'eew-map') {
+  const regions = Array.isArray(rule?.regions) ? rule.regions.map(clean).filter(id => id && id !== 'all') : [];
+  if (regions.some(id => !EQ_REGION_SET.has(id))) return null;
+  // Never widen a region-limited rule to every warning after a downgrade.
+  if (regions.length && !hasFeature(features, 'eewMapRegion')) return null;
+  return {region: 'all', tier, regions: EARTHQUAKE_MAP_REGION_IDS.filter(id => regions.includes(id))};
+ }
+ if (type === 'warning-table') return warningTableSnapshotFields(rule, features, tier);
  const region = REGIONS.has(clean(rule?.region)) ? clean(rule.region) : null;
  if (!region) return null;
  if (type === 'hires-radar') {
@@ -254,7 +362,10 @@ export function imageRuleSnapshotFields(rule, features, tier) {
   };
  }
  if (type === 'tsunami-map') {
-  return {region, tier, includeTables: rule?.includeTables !== false, enlargedArea: rule?.enlargedArea === true && hasFeature(features, 'tsunamiEnlarged')};
+  const ids = TSUNAMI_MAP_OUTPUTS.map(([id]) => id);
+  const outputs = Array.isArray(rule?.outputs) ? ids.filter(id => rule.outputs.includes(id)) : (rule?.includeTables === false ? ['map'] : ['map', 'table']);
+  if (!outputs.length) return null;
+  return {region, tier, outputs, includeTables: outputs.includes('table'), enlargedArea: rule?.enlargedArea === true && outputs.includes('map') && hasFeature(features, 'tsunamiEnlarged')};
  }
  const prefecture = clean(rule?.prefecture);
  const municipalities = Array.isArray(rule?.municipalities) ? rule.municipalities.map(clean).filter(Boolean) : [];
@@ -276,8 +387,24 @@ export function imageRuleSnapshotFields(rule, features, tier) {
 // Pro/custom account: the home server drops a Plus rule that carries any of them.
 // Thresholds narrow the delivery, so a downgraded rule with thresholds is suspended (never
 // widened to "every earthquake"); the centre municipality only changes the framing and is dropped.
+// warning-table snapshot fields. Tables the contract no longer covers are dropped (fewer images,
+// never wider); "every" falls back to "changed" (fewer deliveries) when warningTableEvery is gone.
+function warningTableSnapshotFields(rule, features, tier) {
+ const requested = Array.isArray(rule?.tables) ? rule.tables : [];
+ const tables = WARNING_TABLE_KINDS.map(([id]) => id).filter(id => requested.includes(id) && hasFeature(features, WARNING_TABLE_FEATURE[id]));
+ if (!tables.length) return null;
+ const rawRegions = Array.isArray(rule?.regions) ? rule.regions.map(clean).filter(id => id && id !== 'all') : [];
+ if (rawRegions.some(id => !EQ_REGION_SET.has(id))) return null;
+ const needsRegions = tables.includes('regional') || tables.includes('timeseries');
+ const regions = needsRegions ? EARTHQUAKE_MAP_REGION_IDS.filter(id => rawRegions.includes(id)) : [];
+ if (needsRegions && !regions.length) return null;
+ const deliverOn = rule?.deliverOn === 'every' && hasFeature(features, 'warningTableEvery') ? 'every' : 'changed';
+ return {region: 'all', tier, tables, regions, deliverOn, showAllAreas: rule?.showAllAreas === true};
+}
+
 function earthquakeMapSnapshotFields(rule, features, tier) {
- const products = Array.isArray(rule?.products) ? EQ_PRODUCTS.filter(id => rule.products.includes(id)) : [...EQ_PRODUCTS];
+ const allowedProducts = hasFeature(features, 'eewMap') ? EQ_PRODUCTS_WITH_LEGACY : EQ_PRODUCTS;
+ const products = Array.isArray(rule?.products) ? allowedProducts.filter(id => rule.products.includes(id)) : [...EQ_PRODUCTS];
  // The home server treats an empty list as "all products"; never send that by accident.
  if (!products.length) return null;
  const minText = clean(rule?.minIntensity);

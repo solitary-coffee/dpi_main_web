@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Safely enable v1/v2/v3/v4 supporter snapshot publishing in the deployed AWS Lambda.
 
-Schema v4 adds the paid image rules (hires-radar / tsunami-map / weather-map, and since
-2026-11-18 earthquake-map). A Lambda that already runs the first v4 validator (without
-earthquake-map) is upgraded too; it would otherwise reject every snapshot that contains an
-earthquake-map rule and the ACTIVE pointer would stop advancing.
+Schema v4 adds the paid image rules (hires-radar / tsunami-map / weather-map, since
+2026-11-18 earthquake-map, and since 2026-11-21 eew-map (also Basic, tier "supporter") and
+warning-table). A Lambda that already runs an older v4 validator (without earthquake-map or
+without eew-map / warning-table) is upgraded too; it would otherwise reject every snapshot
+that contains such a rule and the ACTIVE pointer would stop advancing.
+Turn SUPPORTER_IMAGE_RULES_V2_ENABLED on in the website only after this patch is applied.
 Deploy order: home server (dpi_code) FIRST -> this Lambda patch -> website.
 Keep SUPPORTER_IMAGE_RULES_ENABLED off on the website until every home server
 understands v4: an old home server rejects unknown rule types and would stop
@@ -44,8 +46,9 @@ KNOWN_CHECKS = (
     'int(value.get("schemaVersion", 0)) not in (1, 2, 3)',
     V4_CHECK,
 )
-# Marker of the current target validator (all four image rule types).
-CURRENT_MARKER = '"earthquake-map"'
+# Markers of the current target validator (all six image rule types).
+CURRENT_MARKER = '"warning-table"'
+CURRENT_MARKERS = ('"earthquake-map"', '"eew-map"', CURRENT_MARKER)
 LOCAL_SOURCE = Path(__file__).resolve().with_name("lambda_function.py")
 
 
@@ -64,7 +67,7 @@ def function_source(source, name):
 
 def target_validator():
     validator = function_source(LOCAL_SOURCE.read_text(encoding="utf-8"), VALIDATOR)
-    if V4_CHECK not in validator or '"hires-radar"' not in validator or CURRENT_MARKER not in validator:
+    if V4_CHECK not in validator or '"hires-radar"' not in validator or not all(m in validator for m in CURRENT_MARKERS):
         raise RuntimeError("Local lambda_function.py is not the v4 validator")
     return validator
 
@@ -72,7 +75,7 @@ def target_validator():
 def patch(source, validator=None):
     validator = validator or target_validator()
     live = function_source(source, VALIDATOR)
-    if V4_CHECK in live and '"hires-radar"' in live and CURRENT_MARKER in live:
+    if V4_CHECK in live and '"hires-radar"' in live and all(m in live for m in CURRENT_MARKERS):
         return source, False
     if sum(check in live for check in KNOWN_CHECKS) != 1 or '"rain-radar"' not in live:
         raise RuntimeError("Unrecognized deployed validator; refusing update")
@@ -131,9 +134,13 @@ def verify(source):
                                   (4, {**eew, "channelIds": ["invalid"]})):
         if outcome(bad_version, bad_rule) is not None:
             raise RuntimeError("Validator accepted a malformed rule")
-    for kind in ("hires-radar", "tsunami-map", "earthquake-map"):
+    for kind in ("hires-radar", "tsunami-map", "earthquake-map", "eew-map", "warning-table"):
         if outcome(4, {"type": kind, "region": "all", "tier": "plus"}) is None:
             raise RuntimeError(f"v4 {kind} rule was rejected")
+    if outcome(4, {"type": "eew-map", "region": "all", "tier": "supporter", "regions": []}) is None:
+        raise RuntimeError("v4 Basic eew-map rule was rejected")
+    if outcome(4, {"type": "warning-table", "region": "all", "tier": "supporter"}) is not None:
+        raise RuntimeError("Validator accepted a Basic warning-table rule")
     found[5] = "rejected"
     return found
 

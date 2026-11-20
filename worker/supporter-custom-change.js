@@ -58,12 +58,12 @@ export async function commitCustomChange(db,change){
  const result=await db.prepare(`UPDATE supporter_custom_plans SET
    name=?,channel_limit=?,server_limit=?,rule_limit=?,complex_conditions=?,
    municipality_branching=?,content_extraction=?,multi_destination=?,secondary_reuse=?,
-   estimated_yen=?,confirmed_yen=?,reason=?,updated_by=?,updated_at=?,revision=?
+   estimated_yen=?,confirmed_yen=?,reason=?,updated_by=?,updated_at=?,revision=?,features_json=?
    WHERE discord_user_id=? AND id=? AND status='active' AND revision=? AND confirmed_yen=? AND stripe_subscription_id=?`)
    .bind(plan.name,plan.channels,plan.servers,plan.rules,Number(plan.complexConditions),
     Number(plan.municipalityBranching),Number(plan.contentExtraction),Number(plan.multiDestination),
     Number(plan.secondaryReuse),plan.estimatedYen,plan.monthlyYen,change.reason,change.actor,now,
-    change.next_revision,change.discord_user_id,change.custom_plan_id,change.old_revision,
+    change.next_revision,JSON.stringify(plan.features),change.discord_user_id,change.custom_plan_id,change.old_revision,
     change.old_monthly_yen,change.stripe_subscription_id).run();
  if(!Number(result.meta?.changes)){
   const current=await getCustomPlan(db,change.discord_user_id);

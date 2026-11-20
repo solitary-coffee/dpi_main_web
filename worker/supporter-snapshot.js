@@ -2,7 +2,7 @@ import { geographicEntitlements, geographicRuleAllowed } from './supporter-geo.j
 import { enrichCustomGroup } from './supporter-custom.js';
 import { billingReady } from './supporter-billing.js';
 import { planFeatures, hasFeature, imageTier } from '../site/supporter/plan-features.js';
-import { IMAGE_RULE_TYPES, isImageRuleType, imageRulesEnabled, imageRuleSnapshotFields } from './supporter-image-rules.js';
+import { IMAGE_RULE_TYPES, isImageRuleType, isImageRuleV2Type, imageRulesEnabled, imageRulesV2Enabled, imageRuleSnapshotFields } from './supporter-image-rules.js';
 const ACTIVE_SUBSCRIPTION_STATUSES = new Set(['active', 'trialing', 'past_due', 'unpaid', 'paused']);
 const ALLOWED_RULE_TYPES = new Set(['earthquake', 'eew', 'weather', 'rain-radar', ...IMAGE_RULE_TYPES]);
 const SNAPSHOT_TTL_SECONDS = 30 * 60 * 60;
@@ -75,6 +75,8 @@ export async function buildSupporterSnapshot(db, env, loadSubscriptions, nowMs =
     const grouped = await enrichCustomGroup(db,accounts,await loadSubscriptions(env, customerIds));
     const rules = [];
     const imagesEnabled = imageRulesEnabled(env);
+    // eew-map / warning-table: only once every home server and the AWS Lambda know them.
+    const imagesV2Enabled = imagesEnabled && imageRulesV2Enabled(env);
     for (const row of accounts) {
         const subscriptions = grouped.get(row.customer_id) || [];
         const entitled = subscriptions.some(item => item?.recognizedPlan !== false && ACTIVE_SUBSCRIPTION_STATUSES.has(item?.status));
@@ -98,9 +100,9 @@ export async function buildSupporterSnapshot(db, env, loadSubscriptions, nowMs =
         if(custom&&(guilds.size>custom.servers||channels.size>custom.channels||allRules.some(rule=>(!custom.complexConditions&&(rule.conditionLogic==='or'||rule.conditions?.length))||(!custom.multiDestination&&Array.isArray(rule.channelIds)&&rule.channelIds.length>1))))continue;
         for (const [index, rule] of allRules.entries()) {
             if (isImageRuleType(rule?.type)) {
-                // Image rules ship only while the rollout flag is on (kill switch) and
-                // only for Plus/Pro/custom; Pro-only filters are never widened on downgrade.
-                if (!imagesEnabled) continue;
+                // Image rules ship only while the rollout flag is on (kill switch) and only when
+                // the owner's features allow the type; paid filters are never widened on downgrade.
+                if (!imagesEnabled || (isImageRuleV2Type(rule.type) && !imagesV2Enabled)) continue;
                 const fields = imageRuleSnapshotFields(rule, features, tier);
                 if (!fields) continue;
                 const id = `rule-${await digestPrefix(`${row.discord_user_id}:${Number(row.revision) || 0}:${index + 1}`)}`;
