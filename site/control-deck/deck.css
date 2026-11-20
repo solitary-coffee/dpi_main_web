@@ -71,7 +71,8 @@ body.deck { padding: max(10px, env(safe-area-inset-top)) max(10px, env(safe-area
 .deck-kpi.bad { border-color: var(--danger); }
 .deck-kpi.bad strong { color: var(--danger); }
 .deck-types { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
-.deck-type { padding: 4px 10px; border: 1px solid var(--line); border-radius: 999px; font-size: .85rem; }
+.deck-type { padding: 4px 10px; border: 1px solid var(--line); border-radius: 999px; font: inherit; font-size: .85rem; color: var(--text); background: transparent; cursor: pointer; touch-action: manipulation; }
+.deck-type.active { background: var(--accent); border-color: var(--accent); color: #04121f; }
 .deck-type.bad { border-color: var(--danger); }
 .deck-type-mini { flex: none; padding: 0 6px; border: 1px solid var(--line); border-radius: 6px; font-size: .75rem; color: var(--muted); }
 .deck-bad { margin-left: 6px; color: var(--danger); font-weight: 700; }
