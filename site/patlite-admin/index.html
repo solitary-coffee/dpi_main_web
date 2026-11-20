@@ -58,7 +58,7 @@
                     <button id="test-blue" type="button" data-needs-serial>青を試す</button>
                     <button id="test-white" type="button" data-needs-serial>白を試す</button>
                 </div>
-                <p class="muted">「試す」は 10 秒間その色を点滅させ、その後は自動表示に戻ります。Arduino のボタンは、短押しで確認（いま点いているものを消す）、2秒以上の長押しで強制停止（全停止の切り替え）です。</p>
+                <p class="muted">「試す」は 10 秒間その色を点滅させ、その後は自動表示に戻ります。Arduino のボタンは、短押しで確認（5秒後にいま点いているものを消す。その間ボタンの LED が赤）、2秒以上の長押しで強制停止（全停止の切り替え）です。Arduino は Ver.2.2 以降が必要です。</p>
             </section>
 
             <section aria-labelledby="pause-title">
@@ -114,7 +114,7 @@
 
             <section aria-labelledby="legend-title">
                 <div class="section-heading"><div><p class="eyebrow">LEGEND</p><h2 id="legend-title">色の一覧</h2></div></div>
-                <p class="muted">赤＝配信が止まる重大障害、黄＝一部の障害・注意、青＝AWS 側・監視の途絶、白＝防災情報、緑＝復旧。正常なときは消灯。どの項目も最長 5 分点けたら一旦消し、30 分空けてまだ続いていればまた点けます（時間は下の「表示の設定」で変更）。重なったときは色を合わせて点け、点滅は色ごと。物理ボタンの短押しで、いま点いている項目を消します（新しい情報が来ると再び点灯）。2秒以上の長押しで強制停止／解除。ブザーは使いません。</p>
+                <p class="muted">赤＝配信が止まる重大障害、黄＝一部の障害・注意、青＝AWS 側・監視の途絶、白＝防災情報、緑＝復旧。正常なときは消灯。どの項目も最長 5 分点けたら一旦消し、30 分空けてまだ続いていればまた点けます（時間は下の「表示の設定」で変更）。重なったときは色を合わせて点け、点滅は色ごと。物理ボタンの短押しで、5秒後にいま点いている項目を消します（新しい情報が来ると再び点灯）。2秒以上の長押しで強制停止／解除。ブザーは使いません。</p>
                 <div class="table-wrap"><table><thead><tr><th>色</th><th>情報・障害</th><th>点滅</th><th>消えるまで</th></tr></thead><tbody id="legend"></tbody></table></div>
             </section>
         </main>
