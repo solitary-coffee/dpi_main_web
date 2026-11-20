@@ -471,18 +471,19 @@ function regionChoices(){
 
 // 見本（サンプル画像）。/site/supporter/previews/<name>.png が無いときは枠ごと隠す。
 // 見本を押すと拡大表示（preview-lightbox.js）が開き、ルールの今の設定に合う見本から、同じ種類の他の見本も見られる。
-// items: [name, caption, type, prefer]（prefer = 拡大表示で最初に出したい見本のファイル名の候補。無ければ <name>.png）
+// items: [name, caption, type, prefer, group]（prefer = 拡大表示で最初に出したい見本のファイル名の候補。無ければ <name>.png。
+// group = 拡大表示で ← / → で切り替えるまとまり。全国の見本なら全国だけ、地方なら地方だけ）
 function previewImages(container,items){
  if(!items.length)return;
  const wrap=document.createElement('div');wrap.className='rule-preview';
- for(const [name,caption,type,prefer] of items){
+ for(const [name,caption,type,prefer,group] of items){
   const figure=document.createElement('figure');figure.className='rule-preview-item';
   const label=document.createElement('span');label.className='rule-preview-label';label.textContent='見本';
   const img=document.createElement('img');img.loading='lazy';img.decoding='async';img.src=`${PREVIEW_BASE}${name}.png`;img.alt=`見本：${caption}`;
   img.addEventListener('error',()=>{figure.remove();if(!wrap.querySelector('figure'))wrap.remove();});
   const text=document.createElement('figcaption');text.textContent=caption;
   figure.append(label,img,text);wrap.append(figure);
-  if(type)attachPreview(figure,type,{prefer:[...(prefer||[]),`${name}.png`],caption});
+  if(type)attachPreview(figure,type,{prefer:[...(prefer||[]),`${name}.png`],group:group||'',caption});
  }
  container.append(wrap);
 }
@@ -495,18 +496,23 @@ function rulePreviews(rule){
  const regional=type=>scope==='region'?[`${type}-${rule.region}.png`]:[];
  if(rule.type==='weather-map'){
   const prefer=entitlements.weatherMunicipality&&rule.municipalityDetail?['weather-map-municipality.png']:regional('weather-map');
-  return [[`weather-map-${scope}`,`気象警報の図（${where}）`,'weather-map',prefer]];
+  return [[`weather-map-${scope}`,`気象警報の図（${where}）`,'weather-map',prefer,scope]];
  }
- if(rule.type==='hires-radar')return [[`hires-radar-${scope}`,`雨雲レーダー（高解像度版）（${where}）`,'hires-radar',regional('hires-radar')]];
+ if(rule.type==='hires-radar')return [[`hires-radar-${scope}`,`雨雲レーダー（高解像度版）（${where}）`,'hires-radar',regional('hires-radar'),scope]];
  // 全国・地方を選ぶ場合も同じ図（配信する条件だけが違う）。
  if(rule.type==='eew-map')return [['eew-map-national','緊急地震速報（警報）の図（地方を選ぶ場合も同じ図です）','eew-map']];
  if(rule.type==='warning-table'){
   const labels={national:'警報・注意報の表（全国）',regional:'警報・注意報の表（地方）',timeseries:'警報・注意報の表（時系列）'};
   const first=(rule.regions||[])[0];
-  return rule.tables.map(id=>[`warning-table-${id}`,labels[id],'warning-table',id==='regional'&&first?[`warning-table-regional-${first}.png`]:[]]);
+  return rule.tables.map(id=>[`warning-table-${id}`,labels[id],'warning-table',id==='regional'&&first?[`warning-table-regional-${first}.png`]:[],id]);
  }
- if(rule.type==='tsunami-map')return rule.outputs.map(id=>[`tsunami-map-${id}`,id==='map'?'津波警報・注意報の図':'津波警報・注意報の表','tsunami-map',
-  id==='map'&&entitlements.tsunamiEnlarged&&rule.enlargedArea===true?['tsunami-map-enlarged.png']:[]]);
+ // 津波の図: 全国の図の見本（Pro の拡大図を使う設定なら地方の拡大図の見本）。表: 表の見本
+ if(rule.type==='tsunami-map')return rule.outputs.map(id=>{
+  if(id!=='map')return ['tsunami-map-table','津波警報・注意報の表','tsunami-map',[],'table'];
+  return entitlements.tsunamiEnlarged&&rule.enlargedArea===true
+   ?['tsunami-map-enlarged','津波警報・注意報の図（地方の拡大図）','tsunami-map',[],'enlarged']
+   :['tsunami-map-map','津波警報・注意報の図','tsunami-map',[],'map'];
+ });
  if(rule.type==='earthquake-map'){
   const name=EARTHQUAKE_PREVIEWS[(rule.products||[]).find(id=>EARTHQUAKE_PREVIEWS[id])]||'earthquake-map-detail';
   const prefer=entitlements.earthquakeMapFilter&&rule.centerMunicipality?['earthquake-map-centre.png']:[];

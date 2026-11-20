@@ -3,152 +3,426 @@
   {
    "file": "earthquake-map-shindo.png",
    "caption": "震度速報（地域ごとの震度）",
-   "plan": "Plus以上"
+   "plan": "Plus以上",
+   "group": "all"
   },
   {
    "file": "earthquake-map-hypocenter.png",
    "caption": "震源に関する情報",
-   "plan": "Plus以上"
+   "plan": "Plus以上",
+   "group": "all"
   },
   {
    "file": "earthquake-map-detail.png",
    "caption": "震源・震度に関する情報（各地の震度）",
-   "plan": "Plus以上"
+   "plan": "Plus以上",
+   "group": "all"
   },
   {
    "file": "earthquake-map-long-period.png",
    "caption": "長周期地震動に関する観測情報",
-   "plan": "Plus以上"
+   "plan": "Plus以上",
+   "group": "all"
   },
   {
    "file": "earthquake-map-centre.png",
    "caption": "各地の震度（地図の中心にする市区町村を指定：東京都千代田区）",
-   "plan": "Pro以上"
+   "plan": "Pro以上",
+   "group": "all"
   }
  ],
  "weather-map": [
   {
    "file": "weather-map-national.png",
    "caption": "全国（土砂災害警報・注意報）",
-   "plan": "Plus以上"
+   "plan": "Plus以上",
+   "group": "national"
+  },
+  {
+   "file": "weather-map-national-2.png",
+   "caption": "全国（波浪警報・注意報）",
+   "plan": "Plus以上",
+   "group": "national"
+  },
+  {
+   "file": "weather-map-national-3.png",
+   "caption": "全国（暴風警報・注意報）",
+   "plan": "Plus以上",
+   "group": "national"
+  },
+  {
+   "file": "weather-map-hokkaido.png",
+   "caption": "地方（北海道地方・波浪警報・注意報）",
+   "plan": "Plus以上",
+   "group": "region"
+  },
+  {
+   "file": "weather-map-tohoku.png",
+   "caption": "地方（東北地方・大雪警報・注意報）",
+   "plan": "Plus以上",
+   "group": "region"
+  },
+  {
+   "file": "weather-map-kanto-koshin.png",
+   "caption": "地方（関東甲信地方・波浪警報・注意報）",
+   "plan": "Plus以上",
+   "group": "region"
   },
   {
    "file": "weather-map-region.png",
-   "caption": "地方（北陸地方）",
-   "plan": "Plus以上"
+   "caption": "地方（北陸地方・土砂災害警報・注意報）",
+   "plan": "Plus以上",
+   "group": "region"
+  },
+  {
+   "file": "weather-map-tokai.png",
+   "caption": "地方（東海地方・暴風警報・注意報）",
+   "plan": "Plus以上",
+   "group": "region"
+  },
+  {
+   "file": "weather-map-kinki.png",
+   "caption": "地方（近畿地方・暴風警報・注意報）",
+   "plan": "Plus以上",
+   "group": "region"
+  },
+  {
+   "file": "weather-map-chugoku.png",
+   "caption": "地方（中国地方・暴風警報・注意報）",
+   "plan": "Plus以上",
+   "group": "region"
+  },
+  {
+   "file": "weather-map-kyushu-north.png",
+   "caption": "地方（九州北部地方（山口県を含む）・暴風警報・注意報）",
+   "plan": "Plus以上",
+   "group": "region"
+  },
+  {
+   "file": "weather-map-kyushu-south-amami.png",
+   "caption": "地方（九州南部・奄美地方・波浪警報・注意報）",
+   "plan": "Plus以上",
+   "group": "region"
+  },
+  {
+   "file": "weather-map-okinawa.png",
+   "caption": "地方（沖縄地方・波浪警報・注意報）",
+   "plan": "Plus以上",
+   "group": "region"
   },
   {
    "file": "weather-map-municipality.png",
    "caption": "市区町村ごとの詳細（宗谷地方大雨警報・注意報）",
-   "plan": "Pro以上"
+   "plan": "Pro以上",
+   "group": "municipality"
   },
   {
    "file": "weather-map-tornado.png",
    "caption": "竜巻注意情報（埼玉県気象防災速報（竜巻目撃））",
-   "plan": "Plus以上"
+   "plan": "Plus以上",
+   "group": "alert"
   },
   {
    "file": "weather-map-rainband.png",
    "caption": "線状降水帯（千葉県気象防災速報（線状降水帯発生））",
-   "plan": "Plus以上"
+   "plan": "Plus以上",
+   "group": "alert"
   }
  ],
  "warning-table": [
   {
    "file": "warning-table-national.png",
-   "caption": "全国の表",
-   "plan": "Plus以上"
+   "caption": "全国の表（2026/11/20 20:30 発表）",
+   "plan": "Plus以上",
+   "group": "national"
   },
   {
-   "file": "warning-table-regional.png",
-   "caption": "地方の表（九州北部地方（山口県を含む））",
-   "plan": "Pro以上"
+   "file": "warning-table-national-2.png",
+   "caption": "全国の表（2026/11/20 17:30 発表）",
+   "plan": "Plus以上",
+   "group": "national"
+  },
+  {
+   "file": "warning-table-national-3.png",
+   "caption": "全国の表（2026/11/20 14:30 発表）",
+   "plan": "Plus以上",
+   "group": "national"
   },
   {
    "file": "warning-table-regional-hokkaido.png",
    "caption": "地方の表（北海道地方）",
-   "plan": "Pro以上"
+   "plan": "Pro以上",
+   "group": "regional"
+  },
+  {
+   "file": "warning-table-regional-tohoku.png",
+   "caption": "地方の表（東北地方）",
+   "plan": "Pro以上",
+   "group": "regional"
+  },
+  {
+   "file": "warning-table-regional-kanto-koshin.png",
+   "caption": "地方の表（関東甲信地方）",
+   "plan": "Pro以上",
+   "group": "regional"
+  },
+  {
+   "file": "warning-table-regional-hokuriku.png",
+   "caption": "地方の表（北陸地方）",
+   "plan": "Pro以上",
+   "group": "regional"
+  },
+  {
+   "file": "warning-table-regional-tokai.png",
+   "caption": "地方の表（東海地方）",
+   "plan": "Pro以上",
+   "group": "regional"
+  },
+  {
+   "file": "warning-table-regional-kinki.png",
+   "caption": "地方の表（近畿地方）",
+   "plan": "Pro以上",
+   "group": "regional"
+  },
+  {
+   "file": "warning-table-regional-chugoku.png",
+   "caption": "地方の表（中国地方）",
+   "plan": "Pro以上",
+   "group": "regional"
+  },
+  {
+   "file": "warning-table-regional-shikoku.png",
+   "caption": "地方の表（四国地方）",
+   "plan": "Pro以上",
+   "group": "regional"
+  },
+  {
+   "file": "warning-table-regional.png",
+   "caption": "地方の表（九州北部地方（山口県を含む））",
+   "plan": "Pro以上",
+   "group": "regional"
+  },
+  {
+   "file": "warning-table-regional-kyushu-south-amami.png",
+   "caption": "地方の表（九州南部・奄美地方）",
+   "plan": "Pro以上",
+   "group": "regional"
+  },
+  {
+   "file": "warning-table-regional-okinawa.png",
+   "caption": "地方の表（沖縄地方）",
+   "plan": "Pro以上",
+   "group": "regional"
   },
   {
    "file": "warning-table-timeseries.png",
    "caption": "時系列の表（熊本地方気象台）",
-   "plan": "Pro以上"
+   "plan": "Pro以上",
+   "group": "timeseries"
   },
   {
    "file": "warning-table-timeseries-2.png",
    "caption": "時系列の表（岐阜地方気象台）",
-   "plan": "Pro以上"
+   "plan": "Pro以上",
+   "group": "timeseries"
+  },
+  {
+   "file": "warning-table-timeseries-3.png",
+   "caption": "時系列の表（山形地方気象台）",
+   "plan": "Pro以上",
+   "group": "timeseries"
+  },
+  {
+   "file": "warning-table-timeseries-4.png",
+   "caption": "時系列の表（新潟地方気象台）",
+   "plan": "Pro以上",
+   "group": "timeseries"
+  },
+  {
+   "file": "warning-table-timeseries-5.png",
+   "caption": "時系列の表（富山地方気象台）",
+   "plan": "Pro以上",
+   "group": "timeseries"
   }
  ],
  "eew-map": [
   {
    "file": "eew-map-first.png",
    "caption": "第1報",
-   "plan": "Basic以上"
+   "plan": "Basic以上",
+   "group": "all"
   },
   {
    "file": "eew-map-national.png",
    "caption": "続報（新たに対象になった地域を色分け）",
-   "plan": "Basic以上"
+   "plan": "Basic以上",
+   "group": "all"
   },
   {
    "file": "eew-map-cancel.png",
    "caption": "取消のお知らせ",
-   "plan": "Basic以上"
+   "plan": "Basic以上",
+   "group": "all"
   }
  ],
  "tsunami-map": [
   {
    "file": "tsunami-map-map.png",
-   "caption": "津波警報・注意報の図（全国）",
-   "plan": "Plus以上"
+   "caption": "全国の図（大津波警報・津波警報・津波注意報）",
+   "plan": "Plus以上",
+   "group": "map"
+  },
+  {
+   "file": "tsunami-map-map-2.png",
+   "caption": "全国の図（津波注意報・津波予報）",
+   "plan": "Plus以上",
+   "group": "map"
+  },
+  {
+   "file": "tsunami-map-map-3.png",
+   "caption": "全国の図（津波予報のみ）",
+   "plan": "Plus以上",
+   "group": "map"
   },
   {
    "file": "tsunami-map-enlarged.png",
-   "caption": "発表地域の拡大図（北海道地方）",
-   "plan": "Pro以上"
+   "caption": "地方の拡大図（北海道地方）",
+   "plan": "Pro以上",
+   "group": "enlarged"
+  },
+  {
+   "file": "tsunami-map-enlarged-tohoku.png",
+   "caption": "地方の拡大図（東北地方）",
+   "plan": "Pro以上",
+   "group": "enlarged"
+  },
+  {
+   "file": "tsunami-map-enlarged-kanto.png",
+   "caption": "地方の拡大図（関東地方・伊豆諸島）",
+   "plan": "Pro以上",
+   "group": "enlarged"
+  },
+  {
+   "file": "tsunami-map-enlarged-hokuriku-chubu.png",
+   "caption": "地方の拡大図（北陸・中部地方）",
+   "plan": "Pro以上",
+   "group": "enlarged"
+  },
+  {
+   "file": "tsunami-map-enlarged-tokai-kinki.png",
+   "caption": "地方の拡大図（東海・近畿地方）",
+   "plan": "Pro以上",
+   "group": "enlarged"
+  },
+  {
+   "file": "tsunami-map-enlarged-chugoku-shikoku.png",
+   "caption": "地方の拡大図（中国・四国地方）",
+   "plan": "Pro以上",
+   "group": "enlarged"
+  },
+  {
+   "file": "tsunami-map-enlarged-kyushu.png",
+   "caption": "地方の拡大図（九州地方）",
+   "plan": "Pro以上",
+   "group": "enlarged"
+  },
+  {
+   "file": "tsunami-map-enlarged-amami-okinawa.png",
+   "caption": "地方の拡大図（奄美・沖縄地方）",
+   "plan": "Pro以上",
+   "group": "enlarged"
   },
   {
    "file": "tsunami-map-table.png",
    "caption": "津波警報・注意報の表",
-   "plan": "Plus以上"
+   "plan": "Plus以上",
+   "group": "table"
   },
   {
    "file": "tsunami-map-observation.png",
    "caption": "津波観測に関する情報（沿岸の観測）",
-   "plan": "Plus以上"
+   "plan": "Plus以上",
+   "group": "table"
   },
   {
    "file": "tsunami-map-offshore.png",
    "caption": "沖合の津波観測に関する情報",
-   "plan": "Plus以上"
+   "plan": "Plus以上",
+   "group": "table"
   }
  ],
  "hires-radar": [
   {
    "file": "hires-radar-national.png",
    "caption": "全国",
-   "plan": "Plus以上"
-  },
-  {
-   "file": "hires-radar-region.png",
-   "caption": "地方（関東甲信地方）",
-   "plan": "Plus以上"
-  },
-  {
-   "file": "hires-radar-kinki.png",
-   "caption": "地方（近畿地方）",
-   "plan": "Plus以上"
-  },
-  {
-   "file": "hires-radar-kyushu-north.png",
-   "caption": "地方（九州北部地方（山口県を含む））",
-   "plan": "Plus以上"
+   "plan": "Plus以上",
+   "group": "national"
   },
   {
    "file": "hires-radar-hokkaido.png",
    "caption": "地方（北海道地方）",
-   "plan": "Plus以上"
+   "plan": "Plus以上",
+   "group": "region"
+  },
+  {
+   "file": "hires-radar-tohoku.png",
+   "caption": "地方（東北地方）",
+   "plan": "Plus以上",
+   "group": "region"
+  },
+  {
+   "file": "hires-radar-region.png",
+   "caption": "地方（関東甲信地方）",
+   "plan": "Plus以上",
+   "group": "region"
+  },
+  {
+   "file": "hires-radar-hokuriku.png",
+   "caption": "地方（北陸地方）",
+   "plan": "Plus以上",
+   "group": "region"
+  },
+  {
+   "file": "hires-radar-tokai.png",
+   "caption": "地方（東海地方）",
+   "plan": "Plus以上",
+   "group": "region"
+  },
+  {
+   "file": "hires-radar-kinki.png",
+   "caption": "地方（近畿地方）",
+   "plan": "Plus以上",
+   "group": "region"
+  },
+  {
+   "file": "hires-radar-chugoku.png",
+   "caption": "地方（中国地方）",
+   "plan": "Plus以上",
+   "group": "region"
+  },
+  {
+   "file": "hires-radar-shikoku.png",
+   "caption": "地方（四国地方）",
+   "plan": "Plus以上",
+   "group": "region"
+  },
+  {
+   "file": "hires-radar-kyushu-north.png",
+   "caption": "地方（九州北部地方（山口県を含む））",
+   "plan": "Plus以上",
+   "group": "region"
+  },
+  {
+   "file": "hires-radar-kyushu-south-amami.png",
+   "caption": "地方（九州南部・奄美地方）",
+   "plan": "Plus以上",
+   "group": "region"
+  },
+  {
+   "file": "hires-radar-okinawa.png",
+   "caption": "地方（沖縄地方）",
+   "plan": "Plus以上",
+   "group": "region"
   }
  ]
 }
