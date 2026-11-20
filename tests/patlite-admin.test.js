@@ -189,3 +189,42 @@ test('夜間モードは重大だけ、一時停止は全部消す', () => {
     assert.ok(minute >= 600 && minute < 1200);
     assert.equal(minute, dailyIlluminationMinute(day + 3600));
 });
+
+class HistoryD1 {
+    constructor() { this.history = []; this.state = null; this.nextId = 1; }
+    prepare(sql) {
+        const db = this;
+        const statement = {
+            sql,
+            bind(...args) { this.args = args; return this; },
+            async first() { return /patlite_state/u.test(sql) ? db.state : null; },
+            async all() { return { results: db.history.filter((row) => row.ended_at === null) }; },
+            async run() { return db.exec(this); },
+        };
+        return statement;
+    }
+    exec(statement) {
+        const { sql, args } = statement;
+        if (/^INSERT INTO patlite_history/u.test(sql)) this.history.push({ row_id: this.nextId++, cid: args[0], kind: args[1], title: args[2], started_at: args[3], ended_at: args[4] ?? null });
+        else if (/^UPDATE patlite_history/u.test(sql)) this.history.find((row) => row.row_id === args[1]).ended_at = args[0];
+        return {};
+    }
+    async batch(statements) { for (const statement of statements) this.exec(statement); }
+}
+
+test('履歴: 出た項目・消えた項目・ブリッジの途絶を記録する', async () => {
+    const { recordHistory } = await import('../worker/patlite-admin.js');
+    const db = new HistoryD1();
+    await recordHistory(db, [{ id: 'aws:alarm:x', kind: 'aws_alarm', title: 'AWS アラーム: x', since: 900 }], 1000);
+    db.state = { received_at: 1000 };
+    await recordHistory(db, [{ id: 'aws:alarm:x', kind: 'aws_alarm', title: 'AWS アラーム: x', since: 900 }], 1060);   // 変化なし
+    assert.equal(db.history.length, 1);
+    db.state = { received_at: 1060 };
+    await recordHistory(db, [{ id: 'home:critical:EEW配信', kind: 'home_critical', title: '停止', since: 1100 }], 1600);   // 途絶あり・入れ替わり
+    const alarm = db.history.find((row) => row.cid === 'aws:alarm:x');
+    assert.equal(alarm.started_at, 900);
+    assert.equal(alarm.ended_at, 1600);
+    const gap = db.history.find((row) => row.kind === 'link_lost');
+    assert.deepEqual([gap.started_at, gap.ended_at], [1060 + 180, 1600]);
+    assert.equal(db.history.find((row) => row.cid === 'home:critical:EEW配信').ended_at, null);
+});

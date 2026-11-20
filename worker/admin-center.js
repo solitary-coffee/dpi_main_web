@@ -1,7 +1,7 @@
 import { AccessAuthError, authenticateNewsletterAdmin } from './access.js';
 import { DELIVERY_CATALOG } from './delivery-catalog.js';
 import { CdnAdminError, cdnAdminStats } from './cdn-admin.js';
-import { PatliteAdminError, patliteAdminSaveSettings, patliteAdminState } from './patlite-admin.js';
+import { PatliteAdminError, patliteAdminHistory, patliteAdminSaveSettings, patliteAdminState } from './patlite-admin.js';
 
 const JSON_HEADERS = Object.freeze({
     'Content-Type': 'application/json; charset=utf-8',
@@ -46,7 +46,8 @@ export async function handleAdminCenterRequest(request, env) {
     const isCdnStatsApi = pathname === '/site/cdn-admin/api/stats';
     const isPatliteStateApi = pathname === '/site/patlite-admin/api/state';
     const isPatliteSettingsApi = pathname === '/site/patlite-admin/api/settings';
-    const isApi = isPatliteStateApi || isPatliteSettingsApi || isSummaryApi || isActionApi || isDeliveryStatsApi || isDmdataHistoryApi || isDeliveryFlowApi || isTestDeliveryApi || isAuditApi || isCdnStatsApi;
+    const isPatliteHistoryApi = pathname === '/site/patlite-admin/api/history';
+    const isApi = isPatliteStateApi || isPatliteSettingsApi || isPatliteHistoryApi || isSummaryApi || isActionApi || isDeliveryStatsApi || isDmdataHistoryApi || isDeliveryFlowApi || isTestDeliveryApi || isAuditApi || isCdnStatsApi;
     const assetRoot = !isApi ? ADMIN_ASSET_ROOTS.find((root) => pathname === root || pathname.startsWith(`${root}/`)) : null;
     const isAsset = Boolean(assetRoot);
     if (!isApi && !isAsset) return null;
@@ -106,6 +107,12 @@ export async function handleAdminCenterRequest(request, env) {
                 return jsonResponse({ success: false, message: '許可されていない操作です。' }, 405, { Allow: 'GET' });
             }
             return jsonResponse(await patliteAdminState(env, admin));
+        }
+        if (isPatliteHistoryApi) {
+            if (request.method !== 'GET') {
+                return jsonResponse({ success: false, message: '許可されていない操作です。' }, 405, { Allow: 'GET' });
+            }
+            return jsonResponse(await patliteAdminHistory(env, url));
         }
         if (isPatliteSettingsApi) {
             if (request.method !== 'POST') {

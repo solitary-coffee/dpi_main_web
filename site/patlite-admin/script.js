@@ -8,6 +8,8 @@ import { COLORS, COLOR_NAMES, LEGEND, ACK_EVENTS, LINK_TIMEOUT_SECONDS, PatliteE
 
 const API = '/site/patlite-admin/api/state';
 const SETTINGS_API = '/site/patlite-admin/api/settings';
+const HISTORY_API = '/site/patlite-admin/api/history';
+const HISTORY_EVERY_TICKS = 60;
 const ILLUMINATION_DONE_KEY = 'patlite-illumination-done';
 const FETCH_EVERY_TICKS = 5;
 const ARDUINO_FILTERS = [{ usbVendorId: 0x2341 }, { usbVendorId: 0x2A03 }, { usbVendorId: 0x1A86 }, { usbVendorId: 0x0403 }, { usbVendorId: 0x10C4 }];
@@ -138,6 +140,7 @@ function applyConfig(config) {
 async function tick() {
     state.ticks += 1;
     if (state.ticks % FETCH_EVERY_TICKS === 1) fetchState();
+    if (state.ticks % HISTORY_EVERY_TICKS === 1) loadHistory();
     if (!serial.connected || state.busy) { render(); return; }
     state.busy = true;
     try {
@@ -230,6 +233,38 @@ function render() {
 function renderLegend() {
     $('legend').innerHTML = Object.values(LEGEND).map((value) => `<tr><td>${chips(value.colors)}</td><td>${esc(value.label)}</td><td>${flashText(value)}</td><td>${esc(value.until)}</td></tr>`).join('')
         + '<tr><td>—</td><td>すべて正常</td><td>消灯</td><td>—</td></tr>';
+}
+
+// ---------------- 履歴 ----------------
+function duration(seconds) {
+    if (!Number.isFinite(seconds) || seconds < 0) return '—';
+    if (seconds < 60) return `${Math.round(seconds)}秒`;
+    if (seconds < 3600) return `${Math.round(seconds / 60)}分`;
+    if (seconds < 86400) return `${Math.floor(seconds / 3600)}時間${Math.round((seconds % 3600) / 60)}分`;
+    return `${Math.floor(seconds / 86400)}日${Math.round((seconds % 86400) / 3600)}時間`;
+}
+
+async function loadHistory() {
+    const days = $('history-days').value;
+    try {
+        const response = await fetch(`${HISTORY_API}?days=${encodeURIComponent(days)}`, { credentials: 'same-origin', headers: { Accept: 'application/json' }, cache: 'no-store' });
+        const data = await response.json().catch(() => null);
+        if (!response.ok || !data?.success) throw new Error(data?.message || `HTTP ${response.status}`);
+        const now = Number(data.serverTime) || nowSeconds();
+        const ongoing = data.rows.filter((row) => row.endedAt === null).length;
+        const counts = {};
+        for (const row of data.rows) counts[row.kind] = (counts[row.kind] || 0) + 1;
+        const top = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 4)
+            .map(([kind, count]) => `${LEGEND[kind]?.label?.split('（')[0] || kind} ${count}件`).join('・');
+        $('history-summary').textContent = `直近${data.days}日: ${data.rows.length}件${data.truncated ? '（多いため最新500件）' : ''}、継続中 ${ongoing}件${top ? `（多い順: ${top}）` : ''}`;
+        $('history').innerHTML = data.rows.length ? data.rows.map((row) => {
+            const legend = LEGEND[row.kind];
+            const end = row.endedAt === null ? '<strong>継続中</strong>' : new Date(row.endedAt * 1000).toLocaleString('ja-JP');
+            return `<tr><td>${chips(legend?.colors || [])}</td><td>${esc(row.title)}${legend?.critical ? '（重大）' : ''}</td><td>${new Date(row.startedAt * 1000).toLocaleString('ja-JP')}</td><td>${end}</td><td>${duration((row.endedAt ?? now) - row.startedAt)}</td></tr>`;
+        }).join('') : '<tr><td>—</td><td>この期間の記録はありません</td><td>—</td><td>—</td><td>—</td></tr>';
+    } catch (error) {
+        $('history-summary').textContent = `履歴を読めませんでした（${error.message}）`;
+    }
 }
 
 // ---------------- 設定（サイトに保存。どの PC で開いても同じ） ----------------
@@ -382,6 +417,8 @@ function start() {
         button.addEventListener('click', () => snooze(Number(button.dataset.snoozeHours)));
     }
     $('night-form').addEventListener('submit', saveNight);
+    $('history-btn').addEventListener('click', loadHistory);
+    $('history-days').addEventListener('change', loadHistory);
     $('illum-btn').addEventListener('click', () => runIllumination(Number($('illum-seconds').value) || 20).then(render));
     $('wake-btn').addEventListener('click', toggleWakeLock);
     document.addEventListener('visibilitychange', () => { if (!document.hidden && state.wakeLock === null && $('wake-btn').dataset.want === '1') toggleWakeLock(); });

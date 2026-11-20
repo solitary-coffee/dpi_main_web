@@ -6,6 +6,8 @@
 //   認証は admin-center.js（Cloudflare Access + ADMIN_EMAILS）で済ませてから呼ぶこと。
 // - POST /site/patlite-admin/api/settings : 一時停止（何時間か全部消す）・夜間モード（重大だけ表示）・
 //   イルミネーション試験の設定を保存する（管理者のみ。D1 の patlite_settings に 1 行）。
+// - 履歴: 送信のたびに前回との差（出た項目・消えた項目）を patlite_history に書く。ブリッジからの送信が
+//   LINK_GAP_SECONDS 以上途切れた時間帯も kind = link_lost で残す。GET /site/patlite-admin/api/history で読む。
 // 色・点滅・表示時間の決まりはページ側（site/patlite-admin/logic.js）と Arduino の EEPROM 設定で決める。
 
 const INGEST_PATH = '/api/patlite/ingest';
@@ -14,6 +16,9 @@ const MAX_CONDITIONS = 200;
 const KIND_PATTERN = /^[a-z0-9_]{1,40}$/u;
 const TIME_PATTERN = /^(?:[01]\d|2[0-3]):[0-5]\d$/u;
 const MAX_SNOOZE_SECONDS = 7 * 24 * 3600;
+const LINK_GAP_SECONDS = 180;
+const HISTORY_RETENTION_SECONDS = 90 * 24 * 3600;
+const MAX_HISTORY_ROWS = 500;
 export const DEFAULT_SETTINGS = Object.freeze({
     snoozeUntil: null,
     night: Object.freeze({ enabled: false, start: '22:00', end: '07:00' }),
@@ -52,6 +57,11 @@ export async function handlePatliteIngest(request, env) {
     const conditions = payload.conditions.map(sanitizeCondition).filter(Boolean);
     const generatedAt = finiteNumber(payload.generated_at);
     const receivedAt = Date.now() / 1000;
+    try {
+        await recordHistory(database, conditions, receivedAt);
+    } catch (error) {
+        console.error('patlite history write failed', { errorName: error?.name || 'Error' });   // 履歴の失敗で状態の保存は止めない
+    }
     await database.prepare(`INSERT INTO patlite_state (id, body, generated_at, received_at) VALUES (1, ?1, ?2, ?3)
         ON CONFLICT(id) DO UPDATE SET body = excluded.body, generated_at = excluded.generated_at, received_at = excluded.received_at`)
         .bind(JSON.stringify(conditions), generatedAt, receivedAt).run();
@@ -80,6 +90,48 @@ export async function patliteAdminState(env, admin) {
         generatedAt: row ? finiteNumber(row.generated_at) : null,
         conditions,
     };
+}
+
+// 前回からの差だけを書く: 新しく出た項目は INSERT、消えた項目は ended_at を入れる
+export async function recordHistory(database, conditions, now) {
+    const previous = await database.prepare('SELECT received_at FROM patlite_state WHERE id = 1').first();
+    const lastReceived = finiteNumber(previous?.received_at);
+    const statements = [];
+    if (lastReceived !== null && now - lastReceived > LINK_GAP_SECONDS) {
+        statements.push(database.prepare('INSERT INTO patlite_history (cid, kind, title, started_at, ended_at) VALUES (?1, ?2, ?3, ?4, ?5)')
+            .bind('link_lost', 'link_lost', '自宅のブリッジからの送信が途切れた', lastReceived + LINK_GAP_SECONDS, now));
+    }
+    const open = (await database.prepare('SELECT row_id, cid FROM patlite_history WHERE ended_at IS NULL').all()).results || [];
+    const openIds = new Map(open.map((row) => [String(row.cid), row.row_id]));
+    const current = new Map(conditions.map((condition) => [condition.id, condition]));
+    for (const [cid, rowId] of openIds) {
+        if (!current.has(cid)) statements.push(database.prepare('UPDATE patlite_history SET ended_at = ?1 WHERE row_id = ?2').bind(now, rowId));
+    }
+    for (const [cid, condition] of current) {
+        if (openIds.has(cid)) continue;
+        const started = condition.since !== null && condition.since <= now && condition.since > now - 7 * 24 * 3600 ? condition.since : now;
+        statements.push(database.prepare('INSERT INTO patlite_history (cid, kind, title, started_at, ended_at) VALUES (?1, ?2, ?3, ?4, NULL)')
+            .bind(cid, condition.kind, condition.title || condition.kind, started));
+    }
+    if (Math.random() < 0.01) {
+        statements.push(database.prepare('DELETE FROM patlite_history WHERE ended_at IS NOT NULL AND ended_at < ?1').bind(now - HISTORY_RETENTION_SECONDS));
+    }
+    if (statements.length) await database.batch(statements);
+    return statements.length;
+}
+
+export async function patliteAdminHistory(env, url) {
+    const database = env.REUSE_DB;
+    if (!database) throw new PatliteAdminError(503, 'D1（REUSE_DB）が設定されていません。', 'database_not_configured');
+    const days = Math.min(90, Math.max(1, Math.round(Number(url.searchParams.get('days')) || 7)));
+    const since = Date.now() / 1000 - days * 86400;
+    const result = await database.prepare(`SELECT cid, kind, title, started_at, ended_at FROM patlite_history
+        WHERE started_at >= ?1 OR ended_at IS NULL OR ended_at >= ?1 ORDER BY started_at DESC LIMIT ?2`).bind(since, MAX_HISTORY_ROWS).all();
+    const rows = (result.results || []).map((row) => ({
+        id: String(row.cid), kind: String(row.kind), title: String(row.title),
+        startedAt: finiteNumber(row.started_at), endedAt: finiteNumber(row.ended_at),
+    }));
+    return { success: true, days, serverTime: Date.now() / 1000, rows, truncated: rows.length >= MAX_HISTORY_ROWS };
 }
 
 export function normalizeSettings(raw, nowSeconds = Date.now() / 1000) {
