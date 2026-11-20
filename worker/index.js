@@ -12,6 +12,7 @@ import { handleAdminCenterRequest } from './admin-center.js';
 import { handleStatuspageAdminRequest } from './statuspage-admin.js';
 import { handleAccessLogRequest, withAccessLog } from './access-log.js';
 import { handlePatliteIngest } from './patlite-admin.js';
+import { handleAssetLinksRequest } from './asset-links.js';
 
 const TOPICS = Object.freeze({
     bot_issue: 'BOTの不具合',
@@ -50,6 +51,9 @@ const application = {
             try { return await billingWebhook(request, env, ctx); }
             catch { return new Response('Webhook temporarily unavailable', {status:503}); }
         }
+        // Android アプリ（DPI 操作盤）の所有確認。保守中・IP 遮断より前に、誰にでも返します。
+        const assetLinksResponse = handleAssetLinksRequest(request);
+        if (assetLinksResponse) return assetLinksResponse;
         const accessLogResponse = await handleAccessLogRequest(request, env);
         if (accessLogResponse) return accessLogResponse;
         // 自宅の積層灯ブリッジからの状態送信（機械用。合言葉で確認し、保守中でも受け付ける）
