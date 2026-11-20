@@ -184,8 +184,8 @@ test('夜間モードは重大だけ、一時停止は全部消す', () => {
     assert.equal(isNight({ night: { enabled: true, start: '09:00', end: '17:00' } }, day), true);
     const conditions = [{ id: 'd', kind: 'home_degraded', since: night - 10 }, { id: 'e', kind: 'eew_warning', since: night - 10 }];
     const atNight = desiredPattern(conditions, new Set(), night, undefined, policyFor(settings, night));
-    assert.deepEqual(atNight.lamps, lamps({ white: 'flash' }));
-    assert.match(atNight.shown[0].suppressed, /夜間/u);
+    assert.deepEqual(atNight.lamps, lamps({ white: 'flash', red: 'flash' }));
+    assert.equal(atNight.shown[0].suppressed, '時間帯設定（重大のみ）により無連動');
     const snoozed = desiredPattern(conditions, new Set(), night, undefined, policyFor({ snoozeUntil: night + 60 }, night));
     assert.deepEqual(snoozed.lamps, lamps());
     const minute = dailyIlluminationMinute(day);
@@ -208,7 +208,11 @@ class HistoryD1 {
     }
     exec(statement) {
         const { sql, args } = statement;
-        if (/^INSERT INTO patlite_history/u.test(sql)) this.history.push({ row_id: this.nextId++, cid: args[0], kind: args[1], title: args[2], started_at: args[3], ended_at: args[4] ?? null });
+        if (/^INSERT INTO patlite_history/u.test(sql)) {
+            const openRow = /NULL, \?5\)/u.test(sql);   // 続いている項目は ended_at が NULL で、5 番目が理由
+            this.history.push({ row_id: this.nextId++, cid: args[0], kind: args[1], title: args[2], started_at: args[3],
+                ended_at: openRow ? null : args[4] ?? null, suppressed: (openRow ? args[4] : args[5]) ?? null });
+        }
         else if (/^UPDATE patlite_history/u.test(sql)) this.history.find((row) => row.row_id === args[1]).ended_at = args[0];
         return {};
     }
@@ -243,4 +247,211 @@ test('無期限の一時停止: 解除するまで全部消し、期限付きの
     const conditions = [{ id: 'h', kind: 'home_critical', since: now - 5 }];
     assert.deepEqual(desiredPattern(conditions, new Set(), now, undefined, policyFor(settings, now)).lamps, lamps());
     assert.equal(normalizeSettings({}).snoozeForever, false);
+});
+
+
+// ---------------- 2026-11-21: 段階・防災は繰り返さない・絞り込み・無連動の理由・確認 3 秒・復旧の緑 5 秒 ----------------
+import { ACK_DELAY_SECONDS, LEGEND, LEVELS, MAX_RECOVERY_SECONDS, DEFAULT_TIMING, legendByLevel, suppressionReason, filterText } from '../site/patlite-admin/logic.js';
+import { recordHistory } from '../worker/patlite-admin.js';
+
+test('段階: すべての項目に 重大 / 中 / 軽 があり、critical は 重大 と同じ。防災の重大は白と別の色の 2 色', () => {
+    const expected = {
+        home_critical: '重大', aws_failover: '重大', link_lost: '重大', eew_warning: '重大', tsunami_major: '重大', tsunami_warning: '重大',
+        special_warning: '重大', quake_6plus: '重大', nankai_investigating: '重大',
+        home_restart_loop: '中', aws_alarm: '中', tsunami_advisory: '中', quake_5: '中', long_term_caution: '中',
+        home_degraded: '軽', home_resource: '軽', aws_degraded: '軽', recovered: '軽',
+    };
+    assert.deepEqual(Object.fromEntries(Object.entries(LEGEND).map(([kind, value]) => [kind, value.level])), expected);
+    for (const value of Object.values(LEGEND)) {
+        assert.ok(LEVELS.includes(value.level));
+        assert.equal(value.critical, value.level === '重大');
+        assert.equal(value.repeat, value.group === '障害');
+    }
+    const pattern = (kind) => `${LEGEND[kind].colors.join('+')}/${LEGEND[kind].flashSeconds}`;
+    assert.equal(pattern('eew_warning'), 'white+red/null');
+    assert.equal(pattern('tsunami_major'), 'white+red/null');
+    assert.equal(pattern('tsunami_warning'), 'white+yellow/null');
+    assert.equal(pattern('special_warning'), 'white+yellow/0');
+    assert.equal(pattern('quake_6plus'), 'white+red/0');
+    assert.equal(pattern('nankai_investigating'), 'white/null');
+    for (const kind of ['tsunami_advisory', 'quake_5', 'long_term_caution']) assert.equal(pattern(kind), 'white/0');
+    // 同じ色・点き方になるのは、運用者の指定どおりの組（EEW と大津波、白の「中」3 つ）と、以前からの黄 2 つだけ
+    const groups = {};
+    for (const kind of Object.keys(LEGEND)) (groups[pattern(kind)] ||= []).push(kind);
+    const shared = Object.values(groups).filter((kinds) => kinds.length > 1).map((kinds) => kinds.sort().join(','));
+    assert.deepEqual(shared.sort(), ['eew_warning,tsunami_major', 'home_degraded,home_resource', 'long_term_caution,quake_5,tsunami_advisory']);
+    // 障害の項目は白を使わない（白が点いていれば防災情報）
+    for (const value of Object.values(LEGEND)) if (value.group === '障害') assert.ok(!value.colors.includes('white'));
+    assert.deepEqual(legendByLevel().map((group) => [group.level, group.items.length]), [['重大', 9], ['中', 5], ['軽', 4]]);
+});
+
+test('防災情報は最長5分か確認まで点けたら繰り返さない。障害は30分ごとに繰り返す', () => {
+    const eew = [{ id: 'eew_warning:1', kind: 'eew_warning', since: 0 }];
+    assert.deepEqual(desiredPattern(eew, new Set(), 10).lamps, lamps({ white: 'flash', red: 'flash' }));
+    assert.deepEqual(desiredPattern(eew, new Set(), 299).lamps, lamps({ white: 'flash', red: 'flash' }));
+    assert.deepEqual(desiredPattern(eew, new Set(), 301).lamps, lamps());
+    assert.deepEqual(desiredPattern(eew, new Set(), 2100 + 10).lamps, lamps());   // 繰り返さない
+    assert.equal(desiredPattern(eew, new Set(), 2100 + 10).shown[0].repeat, false);
+    const special = [{ id: 'special:x', kind: 'special_warning', since: 0 }];
+    assert.deepEqual(desiredPattern(special, new Set(), 10).lamps, lamps({ white: 'on', yellow: 'on' }));
+    assert.deepEqual(desiredPattern(special, new Set(), 86400).lamps, lamps());
+    // 表示の設定（MAXD）が 5 分より長くても、防災は 5 分まで
+    assert.deepEqual(desiredPattern(eew, new Set(), 400, { ...DEFAULT_TIMING, maxDisplay: 600 }).lamps, lamps());
+    // 確認したら、続いていてももう点けない
+    const engine = new PatliteEngine(0);
+    engine.update([{ id: 'quake:1:quake_6plus', kind: 'quake_6plus', since: 10 }], 10, 0, 10);
+    assert.deepEqual(engine.pattern(11).lamps, lamps({ white: 'on', red: 'on' }));
+    engine.acknowledge(12);
+    engine.update([{ id: 'quake:1:quake_6plus', kind: 'quake_6plus', since: 10 }], 2000, 0, 2000);
+    assert.deepEqual(engine.pattern(2006).lamps, lamps());   // （2000 の送信は途絶からの復帰なので 5 秒は緑）
+    assert.deepEqual(engine.pattern(10 + 1800 + 300 + 5).lamps, lamps());
+    // 障害は繰り返す
+    const system = [{ id: 'h', kind: 'home_critical', since: 0 }];
+    assert.deepEqual(desiredPattern(system, new Set(), 2100 + 10).lamps, lamps({ red: 'flash' }));
+});
+
+test('種類が上がったら（注意報→警報→大津波警報）新しい項目としてまた点ける', () => {
+    const engine = new PatliteEngine(0);
+    engine.update([{ id: 'tsunami:tsunami_advisory', kind: 'tsunami_advisory', since: 0 }], 0, 0, 0);
+    assert.deepEqual(engine.pattern(1).lamps, lamps({ white: 'on' }));
+    engine.acknowledge(2);
+    assert.deepEqual(engine.pattern(3).lamps, lamps());
+    // ブリッジは種類ごとに別の id・新しい since で送る
+    engine.update([{ id: 'tsunami:tsunami_warning', kind: 'tsunami_warning', since: 400 }], 400, 0, 400);
+    assert.deepEqual(engine.pattern(406).lamps, lamps({ white: 'flash', yellow: 'flash' }));   // （途絶からの復帰の緑 5 秒の後）
+    engine.update([{ id: 'tsunami:tsunami_warning', kind: 'tsunami_warning', since: 400 }], 700, 0, 700);
+    assert.deepEqual(engine.pattern(706).lamps, lamps());
+    engine.update([{ id: 'tsunami:tsunami_major', kind: 'tsunami_major', since: 900 }], 900, 0, 900);
+    assert.deepEqual(engine.pattern(906).lamps, lamps({ white: 'flash', red: 'flash' }));
+});
+
+test('絞り込み: 時間帯設定（重大のみ／中以上）と一時的な絞り込み、無連動の理由', () => {
+    const night = Date.UTC(2026, 10, 20, 14, 30) / 1000;   // 23:30 JST
+    const conditions = [
+        { id: 'd', kind: 'home_degraded', since: night - 10 },     // 軽
+        { id: 'l', kind: 'home_restart_loop', since: night - 10 },  // 中
+        { id: 'h', kind: 'home_critical', since: night - 10 },      // 重大
+    ];
+    const reasons = (settings, device) => desiredPattern(conditions, new Set(), night, undefined, policyFor(settings, night, device)).shown.map((item) => item.suppressed);
+    const band = (level) => ({ night: { enabled: true, start: '22:00', end: '07:00', level } });
+    assert.deepEqual(reasons(band('medium')), ['時間帯設定（中以上）により無連動', '', '']);
+    assert.deepEqual(reasons(band('critical')), ['時間帯設定（重大のみ）により無連動', '時間帯設定（重大のみ）により無連動', '']);
+    assert.deepEqual(reasons({ night: { enabled: true, start: '22:00', end: '07:00' } }), reasons(band('critical')));   // 以前の夜間モード＝重大のみ
+    const temporary = (level, until = night + 3600) => ({ filter: { until, level } });
+    assert.deepEqual(reasons(temporary('critical')), ['一時的な絞り込み（重大のみ）により無連動', '一時的な絞り込み（重大のみ）により無連動', '']);
+    assert.deepEqual(reasons(temporary('medium')), ['一時的な絞り込み（中以上）により無連動', '', '']);
+    assert.deepEqual(reasons(temporary('critical', night - 1)), ['', '', '']);   // 期限切れ
+    assert.deepEqual(reasons({ snoozeUntil: night + 60 }), Array(3).fill('一時停止により無連動'));
+    assert.deepEqual(reasons({ snoozeForever: true }), Array(3).fill('無期限停止により無連動'));
+    assert.deepEqual(reasons(null, { fullStop: true }), Array(3).fill('強制停止により無連動'));
+    assert.match(filterText({ ...band('medium'), ...temporary('critical') }, night), /一時的な絞り込み中: 重大のみ.*時間帯設定中（22:00〜07:00）: 中以上/u);
+    assert.equal(suppressionReason(LEGEND.link_lost, policyFor(band('critical'), night)), '');
+    // サイトに保存する値: level は critical / medium だけ、絞り込みは最長 7 日・過ぎたものは持たない
+    const now = 1_000_000;
+    assert.equal(normalizeSettings({ night: { enabled: true } }, now).night.level, 'critical');
+    assert.equal(normalizeSettings({ night: { level: 'medium' } }, now).night.level, 'medium');
+    assert.equal(normalizeSettings({ night: { level: 'all' } }, now).night.level, 'critical');
+    assert.deepEqual(normalizeSettings({ filter: { until: now + 30 * 86400, level: 'medium' } }, now).filter, { until: now + 7 * 86400, level: 'medium' });
+    assert.deepEqual(normalizeSettings({ filter: { until: now - 1, level: 'medium' } }, now).filter, { until: null, level: 'medium' });
+    assert.deepEqual(normalizeSettings({}, now).filter, { until: null, level: 'critical' });
+});
+
+test('履歴: 積層灯に出さなかった項目も理由つきで記録する（一時停止・無期限停止・時間帯設定・絞り込み・強制停止）', async () => {
+    const night = Date.UTC(2026, 10, 20, 14, 30) / 1000;   // 23:30 JST
+    const run = async (context, kind = 'home_degraded') => {
+        const db = new HistoryD1();
+        await recordHistory(db, [{ id: `x:${kind}`, kind, title: 't', since: night - 5 }], night, context);
+        return db.history[0].suppressed;
+    };
+    assert.equal(await run({}), null);
+    assert.equal(await run({ settings: { snoozeUntil: night + 60 } }), '一時停止により無連動');
+    assert.equal(await run({ settings: { snoozeForever: true } }), '無期限停止により無連動');
+    assert.equal(await run({ settings: { night: { enabled: true, start: '22:00', end: '07:00' } } }), '時間帯設定（重大のみ）により無連動');
+    assert.equal(await run({ settings: { night: { enabled: true, start: '22:00', end: '07:00', level: 'medium' } } }, 'quake_5'), null);
+    assert.equal(await run({ settings: { filter: { until: night + 60, level: 'medium' } } }), '一時的な絞り込み（中以上）により無連動');
+    assert.equal(await run({ device: { fullStop: true } }, 'eew_warning'), '強制停止により無連動');
+    // ブリッジの途絶の行にも理由を残す
+    const db = new HistoryD1();
+    db.state = { received_at: night - 600 };
+    await recordHistory(db, [], night, { settings: { snoozeForever: true } });
+    assert.equal(db.history.find((row) => row.kind === 'link_lost').suppressed, '無期限停止により無連動');
+});
+
+test('確認は 3 秒後に消灯し、復旧の緑は確認を待たず 5 秒（確認ですぐ消える）', () => {
+    assert.equal(ACK_DELAY_SECONDS, 3);
+    assert.equal(MAX_RECOVERY_SECONDS, 5);
+    assert.equal(DEFAULT_TIMING.recovery, 5);
+    const engine = new PatliteEngine(0);
+    engine.update([{ id: 'home:loop:x', kind: 'home_restart_loop', since: 0 }, { id: 'aws:alarm:y', kind: 'aws_alarm', since: 0 }], 0, 0, 0);
+    engine.update([{ id: 'home:loop:x', kind: 'home_restart_loop', since: 0 }], 10, 0, 10);   // AWS のアラームが復旧
+    assert.deepEqual(engine.pattern(11).lamps, lamps({ yellow: 'flash', green: 'on' }));
+    assert.deepEqual(engine.pattern(14.9).lamps, lamps({ yellow: 'flash', green: 'on' }));
+    assert.deepEqual(engine.pattern(15).lamps, lamps({ yellow: 'flash' }));   // 5 秒で消える（確認を待たない）
+    engine.update([], 20, 0, 20);   // ループも復旧 → 緑
+    engine.update([{ id: 'h', kind: 'home_critical', since: 20 }], 20, 0, 20);
+    assert.deepEqual(engine.pattern(21).lamps, lamps({ red: 'flash', green: 'on' }));
+    engine.requestAck(21);   // ページ・操作盤の確認
+    assert.deepEqual(engine.pattern(21).lamps, lamps({ red: 'flash' }));      // 緑はすぐ消える
+    assert.deepEqual(engine.pattern(23.9).lamps, lamps({ red: 'flash' }));    // ほかは 3 秒待つ
+    assert.deepEqual(engine.pattern(24).lamps, lamps());
+    assert.equal(engine.ackDueAt, null);
+    // Arduino に古い RECV=60 が残っていても 5 秒
+    const old = new PatliteEngine(0);
+    old.timing = { ...DEFAULT_TIMING, recovery: 60 };
+    old.update([{ id: 'a', kind: 'aws_degraded', since: 0 }], 0, 0, 0);
+    old.update([], 1, 0, 1);
+    assert.deepEqual(old.pattern(5.5).lamps, lamps({ green: 'on' }));
+    assert.deepEqual(old.pattern(6).lamps, lamps());
+    // Arduino のボタンを受け付けた（ACK=1）ことを読める
+    assert.equal(parseStatus('OK STATUS FS=0 R=OFF Y=OFF G=ON B=OFF W=OFF BZ=0 BZA=0 LINK=OK ACK=1 ILL=0 EV=ACK_PENDING EC=3 UP=1').ackPending, true);
+    assert.equal(parseStatus('OK STATUS FS=0 R=OFF Y=OFF G=OFF B=OFF W=OFF ACK=0 EV=READY EC=1 UP=1').ackPending, false);
+});
+
+test('強制停止の状態: 積層灯ページが知らせ、state に載り、古いものは使わない', async () => {
+    const db = new FakeD1();
+    const device = { row: null };
+    const original = db.prepare.bind(db);
+    db.prepare = (sql) => {
+        if (!/patlite_device/u.test(sql)) return original(sql);
+        return {
+            bind(...args) { this.args = args; return this; },
+            async run() { device.row = { full_stop: this.args[0], reported_at: this.args[1] }; return {}; },
+            async first() { return device.row; },
+        };
+    };
+    const environment = env(db);
+    const post = (body, headers = {}) => new Request('https://dpi-bot.com/site/patlite-admin/api/device', {
+        method: 'POST', headers: { 'content-type': 'application/json', origin: 'https://dpi-bot.com', ...headers }, body: JSON.stringify(body),
+    });
+    assert.equal((await handleAdminCenterRequest(post({ fullStop: true }), environment)).status, 403);
+    await withAccess(async (token) => {
+        const auth = { 'cf-access-jwt-assertion': token };
+        assert.equal((await handleAdminCenterRequest(post({ fullStop: 'yes' }, auth), environment)).status, 400);
+        assert.equal((await handleAdminCenterRequest(post({ fullStop: true }, auth), environment)).status, 200);
+        assert.equal(device.row.full_stop, 1);
+        const state = await (await handleAdminCenterRequest(new Request('https://dpi-bot.com/site/patlite-admin/api/state', { headers: auth }), environment)).json();
+        assert.equal(state.device.fullStop, true);
+        device.row.reported_at -= 16 * 60;   // 15 分より古い
+        const stale = await (await handleAdminCenterRequest(new Request('https://dpi-bot.com/site/patlite-admin/api/state', { headers: auth }), environment)).json();
+        assert.equal(stale.device.fullStop, false);
+    });
+});
+
+test('画面: 色の一覧は段階ごと、絞り込みの操作、操作盤のタイルは 6×3 のまま', async () => {
+    const html = await readFile(new URL('../site/patlite-admin/index.html', import.meta.url), 'utf8');
+    const script = await readFile(new URL('../site/patlite-admin/script.js', import.meta.url), 'utf8');
+    const deckHtml = await readFile(new URL('../site/control-deck/index.html', import.meta.url), 'utf8');
+    const deck = await readFile(new URL('../site/control-deck/deck.js', import.meta.url), 'utf8');
+    for (const id of ['filter-form', 'filter-level', 'filter-hours', 'filter-clear', 'night-level', 'legend']) assert.match(html, new RegExp(`id="${id}"`, 'u'));
+    assert.match(script, /legendByLevel\(\)/u);
+    assert.match(script, /engine\.requestAck\(now\)/u);
+    assert.match(script, /if \(status\.ackPending\) engine\.dismissRecovered\(\);/u);
+    assert.match(script, /DEVICE_API/u);
+    assert.match(deck, /legendByLevel\(\)/u);
+    assert.match(deckHtml, /id="filter-tile"/u);
+    assert.match(deckHtml, /id="filter-dialog"/u);
+    assert.doesNotMatch(deckHtml, /refresh-tile/u);
+    // 確認（2×2）＋ 14 マス ＝ 6 列 × 3 段
+    assert.equal((deckHtml.match(/class="deck-tile/gu) || []).length, 15);
+    assert.equal((deckHtml.match(/deck-ack/gu) || []).length, 1);
 });

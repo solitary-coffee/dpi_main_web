@@ -61,7 +61,7 @@
                 <p id="planned" class="patlite-planned"></p>
                 <p id="meta" class="muted"></p>
                 <div class="patlite-actions">
-                    <button id="ack-btn" type="button" data-needs-serial>確認（いま点いているものを消す）</button>
+                    <button id="ack-btn" type="button" data-needs-serial>確認（3秒後にいま点いているものを消す）</button>
                     <button id="fullstop-btn" type="button" data-needs-serial>強制停止 / 解除</button>
                     <button id="resume-btn" type="button">自動表示に戻す</button>
                     <button id="all-off-btn" type="button" data-needs-serial>全部消す（60秒）</button>
@@ -71,11 +71,11 @@
                     <button id="test-blue" type="button" data-needs-serial>青を試す</button>
                     <button id="test-white" type="button" data-needs-serial>白を試す</button>
                 </div>
-                <p class="muted">「試す」は 10 秒間その色を点滅させ、その後は自動表示に戻ります。上の「確認」「強制停止 / 解除」は Arduino のボタンと同じ働きです（ボタンが使えないときの代わり）。Arduino のボタンは、短押しで確認（5秒後にいま点いているものを消す。その間ボタンの LED が赤）、2秒以上の長押しで強制停止（全停止の切り替え）です。Arduino は Ver.2.2 以降が必要です。</p>
+                <p class="muted">「試す」は 10 秒間その色を点滅させ、その後は自動表示に戻ります。上の「確認」「強制停止 / 解除」は Arduino のボタンと同じ働きです（ボタンが使えないときの代わり）。Arduino のボタンは、短押しで確認（3秒後にいま点いているものを消す。その間ボタンの LED が赤。復旧の緑は押したらすぐ消える）、2秒以上の長押しで強制停止（全停止の切り替え）です。Arduino は Ver.2.2 以降が必要です（3秒・復旧の緑 5 秒は Ver.2.3）。</p>
             </section>
 
             <section aria-labelledby="pause-title">
-                <div class="section-heading"><div><p class="eyebrow">PAUSE / NIGHT</p><h2 id="pause-title">一時停止・夜間モード・試験点灯</h2></div></div>
+                <div class="section-heading"><div><p class="eyebrow">PAUSE / FILTER</p><h2 id="pause-title">一時停止・絞り込み・時間帯設定・試験点灯</h2></div></div>
                 <p id="snooze-state" class="muted">一時停止していません</p>
                 <div class="patlite-actions">
                     <button type="button" data-snooze-hours="1">1時間止める</button>
@@ -87,30 +87,39 @@
                     <button type="button" data-snooze-hours="forever">無期限に止める</button>
                     <button type="button" data-snooze-hours="0">一時停止を解除</button>
                 </div>
-                <p class="muted">一時停止中は、重大な障害・防災情報も含めて全部消灯します。設定はサイトに保存され、どの PC で開いても同じです。</p>
+                <p class="muted">一時停止中は、重大な障害・防災情報も含めて全部消灯します（履歴には「一時停止により無連動」として残ります）。設定はサイトに保存され、どの PC で開いても同じです。</p>
+                <h3 class="patlite-subhead">一時的な絞り込み（今から何時間かだけ）</h3>
+                <p id="filter-state" class="muted">絞り込みしていません</p>
+                <form id="filter-form" class="patlite-config">
+                    <label>点けるもの<select id="filter-level"><option value="critical">重大のみ</option><option value="medium">中以上</option></select></label>
+                    <label>今から（時間）<input id="filter-hours" inputmode="decimal" value="3"><small>0.5〜168（最長 7 日）</small></label>
+                    <div class="patlite-actions"><button type="submit">この時間だけ絞り込む</button><button id="filter-clear" type="button">絞り込みを解除</button></div>
+                </form>
+                <h3 class="patlite-subhead">時間帯設定（毎日決まった時間だけ絞り込む。旧・夜間モード）</h3>
                 <form id="night-form" class="patlite-config">
-                    <label class="patlite-check"><input id="night-enabled" type="checkbox">夜間モードを使う（この時間は「重大」だけ点灯）</label>
+                    <label class="patlite-check"><input id="night-enabled" type="checkbox">時間帯設定を使う</label>
+                    <label>この時間に点けるもの<select id="night-level"><option value="critical">重大のみ</option><option value="medium">中以上</option></select></label>
                     <label>開始（日本時間）<input id="night-start" type="time" value="22:00"></label>
                     <label>終了（日本時間）<input id="night-end" type="time" value="07:00"></label>
                     <label class="patlite-check"><input id="illum-daily" type="checkbox">毎日ランダムな時刻（10〜20時）にイルミネーションで試験点灯する</label>
                     <label>試験点灯の長さ（秒）<input id="illum-seconds" inputmode="numeric" value="20"><small>5〜120</small></label>
                     <div><button type="submit">保存</button></div>
                 </form>
-                <p class="muted">「重大」＝自宅の重大障害（赤）・AWS の予備系で配信中（赤＋青）・監視の途絶（青）・緊急地震速報（警報）・大津波警報・津波警報・震度6弱以上・気象の特別警報・南海トラフ臨時情報（調査中）。毎日の試験点灯は、夜間・一時停止中・何か点いているときは行いません。</p>
+                <p class="muted">どれが「重大」「中」「軽」かは、下の「色の一覧」を見てください。絞り込み・時間帯設定で点けなかった項目も履歴に残ります（例: 「時間帯設定（重大のみ）により無連動」）。毎日の試験点灯は、時間帯設定の時間内・絞り込み中・一時停止中・何か点いているときは行いません。</p>
                 <div class="patlite-actions"><button id="illum-btn" type="button" data-needs-serial>イルミネーション試験（いま）</button></div>
             </section>
 
             <section aria-labelledby="shown-title">
                 <div class="section-heading"><div><p class="eyebrow">CONDITIONS</p><h2 id="shown-title">いま起きていること</h2></div></div>
-                <div class="table-wrap"><table><thead><tr><th>色</th><th>内容</th><th>積層灯</th><th>発生</th></tr></thead><tbody id="shown"></tbody></table></div>
+                <div class="table-wrap"><table><thead><tr><th>色</th><th>段階</th><th>内容</th><th>積層灯</th><th>発生</th></tr></thead><tbody id="shown"></tbody></table></div>
             </section>
 
             <section aria-labelledby="history-title">
                 <div class="section-heading"><div><p class="eyebrow">HISTORY</p><h2 id="history-title">履歴</h2></div>
                     <div class="admin-bar"><select id="history-days" aria-label="期間"><option value="1">1日</option><option value="7" selected>7日</option><option value="30">30日</option><option value="90">90日</option></select><button id="history-btn" type="button">更新</button></div></div>
                 <p id="history-summary" class="muted">読み込み中…</p>
-                <div class="table-wrap"><table><thead><tr><th>色</th><th>内容</th><th>発生</th><th>復帰</th><th>続いた時間</th></tr></thead><tbody id="history"></tbody></table></div>
-                <p class="muted">自宅のブリッジから届いた項目が出た時刻と消えた時刻です（夜間モード・一時停止・ボタンの確認で消灯していた間も記録されます）。「監視の途絶」は、ブリッジからの送信が 3 分以上途切れた時間帯です。90 日分を残します。</p>
+                <div class="table-wrap"><table><thead><tr><th>色</th><th>段階</th><th>内容</th><th>積層灯</th><th>発生</th><th>復帰</th><th>続いた時間</th></tr></thead><tbody id="history"></tbody></table></div>
+                <p class="muted">自宅のブリッジから届いた項目が出た時刻と消えた時刻です。一時停止・無期限停止・強制停止・時間帯設定・一時的な絞り込みで積層灯に出さなかった項目も記録し、「積層灯」の欄にその理由（例: 「一時停止により無連動」）を出します（理由は項目が出た時点の設定で決めます）。「監視の途絶」は、ブリッジからの送信が 3 分以上途切れた時間帯です。90 日分を残します。</p>
             </section>
 
             <section aria-labelledby="config-title">
@@ -119,7 +128,7 @@
                 <form id="config-form" class="patlite-config">
                     <label>1 回に点ける最長時間（秒）<input id="cfg-maxd" inputmode="numeric" value="300"><small>10〜3600（既定 5 分）</small></label>
                     <label>消灯してから、続いていればまた点けるまで（秒）<input id="cfg-rint" inputmode="numeric" value="1800"><small>60〜43200（既定 30 分）</small></label>
-                    <label>復旧の緑を点ける時間（秒）<input id="cfg-recv" inputmode="numeric" value="60"><small>0〜600（0 で出さない）</small></label>
+                    <label>復旧の緑を点ける時間（秒）<input id="cfg-recv" inputmode="numeric" value="5"><small>0〜5（0 で出さない。Arduino に 5 より大きい古い値が残っていても 5 秒で消します）</small></label>
                     <label>点滅の ON / OFF の長さ（ミリ秒）<input id="cfg-period" inputmode="numeric" value="500"><small>200〜5000</small></label>
                     <label>PC から届かなければ途絶とする時間（秒）<input id="cfg-hto" inputmode="numeric" value="60"><small>10〜600</small></label>
                     <div><button type="submit" data-needs-serial>Arduino に保存</button></div>
@@ -128,8 +137,8 @@
 
             <section aria-labelledby="legend-title">
                 <div class="section-heading"><div><p class="eyebrow">LEGEND</p><h2 id="legend-title">色の一覧</h2></div></div>
-                <p class="muted">赤＝配信が止まる重大障害、黄＝一部の障害・注意、青＝AWS 側・監視の途絶、白＝防災情報、緑＝復旧。正常なときは消灯。どの項目も最長 5 分点けたら一旦消し、30 分空けてまだ続いていればまた点けます（時間は下の「表示の設定」で変更）。重なったときは色を合わせて点け、点滅は色ごと。物理ボタンの短押しで、5秒後にいま点いている項目を消します（新しい情報が来ると再び点灯）。2秒以上の長押しで強制停止／解除。ブザーは使いません。</p>
-                <div class="table-wrap"><table><thead><tr><th>色</th><th>情報・障害</th><th>点滅</th><th>消えるまで</th></tr></thead><tbody id="legend"></tbody></table></div>
+                <p class="muted">赤＝配信が止まる重大障害、黄＝一部の障害・注意、青＝AWS 側・監視の途絶、白＝防災情報（重大なものは 白＋赤・白＋黄 の 2 色）、緑＝復旧。正常なときは消灯。障害は最長 5 分点けたら一旦消し、30 分空けてまだ続いていればまた点けます（時間は「表示の設定」で変更）。防災情報は最長 5 分か確認まで点けたら、同じ情報ではもう点けません（津波注意報→津波警報のように種類が変わったら、また点けます）。重なったときは色を合わせて点け、点滅は色ごと。確認（物理ボタンの短押し・この画面・操作盤）で、3 秒後にいま点いている項目を消します（復旧の緑はすぐ消えます）。2秒以上の長押しで強制停止／解除。ブザーは使いません。色見本の点滅しているものは、積層灯でも点滅します。</p>
+                <div id="legend" class="patlite-legend"></div>
             </section>
         </main>
     </div>

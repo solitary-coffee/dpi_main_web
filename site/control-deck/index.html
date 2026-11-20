@@ -41,15 +41,20 @@
             <h2 id="history-title">直近の履歴（24時間）</h2>
             <ul id="history" class="deck-list"><li class="deck-muted">読み込み中…</li></ul>
         </section>
+
+        <section class="deck-panel deck-legend" aria-labelledby="legend-title">
+            <h2 id="legend-title">色の一覧（点滅する見本は積層灯でも点滅。防災は最長5分・繰り返さない）</h2>
+            <ul id="legend" class="deck-list"></ul>
+        </section>
         </div>
 
         <section class="deck-grid" aria-label="操作">
-            <!-- 確認は大きく（横向きは 2×2 マス）。1 段目: 積層灯の操作 / 2 段目: 一時停止 / 3 段目: 解除・画面・ページ -->
-            <button class="deck-tile deck-accent deck-ack" type="button" data-command="ack"><span class="deck-icon">✓</span><span>確認<small>点いているものを消す</small></span></button>
+            <!-- 確認は大きく（横向きは 2×2 マス）。1 段目: 積層灯の操作・時間帯設定・絞り込み / 2 段目: 一時停止 / 3 段目: 解除・画面・ページ -->
+            <button class="deck-tile deck-accent deck-ack" type="button" data-command="ack"><span class="deck-icon">✓</span><span>確認<small>3秒後に点いているものを消す</small></span></button>
             <button class="deck-tile deck-danger" type="button" data-command="fullstop_on" data-hold="1"><span class="deck-icon">■</span><span>強制停止<small>1秒長押し</small></span></button>
             <button class="deck-tile" type="button" data-command="fullstop_off"><span class="deck-icon">▶</span><span>強制停止を解除</span></button>
-            <button class="deck-tile" type="button" id="night-tile"><span class="deck-icon">☾</span><span id="night-label">夜間モード</span></button>
-            <button class="deck-tile" type="button" id="refresh-tile"><span class="deck-icon">⟳</span><span>今すぐ更新</span></button>
+            <button class="deck-tile" type="button" id="night-tile"><span class="deck-icon">☾</span><span id="night-label">時間帯設定</span></button>
+            <button class="deck-tile" type="button" id="filter-tile"><span class="deck-icon">⛉</span><span id="filter-label">絞り込み</span></button>
             <button class="deck-tile deck-warn" type="button" data-snooze="1" data-hold="1"><span class="deck-icon">⏸</span><span>1時間停止<small>1秒長押し</small></span></button>
             <button class="deck-tile deck-warn" type="button" data-snooze="6" data-hold="1"><span class="deck-icon">⏸</span><span>6時間停止<small>1秒長押し</small></span></button>
             <button class="deck-tile deck-warn" type="button" data-snooze="custom" data-hold="1"><span class="deck-icon">⏱</span><span>カスタム時間<small>1秒長押し</small></span></button>
@@ -77,6 +82,26 @@
             <div class="deck-dialog-actions">
                 <button type="submit" value="cancel">やめる</button>
                 <button type="submit" value="ok" class="deck-dialog-ok">この時間止める</button>
+            </div>
+        </form>
+    </dialog>
+    <dialog id="filter-dialog" class="deck-dialog" aria-labelledby="filter-title">
+        <form method="dialog">
+            <h2 id="filter-title">今から何時間、絞り込みますか？</h2>
+            <p class="deck-muted">選んだ段階だけ積層灯に点けます（ほかは履歴に「一時的な絞り込みにより無連動」と残ります）。最長 168 時間（7日）。</p>
+            <label class="deck-dialog-input">点けるもの <select id="filter-level"><option value="critical">重大のみ</option><option value="medium">中以上</option></select></label>
+            <div class="deck-dialog-quick">
+                <button type="button" data-filter-hours="1">1時間</button>
+                <button type="button" data-filter-hours="3">3時間</button>
+                <button type="button" data-filter-hours="6">6時間</button>
+                <button type="button" data-filter-hours="12">12時間</button>
+                <button type="button" data-filter-hours="24">24時間</button>
+            </div>
+            <label class="deck-dialog-input"><input type="number" id="filter-hours" min="0.5" max="168" step="0.5" value="3" inputmode="decimal"> 時間</label>
+            <div class="deck-dialog-actions">
+                <button type="submit" value="cancel">やめる</button>
+                <button type="submit" value="clear">絞り込みを解除</button>
+                <button type="submit" value="ok" class="deck-dialog-ok">この時間絞り込む</button>
             </div>
         </form>
     </dialog>
