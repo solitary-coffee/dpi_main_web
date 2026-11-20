@@ -1,0 +1,154 @@
+{
+ "earthquake-map": [
+  {
+   "file": "earthquake-map-shindo.png",
+   "caption": "震度速報（地域ごとの震度）",
+   "plan": "Plus以上"
+  },
+  {
+   "file": "earthquake-map-hypocenter.png",
+   "caption": "震源に関する情報",
+   "plan": "Plus以上"
+  },
+  {
+   "file": "earthquake-map-detail.png",
+   "caption": "震源・震度に関する情報（各地の震度）",
+   "plan": "Plus以上"
+  },
+  {
+   "file": "earthquake-map-long-period.png",
+   "caption": "長周期地震動に関する観測情報",
+   "plan": "Plus以上"
+  },
+  {
+   "file": "earthquake-map-centre.png",
+   "caption": "各地の震度（地図の中心にする市区町村を指定：東京都千代田区）",
+   "plan": "Pro以上"
+  }
+ ],
+ "weather-map": [
+  {
+   "file": "weather-map-national.png",
+   "caption": "全国（土砂災害警報・注意報）",
+   "plan": "Plus以上"
+  },
+  {
+   "file": "weather-map-region.png",
+   "caption": "地方（北陸地方）",
+   "plan": "Plus以上"
+  },
+  {
+   "file": "weather-map-municipality.png",
+   "caption": "市区町村ごとの詳細（宗谷地方大雨警報・注意報）",
+   "plan": "Pro以上"
+  },
+  {
+   "file": "weather-map-tornado.png",
+   "caption": "竜巻注意情報（埼玉県気象防災速報（竜巻目撃））",
+   "plan": "Plus以上"
+  },
+  {
+   "file": "weather-map-rainband.png",
+   "caption": "線状降水帯（千葉県気象防災速報（線状降水帯発生））",
+   "plan": "Plus以上"
+  }
+ ],
+ "warning-table": [
+  {
+   "file": "warning-table-national.png",
+   "caption": "全国の表",
+   "plan": "Plus以上"
+  },
+  {
+   "file": "warning-table-regional.png",
+   "caption": "地方の表（九州北部地方（山口県を含む））",
+   "plan": "Pro以上"
+  },
+  {
+   "file": "warning-table-regional-hokkaido.png",
+   "caption": "地方の表（北海道地方）",
+   "plan": "Pro以上"
+  },
+  {
+   "file": "warning-table-timeseries.png",
+   "caption": "時系列の表（熊本地方気象台）",
+   "plan": "Pro以上"
+  },
+  {
+   "file": "warning-table-timeseries-2.png",
+   "caption": "時系列の表（岐阜地方気象台）",
+   "plan": "Pro以上"
+  }
+ ],
+ "eew-map": [
+  {
+   "file": "eew-map-first.png",
+   "caption": "第1報",
+   "plan": "Basic以上"
+  },
+  {
+   "file": "eew-map-national.png",
+   "caption": "続報（新たに対象になった地域を色分け）",
+   "plan": "Basic以上"
+  },
+  {
+   "file": "eew-map-cancel.png",
+   "caption": "取消のお知らせ",
+   "plan": "Basic以上"
+  }
+ ],
+ "tsunami-map": [
+  {
+   "file": "tsunami-map-map.png",
+   "caption": "津波警報・注意報の図（全国）",
+   "plan": "Plus以上"
+  },
+  {
+   "file": "tsunami-map-enlarged.png",
+   "caption": "発表地域の拡大図（北海道地方）",
+   "plan": "Pro以上"
+  },
+  {
+   "file": "tsunami-map-table.png",
+   "caption": "津波警報・注意報の表",
+   "plan": "Plus以上"
+  },
+  {
+   "file": "tsunami-map-observation.png",
+   "caption": "津波観測に関する情報（沿岸の観測）",
+   "plan": "Plus以上"
+  },
+  {
+   "file": "tsunami-map-offshore.png",
+   "caption": "沖合の津波観測に関する情報",
+   "plan": "Plus以上"
+  }
+ ],
+ "hires-radar": [
+  {
+   "file": "hires-radar-national.png",
+   "caption": "全国",
+   "plan": "Plus以上"
+  },
+  {
+   "file": "hires-radar-region.png",
+   "caption": "地方（関東甲信地方）",
+   "plan": "Plus以上"
+  },
+  {
+   "file": "hires-radar-kinki.png",
+   "caption": "地方（近畿地方）",
+   "plan": "Plus以上"
+  },
+  {
+   "file": "hires-radar-kyushu-north.png",
+   "caption": "地方（九州北部地方（山口県を含む））",
+   "plan": "Plus以上"
+  },
+  {
+   "file": "hires-radar-hokkaido.png",
+   "caption": "地方（北海道地方）",
+   "plan": "Plus以上"
+  }
+ ]
+}

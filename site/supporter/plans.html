@@ -8,6 +8,7 @@
  <link rel="icon" href="../../img/dpi.png" type="image/png">
  <link rel="stylesheet" href="/site/reuse/style.css">
  <link rel="stylesheet" href="plans.css">
+ <link rel="stylesheet" href="preview-lightbox.css">
 </head>
 <body>
  <button id="menu-toggle-btn" type="button" aria-label="メニューを開く"><span></span><span></span><span></span></button>
@@ -200,18 +201,19 @@
   </section>
   <section class="comparison-previews" aria-labelledby="previews-title">
    <h2 id="previews-title">画像配信の見本</h2>
-   <p>実際に配信する画像の例です。表示内容は発表された情報によって変わります。</p>
+   <p>実際に配信する画像の例です。表示内容は発表された情報によって変わります。画像をクリック（タップ）すると拡大し、← / → で同じ種類の他の見本も見られます。</p>
    <div class="preview-gallery">
-    <figure class="preview-thumb"><span class="preview-thumb-label">見本</span><img src="/site/supporter/previews/eew-map-national.png" alt="見本：緊急地震速報（警報）の図" loading="lazy" decoding="async"><figcaption>緊急地震速報（警報）の図</figcaption></figure>
-    <figure class="preview-thumb"><span class="preview-thumb-label">見本</span><img src="/site/supporter/previews/weather-map-national.png" alt="見本：気象警報の図（全国）" loading="lazy" decoding="async"><figcaption>気象警報の図（全国）</figcaption></figure>
-    <figure class="preview-thumb"><span class="preview-thumb-label">見本</span><img src="/site/supporter/previews/weather-map-region.png" alt="見本：気象警報の図（地方）" loading="lazy" decoding="async"><figcaption>気象警報の図（地方）</figcaption></figure>
-    <figure class="preview-thumb"><span class="preview-thumb-label">見本</span><img src="/site/supporter/previews/warning-table-national.png" alt="見本：警報・注意報の表（全国）" loading="lazy" decoding="async"><figcaption>警報・注意報の表（全国）</figcaption></figure>
-    <figure class="preview-thumb"><span class="preview-thumb-label">見本</span><img src="/site/supporter/previews/warning-table-regional.png" alt="見本：警報・注意報の表（地方）" loading="lazy" decoding="async"><figcaption>警報・注意報の表（地方）</figcaption></figure>
-    <figure class="preview-thumb"><span class="preview-thumb-label">見本</span><img src="/site/supporter/previews/warning-table-timeseries.png" alt="見本：警報・注意報の表（時系列）" loading="lazy" decoding="async"><figcaption>警報・注意報の表（時系列）</figcaption></figure>
-    <figure class="preview-thumb"><span class="preview-thumb-label">見本</span><img src="/site/supporter/previews/hires-radar-national.png" alt="見本：雨雲レーダー（高解像度版・全国）" loading="lazy" decoding="async"><figcaption>雨雲レーダー（高解像度版・全国）</figcaption></figure>
-    <figure class="preview-thumb"><span class="preview-thumb-label">見本</span><img src="/site/supporter/previews/hires-radar-region.png" alt="見本：雨雲レーダー（高解像度版・地方）" loading="lazy" decoding="async"><figcaption>雨雲レーダー（高解像度版・地方）</figcaption></figure>
-    <figure class="preview-thumb"><span class="preview-thumb-label">見本</span><img src="/site/supporter/previews/tsunami-map-map.png" alt="見本：津波警報・注意報の図" loading="lazy" decoding="async"><figcaption>津波警報・注意報の図</figcaption></figure>
-    <figure class="preview-thumb"><span class="preview-thumb-label">見本</span><img src="/site/supporter/previews/tsunami-map-table.png" alt="見本：津波警報・注意報の表" loading="lazy" decoding="async"><figcaption>津波警報・注意報の表</figcaption></figure>
+    <figure class="preview-thumb" data-preview-type="earthquake-map" data-preview-file="earthquake-map-detail.png" data-preview-plan="Plus以上"><span class="preview-thumb-label">見本</span><img src="/site/supporter/previews/earthquake-map-detail.png" alt="見本：地震情報の図" loading="lazy" decoding="async"><figcaption>地震情報の図</figcaption></figure>
+    <figure class="preview-thumb" data-preview-type="eew-map" data-preview-file="eew-map-national.png" data-preview-plan="Basic以上"><span class="preview-thumb-label">見本</span><img src="/site/supporter/previews/eew-map-national.png" alt="見本：緊急地震速報（警報）の図" loading="lazy" decoding="async"><figcaption>緊急地震速報（警報）の図</figcaption></figure>
+    <figure class="preview-thumb" data-preview-type="weather-map" data-preview-file="weather-map-national.png" data-preview-plan="Plus以上"><span class="preview-thumb-label">見本</span><img src="/site/supporter/previews/weather-map-national.png" alt="見本：気象警報の図（全国）" loading="lazy" decoding="async"><figcaption>気象警報の図（全国）</figcaption></figure>
+    <figure class="preview-thumb" data-preview-type="weather-map" data-preview-file="weather-map-region.png" data-preview-plan="Plus以上"><span class="preview-thumb-label">見本</span><img src="/site/supporter/previews/weather-map-region.png" alt="見本：気象警報の図（地方）" loading="lazy" decoding="async"><figcaption>気象警報の図（地方）</figcaption></figure>
+    <figure class="preview-thumb" data-preview-type="warning-table" data-preview-file="warning-table-national.png" data-preview-plan="Plus以上"><span class="preview-thumb-label">見本</span><img src="/site/supporter/previews/warning-table-national.png" alt="見本：警報・注意報の表（全国）" loading="lazy" decoding="async"><figcaption>警報・注意報の表（全国）</figcaption></figure>
+    <figure class="preview-thumb" data-preview-type="warning-table" data-preview-file="warning-table-regional.png" data-preview-plan="Pro以上"><span class="preview-thumb-label">見本</span><img src="/site/supporter/previews/warning-table-regional.png" alt="見本：警報・注意報の表（地方）" loading="lazy" decoding="async"><figcaption>警報・注意報の表（地方）</figcaption></figure>
+    <figure class="preview-thumb" data-preview-type="warning-table" data-preview-file="warning-table-timeseries.png" data-preview-plan="Pro以上"><span class="preview-thumb-label">見本</span><img src="/site/supporter/previews/warning-table-timeseries.png" alt="見本：警報・注意報の表（時系列）" loading="lazy" decoding="async"><figcaption>警報・注意報の表（時系列）</figcaption></figure>
+    <figure class="preview-thumb" data-preview-type="hires-radar" data-preview-file="hires-radar-national.png" data-preview-plan="Plus以上"><span class="preview-thumb-label">見本</span><img src="/site/supporter/previews/hires-radar-national.png" alt="見本：雨雲レーダー（高解像度版・全国）" loading="lazy" decoding="async"><figcaption>雨雲レーダー（高解像度版・全国）</figcaption></figure>
+    <figure class="preview-thumb" data-preview-type="hires-radar" data-preview-file="hires-radar-region.png" data-preview-plan="Plus以上"><span class="preview-thumb-label">見本</span><img src="/site/supporter/previews/hires-radar-region.png" alt="見本：雨雲レーダー（高解像度版・地方）" loading="lazy" decoding="async"><figcaption>雨雲レーダー（高解像度版・地方）</figcaption></figure>
+    <figure class="preview-thumb" data-preview-type="tsunami-map" data-preview-file="tsunami-map-map.png" data-preview-plan="Plus以上"><span class="preview-thumb-label">見本</span><img src="/site/supporter/previews/tsunami-map-map.png" alt="見本：津波警報・注意報の図" loading="lazy" decoding="async"><figcaption>津波警報・注意報の図</figcaption></figure>
+    <figure class="preview-thumb" data-preview-type="tsunami-map" data-preview-file="tsunami-map-table.png" data-preview-plan="Plus以上"><span class="preview-thumb-label">見本</span><img src="/site/supporter/previews/tsunami-map-table.png" alt="見本：津波警報・注意報の表" loading="lazy" decoding="async"><figcaption>津波警報・注意報の表</figcaption></figure>
    </div>
   </section>
   <section class="comparison-notices" aria-labelledby="comparison-notes-heading">
@@ -240,6 +242,6 @@
   </main>
  </div>
  <script src="../../script.js"></script>
- <script src="plans-previews.js" defer></script>
+ <script type="module" src="plans-previews.js"></script>
 </body>
 </html>
