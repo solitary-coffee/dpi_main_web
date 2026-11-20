@@ -221,7 +221,7 @@ test('admin details describe eew-map, warning-table and tsunami outputs',()=>{
 test('dashboard: previews, plan-aware type list and the new editors',async()=>{
  const [app,plans,css]=await Promise.all(['site/supporter/app.js','site/supporter/plans.html','site/supporter/style.css'].map(path=>readFile(new URL('../'+path,import.meta.url),'utf8')));
  for(const name of ['weather-map-${scope}','hires-radar-${scope}','eew-map-national','warning-table-${id}','tsunami-map-${id}'])assert.ok(app.includes(name),name);
- assert.match(app,/PREVIEW_BASE='\/site\/supporter\/previews\/'/);
+ assert.match(app,/import \{ PREVIEW_BASE, attachPreview \} from '\.\/preview-lightbox\.js';/);
  assert.match(app,/img\.loading='lazy'/);
  assert.match(app,/addEventListener\('error'/);
  assert.match(app,/textContent='見本'/);
@@ -232,5 +232,5 @@ test('dashboard: previews, plan-aware type list and the new editors',async()=>{
  assert.match(css,/\.rule-preview/);
  for(const name of ['weather-map-national','weather-map-region','warning-table-national','warning-table-regional','warning-table-timeseries','eew-map-national','hires-radar-national','hires-radar-region','tsunami-map-map','tsunami-map-table'])
   assert.ok(plans.includes(`/site/supporter/previews/${name}.png`),name);
- assert.match(plans,/src="plans-previews\.js" defer/);
+ assert.match(plans,/<script type="module" src="plans-previews\.js"><\/script>/);
 });

@@ -1,4 +1,5 @@
 import { planFeatures, imageTypeAllowed } from './plan-features.js';
+import { PREVIEW_BASE, attachPreview } from './preview-lightbox.js';
 
 let session;
 let revision = 0;
@@ -469,32 +470,48 @@ function regionChoices(){
 }
 
 // 見本（サンプル画像）。/site/supporter/previews/<name>.png が無いときは枠ごと隠す。
-const PREVIEW_BASE='/site/supporter/previews/';
+// 見本を押すと拡大表示（preview-lightbox.js）が開き、ルールの今の設定に合う見本から、同じ種類の他の見本も見られる。
+// items: [name, caption, type, prefer]（prefer = 拡大表示で最初に出したい見本のファイル名の候補。無ければ <name>.png）
 function previewImages(container,items){
  if(!items.length)return;
  const wrap=document.createElement('div');wrap.className='rule-preview';
- for(const [name,caption] of items){
+ for(const [name,caption,type,prefer] of items){
   const figure=document.createElement('figure');figure.className='rule-preview-item';
   const label=document.createElement('span');label.className='rule-preview-label';label.textContent='見本';
   const img=document.createElement('img');img.loading='lazy';img.decoding='async';img.src=`${PREVIEW_BASE}${name}.png`;img.alt=`見本：${caption}`;
   img.addEventListener('error',()=>{figure.remove();if(!wrap.querySelector('figure'))wrap.remove();});
   const text=document.createElement('figcaption');text.textContent=caption;
   figure.append(label,img,text);wrap.append(figure);
+  if(type)attachPreview(figure,type,{prefer:[...(prefer||[]),`${name}.png`],caption});
  }
  container.append(wrap);
 }
+// 地震情報の図: 選んだ情報の種類ごとの見本（最初に選んだ種類の見本を表示。地図の中心の指定があればその見本）
+const EARTHQUAKE_PREVIEWS={VXSE51:'earthquake-map-shindo',VXSE52:'earthquake-map-hypocenter',VXSE53:'earthquake-map-detail',VXSE62:'earthquake-map-long-period'};
 function rulePreviews(rule){
  const scope=rule.region&&rule.region!=='all'?'region':'national';
  const where=scope==='region'?'地方':'全国';
- if(rule.type==='weather-map')return [[`weather-map-${scope}`,`気象警報の図（${where}）`]];
- if(rule.type==='hires-radar')return [[`hires-radar-${scope}`,`雨雲レーダー（高解像度版）（${where}）`]];
+ // 地方を選んだルールは、その地方の見本があれば拡大表示でそれを最初に出す
+ const regional=type=>scope==='region'?[`${type}-${rule.region}.png`]:[];
+ if(rule.type==='weather-map'){
+  const prefer=entitlements.weatherMunicipality&&rule.municipalityDetail?['weather-map-municipality.png']:regional('weather-map');
+  return [[`weather-map-${scope}`,`気象警報の図（${where}）`,'weather-map',prefer]];
+ }
+ if(rule.type==='hires-radar')return [[`hires-radar-${scope}`,`雨雲レーダー（高解像度版）（${where}）`,'hires-radar',regional('hires-radar')]];
  // 全国・地方を選ぶ場合も同じ図（配信する条件だけが違う）。
- if(rule.type==='eew-map')return [['eew-map-national','緊急地震速報（警報）の図（地方を選ぶ場合も同じ図です）']];
+ if(rule.type==='eew-map')return [['eew-map-national','緊急地震速報（警報）の図（地方を選ぶ場合も同じ図です）','eew-map']];
  if(rule.type==='warning-table'){
   const labels={national:'警報・注意報の表（全国）',regional:'警報・注意報の表（地方）',timeseries:'警報・注意報の表（時系列）'};
-  return rule.tables.map(id=>[`warning-table-${id}`,labels[id]]);
+  const first=(rule.regions||[])[0];
+  return rule.tables.map(id=>[`warning-table-${id}`,labels[id],'warning-table',id==='regional'&&first?[`warning-table-regional-${first}.png`]:[]]);
  }
- if(rule.type==='tsunami-map')return rule.outputs.map(id=>[`tsunami-map-${id}`,id==='map'?'津波警報・注意報の図':'津波警報・注意報の表']);
+ if(rule.type==='tsunami-map')return rule.outputs.map(id=>[`tsunami-map-${id}`,id==='map'?'津波警報・注意報の図':'津波警報・注意報の表','tsunami-map',
+  id==='map'&&entitlements.tsunamiEnlarged&&rule.enlargedArea===true?['tsunami-map-enlarged.png']:[]]);
+ if(rule.type==='earthquake-map'){
+  const name=EARTHQUAKE_PREVIEWS[(rule.products||[]).find(id=>EARTHQUAKE_PREVIEWS[id])]||'earthquake-map-detail';
+  const prefer=entitlements.earthquakeMapFilter&&rule.centerMunicipality?['earthquake-map-centre.png']:[];
+  return [[name,'地震情報の図','earthquake-map',prefer]];
+ }
  return [];
 }
 
@@ -550,7 +567,7 @@ function imageRuleFields(article,rule){
   return;
  }
  if(!imageTypeAllowed(entitlements,rule.type))upgradeNote(box,'この画像配信は現在の契約では利用できないため配信されません。プランを変更するか、このルールを削除してください。');
- if(rule.type==='earthquake-map'){earthquakeMapFields(box,rule);return;}
+ if(rule.type==='earthquake-map'){earthquakeMapFields(box,rule);previewImages(box,rulePreviews(rule));return;}
  if(rule.type==='eew-map'){eewMapFields(box,rule);previewImages(box,rulePreviews(rule));return;}
  if(rule.type==='warning-table'){warningTableFields(box,rule);previewImages(box,rulePreviews(rule));return;}
  field(box,rule,'region','対象地方（全国・地方）',options.regions);
