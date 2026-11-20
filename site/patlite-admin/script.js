@@ -11,6 +11,23 @@ const SETTINGS_API = '/site/patlite-admin/api/settings';
 const HISTORY_API = '/site/patlite-admin/api/history';
 const HISTORY_EVERY_TICKS = 60;
 const ILLUMINATION_DONE_KEY = 'patlite-illumination-done';
+const TRANSPORT_KEY = 'patlite-transport';   // 'usb' なら次回も WebUSB で自動接続
+let usbSerialModule = null;
+
+// WebUSB 版（web-serial-polyfill）を必要なときだけ読み込む
+async function usbSerial() {
+    if (!('usb' in navigator)) throw new Error('このブラウザは WebUSB に対応していません。');
+    usbSerialModule = usbSerialModule || await import('./vendor/web-serial-polyfill.js');
+    return usbSerialModule.serial;
+}
+
+function rememberTransport(value) {
+    try { localStorage.setItem(TRANSPORT_KEY, value); } catch { /* 保存できなくても動く */ }
+}
+
+function savedTransport() {
+    try { return localStorage.getItem(TRANSPORT_KEY) || 'serial'; } catch { return 'serial'; }
+}
 const FETCH_EVERY_TICKS = 5;
 const ARDUINO_FILTERS = [{ usbVendorId: 0x2341 }, { usbVendorId: 0x2A03 }, { usbVendorId: 0x1A86 }, { usbVendorId: 0x0403 }, { usbVendorId: 0x10C4 }];
 const $ = (id) => document.getElementById(id);
@@ -227,6 +244,7 @@ function render() {
         : '<tr><td>—</td><td>すべて正常（消灯）</td><td>消灯</td><td>—</td></tr>';
     $('connect-btn').hidden = serial.connected;
     $('connect-any-btn').hidden = serial.connected;
+    $('connect-usb-btn').hidden = serial.connected || !('usb' in navigator);
     $('disconnect-btn').hidden = !serial.connected;
     for (const button of document.querySelectorAll('[data-needs-serial]')) button.disabled = !serial.connected;
 }
@@ -423,19 +441,45 @@ function start() {
         $('connect-btn').disabled = true;
     } else {
         setConnection('Arduino 未接続。「Arduino に接続」を押して、Arduino の USB ポートを選んでください。', 'warn');
-        navigator.serial.getPorts().then((ports) => { if (ports[0]) openSerial(ports[0]); });
+        if (savedTransport() !== 'usb') navigator.serial.getPorts().then((ports) => { if (ports[0]) openSerial(ports[0]); });
         navigator.serial.addEventListener('connect', (event) => { if (!serial.port) openSerial(event.target); });
         navigator.serial.addEventListener('disconnect', (event) => { if (serial.port === event.target) closeSerial('Arduino が外されました。挿し直すと自動でつながります。'); });
     }
     $('connect-btn').addEventListener('click', async () => {
         try {
             const port = await navigator.serial.requestPort({ filters: ARDUINO_FILTERS });
+            rememberTransport('serial');
             await openSerial(port);
         } catch (error) {
             if (error?.name !== 'NotFoundError') setConnection(`接続できませんでした: ${error.message}`, 'bad');
             else setConnection('Arduino を選ばずに閉じました。一覧に出ない場合は「すべての機器から選ぶ」か、下の手順を試してください。', 'warn');
         }
     });
+    // Chromebook で Web Serial の一覧に出ないとき: WebUSB で直接（CDC-ACM）やりとりする
+    $('connect-usb-btn').addEventListener('click', async () => {
+        try {
+            const port = await (await usbSerial()).requestPort({ filters: ARDUINO_FILTERS });
+            rememberTransport('usb');
+            await openSerial(port);
+        } catch (error) {
+            if (error?.name === 'NotFoundError') setConnection('Arduino を選ばずに閉じました。', 'warn');
+            else setConnection(`WebUSB で接続できませんでした: ${error.message}`, 'bad');
+        }
+    });
+    if ('usb' in navigator) {
+        if (savedTransport() === 'usb') {
+            usbSerial().then((usb) => usb.getPorts()).then((ports) => { if (ports[0] && !serial.port) openSerial(ports[0]); }).catch(() => {});
+        }
+        navigator.usb.addEventListener('connect', () => {
+            if (serial.port || savedTransport() !== 'usb') return;
+            usbSerial().then((usb) => usb.getPorts()).then((ports) => { if (ports[0] && !serial.port) openSerial(ports[0]); }).catch(() => {});
+        });
+        navigator.usb.addEventListener('disconnect', (event) => {
+            if (serial.port && serial.port.device_ === event.device) closeSerial('Arduino が外されました。挿し直すと自動でつながります。');
+        });
+    } else {
+        $('connect-usb-btn').hidden = true;
+    }
     // 互換機などで識別番号が違うと、絞り込んだ一覧に出ない。絞り込まずに全部のシリアル機器から選ぶ
     $('connect-any-btn').addEventListener('click', async () => {
         try {
