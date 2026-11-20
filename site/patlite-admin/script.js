@@ -4,9 +4,13 @@
 //   - 1 秒ごとに Arduino の状態を読み（GET_STATUS）、表示すべき色と違えば SET を送る
 //   - 表示時間などの設定は Arduino の EEPROM に保存されている（CFG_GET / CFG_SET）。どの PC につないでも同じ設定で動く
 //   - 一度つないだ Arduino は、次からはページを開く・USB を挿すだけで自動でつながる
-import { COLORS, COLOR_NAMES, LEGEND, ACK_EVENTS, LINK_TIMEOUT_SECONDS, PatliteEngine, parseConfig, parseStatus, sameLamps, setCommand } from './logic.js';
+import { COLORS, COLOR_NAMES, LEGEND, ACK_EVENTS, LINK_TIMEOUT_SECONDS, PatliteEngine, dailyIlluminationMinute, jstMinutes, parseConfig, parseStatus, policyFor, sameLamps, setCommand } from './logic.js';
 
 const API = '/site/patlite-admin/api/state';
+const SETTINGS_API = '/site/patlite-admin/api/settings';
+const HISTORY_API = '/site/patlite-admin/api/history';
+const HISTORY_EVERY_TICKS = 60;
+const ILLUMINATION_DONE_KEY = 'patlite-illumination-done';
 const FETCH_EVERY_TICKS = 5;
 const ARDUINO_FILTERS = [{ usbVendorId: 0x2341 }, { usbVendorId: 0x2A03 }, { usbVendorId: 0x1A86 }, { usbVendorId: 0x0403 }, { usbVendorId: 0x10C4 }];
 const $ = (id) => document.getElementById(id);
@@ -15,7 +19,7 @@ const esc = (value) => String(value ?? '').replace(/[&<>"']/gu, (ch) => ({ '&': 
 
 const engine = new PatliteEngine(nowSeconds());
 const serial = { port: null, reader: null, writer: null, buffer: '', pending: null, chain: Promise.resolve(), readyWaiter: null, connected: false };
-const state = { lastStatus: null, lastEventCounter: null, manualUntil: 0, ticks: 0, fetchMessage: '未取得', lastFetchOk: null, busy: false, config: null, wakeLock: null };
+const state = { settings: null, savingSettings: false, illuminationDone: '', lastStatus: null, lastEventCounter: null, manualUntil: 0, ticks: 0, fetchMessage: '未取得', lastFetchOk: null, busy: false, config: null, wakeLock: null };
 
 // ---------------- シリアル ----------------
 function handleLine(line) {
@@ -136,6 +140,7 @@ function applyConfig(config) {
 async function tick() {
     state.ticks += 1;
     if (state.ticks % FETCH_EVERY_TICKS === 1) fetchState();
+    if (state.ticks % HISTORY_EVERY_TICKS === 1) loadHistory();
     if (!serial.connected || state.busy) { render(); return; }
     state.busy = true;
     try {
@@ -150,7 +155,9 @@ async function tick() {
             state.lastEventCounter = status.eventCounter;
         }
         state.lastStatus = status;
-        if (!status.fullStop && state.manualUntil <= now) {
+        if (!status.fullStop && state.manualUntil <= now && await maybeDailyIllumination(now)) {
+            // 毎日の試験点灯を始めた（この間は自動表示を止める）
+        } else if (!status.fullStop && state.manualUntil <= now) {
             const { lamps } = engine.pattern(now);
             if (!sameLamps(status.lamps, lamps)) {
                 const reply = await command(setCommand(lamps));
@@ -174,6 +181,7 @@ async function fetchState() {
         const offset = now - Number(data.serverTime || now);
         const receivedAt = Number.isFinite(data.receivedAt) ? data.receivedAt + offset : null;
         engine.update(Array.isArray(data.conditions) ? data.conditions : [], receivedAt, offset, now);
+        if (data.settings && !state.savingSettings) applySettings(data.settings);
         state.lastFetchOk = now;
         state.fetchMessage = receivedAt === null ? '自宅のブリッジからまだ一度も届いていません' : `自宅のブリッジからの最終受信: ${new Date(receivedAt * 1000).toLocaleString('ja-JP')}`;
         if (data.admin) $('admin-email').textContent = data.admin;
@@ -190,7 +198,7 @@ function setConnection(text, tone) {
 }
 
 const chips = (colors) => colors.length ? colors.map((color) => `<span class="patlite-chip patlite-${color}" title="${COLOR_NAMES[color]}"></span>${COLOR_NAMES[color]}`).join(' ') : '—';
-const stateText = (item) => item.acked ? 'ボタンで確認済み（消灯）' : !item.lit ? '表示時間を過ぎたため消灯' : item.flashing ? '点滅' : '点灯';
+const stateText = (item) => item.suppressed ? item.suppressed : item.acked ? 'ボタンで確認済み（消灯）' : !item.lit ? '表示時間を過ぎたため消灯' : item.flashing ? '点滅' : '点灯';
 const flashText = (value) => {
     const base = value.flashSeconds === null ? '表示中ずっと点滅' : value.flashSeconds === 0 ? '点灯のみ' : `最初の${value.flashSeconds >= 60 ? `${value.flashSeconds / 60}分` : `${value.flashSeconds}秒`}点滅→点灯`;
     return value.remind ? `${base}（続く間は定期的に再表示）` : base;
@@ -206,7 +214,10 @@ function render() {
     }).join('');
     const notes = [state.fetchMessage];
     if (!serial.connected) notes.push('Arduino 未接続（下の画面の色は、つないだときに点く予定の色です）');
-    if (state.lastStatus?.fullStop) notes.push('Arduino は全停止中（ボタン 5 秒で解除）');
+    if (state.lastStatus?.fullStop) notes.push('Arduino は強制停止中（ボタン長押しで解除）');
+    const policy = policyFor(state.settings, now);
+    if (policy.snoozed) notes.push(`一時停止中: ${new Date(state.settings.snoozeUntil * 1000).toLocaleString('ja-JP')} まで全部消灯`);
+    else if (policy.night) notes.push(`夜間モード中（${state.settings.night.start}〜${state.settings.night.end}）: 重大だけ点灯`);
     if (state.manualUntil > now) notes.push(`手動操作中: ${new Date(state.manualUntil * 1000).toLocaleTimeString('ja-JP')} まで自動表示を止めています`);
     if (state.lastFetchOk && now - state.lastFetchOk > LINK_TIMEOUT_SECONDS) notes.push('サイトから 3 分以上読めていません');
     $('meta').textContent = notes.join(' / ');
@@ -222,6 +233,114 @@ function render() {
 function renderLegend() {
     $('legend').innerHTML = Object.values(LEGEND).map((value) => `<tr><td>${chips(value.colors)}</td><td>${esc(value.label)}</td><td>${flashText(value)}</td><td>${esc(value.until)}</td></tr>`).join('')
         + '<tr><td>—</td><td>すべて正常</td><td>消灯</td><td>—</td></tr>';
+}
+
+// ---------------- 履歴 ----------------
+function duration(seconds) {
+    if (!Number.isFinite(seconds) || seconds < 0) return '—';
+    if (seconds < 60) return `${Math.round(seconds)}秒`;
+    if (seconds < 3600) return `${Math.round(seconds / 60)}分`;
+    if (seconds < 86400) return `${Math.floor(seconds / 3600)}時間${Math.round((seconds % 3600) / 60)}分`;
+    return `${Math.floor(seconds / 86400)}日${Math.round((seconds % 86400) / 3600)}時間`;
+}
+
+async function loadHistory() {
+    const days = $('history-days').value;
+    try {
+        const response = await fetch(`${HISTORY_API}?days=${encodeURIComponent(days)}`, { credentials: 'same-origin', headers: { Accept: 'application/json' }, cache: 'no-store' });
+        const data = await response.json().catch(() => null);
+        if (!response.ok || !data?.success) throw new Error(data?.message || `HTTP ${response.status}`);
+        const now = Number(data.serverTime) || nowSeconds();
+        const ongoing = data.rows.filter((row) => row.endedAt === null).length;
+        const counts = {};
+        for (const row of data.rows) counts[row.kind] = (counts[row.kind] || 0) + 1;
+        const top = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 4)
+            .map(([kind, count]) => `${LEGEND[kind]?.label?.split('（')[0] || kind} ${count}件`).join('・');
+        $('history-summary').textContent = `直近${data.days}日: ${data.rows.length}件${data.truncated ? '（多いため最新500件）' : ''}、継続中 ${ongoing}件${top ? `（多い順: ${top}）` : ''}`;
+        $('history').innerHTML = data.rows.length ? data.rows.map((row) => {
+            const legend = LEGEND[row.kind];
+            const end = row.endedAt === null ? '<strong>継続中</strong>' : new Date(row.endedAt * 1000).toLocaleString('ja-JP');
+            return `<tr><td>${chips(legend?.colors || [])}</td><td>${esc(row.title)}${legend?.critical ? '（重大）' : ''}</td><td>${new Date(row.startedAt * 1000).toLocaleString('ja-JP')}</td><td>${end}</td><td>${duration((row.endedAt ?? now) - row.startedAt)}</td></tr>`;
+        }).join('') : '<tr><td>—</td><td>この期間の記録はありません</td><td>—</td><td>—</td><td>—</td></tr>';
+    } catch (error) {
+        $('history-summary').textContent = `履歴を読めませんでした（${error.message}）`;
+    }
+}
+
+// ---------------- 設定（サイトに保存。どの PC で開いても同じ） ----------------
+function applySettings(settings) {
+    state.settings = settings;
+    engine.settings = settings;
+    $('night-enabled').checked = Boolean(settings.night?.enabled);
+    if (document.activeElement !== $('night-start')) $('night-start').value = settings.night?.start || '22:00';
+    if (document.activeElement !== $('night-end')) $('night-end').value = settings.night?.end || '07:00';
+    $('illum-daily').checked = Boolean(settings.illumination?.daily);
+    if (document.activeElement !== $('illum-seconds')) $('illum-seconds').value = String(settings.illumination?.seconds || 20);
+    const until = Number(settings.snoozeUntil);
+    $('snooze-state').textContent = Number.isFinite(until) && until > nowSeconds()
+        ? `一時停止中: ${new Date(until * 1000).toLocaleString('ja-JP')} まで` : '一時停止していません';
+}
+
+async function saveSettings(patch, message) {
+    const next = { ...(state.settings || {}), ...patch };
+    state.savingSettings = true;
+    try {
+        const response = await fetch(SETTINGS_API, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify(next) });
+        const data = await response.json().catch(() => null);
+        if (!response.ok || !data?.success) throw new Error(data?.message || `HTTP ${response.status}`);
+        applySettings(data.settings);
+        setConnection(message, 'good');
+    } catch (error) {
+        setConnection(`設定を保存できませんでした: ${error.message}`, 'bad');
+    } finally {
+        state.savingSettings = false;
+        render();
+    }
+}
+
+function snooze(hours) {
+    if (hours > 0 && !window.confirm(`${hours}時間、積層灯の自動表示を全部止めますか？（重大な障害・防災情報も点きません）`)) return;
+    const until = hours > 0 ? nowSeconds() + hours * 3600 : null;
+    saveSettings({ snoozeUntil: until }, hours > 0 ? `${hours}時間、自動表示を止めました。` : '一時停止を解除しました。');
+}
+
+function saveNight(event) {
+    event.preventDefault();
+    saveSettings({
+        night: { enabled: $('night-enabled').checked, start: $('night-start').value, end: $('night-end').value },
+        illumination: { daily: $('illum-daily').checked, seconds: Number($('illum-seconds').value) },
+    }, '夜間モード・試験点灯の設定を保存しました。');
+}
+
+async function runIllumination(seconds) {
+    try {
+        const reply = await command(`ILLUM ${seconds}`);
+        if (!reply.startsWith('OK')) throw new Error(reply === 'ERR UNKNOWN_COMMAND' ? 'Arduino のプログラムが古い版です（Ver.2.2 以降が必要）' : reply);
+        state.manualUntil = nowSeconds() + seconds + 1;
+        return true;
+    } catch (error) {
+        setConnection(`イルミネーション試験を始められませんでした: ${error.message}`, 'bad');
+        return false;
+    }
+}
+
+// 毎日のランダムな時刻の試験点灯（設定 ON・一時停止中でない・夜間でない・何も点いていないときだけ。1 日 1 回）
+async function maybeDailyIllumination(now) {
+    const settings = state.settings;
+    if (!settings?.illumination?.daily) return false;
+    const policy = policyFor(settings, now);
+    if (policy.snoozed || policy.night) return false;
+    const target = dailyIlluminationMinute(now);
+    const minute = jstMinutes(now);
+    if (minute < target || minute >= target + 3) return false;
+    const day = new Date(now * 1000 + 9 * 3600 * 1000).toISOString().slice(0, 10);
+    let done = state.illuminationDone;
+    try { done = localStorage.getItem(ILLUMINATION_DONE_KEY) || done; } catch { /* 保存できなくても動く */ }
+    if (done === day) return false;
+    if (Object.values(engine.pattern(now).lamps).some((mode) => mode !== 'off')) return false;
+    state.illuminationDone = day;
+    try { localStorage.setItem(ILLUMINATION_DONE_KEY, day); } catch { /* 無視 */ }
+    return runIllumination(Number(settings.illumination.seconds) || 20);
 }
 
 // ---------------- 操作 ----------------
@@ -294,6 +413,13 @@ function start() {
         $(`test-${color}`).addEventListener('click', () => manual(Object.fromEntries(COLORS.map((c) => [c, c === color ? 'flash' : 'off'])), 10));
     }
     $('config-form').addEventListener('submit', saveConfig);
+    for (const button of document.querySelectorAll('[data-snooze-hours]')) {
+        button.addEventListener('click', () => snooze(Number(button.dataset.snoozeHours)));
+    }
+    $('night-form').addEventListener('submit', saveNight);
+    $('history-btn').addEventListener('click', loadHistory);
+    $('history-days').addEventListener('change', loadHistory);
+    $('illum-btn').addEventListener('click', () => runIllumination(Number($('illum-seconds').value) || 20).then(render));
     $('wake-btn').addEventListener('click', toggleWakeLock);
     document.addEventListener('visibilitychange', () => { if (!document.hidden && state.wakeLock === null && $('wake-btn').dataset.want === '1') toggleWakeLock(); });
     $('wake-btn').addEventListener('click', () => { $('wake-btn').dataset.want = state.wakeLock ? '0' : '1'; });
