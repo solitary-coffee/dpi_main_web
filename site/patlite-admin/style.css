@@ -27,3 +27,7 @@
     .patlite-lamp { width: 56px; }
     .patlite-config { grid-template-columns: 1fr; }
 }
+.patlite-help { margin: 0 0 14px; padding: 10px 12px; border: 1px solid #5d6772; border-radius: 8px; color: #c8d0d8; font-size: .9rem; }
+.patlite-help summary { cursor: pointer; font-weight: 700; }
+.patlite-help ol { margin: 8px 0 0; padding-left: 20px; }
+.patlite-help code { overflow-wrap: anywhere; }
