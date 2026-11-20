@@ -1,0 +1,14 @@
+[
+  {
+    "relation": [
+      "delegate_permission/common.handle_all_urls"
+    ],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.dpibot.controldeck",
+      "sha256_cert_fingerprints": [
+        "8B:73:37:1A:E3:E0:CC:F5:F7:CC:F3:47:AC:80:4C:D7:12:F1:88:3C:FE:8F:5A:89:FC:99:BA:93:01:EA:59:A6"
+      ]
+    }
+  }
+]
