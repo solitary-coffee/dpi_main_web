@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="robots" content="noindex,nofollow">
+    <meta name="theme-color" content="#0b0f14">
+    <meta name="mobile-web-app-capable" content="yes">
+    <title>操作盤 - DPI-Bot</title>
+    <link rel="icon" href="../../img/dpi.png" type="image/png">
+    <link rel="manifest" href="manifest.webmanifest" crossorigin="use-credentials">
+    <link rel="stylesheet" href="deck.css">
+</head>
+<body class="deck">
+    <header class="deck-top">
+        <div class="deck-clock"><span id="clock-time">--:--:--</span><span id="clock-date" class="deck-muted"></span></div>
+        <div class="deck-lamps" id="lamps" aria-label="積層灯の表示"></div>
+        <div id="status" class="deck-status deck-muted" role="status" aria-live="polite">読み込み中…</div>
+    </header>
+
+    <main class="deck-main">
+        <section class="deck-panel deck-now" aria-labelledby="now-title">
+            <h2 id="now-title">いま起きていること</h2>
+            <ul id="conditions" class="deck-list"><li class="deck-muted">読み込み中…</li></ul>
+        </section>
+
+        <section class="deck-grid" aria-label="操作">
+            <button class="deck-tile deck-accent" type="button" data-command="ack"><span class="deck-icon">✓</span><span>確認<small>いま点いているものを消す</small></span></button>
+            <button class="deck-tile deck-danger" type="button" data-command="fullstop_on" data-hold="1"><span class="deck-icon">■</span><span>強制停止<small>1秒長押し</small></span></button>
+            <button class="deck-tile" type="button" data-command="fullstop_off"><span class="deck-icon">▶</span><span>強制停止を解除</span></button>
+            <button class="deck-tile" type="button" data-command="illum"><span class="deck-icon">✦</span><span>イルミネーション<small>試験点灯 20秒</small></span></button>
+            <button class="deck-tile deck-warn" type="button" data-snooze="1" data-hold="1"><span class="deck-icon">⏸</span><span>1時間止める<small>1秒長押し</small></span></button>
+            <button class="deck-tile" type="button" data-snooze="0"><span class="deck-icon">⏵</span><span>一時停止を解除</span></button>
+            <button class="deck-tile" type="button" id="night-tile"><span class="deck-icon">☾</span><span id="night-label">夜間モード</span></button>
+            <button class="deck-tile" type="button" id="wake-tile"><span class="deck-icon">☀</span><span id="wake-label">画面を消さない: OFF</span></button>
+            <a class="deck-tile deck-link" href="/site/patlite-admin/"><span class="deck-icon">◎</span><span>積層灯ページ</span></a>
+            <a class="deck-tile deck-link" href="/realtime/"><span class="deck-icon">📈</span><span>監視サイト</span></a>
+            <a class="deck-tile deck-link" href="/site/admin-center/"><span class="deck-icon">⌂</span><span>管理センター</span></a>
+            <button class="deck-tile" type="button" id="fullscreen-tile"><span class="deck-icon">⛶</span><span>全画面</span></button>
+        </section>
+
+        <section class="deck-panel deck-history" aria-labelledby="history-title">
+            <h2 id="history-title">直近の履歴（24時間）</h2>
+            <ul id="history" class="deck-list"><li class="deck-muted">読み込み中…</li></ul>
+        </section>
+    </main>
+    <div id="toast" class="deck-toast" role="alert" hidden></div>
+    <script type="module" src="deck.js"></script>
+</body>
+</html>
