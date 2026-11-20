@@ -19,13 +19,14 @@
     </header>
 
     <main class="deck-main">
+        <div class="deck-info">
         <section class="deck-panel deck-delivery" aria-labelledby="delivery-title">
             <h2 id="delivery-title">配信（直近24時間）<span id="delivery-updated" class="deck-muted deck-small"></span></h2>
             <div class="deck-kpis">
                 <div class="deck-kpi"><span class="deck-kpi-label">配信</span><strong id="kpi-events">—</strong><small id="kpi-hour" class="deck-muted"></small></div>
                 <div class="deck-kpi"><span class="deck-kpi-label">送信先</span><strong id="kpi-targets">—</strong><small id="kpi-rate" class="deck-muted"></small></div>
                 <div class="deck-kpi" id="kpi-errors-box"><span class="deck-kpi-label">失敗</span><strong id="kpi-errors">—</strong><small id="kpi-serious" class="deck-muted"></small></div>
-                <div class="deck-kpi"><span class="deck-kpi-label">最大遅延</span><strong id="kpi-latency">—</strong><small class="deck-muted">配信1件の中で最も遅い送信先</small></div>
+                <div class="deck-kpi"><span class="deck-kpi-label">最大遅延</span><strong id="kpi-latency">—</strong><small class="deck-muted">最も遅い送信先</small></div>
             </div>
             <div id="delivery-types" class="deck-types"></div>
             <ul id="delivery-recent" class="deck-list"><li class="deck-muted">読み込み中…</li></ul>
@@ -35,6 +36,12 @@
             <h2 id="now-title">いま起きていること</h2>
             <ul id="conditions" class="deck-list"><li class="deck-muted">読み込み中…</li></ul>
         </section>
+
+        <section class="deck-panel deck-history" aria-labelledby="history-title">
+            <h2 id="history-title">直近の履歴（24時間）</h2>
+            <ul id="history" class="deck-list"><li class="deck-muted">読み込み中…</li></ul>
+        </section>
+        </div>
 
         <section class="deck-grid" aria-label="操作">
             <button class="deck-tile deck-accent" type="button" data-command="ack"><span class="deck-icon">✓</span><span>確認<small>いま点いているものを消す</small></span></button>
@@ -51,11 +58,6 @@
             <a class="deck-tile deck-link" href="/site/system-admin/"><span class="deck-icon">⚙</span><span>システム運用</span></a>
             <a class="deck-tile deck-link" href="/site/admin-center/"><span class="deck-icon">⌂</span><span>管理センター</span></a>
             <button class="deck-tile" type="button" id="fullscreen-tile"><span class="deck-icon">⛶</span><span>全画面</span></button>
-        </section>
-
-        <section class="deck-panel deck-history" aria-labelledby="history-title">
-            <h2 id="history-title">直近の履歴（24時間）</h2>
-            <ul id="history" class="deck-list"><li class="deck-muted">読み込み中…</li></ul>
         </section>
     </main>
     <div id="toast" class="deck-toast" role="alert" hidden></div>
