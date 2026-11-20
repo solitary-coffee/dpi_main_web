@@ -58,7 +58,32 @@
                     <button id="test-blue" type="button" data-needs-serial>青を試す</button>
                     <button id="test-white" type="button" data-needs-serial>白を試す</button>
                 </div>
-                <p class="muted">「試す」は 10 秒間その色を点滅させ、その後は自動表示に戻ります。</p>
+                <p class="muted">「試す」は 10 秒間その色を点滅させ、その後は自動表示に戻ります。Arduino のボタンは、短押しで確認（いま点いているものを消す）、2秒以上の長押しで強制停止（全停止の切り替え）です。</p>
+            </section>
+
+            <section aria-labelledby="pause-title">
+                <div class="section-heading"><div><p class="eyebrow">PAUSE / NIGHT</p><h2 id="pause-title">一時停止・夜間モード・試験点灯</h2></div></div>
+                <p id="snooze-state" class="muted">一時停止していません</p>
+                <div class="patlite-actions">
+                    <button type="button" data-snooze-hours="1">1時間止める</button>
+                    <button type="button" data-snooze-hours="2">2時間</button>
+                    <button type="button" data-snooze-hours="4">4時間</button>
+                    <button type="button" data-snooze-hours="8">8時間</button>
+                    <button type="button" data-snooze-hours="12">12時間</button>
+                    <button type="button" data-snooze-hours="24">24時間</button>
+                    <button type="button" data-snooze-hours="0">一時停止を解除</button>
+                </div>
+                <p class="muted">一時停止中は、重大な障害・防災情報も含めて全部消灯します。設定はサイトに保存され、どの PC で開いても同じです。</p>
+                <form id="night-form" class="patlite-config">
+                    <label class="patlite-check"><input id="night-enabled" type="checkbox">夜間モードを使う（この時間は「重大」だけ点灯）</label>
+                    <label>開始（日本時間）<input id="night-start" type="time" value="22:00"></label>
+                    <label>終了（日本時間）<input id="night-end" type="time" value="07:00"></label>
+                    <label class="patlite-check"><input id="illum-daily" type="checkbox">毎日ランダムな時刻（10〜20時）にイルミネーションで試験点灯する</label>
+                    <label>試験点灯の長さ（秒）<input id="illum-seconds" inputmode="numeric" value="20"><small>5〜120</small></label>
+                    <div><button type="submit">保存</button></div>
+                </form>
+                <p class="muted">「重大」＝自宅の重大障害（赤）・AWS の予備系で配信中（赤＋青）・監視の途絶（青）・緊急地震速報（警報）・大津波警報・津波警報・震度6弱以上・気象の特別警報・南海トラフ臨時情報（調査中）。毎日の試験点灯は、夜間・一時停止中・何か点いているときは行いません。</p>
+                <div class="patlite-actions"><button id="illum-btn" type="button" data-needs-serial>イルミネーション試験（いま）</button></div>
             </section>
 
             <section aria-labelledby="shown-title">
@@ -82,7 +107,7 @@
 
             <section aria-labelledby="legend-title">
                 <div class="section-heading"><div><p class="eyebrow">LEGEND</p><h2 id="legend-title">色の一覧</h2></div></div>
-                <p class="muted">赤＝配信が止まる重大障害、黄＝一部の障害・注意、青＝AWS 側・監視の途絶、白＝防災情報、緑＝復旧。正常なときは消灯。重なったときは色を合わせて点け、点滅は色ごと。物理ボタンを押すと、いま点いている項目を消します（新しい情報が来ると再び点灯）。ボタン 5 秒で全停止／解除。ブザーは使いません。</p>
+                <p class="muted">赤＝配信が止まる重大障害、黄＝一部の障害・注意、青＝AWS 側・監視の途絶、白＝防災情報、緑＝復旧。正常なときは消灯。重なったときは色を合わせて点け、点滅は色ごと。物理ボタンの短押しで、いま点いている項目を消します（新しい情報が来ると再び点灯）。2秒以上の長押しで強制停止／解除。ブザーは使いません。</p>
                 <div class="table-wrap"><table><thead><tr><th>色</th><th>情報・障害</th><th>点滅</th><th>消えるまで</th></tr></thead><tbody id="legend"></tbody></table></div>
             </section>
         </main>

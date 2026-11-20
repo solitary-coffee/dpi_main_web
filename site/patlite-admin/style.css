@@ -21,6 +21,8 @@
 .patlite-config label { display: grid; gap: 6px; color: #c8d0d8; font-size: .9rem; }
 .patlite-config input { min-width: 0; padding: 8px; border: 1px solid #5d6772; border-radius: 6px; background: #20252a; color: #fff; font: inherit; }
 .patlite-config small { color: #9aa7b5; }
+.patlite-config label.patlite-check { display: flex; align-items: center; gap: 8px; }
+.patlite-config label.patlite-check input { width: auto; }
 @media (max-width: 680px) {
     .patlite-lamp { width: 56px; }
     .patlite-config { grid-template-columns: 1fr; }
