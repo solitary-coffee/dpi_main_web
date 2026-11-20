@@ -1,0 +1,15 @@
+{
+  "name": "DPI-Bot 操作盤",
+  "short_name": "操作盤",
+  "description": "積層灯の確認・強制停止・一時停止と、監視情報を常時表示する操作パネル",
+  "start_url": "/site/control-deck/",
+  "scope": "/site/control-deck/",
+  "display": "fullscreen",
+  "orientation": "any",
+  "background_color": "#0b0f14",
+  "theme_color": "#0b0f14",
+  "lang": "ja",
+  "icons": [
+    { "src": "/img/dpi.png", "type": "image/png", "sizes": "any", "purpose": "any" }
+  ]
+}

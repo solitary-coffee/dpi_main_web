@@ -1,7 +1,7 @@
 import { AccessAuthError, authenticateNewsletterAdmin } from './access.js';
 import { DELIVERY_CATALOG } from './delivery-catalog.js';
 import { CdnAdminError, cdnAdminStats } from './cdn-admin.js';
-import { PatliteAdminError, patliteAdminHistory, patliteAdminSaveSettings, patliteAdminState } from './patlite-admin.js';
+import { PatliteAdminError, patliteAdminCommand, patliteAdminCommandDone, patliteAdminHistory, patliteAdminSaveSettings, patliteAdminState } from './patlite-admin.js';
 
 const JSON_HEADERS = Object.freeze({
     'Content-Type': 'application/json; charset=utf-8',
@@ -22,6 +22,7 @@ const ADMIN_ASSET_ROOTS = Object.freeze([
     '/site/delivery-flow-admin',
     '/site/cdn-admin',
     '/site/patlite-admin',
+    '/site/control-deck',
 ]);
 
 class AdminCenterError extends Error {
@@ -47,7 +48,9 @@ export async function handleAdminCenterRequest(request, env) {
     const isPatliteStateApi = pathname === '/site/patlite-admin/api/state';
     const isPatliteSettingsApi = pathname === '/site/patlite-admin/api/settings';
     const isPatliteHistoryApi = pathname === '/site/patlite-admin/api/history';
-    const isApi = isPatliteStateApi || isPatliteSettingsApi || isPatliteHistoryApi || isSummaryApi || isActionApi || isDeliveryStatsApi || isDmdataHistoryApi || isDeliveryFlowApi || isTestDeliveryApi || isAuditApi || isCdnStatsApi;
+    const isPatliteCommandApi = pathname === '/site/patlite-admin/api/command';
+    const isPatliteCommandDoneApi = pathname === '/site/patlite-admin/api/command/done';
+    const isApi = isPatliteStateApi || isPatliteSettingsApi || isPatliteHistoryApi || isPatliteCommandApi || isPatliteCommandDoneApi || isSummaryApi || isActionApi || isDeliveryStatsApi || isDmdataHistoryApi || isDeliveryFlowApi || isTestDeliveryApi || isAuditApi || isCdnStatsApi;
     const assetRoot = !isApi ? ADMIN_ASSET_ROOTS.find((root) => pathname === root || pathname.startsWith(`${root}/`)) : null;
     const isAsset = Boolean(assetRoot);
     if (!isApi && !isAsset) return null;
@@ -107,6 +110,12 @@ export async function handleAdminCenterRequest(request, env) {
                 return jsonResponse({ success: false, message: '許可されていない操作です。' }, 405, { Allow: 'GET' });
             }
             return jsonResponse(await patliteAdminState(env, admin));
+        }
+        if (isPatliteCommandApi || isPatliteCommandDoneApi) {
+            if (request.method !== 'POST') {
+                return jsonResponse({ success: false, message: '許可されていない操作です。' }, 405, { Allow: 'POST' });
+            }
+            return jsonResponse(isPatliteCommandApi ? await patliteAdminCommand(request, env, admin) : await patliteAdminCommandDone(request, env, admin));
         }
         if (isPatliteHistoryApi) {
             if (request.method !== 'GET') {

@@ -9,6 +9,8 @@ import { COLORS, COLOR_NAMES, LEGEND, ACK_EVENTS, LINK_TIMEOUT_SECONDS, PatliteE
 const API = '/site/patlite-admin/api/state';
 const SETTINGS_API = '/site/patlite-admin/api/settings';
 const HISTORY_API = '/site/patlite-admin/api/history';
+const COMMAND_DONE_API = '/site/patlite-admin/api/command/done';
+const handledCommands = new Set();   // このページで処理済み（取れなかったものも含む）の依頼 ID
 const HISTORY_EVERY_TICKS = 60;
 const ILLUMINATION_DONE_KEY = 'patlite-illumination-done';
 const TRANSPORT_KEY = 'patlite-transport';   // 'usb' なら次回も WebUSB で自動接続
@@ -199,6 +201,7 @@ async function fetchState() {
         const receivedAt = Number.isFinite(data.receivedAt) ? data.receivedAt + offset : null;
         engine.update(Array.isArray(data.conditions) ? data.conditions : [], receivedAt, offset, now);
         if (data.settings && !state.savingSettings) applySettings(data.settings);
+        if (Array.isArray(data.commands) && data.commands.length) processCommands(data.commands);
         state.lastFetchOk = now;
         state.fetchMessage = receivedAt === null ? '自宅のブリッジからまだ一度も届いていません' : `自宅のブリッジからの最終受信: ${new Date(receivedAt * 1000).toLocaleString('ja-JP')}`;
         if (data.admin) $('admin-email').textContent = data.admin;
@@ -252,6 +255,38 @@ function render() {
 function renderLegend() {
     $('legend').innerHTML = Object.values(LEGEND).map((value) => `<tr><td>${chips(value.colors)}</td><td>${esc(value.label)}</td><td>${flashText(value)}</td><td>${esc(value.until)}</td></tr>`).join('')
         + '<tr><td>—</td><td>すべて正常</td><td>消灯</td><td>—</td></tr>';
+}
+
+// ---------------- 遠隔操作（操作盤ページなどからの依頼） ----------------
+// Arduino につながっているときだけ、依頼を「取って」から実行する（複数のページが開いていても 1 回だけ）
+async function processCommands(commands) {
+    if (!serial.connected) return;
+    for (const item of commands) {
+        if (!item?.id || handledCommands.has(item.id)) continue;
+        handledCommands.add(item.id);
+        try {
+            const response = await fetch(COMMAND_DONE_API, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify({ id: item.id }) });
+            const data = await response.json().catch(() => null);
+            if (!response.ok || !data?.claimed) continue;   // 別のページが先に実行した・期限切れ
+        } catch {
+            continue;
+        }
+        if (item.command === 'ack') await acknowledgeFromPage();
+        else if (item.command === 'fullstop_on' || item.command === 'fullstop_off') await setFullStop(item.command === 'fullstop_on');
+        else if (item.command === 'illum') await runIllumination(Number(item.args?.seconds) || 20);
+        setConnection(`遠隔操作を実行しました（${{ ack: '確認', fullstop_on: '強制停止', fullstop_off: '強制停止の解除', illum: 'イルミネーション試験' }[item.command] || item.command}）`, 'good');
+    }
+    render();
+}
+
+// 強制停止を指定した向きにする（遠隔操作用。確認ダイアログは出さない）
+async function setFullStop(stopping) {
+    try {
+        const reply = await command(`FULL_STOP ${stopping ? 'ON' : 'OFF'}`);
+        if (!reply.startsWith('OK')) throw new Error(reply);
+    } catch (error) {
+        setConnection(`強制停止を切り替えられませんでした: ${error.message}`, 'bad');
+    }
 }
 
 // ---------------- 履歴 ----------------

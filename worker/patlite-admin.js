@@ -8,6 +8,9 @@
 //   イルミネーション試験の設定を保存する（管理者のみ。D1 の patlite_settings に 1 行）。
 // - 履歴: 送信のたびに前回との差（出た項目・消えた項目）を patlite_history に書く。ブリッジからの送信が
 //   LINK_GAP_SECONDS 以上途切れた時間帯も kind = link_lost で残す。GET /site/patlite-admin/api/history で読む。
+// - 遠隔操作: POST /site/patlite-admin/api/command（ack / fullstop_on / fullstop_off / illum）で依頼を D1 の
+//   patlite_commands に積み、state の応答に未実行の依頼を含める。積層灯ページが実行して
+//   POST /site/patlite-admin/api/command/done で完了にする（done を先に取ったページだけが実行する）。
 // 色・点滅・表示時間の決まりはページ側（site/patlite-admin/logic.js）と Arduino の EEPROM 設定で決める。
 
 const INGEST_PATH = '/api/patlite/ingest';
@@ -19,6 +22,8 @@ const MAX_SNOOZE_SECONDS = 7 * 24 * 3600;
 const LINK_GAP_SECONDS = 180;
 const HISTORY_RETENTION_SECONDS = 90 * 24 * 3600;
 const MAX_HISTORY_ROWS = 500;
+export const COMMAND_TTL_SECONDS = 120;
+const COMMANDS = new Set(['ack', 'fullstop_on', 'fullstop_off', 'illum']);
 export const DEFAULT_SETTINGS = Object.freeze({
     snoozeUntil: null,
     night: Object.freeze({ enabled: false, start: '22:00', end: '07:00' }),
@@ -89,7 +94,84 @@ export async function patliteAdminState(env, admin) {
         receivedAt: row ? finiteNumber(row.received_at) : null,
         generatedAt: row ? finiteNumber(row.generated_at) : null,
         conditions,
+        commands: await pendingCommands(database),
     };
+}
+
+async function pendingCommands(database, now = Date.now() / 1000) {
+    try {
+        const result = await database.prepare(`SELECT id, command, args, created_at FROM patlite_commands
+            WHERE done_at IS NULL AND created_at >= ?1 ORDER BY created_at ASC LIMIT 20`).bind(now - COMMAND_TTL_SECONDS).all();
+        return (result.results || []).map((row) => {
+            let args = {};
+            try { args = JSON.parse(row.args || '{}') || {}; } catch { args = {}; }
+            return { id: String(row.id), command: String(row.command), args, createdAt: finiteNumber(row.created_at) };
+        });
+    } catch {
+        return [];   // テーブルが無い（マイグレーション前）などでも状態の表示は止めない
+    }
+}
+
+function sameOriginJson(request) {
+    const requestUrl = new URL(request.url);
+    const origin = String(request.headers.get('origin') || '').trim();
+    if ((origin && origin !== requestUrl.origin) || String(request.headers.get('sec-fetch-site') || '') === 'cross-site') {
+        throw new PatliteAdminError(403, '別サイトからの管理操作は許可されていません。', 'invalid_origin');
+    }
+    if (!String(request.headers.get('content-type') || '').toLowerCase().startsWith('application/json')) {
+        throw new PatliteAdminError(415, 'JSON形式で送信してください。', 'invalid_content_type');
+    }
+}
+
+async function readSmallJson(request) {
+    const text = await request.text();
+    if (new TextEncoder().encode(text).byteLength > 4096) throw new PatliteAdminError(413, '送信データが大きすぎます。', 'payload_too_large');
+    try {
+        const value = JSON.parse(text);
+        if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('not_object');
+        return value;
+    } catch {
+        throw new PatliteAdminError(400, 'JSON形式を確認してください。', 'invalid_json');
+    }
+}
+
+// 遠隔操作の依頼を積む（操作盤ページなどから）
+export async function patliteAdminCommand(request, env, admin) {
+    sameOriginJson(request);
+    const payload = await readSmallJson(request);
+    const command = String(payload.command || '');
+    if (!COMMANDS.has(command)) throw new PatliteAdminError(400, '操作の種類を確認してください。', 'invalid_command');
+    const args = {};
+    if (command === 'illum') {
+        const seconds = Math.round(Number(payload.seconds ?? 20));
+        if (!Number.isFinite(seconds) || seconds < 5 || seconds > 120) throw new PatliteAdminError(400, '試験点灯は 5〜120 秒です。', 'invalid_seconds');
+        args.seconds = seconds;
+    }
+    const database = env.REUSE_DB;
+    if (!database) throw new PatliteAdminError(503, 'D1（REUSE_DB）が設定されていません。', 'database_not_configured');
+    const id = crypto.randomUUID();
+    const now = Date.now() / 1000;
+    await database.prepare('INSERT INTO patlite_commands (id, command, args, created_at, created_by) VALUES (?1, ?2, ?3, ?4, ?5)')
+        .bind(id, command, JSON.stringify(args), now, String(admin?.email || '').slice(0, 200)).run();
+    if (Math.random() < 0.05) {
+        await database.prepare('DELETE FROM patlite_commands WHERE created_at < ?1').bind(now - 7 * 86400).run();
+    }
+    return { success: true, id, command, args, expiresAt: now + COMMAND_TTL_SECONDS };
+}
+
+// 依頼を実行する前に「自分が実行する」と取る。先に取ったページだけが claimed=true（二重実行しない）
+export async function patliteAdminCommandDone(request, env, admin) {
+    sameOriginJson(request);
+    const payload = await readSmallJson(request);
+    const id = String(payload.id || '');
+    if (!/^[0-9a-f-]{36}$/u.test(id)) throw new PatliteAdminError(400, '依頼の ID を確認してください。', 'invalid_id');
+    const database = env.REUSE_DB;
+    if (!database) throw new PatliteAdminError(503, 'D1（REUSE_DB）が設定されていません。', 'database_not_configured');
+    const now = Date.now() / 1000;
+    const result = await database.prepare(`UPDATE patlite_commands SET done_at = ?1, done_by = ?2
+        WHERE id = ?3 AND done_at IS NULL AND created_at >= ?4`).bind(now, String(admin?.email || '').slice(0, 200), id, now - COMMAND_TTL_SECONDS).run();
+    const claimed = Number(result?.meta?.changes || 0) === 1;
+    return { success: true, id, claimed };
 }
 
 // 前回からの差だけを書く: 新しく出た項目は INSERT、消えた項目は ended_at を入れる
