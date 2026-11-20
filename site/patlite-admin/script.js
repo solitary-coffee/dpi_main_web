@@ -4,7 +4,7 @@
 //   - 1 秒ごとに Arduino の状態を読み（GET_STATUS）、表示すべき色と違えば SET を送る
 //   - 表示時間などの設定は Arduino の EEPROM に保存されている（CFG_GET / CFG_SET）。どの PC につないでも同じ設定で動く
 //   - 一度つないだ Arduino は、次からはページを開く・USB を挿すだけで自動でつながる
-import { COLORS, COLOR_NAMES, LEGEND, ACK_EVENTS, LINK_TIMEOUT_SECONDS, PatliteEngine, dailyIlluminationMinute, jstMinutes, parseConfig, parseStatus, policyFor, sameLamps, setCommand } from './logic.js';
+import { COLORS, COLOR_NAMES, LEGEND, ACK_EVENTS, LINK_TIMEOUT_SECONDS, PatliteEngine, dailyIlluminationMinute, jstMinutes, parseConfig, parseStatus, policyFor, sameLamps, setCommand, snoozeText } from './logic.js';
 
 const API = '/site/patlite-admin/api/state';
 const SETTINGS_API = '/site/patlite-admin/api/settings';
@@ -236,7 +236,7 @@ function render() {
     if (!serial.connected) notes.push('Arduino 未接続（下の画面の色は、つないだときに点く予定の色です）');
     if (state.lastStatus?.fullStop) notes.push('Arduino は強制停止中（ボタン長押しで解除）');
     const policy = policyFor(state.settings, now);
-    if (policy.snoozed) notes.push(`一時停止中: ${new Date(state.settings.snoozeUntil * 1000).toLocaleString('ja-JP')} まで全部消灯`);
+    if (policy.snoozed) notes.push(snoozeText(state.settings, now));
     else if (policy.night) notes.push(`夜間モード中（${state.settings.night.start}〜${state.settings.night.end}）: 重大だけ点灯`);
     if (state.manualUntil > now) notes.push(`手動操作中: ${new Date(state.manualUntil * 1000).toLocaleTimeString('ja-JP')} まで自動表示を止めています`);
     if (state.lastFetchOk && now - state.lastFetchOk > LINK_TIMEOUT_SECONDS) notes.push('サイトから 3 分以上読めていません');
@@ -330,9 +330,7 @@ function applySettings(settings) {
     if (document.activeElement !== $('night-end')) $('night-end').value = settings.night?.end || '07:00';
     $('illum-daily').checked = Boolean(settings.illumination?.daily);
     if (document.activeElement !== $('illum-seconds')) $('illum-seconds').value = String(settings.illumination?.seconds || 20);
-    const until = Number(settings.snoozeUntil);
-    $('snooze-state').textContent = Number.isFinite(until) && until > nowSeconds()
-        ? `一時停止中: ${new Date(until * 1000).toLocaleString('ja-JP')} まで` : '一時停止していません';
+    $('snooze-state').textContent = snoozeText(settings, nowSeconds()) || '一時停止していません';
 }
 
 async function saveSettings(patch, message) {
@@ -353,9 +351,14 @@ async function saveSettings(patch, message) {
 }
 
 function snooze(hours) {
+    if (hours === 'forever') {
+        if (!window.confirm('積層灯の自動表示を無期限に止めますか？（解除するまで、重大な障害・防災情報も点きません）')) return;
+        saveSettings({ snoozeUntil: null, snoozeForever: true }, '自動表示を無期限に止めました（「一時停止を解除」で戻ります）。');
+        return;
+    }
     if (hours > 0 && !window.confirm(`${hours}時間、積層灯の自動表示を全部止めますか？（重大な障害・防災情報も点きません）`)) return;
     const until = hours > 0 ? nowSeconds() + hours * 3600 : null;
-    saveSettings({ snoozeUntil: until }, hours > 0 ? `${hours}時間、自動表示を止めました。` : '一時停止を解除しました。');
+    saveSettings({ snoozeUntil: until, snoozeForever: false }, hours > 0 ? `${hours}時間、自動表示を止めました。` : '一時停止を解除しました。');
 }
 
 function saveNight(event) {
@@ -535,7 +538,7 @@ function start() {
     }
     $('config-form').addEventListener('submit', saveConfig);
     for (const button of document.querySelectorAll('[data-snooze-hours]')) {
-        button.addEventListener('click', () => snooze(Number(button.dataset.snoozeHours)));
+        button.addEventListener('click', () => snooze(button.dataset.snoozeHours === 'forever' ? 'forever' : Number(button.dataset.snoozeHours)));
     }
     $('night-form').addEventListener('submit', saveNight);
     $('history-btn').addEventListener('click', loadHistory);

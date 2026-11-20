@@ -57,7 +57,16 @@ export function isNight(settings, nowSeconds) {
 // 表示の方針: snoozed = 一時停止中（全部消す）、night = 夜間モード中（重大だけ）
 export function policyFor(settings, nowSeconds) {
     const snoozeUntil = Number(settings?.snoozeUntil);
-    return { snoozed: Number.isFinite(snoozeUntil) && snoozeUntil > nowSeconds, night: isNight(settings, nowSeconds) };
+    const forever = settings?.snoozeForever === true;
+    return { snoozed: forever || (Number.isFinite(snoozeUntil) && snoozeUntil > nowSeconds), forever, night: isNight(settings, nowSeconds) };
+}
+
+// 一時停止の説明（画面の表示用）
+export function snoozeText(settings, nowSeconds) {
+    if (settings?.snoozeForever === true) return '無期限で停止中（解除するまで全部消灯）';
+    const until = Number(settings?.snoozeUntil);
+    if (Number.isFinite(until) && until > nowSeconds) return `一時停止中: ${new Date(until * 1000).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })} まで`;
+    return '';
 }
 
 // 毎日のランダムな試験点灯の時刻（日本時間 10:00〜19:59 のどこか。日付から決めるので、どの PC でも同じ時刻）
