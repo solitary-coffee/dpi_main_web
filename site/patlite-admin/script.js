@@ -131,7 +131,7 @@ function portLabel(port) {
 function applyConfig(config) {
     state.config = config;
     engine.timing = { maxDisplay: config.maxDisplay, reminderInterval: config.reminderInterval, reminder: config.reminder, recovery: config.recovery };
-    for (const [key, id] of [['maxDisplay', 'cfg-maxd'], ['reminderInterval', 'cfg-rint'], ['reminder', 'cfg-rlen'], ['recovery', 'cfg-recv'], ['period', 'cfg-period'], ['hostTimeout', 'cfg-hto']]) {
+    for (const [key, id] of [['maxDisplay', 'cfg-maxd'], ['reminderInterval', 'cfg-rint'], ['recovery', 'cfg-recv'], ['period', 'cfg-period'], ['hostTimeout', 'cfg-hto']]) {
         if (Number.isFinite(config[key])) $(id).value = String(config[key]);
     }
 }
@@ -201,7 +201,7 @@ const chips = (colors) => colors.length ? colors.map((color) => `<span class="pa
 const stateText = (item) => item.suppressed ? item.suppressed : item.acked ? 'ボタンで確認済み（消灯）' : !item.lit ? '表示時間を過ぎたため消灯' : item.flashing ? '点滅' : '点灯';
 const flashText = (value) => {
     const base = value.flashSeconds === null ? '表示中ずっと点滅' : value.flashSeconds === 0 ? '点灯のみ' : `最初の${value.flashSeconds >= 60 ? `${value.flashSeconds / 60}分` : `${value.flashSeconds}秒`}点滅→点灯`;
-    return value.remind ? `${base}（続く間は定期的に再表示）` : base;
+    return `${base}（1回に最長 ${Math.round(engine.timing.maxDisplay / 60 * 10) / 10}分）`;
 };
 
 function render() {
@@ -356,7 +356,7 @@ async function manual(lampsMap, seconds) {
 
 async function saveConfig(event) {
     event.preventDefault();
-    const values = { MAXD: $('cfg-maxd').value, RINT: $('cfg-rint').value, RLEN: $('cfg-rlen').value, RECV: $('cfg-recv').value, PERIOD: $('cfg-period').value, HTO: $('cfg-hto').value };
+    const values = { MAXD: $('cfg-maxd').value, RINT: $('cfg-rint').value, RECV: $('cfg-recv').value, PERIOD: $('cfg-period').value, HTO: $('cfg-hto').value };
     if (!Object.values(values).every((value) => /^\d+$/u.test(value))) { setConnection('設定は数字で入力してください。', 'bad'); return; }
     if (!window.confirm('この設定を Arduino に保存しますか？（次からどの PC につないでもこの設定で動きます）')) return;
     try {

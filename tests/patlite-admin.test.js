@@ -99,13 +99,16 @@ test('積層灯ブリッジの送信は合言葉が合うときだけ保存し�
 
 const lamps = (on = {}) => ({ red: 'off', yellow: 'off', green: 'off', blue: 'off', white: 'off', ...on });
 
-test('表示の決まり: 正常は消灯、最長5分、重大障害は再表示、点滅は色ごと', () => {
+test('表示の決まり: 正常は消灯、最長5分→30分消灯→続いていればまた点灯、点滅は色ごと', () => {
     assert.deepEqual(desiredPattern([], new Set(), 100).lamps, lamps());
     const failover = [{ id: 'a', kind: 'aws_failover', since: 0 }, { id: 'd', kind: 'home_degraded', since: 0 }];
     assert.deepEqual(desiredPattern(failover, new Set(), 10).lamps, lamps({ red: 'flash', blue: 'flash', yellow: 'on' }));
     assert.deepEqual(desiredPattern(failover, new Set(), 120).lamps, lamps({ red: 'on', blue: 'on', yellow: 'on' }));
     assert.deepEqual(desiredPattern(failover, new Set(), 400).lamps, lamps());
-    assert.deepEqual(desiredPattern(failover, new Set(), 300 + 1790).lamps, lamps({ red: 'flash', blue: 'flash' }));
+    assert.deepEqual(desiredPattern(failover, new Set(), 300 + 1790).lamps, lamps());
+    assert.deepEqual(desiredPattern(failover, new Set(), 2100 + 10).lamps, lamps({ red: 'flash', blue: 'flash', yellow: 'on' }));
+    assert.deepEqual(desiredPattern(failover, new Set(), 2100 + 299).lamps, lamps({ red: 'on', blue: 'on', yellow: 'on' }));
+    assert.deepEqual(desiredPattern(failover, new Set(), 2100 + 301).lamps, lamps());
     assert.deepEqual(desiredPattern([{ id: 'e', kind: 'eew_warning', since: 0 }], new Set(['e']), 10).lamps, lamps());
 });
 

@@ -1,8 +1,8 @@
 // 積層灯（PATLITE）管理ページの判定ロジック（画面・シリアルに依存しない部分。tests/patlite-admin.test.js で試験）。
 // Arduino積層灯制御システム server/dpi_status.py と同じ決まり:
 //   赤 = 配信が止まる重大障害 / 黄 = 一部の障害・注意 / 青 = AWS 側・監視の途絶 / 白 = 防災情報 / 緑 = 復旧。
-//   正常なときは消灯。1 項目を点けるのは最長 maxDisplay 秒。重大障害（remind）は続く間 reminderInterval 秒ごとに
-//   reminder 秒だけ点滅で再表示。点滅は色ごと（Arduino がリレーの ON/OFF で点滅させる）。
+//   正常なときは消灯。どの項目も「最長 maxDisplay 秒点ける → reminderInterval 秒消す → まだ続いていればまた点ける」を
+//   繰り返す（復旧まで点けっぱなしにはしない）。点滅は色ごと（Arduino がリレーの ON/OFF で点滅させる）。
 
 export const COLORS = Object.freeze(['red', 'yellow', 'green', 'blue', 'white']);
 export const COLOR_NAMES = Object.freeze({ red: '赤', yellow: '黄', green: '緑', blue: '青', white: '白' });
@@ -10,14 +10,14 @@ const SERIAL_KEYS = Object.freeze({ red: 'R', yellow: 'Y', green: 'G', blue: 'B'
 
 const item = (colors, flashSeconds, remind, group, label, until) => Object.freeze({ colors, flashSeconds, remind, group, label, until, critical: false });
 export const LEGEND = Object.freeze({
-    home_critical: Object.freeze({ ...item(['red'], 60, true, '障害', '自宅の重大障害（中央配信・EEW・地震・津波・気象の受信停止、起動管理に接続できない）', '復旧まで'), critical: true }),
-    aws_failover: Object.freeze({ ...item(['red', 'blue'], 60, true, '障害', 'AWS の予備系で配信中（自宅から配信できていない）', '復旧まで'), critical: true }),
-    link_lost: Object.freeze({ ...item(['blue'], null, true, '障害', '監視情報の途絶（自宅のブリッジから3分届かない・この画面がサイトから読めない）', '復旧まで'), critical: true }),
-    home_restart_loop: item(['yellow'], 60, false, '障害', '自宅のプログラムが起動に失敗し続けている（再起動待ち）', '復旧まで'),
-    home_degraded: item(['yellow'], 0, false, '障害', '自宅のその他のプログラム停止', '復旧まで'),
-    home_resource: item(['yellow'], 0, false, '障害', '自宅サーバーの空き容量・メモリ不足、CPU 高負荷の継続', '解消まで'),
-    aws_alarm: item(['yellow', 'blue'], 30, false, '障害', 'AWS のアラーム（請求アラームを除く）', 'アラーム解消まで'),
-    aws_degraded: item(['yellow', 'blue'], 0, false, '障害', 'AWS 予備系の準備中・AWS の状態を読めない', '復旧まで'),
+    home_critical: Object.freeze({ ...item(['red'], 60, true, '障害', '自宅の重大障害（中央配信・EEW・地震・津波・気象の受信停止、起動管理に接続できない）', '続く間は繰り返す'), critical: true }),
+    aws_failover: Object.freeze({ ...item(['red', 'blue'], 60, true, '障害', 'AWS の予備系で配信中（自宅から配信できていない）', '続く間は繰り返す'), critical: true }),
+    link_lost: Object.freeze({ ...item(['blue'], null, true, '障害', '監視情報の途絶（自宅のブリッジから3分届かない・この画面がサイトから読めない）', '続く間は繰り返す'), critical: true }),
+    home_restart_loop: item(['yellow'], 60, false, '障害', '自宅のプログラムが起動に失敗し続けている（再起動待ち）', '続く間は繰り返す'),
+    home_degraded: item(['yellow'], 0, false, '障害', '自宅のその他のプログラム停止', '続く間は繰り返す'),
+    home_resource: item(['yellow'], 0, false, '障害', '自宅サーバーの空き容量・メモリ不足、CPU 高負荷の継続', '続く間は繰り返す'),
+    aws_alarm: item(['yellow', 'blue'], 30, false, '障害', 'AWS のアラーム（請求アラームを除く）', '続く間は繰り返す'),
+    aws_degraded: item(['yellow', 'blue'], 0, false, '障害', 'AWS 予備系の準備中・AWS の状態を読めない', '続く間は繰り返す'),
     recovered: item(['green'], 0, false, '障害', '障害から復旧した', '復旧の緑の時間'),
     eew_warning: Object.freeze({ ...item(['white'], null, false, '防災', '緊急地震速報（警報）', '最後の報から3分（取消ですぐ消灯）'), critical: true }),
     tsunami_major: Object.freeze({ ...item(['white'], null, false, '防災', '大津波警報', '最長表示まで（警報が上がったらまた表示）'), critical: true }),
@@ -71,16 +71,12 @@ export function dailyIlluminationMinute(nowSeconds) {
 
 export function itemVisible(age, legend, timing) {
     const value = Math.max(0, age);
-    if (value < timing.maxDisplay) {
-        const flashing = legend.flashSeconds === null || (legend.flashSeconds > 0 && value < legend.flashSeconds);
-        return { visible: true, flashing };
-    }
-    if (legend.remind) {
-        const interval = Math.max(60, timing.reminderInterval);
-        const phase = (value - timing.maxDisplay) % interval;
-        if (phase >= interval - timing.reminder) return { visible: true, flashing: legend.flashSeconds !== 0 };
-    }
-    return { visible: false, flashing: false };
+    const show = Math.max(1, timing.maxDisplay);
+    const cycle = show + Math.max(60, timing.reminderInterval);
+    const phase = value % cycle;           // 点ける → 消す → （続いていれば）また点ける
+    if (phase >= show) return { visible: false, flashing: false };
+    const flashing = legend.flashSeconds === null || (legend.flashSeconds > 0 && phase < legend.flashSeconds);
+    return { visible: true, flashing };
 }
 
 export function desiredPattern(conditions, acked, now, timing = DEFAULT_TIMING, policy = { snoozed: false, night: false }) {
