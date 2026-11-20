@@ -120,35 +120,71 @@ const number = (value) => Number(value || 0).toLocaleString('ja-JP');
 const seconds = (ms) => (Number(ms) > 0 ? `${(Number(ms) / 1000).toFixed(Number(ms) < 10_000 ? 1 : 0)}秒` : '—');
 const typeLabel = (type) => EVENT_LABELS[type] || type || '不明';
 
+const deliveryView = { data: null, filter: null };
+
+// 有料プランの「送信先 0 件」の記録（該当する契約が無かった分）は直近の一覧に出さない
+const meaningful = (row) => !(row.eventType === 'supporter' && Number(row.targets || 0) === 0);
+
 async function loadDelivery() {
     try {
-        const data = await api(DELIVERY_API);
-        const stats = data.statistics || {};
-        const totals = stats.totals || {};
-        const recent = Array.isArray(stats.recent) ? stats.recent : [];
-        const now = nowSeconds();
-        const lastHour = recent.filter((row) => now - Number(row.updatedEpoch || 0) <= 3600).length;
-        $('kpi-events').textContent = number(totals.events);
-        $('kpi-hour').textContent = `直近1時間 ${lastHour >= recent.length && recent.length >= 50 ? '50件以上' : `${lastHour}件`}`;
-        $('kpi-targets').textContent = number(totals.targets);
-        const sent = Number(totals.normal || 0) + Number(totals.errors || 0);
-        $('kpi-rate').textContent = sent ? `成功率 ${(Number(totals.normal || 0) / sent * 100).toFixed(sent >= 1000 ? 2 : 1)}%` : '';
-        $('kpi-errors').textContent = number(totals.errors);
-        $('kpi-serious').textContent = `重大 ${number(totals.seriousErrors)}・除外 ${number(totals.excludedErrors)}`;
-        $('kpi-errors-box').classList.toggle('bad', Number(totals.seriousErrors || 0) > 0);
-        $('kpi-latency').textContent = seconds(totals.maxLatencyMs);
-        const types = (stats.byEventType || []).filter((row) => Number(row.events) > 0).sort((a, b) => b.events - a.events);
-        $('delivery-types').innerHTML = types.map((row) => `<span class="deck-type${Number(row.seriousErrors) > 0 ? ' bad' : ''}">${esc(typeLabel(row.eventType))} <strong>${number(row.events)}</strong></span>`).join('')
-            || '<span class="deck-muted">24時間の配信はありません</span>';
-        $('delivery-recent').innerHTML = recent.slice(0, 6).map((row) => {
-            const time = new Date(Number(row.updatedEpoch) * 1000).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
-            const fail = Number(row.errors) > 0 ? `<span class="deck-bad">失敗 ${number(row.errors)}</span>` : '';
-            return `<li><span class="deck-time">${time}</span><span class="deck-type-mini">${esc(typeLabel(row.eventType))}</span><span>${esc(row.title)}<span class="deck-dim">（${number(row.targets)}件・${seconds(row.maxLatencyMs)}）</span>${fail}</span></li>`;
-        }).join('') || '<li class="deck-muted">直近の配信はありません</li>';
+        deliveryView.data = await api(DELIVERY_API);
         $('delivery-updated').textContent = ` ${new Date().toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })} 更新`;
+        renderDelivery();
     } catch (error) {
         $('delivery-recent').innerHTML = `<li class="deck-muted">配信の統計を読めません（${esc(error.message)}）</li>`;
     }
+}
+
+// 種類のチップを押すと、その種類だけの数字と一覧にする（もう一度押すと全部に戻す）
+function renderDelivery() {
+    const stats = deliveryView.data?.statistics || {};
+    const filter = deliveryView.filter;
+    const types = (stats.byEventType || []).filter((row) => Number(row.events) > 0).sort((x, y) => y.events - x.events);
+    const totals = filter ? (types.find((row) => row.eventType === filter) || {}) : (stats.totals || {});
+    const recentAll = (Array.isArray(stats.recent) ? stats.recent : []).filter(meaningful);
+    const now = nowSeconds();
+    $('kpi-events').textContent = number(totals.events);
+    if (filter) {
+        $('kpi-hour').textContent = `${typeLabel(filter)}だけ`;
+    } else {
+        const raw = Array.isArray(stats.recent) ? stats.recent : [];
+        const lastHour = raw.filter((row) => now - Number(row.updatedEpoch || 0) <= 3600).length;
+        $('kpi-hour').textContent = `直近1時間 ${raw.length >= 50 && lastHour >= raw.length ? '50件以上' : `${lastHour}件`}`;
+    }
+    $('kpi-targets').textContent = number(totals.targets);
+    const sent = Number(totals.normal || 0) + Number(totals.errors || 0);
+    $('kpi-rate').textContent = sent ? `成功率 ${(Number(totals.normal || 0) / sent * 100).toFixed(sent >= 1000 ? 2 : 1)}%` : '';
+    // 失敗のうち「宛先の Webhook が消えた・使えない」（除外）は利用者側の問題なので、大きい数字には入れない
+    const actionable = Math.max(0, Number(totals.errors || 0) - Number(totals.excludedErrors || 0));
+    $('kpi-errors').textContent = number(actionable);
+    $('kpi-serious').textContent = `重大 ${number(totals.seriousErrors)}・消えた宛先 ${number(totals.excludedErrors)}`;
+    $('kpi-errors-box').classList.toggle('bad', Number(totals.seriousErrors || 0) > 0);
+    $('kpi-latency').textContent = seconds(totals.maxLatencyMs);
+    $('delivery-types').innerHTML = types.map((row) => {
+        const classes = ['deck-type'];
+        if (Number(row.seriousErrors) > 0) classes.push('bad');
+        if (filter === row.eventType) classes.push('active');
+        return `<button type="button" class="${classes.join(' ')}" data-type="${esc(row.eventType)}" aria-pressed="${filter === row.eventType}">${esc(typeLabel(row.eventType))} <strong>${number(row.events)}</strong></button>`;
+    }).join('') || '<span class="deck-muted">24時間の配信はありません</span>';
+    let items;
+    if (filter) {
+        // 種類を絞ったときは、題名ごとのまとめ（直近 24 時間の回数・送信先・失敗）を新しい順に
+        const byTitle = (stats.byTitle || []).filter((row) => row.eventType === filter && !(filter === 'supporter' && Number(row.targets || 0) === 0));
+        items = byTitle.slice(0, 8).map((row) => {
+            const time = new Date(Number(row.latestEpoch) * 1000).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
+            const fail = Number(row.errors) - Number(row.excludedErrors || 0) > 0 ? `<span class="deck-bad">失敗 ${number(Number(row.errors) - Number(row.excludedErrors || 0))}</span>` : '';
+            return `<li><span class="deck-time">${time}</span><span>${esc(row.title)}<span class="deck-dim">（${number(row.events)}回・${number(row.targets)}件）</span>${fail}</span></li>`;
+        });
+    } else {
+        items = recentAll.slice(0, 6).map((row) => {
+            const time = new Date(Number(row.updatedEpoch) * 1000).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
+            // 直近の一覧の行には「消えた宛先」の内訳が無いので、重大な失敗だけを出す
+            const fail = Number(row.seriousErrors) > 0 ? `<span class="deck-bad">重大 ${number(row.seriousErrors)}</span>` : '';
+            const title = row.eventType === 'supporter' && row.title === 'supporter' ? '有料プランの配信' : row.title;
+            return `<li><span class="deck-time">${time}</span><span class="deck-type-mini">${esc(typeLabel(row.eventType))}</span><span>${esc(title)}<span class="deck-dim">（${number(row.targets)}件・${seconds(row.maxLatencyMs)}）</span>${fail}</span></li>`;
+        });
+    }
+    $('delivery-recent').innerHTML = items.join('') || `<li class="deck-muted">${filter ? `${esc(typeLabel(filter))}の記録はありません` : '直近の配信はありません'}</li>`;
 }
 
 // ---------------- 操作 ----------------
@@ -227,6 +263,12 @@ function start() {
         saveSettings({ night }, `夜間モードを${night.enabled ? 'ON' : 'OFF'}にしました（${night.start}〜${night.end}）`);
     });
     $('wake-tile').addEventListener('click', toggleWake);
+    $('delivery-types').addEventListener('click', (event) => {
+        const chip = event.target.closest('[data-type]');
+        if (!chip) return;
+        deliveryView.filter = deliveryView.filter === chip.dataset.type ? null : chip.dataset.type;
+        renderDelivery();
+    });
     $('fullscreen-tile').addEventListener('click', () => {
         if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
         else document.documentElement.requestFullscreen?.().catch(() => toast('全画面にできませんでした', 'bad'));
