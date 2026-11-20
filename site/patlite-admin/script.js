@@ -354,6 +354,34 @@ async function manual(lampsMap, seconds) {
     render();
 }
 
+// 物理ボタンの代わり: 確認（いま点いているものを消したままにする）
+async function acknowledgeFromPage() {
+    const now = nowSeconds();
+    engine.acknowledge(now);
+    state.manualUntil = 0;
+    try {
+        await command(setCommand(engine.pattern(now).lamps));
+        setConnection('確認しました（いま点いていたものを消しました。新しい情報が来るとまた点きます）', 'good');
+    } catch (error) {
+        setConnection(`確認を送れませんでした: ${error.message}`, 'bad');
+    }
+    render();
+}
+
+// 物理ボタンの長押しの代わり: 強制停止（全停止）の切り替え
+async function toggleFullStop() {
+    const stopping = !state.lastStatus?.fullStop;
+    if (stopping && !window.confirm('強制停止しますか？（解除するまで積層灯は何も点きません）')) return;
+    try {
+        const reply = await command(`FULL_STOP ${stopping ? 'ON' : 'OFF'}`);
+        if (!reply.startsWith('OK')) throw new Error(reply);
+        setConnection(stopping ? '強制停止しました。' : '強制停止を解除しました。', 'good');
+    } catch (error) {
+        setConnection(`強制停止を切り替えられませんでした: ${error.message}`, 'bad');
+    }
+    render();
+}
+
 async function saveConfig(event) {
     event.preventDefault();
     const values = { MAXD: $('cfg-maxd').value, RINT: $('cfg-rint').value, RECV: $('cfg-recv').value, PERIOD: $('cfg-period').value, HTO: $('cfg-hto').value };
@@ -408,6 +436,8 @@ function start() {
     });
     $('disconnect-btn').addEventListener('click', () => closeSerial('切断しました。'));
     $('resume-btn').addEventListener('click', () => { state.manualUntil = 0; render(); });
+    $('ack-btn').addEventListener('click', acknowledgeFromPage);
+    $('fullstop-btn').addEventListener('click', toggleFullStop);
     $('all-off-btn').addEventListener('click', () => manual(Object.fromEntries(COLORS.map((c) => [c, 'off'])), 60));
     for (const color of COLORS) {
         $(`test-${color}`).addEventListener('click', () => manual(Object.fromEntries(COLORS.map((c) => [c, c === color ? 'flash' : 'off'])), 10));
