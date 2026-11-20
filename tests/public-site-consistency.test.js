@@ -23,6 +23,7 @@ const excluded = new Set([
     'site/supporter-admin/index.html',
     'site/supporter-admin/stats.html',
     'site/cdn-admin/index.html',
+    'site/patlite-admin/index.html',
 ]);
 const expectedMenu = [
     ['/index.html', 'トップページ'],

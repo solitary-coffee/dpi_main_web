@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="robots" content="noindex,nofollow">
+    <title>積層灯 - DPI-Bot</title>
+    <link rel="icon" href="../../img/dpi.png" type="image/png">
+    <link rel="stylesheet" href="../admin-shell.css">
+    <link rel="stylesheet" href="../admin-center/style.css">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body class="admin-shell">
+    <button id="menu-toggle-btn" type="button" aria-label="メニューを開く"><span></span><span></span><span></span></button>
+    <div class="overlay"></div>
+    <div class="page-container">
+        <nav class="sidebar" aria-label="管理メニュー">
+            <div class="sidebar-header"><h2>管理メニュー</h2></div>
+            <ul>
+                <li><a href="/">公式サイト</a></li>
+                <li><a href="/site/admin-center/">統合管理センター</a></li>
+                <li><a href="/site/system-admin/">システム運用</a></li>
+                <li><a href="/site/ec2-admin/">EC2管理</a></li>
+                <li><a href="/site/xml-admin/">XML配信</a></li>
+                <li><a href="/site/status-admin/">ステータス管理</a></li>
+                <li><a href="/site/delivery-admin/">配信統計</a></li>
+                <li><a href="/site/delivery-flow-admin/">配信系統</a></li>
+                <li><a href="/site/system-admin/audit/">監査ログ</a></li>
+                <li><a href="/site/channel-admin/">配信先検索</a></li>
+                <li><a href="/site/reuse-admin/">二次利用申請管理</a></li>
+                <li><a href="/site/supporter-admin/">有料プラン管理</a></li>
+                <li><a href="/site/cdn-admin/">画像CDN</a></li>
+                <li><a href="/site/patlite-admin/" class="active" aria-current="page">積層灯</a></li>
+                <li><a href="/site/mail-admin/">メール配信管理</a></li>
+                <li><a href="/site/discord-admin/">Discordお知らせ管理</a></li>
+                <li><a href="/site/ip-admin/">IP遮断管理</a></li>
+                <li><a href="/cdn-cgi/access/logout">ログアウト</a></li>
+            </ul>
+        </nav>
+        <main class="main-content">
+            <header class="topbar">
+                <div><p class="eyebrow">PATLITE</p><h1>積層灯</h1><p class="muted">この PC（Chromebook 可）に USB でつないだ Arduino の積層灯へ、自宅サーバー・AWS の障害と防災情報を表示します。Chrome か Edge で開き、このタブを開いたままにしてください。アプリのインストールは不要です。</p></div>
+                <div class="admin-bar"><span id="admin-email"></span><button id="connect-btn" type="button">Arduino に接続</button><button id="disconnect-btn" type="button" hidden>切断</button><button id="wake-btn" type="button">画面を消さない: OFF</button></div>
+            </header>
+            <div id="connection" class="patlite-connection patlite-warn" role="status" aria-live="polite">読み込み中…</div>
+
+            <section aria-labelledby="tower-title">
+                <div class="section-heading"><div><p class="eyebrow">NOW</p><h2 id="tower-title">いまの積層灯</h2></div></div>
+                <div id="tower" class="patlite-tower"></div>
+                <p id="planned" class="patlite-planned"></p>
+                <p id="meta" class="muted"></p>
+                <div class="patlite-actions">
+                    <button id="resume-btn" type="button">自動表示に戻す</button>
+                    <button id="all-off-btn" type="button" data-needs-serial>全部消す（60秒）</button>
+                    <button id="test-red" type="button" data-needs-serial>赤を試す</button>
+                    <button id="test-yellow" type="button" data-needs-serial>黄を試す</button>
+                    <button id="test-green" type="button" data-needs-serial>緑を試す</button>
+                    <button id="test-blue" type="button" data-needs-serial>青を試す</button>
+                    <button id="test-white" type="button" data-needs-serial>白を試す</button>
+                </div>
+                <p class="muted">「試す」は 10 秒間その色を点滅させ、その後は自動表示に戻ります。</p>
+            </section>
+
+            <section aria-labelledby="shown-title">
+                <div class="section-heading"><div><p class="eyebrow">CONDITIONS</p><h2 id="shown-title">いま起きていること</h2></div></div>
+                <div class="table-wrap"><table><thead><tr><th>色</th><th>内容</th><th>積層灯</th><th>発生</th></tr></thead><tbody id="shown"></tbody></table></div>
+            </section>
+
+            <section aria-labelledby="config-title">
+                <div class="section-heading"><div><p class="eyebrow">ARDUINO SETTINGS</p><h2 id="config-title">表示の設定（Arduino に保存）</h2></div></div>
+                <p class="muted">ここで保存した設定は Arduino の中に残るので、別の PC・Chromebook につないでも同じ動きになります。</p>
+                <form id="config-form" class="patlite-config">
+                    <label>1 項目を点ける最長時間（秒）<input id="cfg-maxd" inputmode="numeric" value="300"><small>10〜3600</small></label>
+                    <label>重大障害を再表示する間隔（秒）<input id="cfg-rint" inputmode="numeric" value="1800"><small>60〜43200</small></label>
+                    <label>再表示の長さ（秒）<input id="cfg-rlen" inputmode="numeric" value="30"><small>5〜600</small></label>
+                    <label>復旧の緑を点ける時間（秒）<input id="cfg-recv" inputmode="numeric" value="60"><small>0〜600（0 で出さない）</small></label>
+                    <label>点滅の ON / OFF の長さ（ミリ秒）<input id="cfg-period" inputmode="numeric" value="500"><small>200〜5000</small></label>
+                    <label>PC から届かなければ途絶とする時間（秒）<input id="cfg-hto" inputmode="numeric" value="60"><small>10〜600</small></label>
+                    <div><button type="submit" data-needs-serial>Arduino に保存</button></div>
+                </form>
+            </section>
+
+            <section aria-labelledby="legend-title">
+                <div class="section-heading"><div><p class="eyebrow">LEGEND</p><h2 id="legend-title">色の一覧</h2></div></div>
+                <p class="muted">赤＝配信が止まる重大障害、黄＝一部の障害・注意、青＝AWS 側・監視の途絶、白＝防災情報、緑＝復旧。正常なときは消灯。重なったときは色を合わせて点け、点滅は色ごと。物理ボタンを押すと、いま点いている項目を消します（新しい情報が来ると再び点灯）。ボタン 5 秒で全停止／解除。ブザーは使いません。</p>
+                <div class="table-wrap"><table><thead><tr><th>色</th><th>情報・障害</th><th>点滅</th><th>消えるまで</th></tr></thead><tbody id="legend"></tbody></table></div>
+            </section>
+        </main>
+    </div>
+    <script src="../../script.js"></script>
+    <script type="module" src="script.js"></script>
+</body>
+</html>

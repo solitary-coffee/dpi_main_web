@@ -1,6 +1,7 @@
 import { AccessAuthError, authenticateNewsletterAdmin } from './access.js';
 import { DELIVERY_CATALOG } from './delivery-catalog.js';
 import { CdnAdminError, cdnAdminStats } from './cdn-admin.js';
+import { PatliteAdminError, patliteAdminState } from './patlite-admin.js';
 
 const JSON_HEADERS = Object.freeze({
     'Content-Type': 'application/json; charset=utf-8',
@@ -20,6 +21,7 @@ const ADMIN_ASSET_ROOTS = Object.freeze([
     '/site/delivery-admin',
     '/site/delivery-flow-admin',
     '/site/cdn-admin',
+    '/site/patlite-admin',
 ]);
 
 class AdminCenterError extends Error {
@@ -42,7 +44,8 @@ export async function handleAdminCenterRequest(request, env) {
     const isTestDeliveryApi = pathname === '/site/system-admin/api/test-delivery';
     const isAuditApi = pathname === '/site/system-admin/audit/api/logs';
     const isCdnStatsApi = pathname === '/site/cdn-admin/api/stats';
-    const isApi = isSummaryApi || isActionApi || isDeliveryStatsApi || isDmdataHistoryApi || isDeliveryFlowApi || isTestDeliveryApi || isAuditApi || isCdnStatsApi;
+    const isPatliteStateApi = pathname === '/site/patlite-admin/api/state';
+    const isApi = isPatliteStateApi || isSummaryApi || isActionApi || isDeliveryStatsApi || isDmdataHistoryApi || isDeliveryFlowApi || isTestDeliveryApi || isAuditApi || isCdnStatsApi;
     const assetRoot = !isApi ? ADMIN_ASSET_ROOTS.find((root) => pathname === root || pathname.startsWith(`${root}/`)) : null;
     const isAsset = Boolean(assetRoot);
     if (!isApi && !isAsset) return null;
@@ -97,6 +100,12 @@ export async function handleAdminCenterRequest(request, env) {
             }
             return jsonResponse(await cdnAdminStats(env, admin));
         }
+        if (isPatliteStateApi) {
+            if (request.method !== 'GET') {
+                return jsonResponse({ success: false, message: '許可されていない操作です。' }, 405, { Allow: 'GET' });
+            }
+            return jsonResponse(await patliteAdminState(env, admin));
+        }
         if (!['GET', 'HEAD'].includes(request.method)) {
             throw new AdminCenterError(405, '許可されていない操作です。', 'method_not_allowed');
         }
@@ -118,7 +127,7 @@ export async function handleAdminCenterRequest(request, env) {
         return new Response(asset.body, { status: asset.status, statusText: asset.statusText, headers });
     } catch (error) {
         const status = Number(error?.status) || 500;
-        const known = error instanceof AccessAuthError || error instanceof AdminCenterError || error instanceof CdnAdminError;
+        const known = error instanceof AccessAuthError || error instanceof AdminCenterError || error instanceof CdnAdminError || error instanceof PatliteAdminError;
         const message = known ? error.publicMessage : '統合管理情報を取得できませんでした。';
         if (!known) {
             console.error('Admin center request failed', { errorName: error?.name || 'Error' });
