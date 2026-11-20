@@ -52,10 +52,15 @@ test('the admin screen retains frequent operations and expands custom settings o
  assert.match(html,/href="stats\.html"/);
  assert.ok(html.indexOf('id="accounts-title"')<html.indexOf('id="compensation-title"'));
  assert.ok(html.indexOf('id="compensation-title"')<html.indexOf('id="custom-title"'));
- for(const id of ['custom-complex','custom-city','custom-extract','custom-multi'])assert.match(html,new RegExp('id="'+id+'" type="checkbox" role="switch"'));
+ // Every feature is set per custom contract (grouped checkboxes built from plan-features.js) with presets.
+ assert.match(html,/id="custom-feature-groups"/);
+ for(const preset of ['pro','plus','supporter','none'])assert.match(html,new RegExp('data-preset="'+preset+'"'));
+ for(const text of ['Proと同じ','Plusと同じ','Basicと同じ','すべてオフ'])assert.ok(html.includes(text),text);
  assert.match(html,/id="custom-reuse" type="checkbox"/);
  assert.match(js,/openCustomForAccount/);
- assert.match(js,/syncCustomToggles/);
+ assert.match(js,/from '\.\.\/supporter\/plan-features\.js'/);
+ assert.match(js,/syncFeatureDependencies/);
+ assert.match(js,/features:selectedFeatures\(\)/);
  assert.match(js,/customRequestId=''/);
  assert.match(css,/\.custom-toggle input\[type="checkbox"\]:checked/);
 });

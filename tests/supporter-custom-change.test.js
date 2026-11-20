@@ -53,12 +53,12 @@ function makeFake(){
      return {meta:{changes:c?.status==='applied'?1:0}};
     }
     if(sql.includes("UPDATE supporter_custom_plans SET")){
-     const [name,channels,servers,rules,complex,city,extract,multi,reuse,estimated,price,reason,actor,now,revision,
+     const [name,channels,servers,rules,complex,city,extract,multi,reuse,estimated,price,reason,actor,now,revision,features,
       user,identity,oldRevision,oldPrice,sub]=args;
      if(user!==uid||identity!==customId||sub!==subscriptionId||plan.revision!==oldRevision||plan.confirmed_yen!==oldPrice)return {meta:{changes:0}};
      Object.assign(plan,{name,channel_limit:channels,server_limit:servers,rule_limit:rules,complex_conditions:complex,
       municipality_branching:city,content_extraction:extract,multi_destination:multi,secondary_reuse:reuse,
-      estimated_yen:estimated,confirmed_yen:price,reason,updated_by:actor,updated_at:now,revision});
+      estimated_yen:estimated,confirmed_yen:price,reason,updated_by:actor,updated_at:now,revision,features_json:features});
      return {meta:{changes:1}};
     }
     throw Error('Unexpected run query: '+sql);

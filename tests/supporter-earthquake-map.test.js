@@ -5,7 +5,7 @@ import {normalizeSupporterRules, supporterOptions, supporterAdminDetails} from '
 import {buildSupporterSnapshot} from '../worker/supporter-snapshot.js';
 import {geographicEntitlements} from '../worker/supporter-geo.js';
 import {isPrivateAssetPath} from '../worker/private-assets.js';
-import {planFeatures, PLAN_FEATURES} from '../site/supporter/plan-features.js';
+import {planFeatures, PLAN_FEATURES, PLAN_FEATURE_NAMES} from '../site/supporter/plan-features.js';
 import {
  EARTHQUAKE_MAP_PRODUCTS, EARTHQUAKE_MAP_INTENSITIES, EARTHQUAKE_MAP_LG_CLASSES, EARTHQUAKE_MAP_REGION_IDS, EARTHQUAKE_MUNICIPALITIES_PATH,
  imageRuleSnapshotFields, parseEarthquakeMunicipalities, loadEarthquakeMunicipalities,
@@ -87,7 +87,8 @@ test('snapshot v4 sends Pro-only earthquake keys only for Pro/custom and only wh
  const pro=await build(active('pro'));
  assert.equal(pro.schemaVersion,4);
  const [all,threshold,centre]=pro.rules;
- assert.deepEqual(Object.keys(all).sort(),['channelId','channelIds','guildId','id','name','products','region','tier','type']);
+ assert.deepEqual(Object.keys(all).sort(),['channelId','channelIds','features','guildId','id','name','products','region','tier','type']);
+ assert.deepEqual(all.features,[...PLAN_FEATURE_NAMES.pro].sort());
  assert.deepEqual([all.type,all.region,all.tier,all.products],['earthquake-map','all','pro',['VXSE51','VXSE52','VXSE53']]);
  assert.deepEqual([threshold.products,threshold.minIntensity,threshold.regionMinIntensity,threshold.centerMunicipality],[['VXSE53'],'4',{'kanto-koshin':'3'},'1310100']);
  assert.equal(centre.centerMunicipality,'2710000');
@@ -112,7 +113,7 @@ test('downgrade to Plus suspends threshold rules and drops the centre, never sen
  assert.equal(imageRuleSnapshotFields(stored({products:[]}),pro,'pro'),null);
  // A Plus tier never carries Pro keys even if the features say otherwise.
  assert.equal(imageRuleSnapshotFields(stored({minIntensity:'3'}),pro,'plus'),null);
- assert.deepEqual(Object.keys(imageRuleSnapshotFields(stored({centerMunicipality:'1310100'}),pro,'plus')).sort(),['products','region','tier']);
+ assert.deepEqual(Object.keys(imageRuleSnapshotFields(stored({centerMunicipality:'1310100'}),pro,'plus')).sort(),['features','products','region','tier']);
 });
 
 test('static municipality list is small, complete and served behind the paid-site gate',async()=>{
@@ -158,8 +159,8 @@ test('dashboard and comparison page describe the earthquake maps with the Plus/P
  assert.match(app,/Pro限定の設定を解除する/);
  for(const key of ['earthquakeMapProducts','earthquakeMapIntensities','earthquakeMapRegions','earthquakeMunicipalitiesPath','centerMunicipality','regionMinIntensity','minIntensity'])assert.ok(app.includes(key),key);
  const row=label=>html.match(new RegExp(`<th scope="row">${label}[^<]*</th>((?:<td>[^<]*</td>){4})`))?.[1].match(/<td>([^<]*)<\/td>/g).map(cell=>cell.replace(/<\/?td>/g,''));
- assert.deepEqual(row('地震情報の図：すべての地震情報'),['—','○','○','○']);
- assert.deepEqual(row('地震情報の図：震度のしきい値'),['—','—','○','○']);
+ assert.deepEqual(row('地震情報の図：すべての地震情報'),['—','○','○','契約による']);
+ assert.deepEqual(row('地震情報の図：震度のしきい値'),['—','—','○','契約による']);
  assert.match(html,/id="earthquake-map-detail"/);
  assert.match(index,/地震情報の図/);
  // Still private: no donation / payment wording added, no public switch flipped.

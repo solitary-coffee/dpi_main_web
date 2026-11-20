@@ -1,5 +1,9 @@
 // Admin-issued per-user contract; real delivery rights require a matching,
 // paid and currently active Stripe subscription, never the D1 offer alone.
+// Every feature (text-rule options and each image option) is set per contract in
+// features_json (sorted names from site/supporter/plan-features.js, migrations/0032).
+// The legacy boolean columns are kept in sync for older readers and the price estimate.
+import {FEATURE_NAMES,featureLabel,legacyCustomFeatureNames,missingFeatureDependency,sortFeatureNames} from '../site/supporter/plan-features.js';
 export const CUSTOM_LOCKED_STATUSES=new Set(['offered','active']);
 const ACTIVE=new Set(['active','trialing']); // past_due/unpaid never grant new custom access
 const message=(text,status=400)=>{throw Object.assign(new Error(text),{status});};
@@ -14,23 +18,47 @@ export function estimateCustomMonthly(input){
   +Math.max(0,servers-defaults[1])*200+Math.ceil(Math.max(0,rules-defaults[2])/5)*100;
  return base+beyond+(bool(input.secondaryReuse)?200:0);
 }
+// Feature names of a custom plan input: `features` (array of names, the admin screen) or,
+// for older callers / pending changes saved before features existed, the legacy booleans.
+function customFeatureInput(input){
+ if(input.features!==undefined&&input.features!==null){
+  if(!Array.isArray(input.features)||input.features.some(name=>!FEATURE_NAMES.includes(name)))message('カスタムプランの機能の指定を確認してください。');
+  return sortFeatureNames(input.features);
+ }
+ if(input.contentExtraction===true&&input.municipalityBranching!==true)message('配信抽出には市区町村分岐を有効にしてください。');
+ return legacyCustomFeatureNames({complexConditions:input.complexConditions===true,municipalityBranching:input.municipalityBranching===true,
+  contentExtraction:input.contentExtraction===true,multiDestination:input.multiDestination===true});
+}
 export function normalizeCustomPlan(input){
  const number=(name,max)=>{const value=Number(input[name]);if(!Number.isInteger(value)||value<1||value>max)message(`${name}の上限値を確認してください。`);return value;};
+ const features=customFeatureInput(input);
+ const missing=missingFeatureDependency(features);
+ if(missing)message(`「${featureLabel(missing.name)}」を有効にするには「${missing.requires.map(featureLabel).join('」または「')}」も有効にしてください。`);
+ const has=name=>features.includes(name);
  const result={
   name:String(input.name||'カスタムプラン').trim(),
   channels:number('channels',200),servers:number('servers',50),rules:number('rules',500),
-  complexConditions:input.complexConditions===true,
-  municipalityBranching:input.municipalityBranching===true,
-  contentExtraction:input.contentExtraction===true,
-  multiDestination:input.multiDestination===true,
+  complexConditions:has('complexConditions'),
+  municipalityBranching:has('municipalityScope'),
+  contentExtraction:has('strictMunicipality'),
+  multiDestination:has('multiDestination'),
   secondaryReuse:input.secondaryReuse===true,
   monthlyYen:number('monthlyYen',1000000),
+  features,
  };
  if(result.monthlyYen<100)message('確定料金は月額100円以上で指定してください。');
  if(!result.name||result.name.length>80)message('カスタムプラン名は1〜80文字にしてください。');
- if(result.contentExtraction&&!result.municipalityBranching)message('配信抽出には市区町村分岐を有効にしてください。');
  result.estimatedYen=estimateCustomMonthly(result);
  return result;
+}
+// Feature names stored for a contract row (features_json), or the legacy columns before migration 0032.
+export function customRowFeatures(row){
+ if(!row)return [];
+ if(typeof row.features_json==='string'&&row.features_json){
+  try{const parsed=JSON.parse(row.features_json);if(Array.isArray(parsed))return sortFeatureNames(parsed);}catch{/* fall back to the legacy columns */}
+ }
+ return legacyCustomFeatureNames({complexConditions:bool(row.complex_conditions),municipalityBranching:bool(row.municipality_branching),
+  contentExtraction:bool(row.content_extraction),multiDestination:bool(row.multi_destination)});
 }
 export const customLocked=row=>CUSTOM_LOCKED_STATUSES.has(row?.status);
 export async function getCustomPlan(db,uid){
@@ -45,6 +73,7 @@ export function customPublic(row){
   complexConditions:bool(row.complex_conditions),municipalityBranching:bool(row.municipality_branching),
   contentExtraction:bool(row.content_extraction),multiDestination:bool(row.multi_destination),
   secondaryReuse:bool(row.secondary_reuse),estimatedYen:Number(row.estimated_yen),
+  features:customRowFeatures(row),
   monthlyYen:Number(row.confirmed_yen),updatedAt:row.updated_at,activatedAt:row.activated_at,
   // A managed monthly contract does not expose a user-controlled price or update action.
   locked:customLocked(row),
@@ -57,14 +86,17 @@ export function customSubscriptionMatches(row,summary){
 }
 export function enrichCustomSubscriptions(summaries,row){
  if(!row||row.status!=='active')return summaries;
+ const features=customRowFeatures(row),has=name=>features.includes(name);
  return summaries.map(item=>customSubscriptionMatches(row,item)?{
   ...item,planId:'custom',plan:row.name||'カスタムプラン',recognizedPlan:true,
   channels:Number(row.channel_limit),servers:Number(row.server_limit),rules:Number(row.rule_limit),
-  complexConditions:bool(row.complex_conditions),multiDestination:bool(row.multi_destination),
-  prefecture:bool(row.municipality_branching),municipality:bool(row.municipality_branching),
-  strictMunicipality:bool(row.content_extraction),
-  municipalityBranching:bool(row.municipality_branching),
-  contentExtraction:bool(row.content_extraction),secondaryReuse:bool(row.secondary_reuse),
+  complexConditions:has('complexConditions'),multiDestination:has('multiDestination'),
+  prefecture:has('prefectureScope'),municipality:has('municipalityScope'),
+  strictMunicipality:has('strictMunicipality'),
+  municipalityBranching:has('municipalityScope'),
+  contentExtraction:has('strictMunicipality'),secondaryReuse:bool(row.secondary_reuse),
+  // Per-contract feature names; plan-features.js subscriptionFeatures() reads these.
+  customFeatures:features,
   managedCustom:true
  }:item);
 }

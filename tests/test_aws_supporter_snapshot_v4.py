@@ -76,6 +76,23 @@ class RepositoryLambdaV4Tests(unittest.TestCase):
                 self.validate(value, NOW)
 
 
+    def test_v4_accepts_eew_map_and_warning_table(self):
+        features = ["eewMap"]
+        basic = {"type": "eew-map", "region": "all", "tier": "supporter", "regions": [], "features": features}
+        regional = {"type": "eew-map", "region": "all", "tier": "plus", "regions": ["tohoku", "kanto-koshin"]}
+        table = {"type": "warning-table", "region": "all", "tier": "pro", "tables": ["national", "timeseries"],
+                 "regions": ["kinki"], "deliverOn": "changed", "showAllAreas": True}
+        result = self.validate(snapshot(4, basic, regional, table, EARTHQUAKE), NOW)
+        self.assertEqual([rule["type"] for rule in result["rules"]], ["eew-map", "eew-map", "warning-table", "earthquake"])
+        self.assertEqual(result["rules"][0]["features"], features)
+        self.assertEqual(result["rules"][1]["regions"], ["tohoku", "kanto-koshin"])
+        self.assertEqual(result["rules"][2]["tables"], ["national", "timeseries"])
+        # "supporter" (Basic) is accepted for eew-map only.
+        for bad in (snapshot(4, {**table, "tier": "supporter"}), snapshot(4, {**basic, "tier": ""}),
+                    snapshot(3, basic), snapshot(4, {**TSUNAMI, "tier": "supporter"})):
+            with self.assertRaises(ValueError):
+                self.validate(bad, NOW)
+
     def test_v4_accepts_earthquake_map_and_keeps_fields(self):
         plus = {"type": "earthquake-map", "region": "all", "tier": "plus", "products": ["VXSE52"]}
         result = self.validate(snapshot(4, QUAKE_MAP, plus, EARTHQUAKE), NOW)
@@ -91,9 +108,22 @@ class RepositoryLambdaV4Tests(unittest.TestCase):
 
 def first_v4_source():
     """The repository Lambda as first deployed for v4 (before earthquake-map was allowed)."""
-    source = (ROOT / "aws/channel-directory-api/lambda_function.py").read_text(encoding="utf-8")
-    old = source.replace(',\n                     "earthquake-map"}', '}').replace(', "earthquake-map"}', '}')
+    old = earthquake_map_v4_source()
+    old = old.replace(',\n                     "earthquake-map"}', '}').replace(', "earthquake-map"}', '}')
     assert '"earthquake-map"' not in deploy_schema_v4.function_source(old, "_validate_supporter_snapshot")
+    return old
+
+
+def earthquake_map_v4_source():
+    """The repository Lambda as deployed on 2026-11-18 (earthquake-map, no eew-map / warning-table)."""
+    source = (ROOT / "aws/channel-directory-api/lambda_function.py").read_text(encoding="utf-8")
+    old = source.replace(', "eew-map", "warning-table"}', '}').replace(
+        '    basic_image_types = {"eew-map"}\n', '').replace(
+        '''not in (
+                image_tiers | ({"supporter"} if _clean(rule.get("type"), 30) in basic_image_types else set()))''',
+        'not in image_tiers')
+    validator = deploy_schema_v4.function_source(old, "_validate_supporter_snapshot")
+    assert '"eew-map"' not in validator and '"warning-table"' not in validator and '"earthquake-map"' in validator
     return old
 
 
@@ -110,6 +140,17 @@ class LambdaSnapshotV4PatchTests(unittest.TestCase):
         self.assertEqual(updated.replace(deploy_schema_v4.function_source(updated, "_validate_supporter_snapshot"), ""),
                          live.replace(deploy_schema_v4.function_source(live, "_validate_supporter_snapshot"), ""))
 
+
+    def test_earthquake_map_validator_is_upgraded_for_eew_map_and_warning_table(self):
+        live = earthquake_map_v4_source()
+        updated, changed = deploy_schema_v4.patch(live)
+        self.assertTrue(changed)
+        validator = deploy_schema_v4.function_source(updated, "_validate_supporter_snapshot")
+        self.assertIn('"eew-map"', validator)
+        self.assertIn('"warning-table"', validator)
+        self.assertEqual(deploy_schema_v4.verify(updated),
+                         {1: "accepted", 2: "accepted", 3: "accepted", 4: "accepted", 5: "rejected"})
+        self.assertFalse(deploy_schema_v4.patch(updated)[1])
 
     def test_v1_and_v3_live_validators_are_upgraded(self):
         v3, _ = deploy_schema_v3.patch(V1_SOURCE)

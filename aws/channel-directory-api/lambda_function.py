@@ -269,7 +269,8 @@ def _handle_action(body):
 
 
 def _validate_supporter_snapshot(value, now=None):
-    # v4 adds paid image rules (hires-radar / tsunami-map / weather-map / earthquake-map); v1-v3 stay valid.
+    # v4 adds paid image rules (hires-radar / tsunami-map / weather-map / earthquake-map / eew-map /
+    # warning-table); v1-v3 stay valid. eew-map is also available on Basic (tier "supporter").
     if not isinstance(value, dict) or int(value.get("schemaVersion", 0)) not in (1, 2, 3, 4):
         raise ValueError("有料プラン配信設定の形式を確認してください。")
     version = _clean(value.get("version"), 128)
@@ -286,9 +287,10 @@ def _validate_supporter_snapshot(value, now=None):
     if not isinstance(rules, list) or len(rules) > 10_000:
         raise ValueError("有料プラン配信ルール数を確認してください。")
     allowed_types = {"earthquake", "eew", "weather", "rain-radar", "hires-radar", "tsunami-map", "weather-map",
-                     "earthquake-map"}
-    image_types = {"hires-radar", "tsunami-map", "weather-map", "earthquake-map"}
+                     "earthquake-map", "eew-map", "warning-table"}
+    image_types = {"hires-radar", "tsunami-map", "weather-map", "earthquake-map", "eew-map", "warning-table"}
     image_tiers = {"plus", "pro", "custom"}
+    basic_image_types = {"eew-map"}
     image_regions = {"all", "hokkaido", "tohoku", "kanto-koshin", "hokuriku", "tokai", "kinki",
                      "chugoku", "shikoku", "kyushu-north", "kyushu-south-amami", "okinawa"}
     normalized_rules = []
@@ -311,7 +313,8 @@ def _validate_supporter_snapshot(value, now=None):
             raise ValueError("有料プラン配信ルールの識別情報を確認してください。")
         if _clean(rule.get("type"), 30) in image_types and (
             int(value["schemaVersion"]) < 4
-            or _clean(rule.get("tier"), 10) not in image_tiers
+            or _clean(rule.get("tier"), 10) not in (
+                image_tiers | ({"supporter"} if _clean(rule.get("type"), 30) in basic_image_types else set()))
             or _clean(rule.get("region") or "all", 30) not in image_regions
         ):
             raise ValueError("有料プラン画像配信ルールの形式を確認してください。")
