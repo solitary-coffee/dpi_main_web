@@ -220,7 +220,7 @@ test('admin details describe eew-map, warning-table and tsunami outputs',()=>{
 
 test('dashboard: previews, plan-aware type list and the new editors',async()=>{
  const [app,plans,css]=await Promise.all(['site/supporter/app.js','site/supporter/plans.html','site/supporter/style.css'].map(path=>readFile(new URL('../'+path,import.meta.url),'utf8')));
- for(const name of ['weather-map-${scope}','hires-radar-${scope}','eew-map-national','warning-table-${id}','tsunami-map-${id}'])assert.ok(app.includes(name),name);
+ for(const name of ['weather-map-${scope}','hires-radar-${scope}','eew-map-national','warning-table-${id}','tsunami-map-map','tsunami-map-enlarged','tsunami-map-table'])assert.ok(app.includes(name),name);
  assert.match(app,/import \{ PREVIEW_BASE, attachPreview \} from '\.\/preview-lightbox\.js';/);
  assert.match(app,/img\.loading='lazy'/);
  assert.match(app,/addEventListener\('error'/);

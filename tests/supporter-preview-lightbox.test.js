@@ -26,7 +26,8 @@ test('manifest: 正しい形で、どの種類にも見本が 2 枚以上ある'
  for (const type of TYPES) {
   assert.ok(manifest[type].length >= 2, `${type}: ${manifest[type].length}`);
   for (const item of manifest[type]) {
-   assert.deepEqual(Object.keys(item).sort(), ['caption', 'file', 'plan']);
+   assert.deepEqual(Object.keys(item).sort(), ['caption', 'file', 'group', 'plan']);
+   assert.match(item.group, /^[a-z0-9-]+$/);
    assert.ok(item.file.startsWith(`${type}-`), item.file);
    assert.ok(['Basic以上', 'Plus以上', 'Pro以上'].includes(item.plan), item.plan);
    assert.ok(!files.has(item.file), `重複: ${item.file}`);
@@ -55,9 +56,11 @@ test('validateManifest: 不正な項目・知らない種類は落とす', () =>
    {file: 'c.png', caption: 'c', plan: '無料'}, {file: 'd.jpg', caption: 'd', plan: 'Pro以上'}, null],
   'unknown-type': [ok],
   'tsunami-map': 'x',
- }), {'weather-map': [ok]});
+ }), {'weather-map': [{...ok, group: 'all'}]});
  assert.deepEqual(lightbox.validateManifest({'eew-map': [{...ok, file: 'eew-map-a.png', extra: 1}]}),
-  {'eew-map': [{file: 'eew-map-a.png', caption: '全国', plan: 'Plus以上'}]});
+  {'eew-map': [{file: 'eew-map-a.png', caption: '全国', plan: 'Plus以上', group: 'all'}]});
+ assert.deepEqual(lightbox.validateManifest({'hires-radar': [{...ok, file: 'hires-radar-a.png', group: 'region'},
+  {...ok, file: 'hires-radar-b.png', group: '../x'}]})['hires-radar'].map(item => item.group), ['region', 'all']);
 });
 
 test('wrapIndex / indexFor: 端で反対側へ回り、候補に合う見本から開く', () => {
@@ -69,6 +72,41 @@ test('wrapIndex / indexFor: 端で反対側へ回り、候補に合う見本か�
  assert.equal(lightbox.indexFor(items, ['x.png', 'c.png', 'b.png']), 2);
  assert.equal(lightbox.indexFor(items, ['x.png']), 0);
  assert.equal(lightbox.indexFor(items), 0);
+});
+
+test('groupFor: 開いた見本と同じまとまりの見本だけを切り替える', () => {
+ const items = [{file: 'n1.png', group: 'national'}, {file: 'r1.png', group: 'region'}, {file: 'n2.png', group: 'national'},
+  {file: 'r2.png', group: 'region'}, {file: 'r3.png', group: 'region'}];
+ const regional = lightbox.groupFor(items, {prefer: ['r2.png']});
+ assert.deepEqual(regional.items.map(item => item.file), ['r1.png', 'r2.png', 'r3.png']);
+ assert.equal(regional.index, 1);
+ // prefer が無ければ group の先頭
+ const byGroup = lightbox.groupFor(items, {prefer: ['x.png'], group: 'region'});
+ assert.equal(byGroup.items[byGroup.index].file, 'r1.png');
+ assert.equal(byGroup.items.length, 3);
+ // どちらも無ければ先頭のまとまり
+ assert.deepEqual(lightbox.groupFor(items).items.map(item => item.file), ['n1.png', 'n2.png']);
+ assert.deepEqual(lightbox.groupFor([]), {items: [], index: 0});
+ assert.equal(lightbox.titleFor('hires-radar', 'region'), '雨雲レーダー（高解像度版）（地方）');
+ assert.equal(lightbox.titleFor('eew-map', 'all'), '緊急地震速報（警報）の図');
+});
+
+test('manifest: 地方のまとまりには全国の見本が混ざらず、地方の見本が充実している', async () => {
+ const manifest = JSON.parse(await read('site/supporter/previews/manifest.json'));
+ const group = (type, name) => manifest[type].filter(item => item.group === name);
+ for (const [type, name, min] of [['weather-map', 'region', 6], ['warning-table', 'regional', 6],
+  ['hires-radar', 'region', 8], ['tsunami-map', 'enlarged', 6]]) {
+  const items = group(type, name);
+  assert.ok(items.length >= min, `${type}/${name}: ${items.length}`);
+  for (const item of items) assert.doesNotMatch(item.caption, /全国/, item.file);
+ }
+ for (const [type, name] of [['weather-map', 'national'], ['warning-table', 'national'], ['hires-radar', 'national'],
+  ['tsunami-map', 'map']]) {
+  assert.ok(group(type, name).length >= 1, `${type}/${name}`);
+  for (const item of group(type, name)) assert.match(item.caption, /全国/, item.file);
+ }
+ // 津波の図と表は別のまとまり
+ for (const item of group('tsunami-map', 'table')) assert.match(item.caption, /表|観測/, item.file);
 });
 
 test('loadManifest: 1 回だけ読み、失敗したら次に読み直す', async () => {
@@ -83,7 +121,7 @@ test('loadManifest: 1 回だけ読み、失敗したら次に読み直す', asyn
 });
 
 test('モジュールはページが使うものを公開している', () => {
- for (const name of ['attachPreview', 'openPreview', 'loadManifest', 'validateManifest', 'wrapIndex', 'indexFor'])
+ for (const name of ['attachPreview', 'openPreview', 'loadManifest', 'validateManifest', 'wrapIndex', 'indexFor', 'groupFor', 'titleFor'])
   assert.equal(typeof lightbox[name], 'function', name);
  assert.equal(lightbox.PREVIEW_BASE, '/site/supporter/previews/');
  assert.equal(lightbox.MANIFEST_URL, '/site/supporter/previews/manifest.json');
