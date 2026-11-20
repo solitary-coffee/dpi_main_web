@@ -28,7 +28,22 @@ Bubblewrap（`node_modules`）があり、`%USERPROFILE%\.bubblewrap\config.json
    ..\node_modules\.bin\bubblewrap.cmd build --skipPwaValidation
    ```
 
-4. できた `app-release-signed.apk` を端末に入れる（同じ鍵で署名していれば上書き更新できます）。
+4. **ビルド前に必ず次の 2 点を直す**（`bubblewrap update` で元に戻るため。直さないと起動直後にクラッシュします）。
+   - `app/build.gradle` の `minifyEnabled true` を `false` に（R8 がライブラリの画面のクラス名を変えてしまう）
+   - `app/src/main/AndroidManifest.xml` の `FocusActivity` の下に、次の宣言を足す
+     （androidbrowserhelper 2.7 は起動時にこの画面の有効/無効を切り替えるため、宣言が無いと落ちる）
+
+     ```xml
+     <activity android:name="com.google.androidbrowserhelper.trusted.ManageDataLauncherActivity"
+         android:exported="false">
+         <meta-data android:name="android.support.customtabs.trusted.MANAGE_SPACE_URL"
+             android:value="@string/launchUrl" />
+     </activity>
+     ```
+
+   直したあとは `gradlew.bat assembleRelease` → `zipalign` → `apksigner sign` で作る（1.0.2 はこの手順）。
+5. できた APK を端末に入れる（同じ鍵で署名していれば上書き更新できます）。
+   入れる前にエミュレーター（`sdk\emulator`、AVD `deck34`）で `adb logcat -b crash` が空なことを確かめる。
 
 注意:
 - `webManifestUrl` は書かないでください。操作盤の manifest は Access で保護されており、Bubblewrap が取得に失敗します。
