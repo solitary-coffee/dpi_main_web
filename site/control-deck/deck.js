@@ -1,7 +1,8 @@
 // 操作盤: 使っていないスマホ（Galaxy など）を常時表示の操作パネルにする。
 //   - 5 秒ごとに積層灯の状態（/site/patlite-admin/api/state）を読み、点く色・いま起きていること・一時停止/夜間モードを表示
 //   - 1 分ごとに直近 24 時間の履歴（/site/patlite-admin/api/history?days=1）を表示
-//   - 積層灯の操作（確認・強制停止・イルミネーション試験）は「遠隔操作の依頼」として積む（/site/patlite-admin/api/command）。
+//   - 2 分ごとに直近 24 時間の配信統計（/site/delivery-admin/api/summary?period=24h。AWS の監視テーブル）を表示
+//   - 積層灯の操作（確認・強制停止）は「遠隔操作の依頼」として積む（/site/patlite-admin/api/command）。
 //     Arduino をつないだ PC / Chromebook の積層灯ページが 5 秒以内に受け取って実行する
 //   - 一時停止・夜間モードはサイトの設定（/site/patlite-admin/api/settings）を直接変える
 //   - 強制停止・一時停止は 1 秒長押しで実行（誤操作防止）。画面を消さない（Screen Wake Lock）
@@ -11,8 +12,11 @@ const STATE_API = '/site/patlite-admin/api/state';
 const HISTORY_API = '/site/patlite-admin/api/history?days=1';
 const SETTINGS_API = '/site/patlite-admin/api/settings';
 const COMMAND_API = '/site/patlite-admin/api/command';
+const DELIVERY_API = '/site/delivery-admin/api/summary?period=24h';
+const DELIVERY_EVERY_MS = 120_000;   // 監視テーブルを読むので間隔を空ける（サーバー側も 45 秒キャッシュ）
+const EVENT_LABELS = { eew: 'EEW', keiho: 'EEW警報', eew_sind: 'EEW震度', zisin: '地震', tunami: '津波', kisyo: '気象', kisyo2: '気象', kazan: '火山', sub: 'その他', supporter: '有料' };
 const HOLD_MS = 1000;
-const COMMAND_LABELS = { ack: '確認', fullstop_on: '強制停止', fullstop_off: '強制停止の解除', illum: 'イルミネーション試験' };
+const COMMAND_LABELS = { ack: '確認', fullstop_on: '強制停止', fullstop_off: '強制停止の解除' };
 const WAKE_KEY = 'control-deck-wake';
 
 const $ = (id) => document.getElementById(id);
@@ -111,10 +115,46 @@ async function loadHistory() {
     }
 }
 
+// ---------------- 配信の統計 ----------------
+const number = (value) => Number(value || 0).toLocaleString('ja-JP');
+const seconds = (ms) => (Number(ms) > 0 ? `${(Number(ms) / 1000).toFixed(Number(ms) < 10_000 ? 1 : 0)}秒` : '—');
+const typeLabel = (type) => EVENT_LABELS[type] || type || '不明';
+
+async function loadDelivery() {
+    try {
+        const data = await api(DELIVERY_API);
+        const stats = data.statistics || {};
+        const totals = stats.totals || {};
+        const recent = Array.isArray(stats.recent) ? stats.recent : [];
+        const now = nowSeconds();
+        const lastHour = recent.filter((row) => now - Number(row.updatedEpoch || 0) <= 3600).length;
+        $('kpi-events').textContent = number(totals.events);
+        $('kpi-hour').textContent = `直近1時間 ${lastHour >= recent.length && recent.length >= 50 ? '50件以上' : `${lastHour}件`}`;
+        $('kpi-targets').textContent = number(totals.targets);
+        const sent = Number(totals.normal || 0) + Number(totals.errors || 0);
+        $('kpi-rate').textContent = sent ? `成功率 ${(Number(totals.normal || 0) / sent * 100).toFixed(sent >= 1000 ? 2 : 1)}%` : '';
+        $('kpi-errors').textContent = number(totals.errors);
+        $('kpi-serious').textContent = `重大 ${number(totals.seriousErrors)}・除外 ${number(totals.excludedErrors)}`;
+        $('kpi-errors-box').classList.toggle('bad', Number(totals.seriousErrors || 0) > 0);
+        $('kpi-latency').textContent = seconds(totals.maxLatencyMs);
+        const types = (stats.byEventType || []).filter((row) => Number(row.events) > 0).sort((a, b) => b.events - a.events);
+        $('delivery-types').innerHTML = types.map((row) => `<span class="deck-type${Number(row.seriousErrors) > 0 ? ' bad' : ''}">${esc(typeLabel(row.eventType))} <strong>${number(row.events)}</strong></span>`).join('')
+            || '<span class="deck-muted">24時間の配信はありません</span>';
+        $('delivery-recent').innerHTML = recent.slice(0, 6).map((row) => {
+            const time = new Date(Number(row.updatedEpoch) * 1000).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
+            const fail = Number(row.errors) > 0 ? `<span class="deck-bad">失敗 ${number(row.errors)}</span>` : '';
+            return `<li><span class="deck-time">${time}</span><span class="deck-type-mini">${esc(typeLabel(row.eventType))}</span><span>${esc(row.title)}<span class="deck-dim">（${number(row.targets)}件・${seconds(row.maxLatencyMs)}）</span>${fail}</span></li>`;
+        }).join('') || '<li class="deck-muted">直近の配信はありません</li>';
+        $('delivery-updated').textContent = ` ${new Date().toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })} 更新`;
+    } catch (error) {
+        $('delivery-recent').innerHTML = `<li class="deck-muted">配信の統計を読めません（${esc(error.message)}）</li>`;
+    }
+}
+
 // ---------------- 操作 ----------------
 async function sendCommand(command) {
     try {
-        await api(COMMAND_API, command === 'illum' ? { command, seconds: 20 } : { command });
+        await api(COMMAND_API, { command });
         toast(`${COMMAND_LABELS[command]}を送りました（積層灯ページが 5 秒以内に実行）`);
     } catch (error) {
         toast(`${COMMAND_LABELS[command]}を送れませんでした: ${error.message}`, 'bad');
@@ -194,14 +234,16 @@ function start() {
     try { state.wantWake = localStorage.getItem(WAKE_KEY) === '1'; } catch { state.wantWake = false; }
     // 画面を消さない: 画面に戻ったら取り直す（Wake Lock は裏に回ると自動で外れる）。最初の 1 回はタップが必要な端末もある
     document.addEventListener('visibilitychange', () => {
-        if (!document.hidden) { loadState(); if (state.wantWake && !state.wakeLock) requestWakeLock(); }
+        if (!document.hidden) { loadState(); loadDelivery(); if (state.wantWake && !state.wakeLock) requestWakeLock(); }
     });
     if (state.wantWake) requestWakeLock();
     renderClock();
     setInterval(renderClock, 1000);
     loadState();
     loadHistory();
+    loadDelivery();
     setInterval(loadState, 5000);
+    setInterval(() => { if (!document.hidden) loadDelivery(); }, DELIVERY_EVERY_MS);
     setInterval(loadHistory, 60000);
 }
 

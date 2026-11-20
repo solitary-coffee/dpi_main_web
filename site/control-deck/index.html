@@ -19,6 +19,18 @@
     </header>
 
     <main class="deck-main">
+        <section class="deck-panel deck-delivery" aria-labelledby="delivery-title">
+            <h2 id="delivery-title">配信（直近24時間）<span id="delivery-updated" class="deck-muted deck-small"></span></h2>
+            <div class="deck-kpis">
+                <div class="deck-kpi"><span class="deck-kpi-label">配信</span><strong id="kpi-events">—</strong><small id="kpi-hour" class="deck-muted"></small></div>
+                <div class="deck-kpi"><span class="deck-kpi-label">送信先</span><strong id="kpi-targets">—</strong><small id="kpi-rate" class="deck-muted"></small></div>
+                <div class="deck-kpi" id="kpi-errors-box"><span class="deck-kpi-label">失敗</span><strong id="kpi-errors">—</strong><small id="kpi-serious" class="deck-muted"></small></div>
+                <div class="deck-kpi"><span class="deck-kpi-label">最大遅延</span><strong id="kpi-latency">—</strong><small class="deck-muted">配信1件の中で最も遅い送信先</small></div>
+            </div>
+            <div id="delivery-types" class="deck-types"></div>
+            <ul id="delivery-recent" class="deck-list"><li class="deck-muted">読み込み中…</li></ul>
+        </section>
+
         <section class="deck-panel deck-now" aria-labelledby="now-title">
             <h2 id="now-title">いま起きていること</h2>
             <ul id="conditions" class="deck-list"><li class="deck-muted">読み込み中…</li></ul>
@@ -28,13 +40,15 @@
             <button class="deck-tile deck-accent" type="button" data-command="ack"><span class="deck-icon">✓</span><span>確認<small>いま点いているものを消す</small></span></button>
             <button class="deck-tile deck-danger" type="button" data-command="fullstop_on" data-hold="1"><span class="deck-icon">■</span><span>強制停止<small>1秒長押し</small></span></button>
             <button class="deck-tile" type="button" data-command="fullstop_off"><span class="deck-icon">▶</span><span>強制停止を解除</span></button>
-            <button class="deck-tile" type="button" data-command="illum"><span class="deck-icon">✦</span><span>イルミネーション<small>試験点灯 20秒</small></span></button>
             <button class="deck-tile deck-warn" type="button" data-snooze="1" data-hold="1"><span class="deck-icon">⏸</span><span>1時間止める<small>1秒長押し</small></span></button>
             <button class="deck-tile" type="button" data-snooze="0"><span class="deck-icon">⏵</span><span>一時停止を解除</span></button>
             <button class="deck-tile" type="button" id="night-tile"><span class="deck-icon">☾</span><span id="night-label">夜間モード</span></button>
             <button class="deck-tile" type="button" id="wake-tile"><span class="deck-icon">☀</span><span id="wake-label">画面を消さない: OFF</span></button>
             <a class="deck-tile deck-link" href="/site/patlite-admin/"><span class="deck-icon">◎</span><span>積層灯ページ</span></a>
-            <a class="deck-tile deck-link" href="/realtime/"><span class="deck-icon">📈</span><span>監視サイト</span></a>
+            <a class="deck-tile deck-link" href="https://api-dp.jr226toritetu.workers.dev/realtime/"><span class="deck-icon">📈</span><span>監視サイト</span></a>
+            <a class="deck-tile deck-link" href="/site/delivery-admin/"><span class="deck-icon">▤</span><span>配信統計</span></a>
+            <a class="deck-tile deck-link" href="/site/delivery-flow-admin/"><span class="deck-icon">⇄</span><span>配信系統</span></a>
+            <a class="deck-tile deck-link" href="/site/system-admin/"><span class="deck-icon">⚙</span><span>システム運用</span></a>
             <a class="deck-tile deck-link" href="/site/admin-center/"><span class="deck-icon">⌂</span><span>管理センター</span></a>
             <button class="deck-tile" type="button" id="fullscreen-tile"><span class="deck-icon">⛶</span><span>全画面</span></button>
         </section>
