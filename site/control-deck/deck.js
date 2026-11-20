@@ -341,6 +341,7 @@ function start() {
         saveSettings({ night }, `時間帯設定を${night.enabled ? 'ON' : 'OFF'}にしました（${night.start}〜${night.end} ${level}）`);
     });
     $('filter-tile').addEventListener('click', openFilter);
+    $('refresh-tile').addEventListener('click', () => { loadState(); loadHistory(); loadDelivery(); toast('最新の情報を読み込みました'); });
     const filterDialog = $('filter-dialog');
     for (const button of filterDialog.querySelectorAll('[data-filter-hours]')) {
         button.addEventListener('click', () => { $('filter-hours').value = button.dataset.filterHours; });
