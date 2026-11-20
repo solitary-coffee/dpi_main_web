@@ -226,6 +226,7 @@ function render() {
         ? shown.map((item) => `<tr><td>${chips(item.colors)}</td><td>${esc(item.title)}</td><td>${stateText(item)}</td><td>${new Date(item.since * 1000).toLocaleString('ja-JP')}</td></tr>`).join('')
         : '<tr><td>—</td><td>すべて正常（消灯）</td><td>消灯</td><td>—</td></tr>';
     $('connect-btn').hidden = serial.connected;
+    $('connect-any-btn').hidden = serial.connected;
     $('disconnect-btn').hidden = !serial.connected;
     for (const button of document.querySelectorAll('[data-needs-serial]')) button.disabled = !serial.connected;
 }
@@ -432,6 +433,17 @@ function start() {
             await openSerial(port);
         } catch (error) {
             if (error?.name !== 'NotFoundError') setConnection(`接続できませんでした: ${error.message}`, 'bad');
+            else setConnection('Arduino を選ばずに閉じました。一覧に出ない場合は「すべての機器から選ぶ」か、下の手順を試してください。', 'warn');
+        }
+    });
+    // 互換機などで識別番号が違うと、絞り込んだ一覧に出ない。絞り込まずに全部のシリアル機器から選ぶ
+    $('connect-any-btn').addEventListener('click', async () => {
+        try {
+            const port = await navigator.serial.requestPort();
+            await openSerial(port);
+        } catch (error) {
+            if (error?.name !== 'NotFoundError') setConnection(`接続できませんでした: ${error.message}`, 'bad');
+            else setConnection('シリアル機器が 1 つも見つかりませんでした。下の「対応デバイスが見つかりません」と出るときの手順を確認してください。', 'bad');
         }
     });
     $('disconnect-btn').addEventListener('click', () => closeSerial('切断しました。'));
