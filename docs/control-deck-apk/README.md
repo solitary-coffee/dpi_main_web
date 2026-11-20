@@ -41,6 +41,7 @@ Bubblewrap（`node_modules`）があり、`%USERPROFILE%\.bubblewrap\config.json
      </activity>
      ```
 
+   ※ `build.gradle` などを PowerShell の `Get-Content` で読み書きしないこと（UTF-8 が化けてアプリ名が文字化けする。1.0.2 で発生）。
    直したあとは `gradlew.bat assembleRelease` → `zipalign` → `apksigner sign` で作る（1.0.2 はこの手順）。
 5. できた APK を端末に入れる（同じ鍵で署名していれば上書き更新できます）。
    入れる前にエミュレーター（`sdk\emulator`、AVD `deck34`）で `adb logcat -b crash` が空なことを確かめる。

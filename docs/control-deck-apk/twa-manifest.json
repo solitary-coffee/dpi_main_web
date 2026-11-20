@@ -20,8 +20,8 @@
     "path": "C:/Users/kazu/android-build/keys/dpi-control-deck.jks",
     "alias": "controldeck"
   },
-  "appVersionName": "1.0.2",
-  "appVersionCode": 3,
+  "appVersionName": "1.0.3",
+  "appVersionCode": 4,
   "shortcuts": [],
   "generatorApp": "bubblewrap-cli",
   "fallbackType": "customtabs",
@@ -37,5 +37,5 @@
   "retainedBundles": [],
   "protocolHandlers": [],
   "fileHandlers": [],
-  "appVersion": "1.0.2"
+  "appVersion": "1.0.3"
 }
