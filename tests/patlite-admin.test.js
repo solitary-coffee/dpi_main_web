@@ -450,7 +450,8 @@ test('画面: 色の一覧は段階ごと、絞り込みの操作、操作盤の
     assert.match(deck, /legendByLevel\(\)/u);
     assert.match(deckHtml, /id="filter-tile"/u);
     assert.match(deckHtml, /id="filter-dialog"/u);
-    assert.doesNotMatch(deckHtml, /refresh-tile/u);
+    assert.match(deckHtml, /id="refresh-tile"/u);            // 「配信統計」の代わりに「今すぐ更新」（2026-11-21）
+    assert.doesNotMatch(deckHtml, /delivery-admin/u);
     // 確認（2×2）＋ 14 マス ＝ 6 列 × 3 段
     assert.equal((deckHtml.match(/class="deck-tile/gu) || []).length, 15);
     assert.equal((deckHtml.match(/deck-ack/gu) || []).length, 1);
