@@ -15,7 +15,8 @@ const COMMAND_API = '/site/patlite-admin/api/command';
 const DELIVERY_API = '/site/delivery-admin/api/summary?period=24h';
 const DELIVERY_EVERY_MS = 120_000;   // 監視テーブルを読むので間隔を空ける（サーバー側も 45 秒キャッシュ）
 const EVENT_LABELS = { eew: 'EEW', keiho: 'EEW警報', eew_sind: 'EEW震度', zisin: '地震', tunami: '津波', kisyo: '気象', kisyo2: '気象', kazan: '火山', sub: 'その他', supporter: '有料' };
-const HOLD_MS = 1000;
+const HOLD_MS = 1000;   // data-hold の秒数を掛ける（無期限停止は 3 秒）
+const MAX_CUSTOM_HOURS = 168;
 const COMMAND_LABELS = { ack: '確認', fullstop_on: '強制停止', fullstop_off: '強制停止の解除' };
 const WAKE_KEY = 'control-deck-wake';
 
@@ -212,6 +213,7 @@ async function saveSettings(patch, message) {
 function run(tile) {
     if (tile.dataset.command) return sendCommand(tile.dataset.command);
     if (tile.dataset.snooze !== undefined) {
+        if (tile.dataset.snooze === 'custom') return openCustomSnooze();
         if (tile.dataset.snooze === 'forever') {
             return saveSettings({ snoozeUntil: null, snoozeForever: true }, '積層灯の自動表示を無期限に止めました（「一時停止を解除」で戻ります）');
         }
@@ -222,18 +224,40 @@ function run(tile) {
     return undefined;
 }
 
-// data-hold のタイルは 1 秒長押しで実行（離したら取り消し）
+// カスタム時間: 時間を選ぶ（入れる）画面を出して、決めた時間だけ止める
+function openCustomSnooze() {
+    const dialog = $('custom-dialog');
+    if (typeof dialog.showModal !== 'function') {
+        const answer = window.prompt('何時間止めますか？（0.5〜168）', '3');
+        if (answer !== null) snoozeHours(Number(answer));
+        return;
+    }
+    dialog.returnValue = '';
+    dialog.showModal();
+}
+
+function snoozeHours(hours) {
+    if (!Number.isFinite(hours) || hours <= 0) { toast('時間を正しく入れてください', 'bad'); return undefined; }
+    const value = Math.min(MAX_CUSTOM_HOURS, Math.max(0.5, Math.round(hours * 2) / 2));
+    const label = value >= 24 && value % 24 === 0 ? `${value / 24}日` : `${value}時間`;
+    return saveSettings({ snoozeUntil: nowSeconds() + Math.round(value * 3600), snoozeForever: false },
+        `${label}、積層灯の自動表示を止めました`);
+}
+
+// data-hold のタイルは長押しで実行（data-hold の秒数。離したら取り消し）
 function bindTile(tile) {
     if (!tile.dataset.hold) {
         tile.addEventListener('click', () => run(tile));
         return;
     }
     let timer = null;
+    const holdMs = Math.max(1, Number(tile.dataset.hold) || 1) * HOLD_MS;
+    tile.style.setProperty('--hold', `${holdMs}ms`);
     const cancel = () => { clearTimeout(timer); timer = null; tile.classList.remove('holding'); };
     tile.addEventListener('pointerdown', (event) => {
         event.preventDefault();
         tile.classList.add('holding');
-        timer = setTimeout(() => { cancel(); if (navigator.vibrate) navigator.vibrate(60); run(tile); }, HOLD_MS);
+        timer = setTimeout(() => { cancel(); if (navigator.vibrate) navigator.vibrate(60); run(tile); }, holdMs);
     });
     for (const name of ['pointerup', 'pointerleave', 'pointercancel']) tile.addEventListener(name, cancel);
     tile.addEventListener('click', (event) => { if (event.detail === 0) run(tile); });   // キーボード操作（Enter）はそのまま実行
@@ -266,6 +290,13 @@ function start() {
         saveSettings({ night }, `夜間モードを${night.enabled ? 'ON' : 'OFF'}にしました（${night.start}〜${night.end}）`);
     });
     $('wake-tile').addEventListener('click', toggleWake);
+    const customDialog = $('custom-dialog');
+    for (const button of customDialog.querySelectorAll('[data-hours]')) {
+        button.addEventListener('click', () => { $('custom-hours').value = button.dataset.hours; });
+    }
+    customDialog.addEventListener('close', () => {
+        if (customDialog.returnValue === 'ok') snoozeHours(Number($('custom-hours').value));
+    });
     $('refresh-tile').addEventListener('click', () => { loadState(); loadHistory(); loadDelivery(); toast('最新の情報を読み込みました'); });
     $('delivery-types').addEventListener('click', (event) => {
         const chip = event.target.closest('[data-type]');
