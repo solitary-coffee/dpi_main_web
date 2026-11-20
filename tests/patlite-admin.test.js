@@ -231,3 +231,16 @@ test('履歴: 出た項目・消えた項目・ブリッジの途絶を記録す
     assert.deepEqual([gap.started_at, gap.ended_at], [1060 + 180, 1600]);
     assert.equal(db.history.find((row) => row.cid === 'home:critical:EEW配信').ended_at, null);
 });
+
+test('無期限の一時停止: 解除するまで全部消し、期限付きの値は持たない', async () => {
+    const { snoozeText } = await import('../site/patlite-admin/logic.js');
+    const settings = normalizeSettings({ snoozeForever: true, snoozeUntil: Date.now() / 1000 + 3600 });
+    assert.equal(settings.snoozeForever, true);
+    assert.equal(settings.snoozeUntil, null);
+    const now = Date.now() / 1000 + 365 * 86400;
+    assert.equal(policyFor(settings, now).snoozed, true);
+    assert.match(snoozeText(settings, now), /無期限/u);
+    const conditions = [{ id: 'h', kind: 'home_critical', since: now - 5 }];
+    assert.deepEqual(desiredPattern(conditions, new Set(), now, undefined, policyFor(settings, now)).lamps, lamps());
+    assert.equal(normalizeSettings({}).snoozeForever, false);
+});

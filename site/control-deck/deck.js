@@ -6,7 +6,7 @@
 //     Arduino をつないだ PC / Chromebook の積層灯ページが 5 秒以内に受け取って実行する
 //   - 一時停止・夜間モードはサイトの設定（/site/patlite-admin/api/settings）を直接変える
 //   - 強制停止・一時停止は 1 秒長押しで実行（誤操作防止）。画面を消さない（Screen Wake Lock）
-import { COLORS, COLOR_NAMES, LEGEND, PatliteEngine, policyFor } from '../patlite-admin/logic.js';
+import { COLORS, COLOR_NAMES, LEGEND, PatliteEngine, policyFor, snoozeText } from '../patlite-admin/logic.js';
 
 const STATE_API = '/site/patlite-admin/api/state';
 const HISTORY_API = '/site/patlite-admin/api/history?days=1';
@@ -65,7 +65,7 @@ function render() {
     const notes = [];
     if (state.error) notes.push(state.error);
     if (state.receivedAt) notes.push(`自宅から最終受信 ${new Date(state.receivedAt * 1000).toLocaleTimeString('ja-JP', { hour12: false })}`);
-    if (policy.snoozed) notes.push(`一時停止中（${new Date(state.settings.snoozeUntil * 1000).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })} まで）`);
+    if (policy.snoozed) notes.push(snoozeText(state.settings, now));
     else if (policy.night) notes.push('夜間モード中（重大だけ）');
     $('status').textContent = notes.join(' / ') || '読み込み中…';
     $('status').classList.toggle('bad', Boolean(state.error));
@@ -212,8 +212,11 @@ async function saveSettings(patch, message) {
 function run(tile) {
     if (tile.dataset.command) return sendCommand(tile.dataset.command);
     if (tile.dataset.snooze !== undefined) {
+        if (tile.dataset.snooze === 'forever') {
+            return saveSettings({ snoozeUntil: null, snoozeForever: true }, '積層灯の自動表示を無期限に止めました（「一時停止を解除」で戻ります）');
+        }
         const hours = Number(tile.dataset.snooze);
-        return saveSettings({ snoozeUntil: hours > 0 ? nowSeconds() + hours * 3600 : null },
+        return saveSettings({ snoozeUntil: hours > 0 ? nowSeconds() + hours * 3600 : null, snoozeForever: false },
             hours > 0 ? `${hours}時間、積層灯の自動表示を止めました` : '一時停止を解除しました');
     }
     return undefined;
@@ -263,6 +266,7 @@ function start() {
         saveSettings({ night }, `夜間モードを${night.enabled ? 'ON' : 'OFF'}にしました（${night.start}〜${night.end}）`);
     });
     $('wake-tile').addEventListener('click', toggleWake);
+    $('refresh-tile').addEventListener('click', () => { loadState(); loadHistory(); loadDelivery(); toast('最新の情報を読み込みました'); });
     $('delivery-types').addEventListener('click', (event) => {
         const chip = event.target.closest('[data-type]');
         if (!chip) return;

@@ -26,6 +26,7 @@ export const COMMAND_TTL_SECONDS = 120;
 const COMMANDS = new Set(['ack', 'fullstop_on', 'fullstop_off', 'illum']);
 export const DEFAULT_SETTINGS = Object.freeze({
     snoozeUntil: null,
+    snoozeForever: false,
     night: Object.freeze({ enabled: false, start: '22:00', end: '07:00' }),
     illumination: Object.freeze({ daily: false, seconds: 20 }),
 });
@@ -222,8 +223,11 @@ export function normalizeSettings(raw, nowSeconds = Date.now() / 1000) {
     const illumination = source.illumination && typeof source.illumination === 'object' ? source.illumination : {};
     const snooze = finiteNumber(source.snoozeUntil);
     const seconds = Math.round(Number(illumination.seconds));
+    const forever = source.snoozeForever === true;
     return {
-        snoozeUntil: snooze && snooze > nowSeconds ? Math.min(snooze, nowSeconds + MAX_SNOOZE_SECONDS) : null,
+        // 無期限の一時停止（解除するまで全部消灯）。無期限のときは期限付きの値は持たない
+        snoozeForever: forever,
+        snoozeUntil: !forever && snooze && snooze > nowSeconds ? Math.min(snooze, nowSeconds + MAX_SNOOZE_SECONDS) : null,
         night: {
             enabled: night.enabled === true,
             start: TIME_PATTERN.test(String(night.start)) ? String(night.start) : DEFAULT_SETTINGS.night.start,

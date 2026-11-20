@@ -103,7 +103,7 @@ body.deck { padding: max(10px, env(safe-area-inset-top)) max(10px, env(safe-area
     .deck-type { padding: 2px 8px; font-size: .75rem; }
     .deck-list { gap: 3px; }
     .deck-list li { font-size: .8rem; }
-    .deck-grid { min-height: 0; grid-template-columns: repeat(4, minmax(0, 1fr)); grid-auto-rows: minmax(0, 1fr); gap: 6px; }
+    .deck-grid { min-height: 0; grid-template-columns: repeat(5, minmax(0, 1fr)); grid-auto-rows: minmax(0, 1fr); gap: 6px; }
     .deck-tile { min-height: 0; padding: 4px; border-radius: 12px; gap: 2px; font-size: clamp(.72rem, 2.6vh, .95rem); }
     .deck-tile small { font-size: .62rem; margin-top: 0; }
     .deck-icon { font-size: clamp(1rem, 5vh, 1.5rem); }
