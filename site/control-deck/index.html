@@ -44,26 +44,21 @@
         </div>
 
         <section class="deck-grid" aria-label="操作">
-            <!-- 1 段目: 積層灯の操作 -->
-            <button class="deck-tile deck-accent" type="button" data-command="ack"><span class="deck-icon">✓</span><span>確認<small>点いているものを消す</small></span></button>
+            <!-- 確認は大きく（横向きは 2×2 マス）。1 段目: 積層灯の操作 / 2 段目: 一時停止 / 3 段目: 解除・画面・ページ -->
+            <button class="deck-tile deck-accent deck-ack" type="button" data-command="ack"><span class="deck-icon">✓</span><span>確認<small>点いているものを消す</small></span></button>
             <button class="deck-tile deck-danger" type="button" data-command="fullstop_on" data-hold="1"><span class="deck-icon">■</span><span>強制停止<small>1秒長押し</small></span></button>
             <button class="deck-tile" type="button" data-command="fullstop_off"><span class="deck-icon">▶</span><span>強制停止を解除</span></button>
             <button class="deck-tile" type="button" id="night-tile"><span class="deck-icon">☾</span><span id="night-label">夜間モード</span></button>
-            <button class="deck-tile" type="button" id="wake-tile"><span class="deck-icon">☀</span><span id="wake-label">画面を消さない: OFF</span></button>
             <button class="deck-tile" type="button" id="refresh-tile"><span class="deck-icon">⟳</span><span>今すぐ更新</span></button>
-            <!-- 2 段目: 一時停止（自動表示を止める） -->
             <button class="deck-tile deck-warn" type="button" data-snooze="1" data-hold="1"><span class="deck-icon">⏸</span><span>1時間停止<small>1秒長押し</small></span></button>
             <button class="deck-tile deck-warn" type="button" data-snooze="6" data-hold="1"><span class="deck-icon">⏸</span><span>6時間停止<small>1秒長押し</small></span></button>
             <button class="deck-tile deck-warn" type="button" data-snooze="custom" data-hold="1"><span class="deck-icon">⏱</span><span>カスタム時間<small>1秒長押し</small></span></button>
             <button class="deck-tile deck-danger" type="button" data-snooze="forever" data-hold="3"><span class="deck-icon">⏹</span><span>無期限停止<small>3秒長押し</small></span></button>
             <button class="deck-tile" type="button" data-snooze="0"><span class="deck-icon">⏵</span><span>停止を解除</span></button>
+            <button class="deck-tile" type="button" id="wake-tile"><span class="deck-icon">☀</span><span id="wake-label">画面を消さない: OFF</span></button>
             <button class="deck-tile" type="button" id="fullscreen-tile"><span class="deck-icon">⛶</span><span>全画面</span></button>
-            <!-- 3 段目: ページを開く -->
             <a class="deck-tile deck-link" href="/site/patlite-admin/"><span class="deck-icon">◎</span><span>積層灯ページ</span></a>
-            <a class="deck-tile deck-link" href="https://api-dp.jr226toritetu.workers.dev/realtime/"><span class="deck-icon">📈</span><span>監視サイト</span></a>
             <a class="deck-tile deck-link" href="/site/delivery-admin/"><span class="deck-icon">▤</span><span>配信統計</span></a>
-            <a class="deck-tile deck-link" href="/site/delivery-flow-admin/"><span class="deck-icon">⇄</span><span>配信系統</span></a>
-            <a class="deck-tile deck-link" href="/site/system-admin/"><span class="deck-icon">⚙</span><span>システム運用</span></a>
             <a class="deck-tile deck-link" href="/site/admin-center/"><span class="deck-icon">⌂</span><span>管理センター</span></a>
         </section>
     </main>

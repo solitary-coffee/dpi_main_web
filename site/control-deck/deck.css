@@ -42,6 +42,10 @@ body.deck { padding: max(10px, env(safe-area-inset-top)) max(10px, env(safe-area
 .deck-list .deck-dim { color: var(--muted); }
 .deck-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; min-width: 0; }
 @media (min-width: 560px) { .deck-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); } }
+/* 確認ボタンは大きく: 縦向きは横いっぱい、広い画面・横向きは 2×2 マス */
+.deck-ack { grid-column: 1 / -1; font-size: 1.4rem; }
+.deck-ack .deck-icon { font-size: 2.6rem; }
+@media (min-width: 560px) { .deck-ack { grid-column: span 2; grid-row: span 2; } }
 .deck-tile { position: relative; overflow: hidden; min-width: 0; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 6px; min-height: clamp(88px, 22vw, 130px); padding: 10px; border: 1px solid var(--line); border-radius: 16px; background: var(--tile); color: var(--text); font: inherit; font-size: 1rem; font-weight: 700; text-align: center; text-decoration: none; cursor: pointer; touch-action: manipulation; }
 .deck-tile small { display: block; margin-top: 2px; font-size: .72rem; font-weight: 500; color: var(--muted); }
 .deck-tile:active, .deck-tile.pressed { background: var(--tile-press); transform: scale(.98); }
@@ -109,6 +113,9 @@ body.deck { padding: max(10px, env(safe-area-inset-top)) max(10px, env(safe-area
     .deck-tile small { font-size: .62rem; margin-top: 0; }
     .deck-tile > span:last-child { line-height: 1.2; overflow-wrap: anywhere; }
     .deck-icon { font-size: clamp(1rem, 5vh, 1.5rem); }
+    .deck-ack { grid-column: span 2; grid-row: span 2; font-size: clamp(1.1rem, 6vh, 1.8rem); }
+    .deck-ack .deck-icon { font-size: clamp(1.8rem, 12vh, 3.4rem); }
+    .deck-ack small { font-size: .8rem; }
     .deck-toast { bottom: 8px; }
 }
 
