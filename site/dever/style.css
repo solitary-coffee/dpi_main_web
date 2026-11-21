@@ -349,3 +349,57 @@ h3 {
     color: #2980b9; /* 文字色（少し濃い青） */
     text-decoration: none; /* 下線を消す */
 }
+
+/* --- 開発者紹介（チーム一覧・アイコン付きカード） --- */
+.team-intro { text-align: center; margin-bottom: 36px; }
+.team-title { border: none; margin-bottom: 8px; }
+.team-lead { color: #dfe6ee; line-height: 1.8; margin: 0 0 20px; }
+.member-row { list-style: none; padding: 0; margin: 0; display: flex; flex-wrap: wrap; justify-content: center; gap: 14px; }
+.main-content a.member-chip, .main-content a.member-chip:visited {
+    display: flex; flex-direction: column; align-items: center; gap: 6px; width: 112px; padding: 14px 8px;
+    border-radius: 14px; background: #3b4047; border: 1px solid #555c64; color: #fff; text-decoration: none;
+    transition: transform .15s, border-color .15s, background-color .15s;
+}
+.main-content a.member-chip:hover, .main-content a.member-chip:focus-visible {
+    transform: translateY(-2px); border-color: #3498db; background: #40474f; color: #fff;
+}
+.member-chip img { width: 56px; height: 56px; border-radius: 50%; object-fit: cover; border: 2px solid #5b6570; background: #2c3136; }
+.member-name { font-weight: 700; font-size: .95em; word-break: break-all; }
+.member-role { font-size: .75em; color: #b8c4d0; }
+
+.developer-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 20px; }
+.developer-card {
+    background: #3b4047; border: 1px solid #555c64; border-radius: 16px; padding: 22px 24px;
+    scroll-margin-top: 24px;
+}
+.developer-card:target { border-color: #3498db; box-shadow: 0 0 0 2px rgba(52,152,219,.45); }
+.developer-header { margin-bottom: 16px; }
+.developer-icon { width: 96px; height: 96px; border: 3px solid #5b6570; background: #2c3136; flex-shrink: 0; }
+.developer-info { min-width: 0; }
+.developer-handle { margin: 4px 0 0 !important; color: #b8c4d0; font-size: .9em; word-break: break-all; }
+.role-badge { display: inline-block; font-size: .78em; font-weight: 700; padding: 3px 10px; border-radius: 999px; margin-bottom: 6px; }
+.role-lead { background: #f1c40f; color: #2b2b2b; }
+.role-dev { background: #3498db; color: #fff; }
+.role-staff { background: #2ecc71; color: #10301d; }
+.developer-body .bio { margin: 0 0 1.4em; color: #eef2f6; }
+.developer-body h3 { font-size: 1.05em; margin: 0 0 8px; color: #6cb6f0; }
+.duties { margin: 0 0 1.2em; padding-left: 1.2em; line-height: 1.8; }
+.developer-card .skills { margin-bottom: 0; }
+
+.team-contact { margin-top: 40px; }
+.contact-links { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; }
+.main-content a.contact-card, .main-content a.contact-card:visited {
+    display: flex; flex-direction: column; gap: 6px; padding: 18px 20px; border-radius: 14px;
+    background: #3b4047; border: 1px solid #555c64; color: #fff; text-decoration: none;
+}
+.main-content a.contact-card:hover { border-color: #3498db; color: #fff; }
+.contact-card strong { color: #6cb6f0; font-size: 1.05em; }
+.contact-card span { color: #dfe6ee; font-size: .9em; line-height: 1.6; }
+.contact-note { text-align: center; color: #b8c4d0; font-size: .85em; margin-top: 18px; }
+
+@media (max-width: 768px) {
+    .developer-grid { grid-template-columns: 1fr; }
+    .developer-card { padding: 18px 16px; }
+    .developer-icon { width: 72px; height: 72px; }
+    .main-content a.member-chip { width: 96px; }
+}
