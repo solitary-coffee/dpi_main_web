@@ -117,6 +117,66 @@
    "group": "municipality"
   },
   {
+   "file": "weather-map-municipality-01.png",
+   "caption": "市区町村ごとの詳細（石狩・空知・後志地方大雨警報・注意報）",
+   "plan": "Pro以上",
+   "group": "municipality"
+  },
+  {
+   "file": "weather-map-municipality-07.png",
+   "caption": "市区町村ごとの詳細（福島県土砂災害警報・注意報）",
+   "plan": "Pro以上",
+   "group": "municipality"
+  },
+  {
+   "file": "weather-map-municipality-12.png",
+   "caption": "市区町村ごとの詳細（千葉県土砂災害警報・注意報）",
+   "plan": "Pro以上",
+   "group": "municipality"
+  },
+  {
+   "file": "weather-map-municipality-15.png",
+   "caption": "市区町村ごとの詳細（新潟県土砂災害警報・注意報）",
+   "plan": "Pro以上",
+   "group": "municipality"
+  },
+  {
+   "file": "weather-map-municipality-22.png",
+   "caption": "市区町村ごとの詳細（静岡県土砂災害警報・注意報）",
+   "plan": "Pro以上",
+   "group": "municipality"
+  },
+  {
+   "file": "weather-map-municipality-28.png",
+   "caption": "市区町村ごとの詳細（兵庫県大雨警報・注意報）",
+   "plan": "Pro以上",
+   "group": "municipality"
+  },
+  {
+   "file": "weather-map-municipality-31.png",
+   "caption": "市区町村ごとの詳細（鳥取県土砂災害警報・注意報）",
+   "plan": "Pro以上",
+   "group": "municipality"
+  },
+  {
+   "file": "weather-map-municipality-42.png",
+   "caption": "市区町村ごとの詳細（長崎県土砂災害警報・注意報）",
+   "plan": "Pro以上",
+   "group": "municipality"
+  },
+  {
+   "file": "weather-map-municipality-45.png",
+   "caption": "市区町村ごとの詳細（宮崎県土砂災害警報・注意報）",
+   "plan": "Pro以上",
+   "group": "municipality"
+  },
+  {
+   "file": "weather-map-municipality-47.png",
+   "caption": "市区町村ごとの詳細（沖縄本島地方大雨警報・注意報）",
+   "plan": "Pro以上",
+   "group": "municipality"
+  },
+  {
    "file": "weather-map-tornado.png",
    "caption": "竜巻注意情報（埼玉県気象防災速報（竜巻目撃））",
    "plan": "Plus以上",
@@ -274,13 +334,13 @@
   },
   {
    "file": "tsunami-map-map-2.png",
-   "caption": "全国の図（津波注意報・津波予報）",
+   "caption": "全国の図（津波警報・津波注意報の例・見本用に区域を絞った電文）",
    "plan": "Plus以上",
    "group": "map"
   },
   {
    "file": "tsunami-map-map-3.png",
-   "caption": "全国の図（津波予報のみ）",
+   "caption": "全国の図（津波注意報の例・見本用に区域を絞った電文）",
    "plan": "Plus以上",
    "group": "map"
   },
