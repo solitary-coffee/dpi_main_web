@@ -95,7 +95,7 @@ test('manifest: 地方のまとまりには全国の見本が混ざらず、地�
  const manifest = JSON.parse(await read('site/supporter/previews/manifest.json'));
  const group = (type, name) => manifest[type].filter(item => item.group === name);
  for (const [type, name, min] of [['weather-map', 'region', 6], ['warning-table', 'regional', 6],
-  ['hires-radar', 'region', 8], ['tsunami-map', 'enlarged', 6]]) {
+  ['hires-radar', 'region', 8], ['tsunami-map', 'enlarged', 6], ['weather-map', 'municipality', 6]]) {
   const items = group(type, name);
   assert.ok(items.length >= min, `${type}/${name}: ${items.length}`);
   for (const item of items) assert.doesNotMatch(item.caption, /全国/, item.file);
