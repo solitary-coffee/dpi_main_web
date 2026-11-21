@@ -86,3 +86,10 @@
 .preview-result-ng{padding:10px 12px;border-radius:8px;background:#3d2a1e;color:#ffe2c4;font-weight:700}
 /* 画像配信ルール：補足の一言と見本の画像 */
 .rule-help{margin:0;padding:6px 10px;border-left:3px solid #6caee8;color:var(--muted);font-size:.9rem}.rule-preview{display:flex;flex-wrap:wrap;gap:12px}.rule-preview-item{position:relative;margin:0;flex:1 1 220px;max-width:360px;padding:8px;border:1px solid var(--line);border-radius:7px;background:var(--panel)}.rule-preview-item img{display:block;width:100%;height:auto;border-radius:4px}.rule-preview-item figcaption{margin-top:6px;color:var(--muted);font-size:.82rem}.rule-preview-label{position:absolute;top:12px;left:12px;padding:2px 8px;border-radius:999px;background:#24445d;color:#dff1ff;font-size:.78rem;font-weight:700}
+/* 準備中（メンテナンス中）の案内と、受付停止中のボタン */
+.intake-paused-notice{margin:14px 0 22px;padding:16px 18px;border:1px solid #e05260;border-left:6px solid #e05260;border-radius:9px;background:#4a262b;color:#fff;line-height:1.7}
+.intake-paused-notice.hidden{display:none}
+.intake-paused-notice strong{display:block;margin-bottom:4px;font-size:1.2rem;color:#ffb3ba}
+.intake-paused-notice p{margin:2px 0}
+body.intake-paused main button:not(#reload):not([data-preview-plan]){pointer-events:none;opacity:.45}
+body.intake-paused main :is(#rules,#billing) :is(input,select,textarea){pointer-events:none;opacity:.6}

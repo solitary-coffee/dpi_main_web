@@ -12,6 +12,54 @@ const SETTINGS_API = '/site/patlite-admin/api/settings';
 const HISTORY_API = '/site/patlite-admin/api/history';
 const COMMAND_DONE_API = '/site/patlite-admin/api/command/done';
 const DEVICE_API = '/site/patlite-admin/api/device';
+// Cloudflare Access のログインが切れても表示を続けるための鍵（ログイン中に発行してブラウザに保存する）
+const LAMP_KEY_API = '/site/patlite-admin/api/lamp-key';
+const LAMP_API = { [API]: '/api/patlite/lamp/state', [COMMAND_DONE_API]: '/api/patlite/lamp/command-done', [DEVICE_API]: '/api/patlite/lamp/device' };
+const LAMP_KEY_STORAGE = 'patlite-lamp-key';
+const LAMP_KEY_RENEW_SECONDS = 86400;   // ログイン中は 1 日ごとに新しい鍵へ更新する（有効 400 日）
+const lamp = { viaKey: false, renewing: false };
+
+function savedLampKey() {
+    try {
+        const saved = JSON.parse(localStorage.getItem(LAMP_KEY_STORAGE) || 'null');
+        return saved && typeof saved.key === 'string' && Number(saved.expiresAt) > Date.now() / 1000 ? saved : null;
+    } catch { return null; }
+}
+
+// ログイン中に呼ぶ: 鍵が無い・発行から 1 日以上たっていたら新しく発行して保存する
+async function renewLampKey() {
+    const saved = savedLampKey();
+    if (lamp.renewing || (saved && Date.now() / 1000 - Number(saved.issuedAt || 0) < LAMP_KEY_RENEW_SECONDS)) return;
+    lamp.renewing = true;
+    try {
+        const response = await fetch(LAMP_KEY_API, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: '{}' });
+        const data = await response.json().catch(() => null);
+        if (response.ok && data?.success && data.key) {
+            localStorage.setItem(LAMP_KEY_STORAGE, JSON.stringify({ key: data.key, expiresAt: data.expiresAt, issuedAt: Date.now() / 1000 }));
+        }
+    } catch { /* 発行できなくても、ログイン中は今までどおり動く */ } finally { lamp.renewing = false; }
+}
+
+// まずログイン（Access）で読む。読めないとき（ログイン切れ）は、保存してある鍵で Access の外の API を使う
+async function lampFetch(url, init = {}) {
+    let failure = null;
+    try {
+        const response = await fetch(url, { credentials: 'same-origin', ...init });
+        const data = await response.clone().json().catch(() => null);
+        if (response.ok && data) { lamp.viaKey = false; return { response, data }; }
+        if (data && response.status !== 401 && response.status !== 403) return { response, data };   // ログイン以外の理由（入力の誤りなど）
+        failure = new Error(`HTTP ${response.status}`);
+    } catch (error) {
+        failure = error;   // ログイン画面への転送は別サイトなので、通信エラーになる
+    }
+    const saved = savedLampKey();
+    if (!saved || !LAMP_API[url]) throw failure;
+    const response = await fetch(LAMP_API[url], { ...init, credentials: 'omit', headers: { ...(init.headers || {}), Authorization: `Bearer ${saved.key}` } });
+    const data = await response.json().catch(() => null);
+    if (response.status === 401) { try { localStorage.removeItem(LAMP_KEY_STORAGE); } catch { /* 何もしない */ } throw failure; }
+    lamp.viaKey = true;
+    return { response, data };
+}
 const DEVICE_REPORT_SECONDS = 300;
 const MAX_FILTER_HOURS = 168;
 const handledCommands = new Set();   // このページで処理済み（取れなかったものも含む）の依頼 ID
@@ -202,9 +250,9 @@ async function tick() {
 
 async function fetchState() {
     try {
-        const response = await fetch(API, { credentials: 'same-origin', headers: { Accept: 'application/json' }, cache: 'no-store' });
-        const data = await response.json().catch(() => null);
+        const { response, data } = await lampFetch(API, { headers: { Accept: 'application/json' }, cache: 'no-store' });
         if (!response.ok || !data?.success) throw new Error(data?.message || `HTTP ${response.status}`);
+        if (!lamp.viaKey) renewLampKey();
         const now = nowSeconds();
         const offset = now - Number(data.serverTime || now);
         const receivedAt = Number.isFinite(data.receivedAt) ? data.receivedAt + offset : null;
@@ -214,6 +262,7 @@ async function fetchState() {
         if (Array.isArray(data.commands) && data.commands.length) processCommands(data.commands);
         state.lastFetchOk = now;
         state.fetchMessage = receivedAt === null ? '自宅のブリッジからまだ一度も届いていません' : `自宅のブリッジからの最終受信: ${new Date(receivedAt * 1000).toLocaleString('ja-JP')}`;
+        if (lamp.viaKey) state.fetchMessage += '／ログインが切れています（積層灯の表示は続けています。設定の変更・履歴はページを再読み込みしてログインし直してください）';
         if (data.admin) $('admin-email').textContent = data.admin;
     } catch (error) {
         state.fetchMessage = `サイトから読めません（${error.message}）。ログインが切れた場合はページを再読み込みしてください。`;
@@ -225,8 +274,8 @@ function reportDevice(fullStop, now) {
     if (state.reportedFullStop === fullStop && now - state.reportedAt < DEVICE_REPORT_SECONDS) return;
     state.reportedFullStop = fullStop;
     state.reportedAt = now;
-    fetch(DEVICE_API, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify({ fullStop }) })
-        .then((response) => { if (!response.ok) state.reportedAt = 0; })
+    lampFetch(DEVICE_API, { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify({ fullStop }) })
+        .then(({ response }) => { if (!response.ok) state.reportedAt = 0; })
         .catch(() => { state.reportedAt = 0; });
 }
 
@@ -289,8 +338,7 @@ async function processCommands(commands) {
         if (!item?.id || handledCommands.has(item.id)) continue;
         handledCommands.add(item.id);
         try {
-            const response = await fetch(COMMAND_DONE_API, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify({ id: item.id }) });
-            const data = await response.json().catch(() => null);
+            const { response, data } = await lampFetch(COMMAND_DONE_API, { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify({ id: item.id }) });
             if (!response.ok || !data?.claimed) continue;   // 別のページが先に実行した・期限切れ
         } catch {
             continue;

@@ -11,7 +11,7 @@ import { handleChannelDirectoryRequest } from './channel-directory.js';
 import { handleAdminCenterRequest } from './admin-center.js';
 import { handleStatuspageAdminRequest } from './statuspage-admin.js';
 import { handleAccessLogRequest, withAccessLog } from './access-log.js';
-import { handlePatliteIngest } from './patlite-admin.js';
+import { handlePatliteIngest, handlePatliteLamp } from './patlite-admin.js';
 import { handleAssetLinksRequest } from './asset-links.js';
 
 const TOPICS = Object.freeze({
@@ -59,6 +59,9 @@ const application = {
         // 自宅の積層灯ブリッジからの状態送信（機械用。合言葉で確認し、保守中でも受け付ける）
         const patliteIngestResponse = await handlePatliteIngest(request, env);
         if (patliteIngestResponse) return patliteIngestResponse;
+        // 積層灯ページ（Access のログインが切れても、発行済みの鍵で表示だけは続ける）
+        const patliteLampResponse = await handlePatliteLamp(request, env);
+        if (patliteLampResponse) return patliteLampResponse;
         if (isPrivateAssetPath(new URL(request.url).pathname)) {
             return new Response('Not Found', { status: 404, headers: { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' } });
         }

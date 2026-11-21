@@ -15,6 +15,13 @@
 // - 遠隔操作: POST /site/patlite-admin/api/command（ack / fullstop_on / fullstop_off / illum）で依頼を D1 の
 //   patlite_commands に積み、state の応答に未実行の依頼を含める。積層灯ページが実行して
 //   POST /site/patlite-admin/api/command/done で完了にする（done を先に取ったページだけが実行する）。
+// - 積層灯ページ用の鍵（Cloudflare Access のログインが切れても、表示だけは続けるため）:
+//   POST /site/patlite-admin/api/lamp-key（ログイン中の管理者だけ）で、署名付きの鍵（有効 400 日）を発行する。
+//   積層灯ページはこの鍵をブラウザに保存し、ログインが切れて /site/patlite-admin/api/* を読めなくなったら
+//   Access の外にある /api/patlite/lamp/state・/api/patlite/lamp/device・/api/patlite/lamp/command-done を
+//   Authorization: Bearer <鍵> で使う。鍵でできるのは「状態を読む・強制停止の状態を知らせる・依頼を実行済みにする」だけで、
+//   設定の変更・遠隔操作の依頼・履歴の閲覧はできない。鍵をすべて無効にするには PATLITE_LAMP_SECRET
+//   （未設定なら PATLITE_BRIDGE_TOKEN）を変える。
 // 色・点滅・表示時間の決まりはページ側（site/patlite-admin/logic.js）と Arduino の EEPROM 設定で決める。
 
 import { LEGEND, policyFor, suppressionReason } from '../site/patlite-admin/logic.js';
@@ -40,6 +47,9 @@ export const DEFAULT_SETTINGS = Object.freeze({
     filter: Object.freeze({ until: null, level: 'critical' }),
     illumination: Object.freeze({ daily: false, seconds: 20 }),
 });
+
+const LAMP_PATH_PREFIX = '/api/patlite/lamp/';
+export const LAMP_KEY_TTL_SECONDS = 400 * 86400;
 
 export class PatliteAdminError extends Error {
     constructor(status, message, code) {
@@ -83,6 +93,58 @@ export async function handlePatliteIngest(request, env) {
         ON CONFLICT(id) DO UPDATE SET body = excluded.body, generated_at = excluded.generated_at, received_at = excluded.received_at`)
         .bind(JSON.stringify(conditions), generatedAt, receivedAt).run();
     return json({ success: true, accepted: conditions.length }, 202);
+}
+
+// ---------------- 積層灯ページ用の鍵（ログインが切れても表示を続ける） ----------------
+function lampSecret(env) {
+    return String(env.PATLITE_LAMP_SECRET || env.PATLITE_BRIDGE_TOKEN || '').trim();
+}
+
+async function lampSignature(secret, payload) {
+    const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(`patlite-lamp-key:${secret}`), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+    const bytes = new Uint8Array(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(payload)));
+    return [...bytes].map((value) => value.toString(16).padStart(2, '0')).join('');
+}
+
+// ログイン中の管理者に、積層灯ページ用の鍵を発行する
+export async function patliteAdminLampKey(request, env, admin, now = Date.now() / 1000) {
+    sameOriginJson(request);
+    const secret = lampSecret(env);
+    if (!secret) throw new PatliteAdminError(503, '積層灯ページ用の鍵を発行できません（PATLITE_BRIDGE_TOKEN が未設定）。', 'lamp_key_not_configured');
+    const expiresAt = Math.floor(now + LAMP_KEY_TTL_SECONDS);
+    const payload = `v1.${expiresAt}.${crypto.randomUUID().replaceAll('-', '')}`;
+    console.log('patlite lamp key issued', { admin: String(admin?.email || '').slice(0, 200), expiresAt });
+    return { success: true, key: `${payload}.${await lampSignature(secret, payload)}`, expiresAt };
+}
+
+export async function lampKeyValid(env, key, now = Date.now() / 1000) {
+    const secret = lampSecret(env);
+    const match = String(key || '').match(/^(v1\.(\d{9,12})\.[0-9a-f]{32})\.([0-9a-f]{64})$/u);
+    if (!secret || !match || Number(match[2]) <= now) return false;
+    const [left, right] = await Promise.all([digest(await lampSignature(secret, match[1])), digest(match[3])]);
+    return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+// Access の外: 鍵を持つ積層灯ページだけが使う（保守中でも受け付ける）
+export async function handlePatliteLamp(request, env) {
+    const pathname = new URL(request.url).pathname.replace(/\/+$/u, '');
+    if (!pathname.startsWith(LAMP_PATH_PREFIX)) return null;
+    const action = pathname.slice(LAMP_PATH_PREFIX.length);
+    const method = { state: 'GET', device: 'POST', 'command-done': 'POST' }[action];
+    if (!method) return json({ success: false, code: 'not_found' }, 404);
+    if (request.method !== method) return json({ success: false, code: 'method_not_allowed' }, 405, { Allow: method });
+    const bearer = String(request.headers.get('authorization') || '').match(/^Bearer\s+(.+)$/iu);
+    if (!await lampKeyValid(env, bearer ? bearer[1].trim() : '')) return json({ success: false, code: 'unauthorized' }, 401);
+    const actor = { email: 'lamp-key' };
+    try {
+        if (action === 'state') return json({ ...await patliteAdminState(env, null), viaLampKey: true });
+        if (action === 'device') return json(await patliteAdminDevice(request, env, actor));
+        return json(await patliteAdminCommandDone(request, env, actor));
+    } catch (error) {
+        if (error instanceof PatliteAdminError) return json({ success: false, code: error.code, message: error.publicMessage }, error.status);
+        console.error('patlite lamp api failed', { errorName: error?.name || 'Error' });
+        return json({ success: false, code: 'internal_error' }, 500);
+    }
 }
 
 export async function patliteAdminState(env, admin) {

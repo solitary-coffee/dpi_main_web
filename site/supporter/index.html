@@ -44,6 +44,12 @@
      <li>表示している価格・機能は、正式公開までに変わる場合があります。</li>
     </ul>
    </div>
+   <!-- 準備中（メンテナンス中）の案内：/api/supporter/plans の intakePaused が true のときだけ app.js が表示する -->
+   <div id="intake-paused-notice" class="intake-paused-notice hidden" role="alert">
+    <strong>現在準備中（メンテナンス中）です</strong>
+    <p>Discordでのログインはできますが、お申込み・お支払い・契約変更・通知設定の保存は受け付けていません。再開までお待ちください。</p>
+    <p>ログイン不要のテスト支払いページ（この下）は、引き続きお試しいただけます。</p>
+   </div>
    <p id="status" class="form-status" role="status" aria-live="polite"></p>
    <div id="account-enforcement" class="billing-suspension hidden" role="alert"></div>
    <!-- テスト公開中だけ：ログイン不要のテスト支払い（正式公開時に削除） -->

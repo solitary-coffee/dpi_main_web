@@ -732,6 +732,12 @@ export function supporterPublicEnabled(env) {
 export function supporterPreviewOpen(env) {
  return clean(env.SUPPORTER_PREVIEW_OPEN).toLowerCase() === 'true';
 }
+// 準備中（メンテナンス中）：ログインと閲覧はできるが、申込み・支払い・契約変更・通知設定の保存は受け付けない。
+// ログイン不要のテスト支払い（preview-checkout）と Stripe の Webhook は対象外。
+export const SUPPORTER_INTAKE_PAUSED_MESSAGE = '現在準備中（メンテナンス中）のため、お申込み・お支払い・契約変更・通知設定の保存は受け付けていません。再開までお待ちください。';
+export function supporterIntakePaused(env) {
+ return clean(env.SUPPORTER_INTAKE_PAUSED).toLowerCase() === 'true';
+}
 export function supporterTestUserAllowed(env, discordUserId) {
  if (supporterPublicEnabled(env) || supporterPreviewOpen(env)) return true;
  const allowed = new Set(clean(env.SUPPORTER_TEST_USER_IDS)
@@ -1133,7 +1139,7 @@ export async function handleSupporterRequest(request, env, ctx) {
    return response(await createPreviewCheckout(env, clean(input?.plan), input));
   }
   if (path === '/api/supporter/plans' && request.method === 'GET' && (supporterPublicEnabled(env) || supporterPreviewOpen(env))) {
-   return response({billingEnabled:false, deliveryEnabled:false, plans:publicPlans(), addons:{channel:{yen:200,channels:3},server:{yen:200,servers:2},rule:{yen:200,rules:3},prorated:false},billingDay:26});
+   return response({billingEnabled:false, intakePaused:supporterIntakePaused(env), deliveryEnabled:false, plans:publicPlans(), addons:{channel:{yen:200,channels:3},server:{yen:200,servers:2},rule:{yen:200,rules:3},prorated:false},billingDay:26});
   }
   let session;
   try { session = await requireSession(request, {...env,REUSE_DB:db}); }
@@ -1141,7 +1147,7 @@ export async function handleSupporterRequest(request, env, ctx) {
   const uid = session.discord_user_id;
   if (!supporterTestUserAllowed(env, uid) && !(await reviewCookieValid(request, env))) return notFound();
   if (path === '/api/supporter/plans' && request.method === 'GET') {
-   return response({billingEnabled:false, deliveryEnabled:false, plans:publicPlans(), addons:{channel:{yen:200,channels:3},server:{yen:200,servers:2},rule:{yen:200,rules:3},prorated:false},billingDay:26});
+   return response({billingEnabled:false, intakePaused:supporterIntakePaused(env), deliveryEnabled:false, plans:publicPlans(), addons:{channel:{yen:200,channels:3},server:{yen:200,servers:2},rule:{yen:200,rules:3},prorated:false},billingDay:26});
   }
   if (path === '/api/supporter/options' && request.method === 'GET') {
    return response(supporterOptions(env));
@@ -1150,6 +1156,7 @@ export async function handleSupporterRequest(request, env, ctx) {
    const areas=await loadSupporterAreaCatalogue();
    return response({municipalities:areas.municipalities,districts:areas.districts,source:areas.source});
   }
+  if (request.method !== 'GET' && supporterIntakePaused(env)) return response({message:SUPPORTER_INTAKE_PAUSED_MESSAGE,intakePaused:true},503);
   if (request.method !== 'GET') { assertSameOrigin(request); assertCsrf(request,session); }
   if (/^\/api\/supporter\/billing\/(checkout|topup|preview-update|update|portal|status)$/.test(path)) {
    const expected=path.endsWith('/status')?'GET':'POST';
@@ -1173,7 +1180,7 @@ export async function handleSupporterRequest(request, env, ctx) {
    const discordName=clean(session.discord_username).slice(0,100);
    if(discordName)await db.prepare('UPDATE supporter_accounts SET discord_name=? WHERE discord_user_id=? AND COALESCE(discord_name,\'\')<>?').bind(discordName,uid,discordName).run();
    const account = await db.prepare('SELECT * FROM supporter_accounts WHERE discord_user_id=?').bind(uid).first();
-   return response({account,customPlan:customPublic(await getCustomPlan(db,uid)),deliveryEnabled:false,billingEnabled:billingReady(env)});
+   return response({account,customPlan:customPublic(await getCustomPlan(db,uid)),deliveryEnabled:false,billingEnabled:billingReady(env),intakePaused:supporterIntakePaused(env)});
   }
   if (path === '/api/supporter/account' && request.method === 'POST') {
    const input = await readJson(request);
