@@ -7,10 +7,13 @@
 //   - 一時停止・時間帯設定（旧・夜間モード）・一時的な絞り込み（今から N 時間は重大のみ／中以上）は
 //     サイトの設定（/site/patlite-admin/api/settings）を直接変える
 //   - 強制停止・一時停止は 1 秒長押しで実行（誤操作防止）。画面を消さない（Screen Wake Lock）
+//   - Access のログインが切れても、保存した鍵（../patlite-admin/lamp-key.js）と保存したページ本体（sw.js）で表示を続ける
+//   - Arduino をつないだ積層灯ページからの報告（5 分ごと）が途絶えたら、実機が点いていないおそれを状態の欄に出す
 //   - 色の一覧（重大 / 中 / 軽）を左の情報欄のいちばん下に出す
 import { COLORS, COLOR_NAMES, FILTER_LEVELS, LEGEND, PatliteEngine, colorText, filterText, flashText, legendByLevel, policyFor, snoozeText } from '../patlite-admin/logic.js';
 
-const STATE_API = '/site/patlite-admin/api/state';
+import { STATE_API, lamp, lampFetch, registerShell, renewLampKey } from '../patlite-admin/lamp-key.js';
+
 const HISTORY_API = '/site/patlite-admin/api/history?days=1';
 const SETTINGS_API = '/site/patlite-admin/api/settings';
 const COMMAND_API = '/site/patlite-admin/api/command';
@@ -21,6 +24,7 @@ const HOLD_MS = 1000;   // data-hold の秒数を掛ける（無期限停止は 
 const MAX_CUSTOM_HOURS = 168;
 const COMMAND_LABELS = { ack: '確認', fullstop_on: '強制停止', fullstop_off: '強制停止の解除' };
 const COMMAND_NOTES = { ack: '積層灯ページが 5 秒以内に受け取り、その 3 秒後に消灯' };
+const DEVICE_LATE_SECONDS = 11 * 60;   // 積層灯ページは 5 分ごとに報告する。2 回続けて届かなければ未接続とみなす
 const WAKE_KEY = 'control-deck-wake';
 
 const $ = (id) => document.getElementById(id);
@@ -28,7 +32,7 @@ const nowSeconds = () => Date.now() / 1000;
 const esc = (value) => String(value ?? '').replace(/[&<>"']/gu, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
 const engine = new PatliteEngine(nowSeconds());
 const shortTime = (seconds) => new Date(seconds * 1000).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
-const state = { settings: null, receivedAt: null, lastOk: null, error: '', wakeLock: null, wantWake: false, toastTimer: null };
+const state = { settings: null, receivedAt: null, deviceAt: undefined, lastOk: null, error: '', wakeLock: null, wantWake: false, toastTimer: null };
 
 function toast(text, tone = 'good') {
     const element = $('toast');
@@ -46,7 +50,7 @@ async function api(url, body) {
         body: body ? JSON.stringify(body) : undefined,
     });
     const data = await response.json().catch(() => null);
-    if (!response.ok || !data?.success) throw new Error(data?.message || `HTTP ${response.status}（ログインが切れたら再読み込み）`);
+    if (!response.ok || !data?.success) throw new Error(data?.message || `HTTP ${response.status}（ログインが切れていたら「ログインし直す」）`);
     return data;
 }
 
@@ -55,6 +59,14 @@ function renderClock() {
     const now = new Date();
     $('clock-time').textContent = now.toLocaleTimeString('ja-JP', { hour12: false });
     $('clock-date').textContent = now.toLocaleDateString('ja-JP', { month: 'long', day: 'numeric', weekday: 'short' });
+}
+
+// Arduino をつないだ積層灯ページから報告が来ていないとき、その説明（来ていれば ''）
+function deviceProblem(now) {
+    if (state.deviceAt === undefined) return '';
+    if (state.deviceAt === null) return '実機の積層灯: 未接続（報告がありません）';
+    const age = now - state.deviceAt;
+    return age > DEVICE_LATE_SECONDS ? `実機の積層灯: 未接続のおそれ（${duration(age)}報告なし）` : '';
 }
 
 function render() {
@@ -68,12 +80,16 @@ function render() {
     const policy = policyFor(state.settings, now);
     const notes = [];
     if (state.error) notes.push(state.error);
+    else if (lamp.viaKey) notes.push('ログイン切れ（表示は継続・操作はログイン後）');
+    const deviceLate = deviceProblem(now);
+    if (deviceLate) notes.push(deviceLate);
     if (state.receivedAt) notes.push(`自宅から最終受信 ${new Date(state.receivedAt * 1000).toLocaleTimeString('ja-JP', { hour12: false })}`);
     if (policy.snoozed) notes.push(snoozeText(state.settings, now));
     else if (filterText(state.settings, now)) notes.push(filterText(state.settings, now));
     if (policy.fullStop) notes.push('強制停止中');
     $('status').textContent = notes.join(' / ') || '読み込み中…';
-    $('status').classList.toggle('bad', Boolean(state.error));
+    $('status').classList.toggle('bad', Boolean(state.error || deviceLate));
+    $('login-link').hidden = !lamp.loginLost;
     const nightOn = Boolean(state.settings?.night?.enabled);
     const nightLevel = FILTER_LEVELS[state.settings?.night?.level === 'medium' ? 'medium' : 'critical'].label;
     $('night-label').innerHTML = `時間帯設定: ${nightOn ? 'ON' : 'OFF'}<small>${nightOn ? `${esc(state.settings.night.start)}〜${esc(state.settings.night.end)} ${esc(nightLevel)}` : 'タップで切り替え'}</small>`;
@@ -88,7 +104,9 @@ function render() {
 
 async function loadState() {
     try {
-        const data = await api(STATE_API);
+        const { response, data } = await lampFetch(STATE_API, { headers: { Accept: 'application/json' }, cache: 'no-store' });
+        if (!response.ok || !data?.success) throw new Error(data?.message || `HTTP ${response.status}`);
+        if (!lamp.viaKey) renewLampKey();
         const now = nowSeconds();
         const offset = now - Number(data.serverTime || now);
         state.receivedAt = Number.isFinite(data.receivedAt) ? data.receivedAt + offset : null;
@@ -96,6 +114,7 @@ async function loadState() {
         state.settings = data.settings || null;
         engine.settings = state.settings;
         engine.device = data.device || null;
+        state.deviceAt = Number.isFinite(data.device?.reportedAt) ? data.device.reportedAt + offset : null;
         state.lastOk = now;
         state.error = '';
     } catch (error) {
@@ -333,6 +352,7 @@ async function toggleWake() {
 }
 
 function start() {
+    registerShell('sw.js');
     for (const tile of document.querySelectorAll('.deck-tile[data-command], .deck-tile[data-snooze]')) bindTile(tile);
     $('night-tile').addEventListener('click', () => {
         const night = { ...(state.settings?.night || { start: '22:00', end: '07:00', level: 'critical' }) };

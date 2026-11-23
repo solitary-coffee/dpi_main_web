@@ -44,3 +44,5 @@
 .patlite-level-中 { background: #ffb020; color: #111; }
 .patlite-level-軽 { background: #5d6772; color: #fff; }
 .patlite-suppressed { color: #ffce6a; }
+#login-notice[hidden] { display: none; }
+#login-notice a { color: inherit; font-weight: 800; }

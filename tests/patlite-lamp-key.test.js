@@ -83,7 +83,8 @@ test('ページはログインで読めないときだけ鍵に切り替え、Wo
     const script = await readFile(new URL('../site/patlite-admin/script.js', import.meta.url), 'utf8');
     assert.match(script, /const \{ response, data \} = await lampFetch\(API,/u);
     assert.match(script, /if \(!lamp\.viaKey\) renewLampKey\(\);/u);
-    assert.match(script, /credentials: 'omit', headers: \{ \.\.\.\(init\.headers \|\| \{\}\), Authorization: `Bearer \$\{saved\.key\}` \}/u);
+    const key = await readFile(new URL('../site/patlite-admin/lamp-key.js', import.meta.url), 'utf8');
+    assert.match(key, /credentials: 'omit', headers: \{ \.\.\.\(init\.headers \|\| \{\}\), Authorization: `Bearer \$\{saved\.key\}` \}/u);
     const index = await readFile(new URL('../worker/index.js', import.meta.url), 'utf8');
     assert.ok(index.indexOf('handlePatliteLamp(request, env)') < index.indexOf("publicMaintenanceGate(request, env, 'main')"));
 });
