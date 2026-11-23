@@ -3,63 +3,17 @@
 //   - 5 秒ごとに /site/patlite-admin/api/state（自宅の積層灯ブリッジが送った「いま起きていること」）を読む
 //   - 1 秒ごとに Arduino の状態を読み（GET_STATUS）、表示すべき色と違えば SET を送る
 //   - 表示時間などの設定は Arduino の EEPROM に保存されている（CFG_GET / CFG_SET）。どの PC につないでも同じ設定で動く
-//   - 一度つないだ Arduino は、次からはページを開く・USB を挿すだけで自動でつながる
+//   - 一度つないだ Arduino は、次からはページを開く・USB を挿すだけで自動でつながる。通信が切れたら 15 秒ごとにつなぎ直す（「切断」を押したときを除く）
+//   - Access のログインが切れても、保存した鍵（lamp-key.js）と保存したページ本体（sw.js）で、再読み込み・再起動の後も表示を続ける
 //   - Arduino の強制停止の状態を、変わったときと 5 分ごとにサイトへ知らせる（履歴の「強制停止により無連動」に使う）
 import { COLORS, COLOR_NAMES, LEGEND, ACK_EVENTS, ACK_DELAY_SECONDS, FILTER_LEVELS, LINK_TIMEOUT_SECONDS, MAX_RECOVERY_SECONDS, PatliteEngine, colorText, dailyIlluminationMinute, filterText, flashText, jstMinutes, legendByLevel, parseConfig, parseStatus, policyFor, sameLamps, setCommand, snoozeText } from './logic.js';
 
-const API = '/site/patlite-admin/api/state';
+import { COMMAND_DONE_API, DEVICE_API, STATE_API as API, lamp, lampFetch, openedForLogin, registerShell, renewLampKey } from './lamp-key.js';
+
 const SETTINGS_API = '/site/patlite-admin/api/settings';
 const HISTORY_API = '/site/patlite-admin/api/history';
-const COMMAND_DONE_API = '/site/patlite-admin/api/command/done';
-const DEVICE_API = '/site/patlite-admin/api/device';
-// Cloudflare Access のログインが切れても表示を続けるための鍵（ログイン中に発行してブラウザに保存する）
-const LAMP_KEY_API = '/site/patlite-admin/api/lamp-key';
-const LAMP_API = { [API]: '/api/patlite/lamp/state', [COMMAND_DONE_API]: '/api/patlite/lamp/command-done', [DEVICE_API]: '/api/patlite/lamp/device' };
-const LAMP_KEY_STORAGE = 'patlite-lamp-key';
-const LAMP_KEY_RENEW_SECONDS = 86400;   // ログイン中は 1 日ごとに新しい鍵へ更新する（有効 400 日）
-const lamp = { viaKey: false, renewing: false };
-
-function savedLampKey() {
-    try {
-        const saved = JSON.parse(localStorage.getItem(LAMP_KEY_STORAGE) || 'null');
-        return saved && typeof saved.key === 'string' && Number(saved.expiresAt) > Date.now() / 1000 ? saved : null;
-    } catch { return null; }
-}
-
-// ログイン中に呼ぶ: 鍵が無い・発行から 1 日以上たっていたら新しく発行して保存する
-async function renewLampKey() {
-    const saved = savedLampKey();
-    if (lamp.renewing || (saved && Date.now() / 1000 - Number(saved.issuedAt || 0) < LAMP_KEY_RENEW_SECONDS)) return;
-    lamp.renewing = true;
-    try {
-        const response = await fetch(LAMP_KEY_API, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: '{}' });
-        const data = await response.json().catch(() => null);
-        if (response.ok && data?.success && data.key) {
-            localStorage.setItem(LAMP_KEY_STORAGE, JSON.stringify({ key: data.key, expiresAt: data.expiresAt, issuedAt: Date.now() / 1000 }));
-        }
-    } catch { /* 発行できなくても、ログイン中は今までどおり動く */ } finally { lamp.renewing = false; }
-}
-
-// まずログイン（Access）で読む。読めないとき（ログイン切れ）は、保存してある鍵で Access の外の API を使う
-async function lampFetch(url, init = {}) {
-    let failure = null;
-    try {
-        const response = await fetch(url, { credentials: 'same-origin', ...init });
-        const data = await response.clone().json().catch(() => null);
-        if (response.ok && data) { lamp.viaKey = false; return { response, data }; }
-        if (data && response.status !== 401 && response.status !== 403) return { response, data };   // ログイン以外の理由（入力の誤りなど）
-        failure = new Error(`HTTP ${response.status}`);
-    } catch (error) {
-        failure = error;   // ログイン画面への転送は別サイトなので、通信エラーになる
-    }
-    const saved = savedLampKey();
-    if (!saved || !LAMP_API[url]) throw failure;
-    const response = await fetch(LAMP_API[url], { ...init, credentials: 'omit', headers: { ...(init.headers || {}), Authorization: `Bearer ${saved.key}` } });
-    const data = await response.json().catch(() => null);
-    if (response.status === 401) { try { localStorage.removeItem(LAMP_KEY_STORAGE); } catch { /* 何もしない */ } throw failure; }
-    lamp.viaKey = true;
-    return { response, data };
-}
+const RECONNECT_EVERY_TICKS = 15;   // 通信が切れた Arduino へ、つなぎ直しを試す間隔（秒）
+const MAX_STATUS_FAILURES = 5;      // 状態を続けて読めない回数がこれになったら、一度閉じてつなぎ直す
 const DEVICE_REPORT_SECONDS = 300;
 const MAX_FILTER_HOURS = 168;
 const handledCommands = new Set();   // このページで処理済み（取れなかったものも含む）の依頼 ID
@@ -89,7 +43,7 @@ const nowSeconds = () => Date.now() / 1000;
 const esc = (value) => String(value ?? '').replace(/[&<>"']/gu, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
 
 const engine = new PatliteEngine(nowSeconds());
-const serial = { port: null, reader: null, writer: null, buffer: '', pending: null, chain: Promise.resolve(), readyWaiter: null, connected: false };
+const serial = { port: null, reader: null, writer: null, buffer: '', pending: null, chain: Promise.resolve(), readyWaiter: null, connected: false, opening: false, manualClose: false, failures: 0 };
 const state = { settings: null, savingSettings: false, illuminationDone: '', lastStatus: null, lastEventCounter: null, manualUntil: 0, ticks: 0, fetchMessage: '未取得', lastFetchOk: null, busy: false, config: null, wakeLock: null, reportedFullStop: null, reportedAt: 0 };
 
 // ---------------- シリアル ----------------
@@ -131,14 +85,14 @@ async function readLoop(port) {
             try { serial.reader.releaseLock(); } catch { /* 切断済み */ }
         }
     }
-    if (serial.port === port) await closeSerial('Arduino との通信が切れました。USB を挿し直すと自動でつながります。');
+    if (serial.port === port) await closeSerial('Arduino との通信が切れました。自動でつなぎ直します。');
 }
 
 function command(text, timeoutMs = 1500) {
     const run = () => new Promise((resolve, reject) => {
         if (!serial.writer) { reject(new Error('Arduino に接続していません。')); return; }
         const timer = setTimeout(() => { serial.pending = null; reject(new Error(`応答がありません（${text.split(' ')[0]}）`)); }, timeoutMs);
-        serial.pending = { resolve, timer };
+        serial.pending = { resolve, reject, timer };
         serial.writer.write(new TextEncoder().encode(`${text}\n`)).catch((error) => { clearTimeout(timer); serial.pending = null; reject(error); });
     });
     const result = serial.chain.then(run, run);
@@ -147,7 +101,12 @@ function command(text, timeoutMs = 1500) {
 }
 
 async function openSerial(port) {
-    if (serial.port) return;
+    if (serial.port || serial.opening) return;
+    serial.opening = true;
+    try { await openPort(port); } finally { serial.opening = false; }
+}
+
+async function openPort(port) {
     setConnection('接続中…（Arduino は接続時に再起動します）', 'warn');
     try {
         await port.open({ baudRate: 115200 });
@@ -171,6 +130,8 @@ async function openSerial(port) {
         if (config) applyConfig(config);
         else setConnection('Arduino から設定を読めませんでした（Ver.2.1 以降が必要）。既定の設定で動かします。', 'warn');
         serial.connected = true;
+        serial.manualClose = false;
+        serial.failures = 0;
         state.lastEventCounter = null;
         setConnection(`Arduino に接続しました（${portLabel(port)}）`, 'good');
     } catch (error) {
@@ -183,7 +144,13 @@ async function closeSerial(message) {
     const port = serial.port;
     serial.connected = false;
     serial.port = null;
-    if (serial.pending) { clearTimeout(serial.pending.timer); serial.pending = null; }
+    // 返事待ちの命令は必ず終わらせる（終わらせないと、後の命令がずっと順番待ちになり、つなぎ直しても未接続のままになる）
+    if (serial.pending) {
+        const { reject, timer } = serial.pending;
+        serial.pending = null;
+        clearTimeout(timer);
+        reject(new Error('通信が切れました。'));
+    }
     try { await serial.reader?.cancel(); } catch { /* 無視 */ }
     try { serial.writer?.releaseLock(); } catch { /* 無視 */ }
     serial.writer = null;
@@ -192,6 +159,18 @@ async function closeSerial(message) {
     state.lastStatus = null;
     setConnection(message || '切断しました。', 'warn');
     render();
+}
+
+// 通信が切れた Arduino へつなぎ直す（許可済みの機器だけ。「切断」を押した後・ログインし直すためのタブでは行わない）
+async function reconnectSerial() {
+    if (serial.port || serial.opening || serial.manualClose || openedForLogin()) return;
+    try {
+        const source = savedTransport() === 'usb' ? await usbSerial() : navigator.serial;
+        const ports = source ? await source.getPorts() : [];
+        if (ports[0] && !serial.port) await openSerial(ports[0]);
+    } catch (error) {
+        console.warn('serial reconnect failed', error);
+    }
 }
 
 function portLabel(port) {
@@ -214,11 +193,13 @@ async function tick() {
     state.ticks += 1;
     if (state.ticks % FETCH_EVERY_TICKS === 1) fetchState();
     if (state.ticks % HISTORY_EVERY_TICKS === 1) loadHistory();
+    if (!serial.connected && state.ticks % RECONNECT_EVERY_TICKS === 0) reconnectSerial();
     if (!serial.connected || state.busy) { render(); return; }
     state.busy = true;
     try {
         const status = parseStatus(await command('GET_STATUS'));
         if (!status) throw new Error('状態を読めませんでした。');
+        serial.failures = 0;
         const now = nowSeconds();
         if (status.ackPending) engine.dismissRecovered();   // ボタンの短押しを受け付けた: 復旧の緑はすぐ消す（ほかは 3 秒後）
         engine.device = { fullStop: status.fullStop };
@@ -241,7 +222,9 @@ async function tick() {
             }
         }
     } catch (error) {
-        setConnection(`Arduino との通信で問題: ${error.message}`, 'warn');
+        serial.failures += 1;
+        if (serial.failures >= MAX_STATUS_FAILURES && serial.connected) await closeSerial('Arduino から返事がありません。自動でつなぎ直します。');
+        else if (serial.connected) setConnection(`Arduino との通信で問題: ${error.message}`, 'warn');
     } finally {
         state.busy = false;
     }
@@ -262,10 +245,10 @@ async function fetchState() {
         if (Array.isArray(data.commands) && data.commands.length) processCommands(data.commands);
         state.lastFetchOk = now;
         state.fetchMessage = receivedAt === null ? '自宅のブリッジからまだ一度も届いていません' : `自宅のブリッジからの最終受信: ${new Date(receivedAt * 1000).toLocaleString('ja-JP')}`;
-        if (lamp.viaKey) state.fetchMessage += '／ログインが切れています（積層灯の表示は続けています。設定の変更・履歴はページを再読み込みしてログインし直してください）';
+        if (lamp.viaKey) state.fetchMessage += '／ログインが切れています（積層灯の表示は続けています）';
         if (data.admin) $('admin-email').textContent = data.admin;
     } catch (error) {
-        state.fetchMessage = `サイトから読めません（${error.message}）。ログインが切れた場合はページを再読み込みしてください。`;
+        state.fetchMessage = `サイトから読めません（${error.message}）`;
     }
 }
 
@@ -315,6 +298,10 @@ function render() {
     $('shown').innerHTML = shown.length
         ? shown.map((item) => `<tr><td>${chips(item.colors)}</td><td>${levelBadge(item.level)}</td><td>${esc(item.title)}</td><td>${stateText(item)}</td><td>${new Date(item.since * 1000).toLocaleString('ja-JP')}</td></tr>`).join('')
         : '<tr><td>—</td><td>—</td><td>すべて正常（消灯）</td><td>消灯</td><td>—</td></tr>';
+    $('login-notice').hidden = !lamp.loginLost;
+    $('login-notice-text').textContent = lamp.viaKey
+        ? 'Cloudflare のログインが切れています。積層灯の表示は続けています。設定の変更・履歴は、ログインし直すと使えます。'
+        : 'サイトから読めません。Cloudflare のログインが切れている可能性があります。ログインし直すまで、積層灯に新しい情報は出ません。';
     $('connect-btn').hidden = serial.connected;
     $('connect-any-btn').hidden = serial.connected;
     $('connect-usb-btn').hidden = serial.connected || !('usb' in navigator);
@@ -566,14 +553,15 @@ function updateWakeButton() {
 }
 
 function start() {
+    registerShell('sw.js');
     renderLegend();
     if (!('serial' in navigator)) {
         setConnection('このブラウザは Web Serial に対応していません。PC か Chromebook の Chrome（または Edge）で開いてください。', 'bad');
         $('connect-btn').disabled = true;
     } else {
         setConnection('Arduino 未接続。「Arduino に接続」を押して、Arduino の USB ポートを選んでください。', 'warn');
-        if (savedTransport() !== 'usb') navigator.serial.getPorts().then((ports) => { if (ports[0]) openSerial(ports[0]); });
-        navigator.serial.addEventListener('connect', (event) => { if (!serial.port) openSerial(event.target); });
+        if (savedTransport() !== 'usb' && !openedForLogin()) navigator.serial.getPorts().then((ports) => { if (ports[0]) openSerial(ports[0]); });
+        navigator.serial.addEventListener('connect', (event) => { if (!serial.port && !openedForLogin()) openSerial(event.target); });
         navigator.serial.addEventListener('disconnect', (event) => { if (serial.port === event.target) closeSerial('Arduino が外されました。挿し直すと自動でつながります。'); });
     }
     $('connect-btn').addEventListener('click', async () => {
@@ -598,11 +586,11 @@ function start() {
         }
     });
     if ('usb' in navigator) {
-        if (savedTransport() === 'usb') {
+        if (savedTransport() === 'usb' && !openedForLogin()) {
             usbSerial().then((usb) => usb.getPorts()).then((ports) => { if (ports[0] && !serial.port) openSerial(ports[0]); }).catch(() => {});
         }
         navigator.usb.addEventListener('connect', () => {
-            if (serial.port || savedTransport() !== 'usb') return;
+            if (serial.port || savedTransport() !== 'usb' || openedForLogin()) return;
             usbSerial().then((usb) => usb.getPorts()).then((ports) => { if (ports[0] && !serial.port) openSerial(ports[0]); }).catch(() => {});
         });
         navigator.usb.addEventListener('disconnect', (event) => {
@@ -621,7 +609,7 @@ function start() {
             else setConnection('シリアル機器が 1 つも見つかりませんでした。下の「対応デバイスが見つかりません」と出るときの手順を確認してください。', 'bad');
         }
     });
-    $('disconnect-btn').addEventListener('click', () => closeSerial('切断しました。'));
+    $('disconnect-btn').addEventListener('click', () => { serial.manualClose = true; closeSerial('切断しました。'); });
     $('resume-btn').addEventListener('click', () => { state.manualUntil = 0; render(); });
     $('ack-btn').addEventListener('click', acknowledgeFromPage);
     $('fullstop-btn').addEventListener('click', toggleFullStop);
@@ -643,6 +631,7 @@ function start() {
     document.addEventListener('visibilitychange', () => { if (!document.hidden && state.wakeLock === null && $('wake-btn').dataset.want === '1') toggleWakeLock(); });
     $('wake-btn').addEventListener('click', () => { $('wake-btn').dataset.want = state.wakeLock ? '0' : '1'; });
     updateWakeButton();
+    if (openedForLogin()) setConnection('ログインし直しました。このタブは閉じて、積層灯のタブに戻ってください（積層灯のタブはそのまま続きます）。', 'good');
     const ticker = new Worker('ticker.js');
     ticker.addEventListener('message', () => { tick(); });
     fetchState().then(render);

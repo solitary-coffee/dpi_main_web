@@ -32,6 +32,8 @@ body.deck { padding: max(10px, env(safe-area-inset-top)) max(10px, env(safe-area
 .deck-lamp.white { background: #f2f2f2; color: #f2f2f2; }
 .deck-status { grid-column: 1 / -1; font-size: .9rem; overflow-wrap: anywhere; }
 .deck-status.bad { color: #ffb3ad; }
+.deck-login { grid-column: 1 / -1; justify-self: start; padding: 4px 12px; border: 1px solid #ffb3ad; border-radius: 999px; color: #ffb3ad; font-size: .9rem; white-space: nowrap; }
+.deck-login[hidden] { display: none; }
 .deck-main { display: grid; gap: 10px; grid-template-columns: minmax(0, 1fr); }
 .deck-panel { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 10px 12px; min-width: 0; }
 .deck-panel h2 { margin: 0 0 6px; font-size: .95rem; color: var(--muted); font-weight: 700; }

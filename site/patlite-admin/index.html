@@ -44,6 +44,7 @@
                 <div class="admin-bar"><span id="admin-email"></span><button id="connect-btn" type="button">Arduino に接続</button><button id="connect-any-btn" type="button" title="一覧に Arduino が出ないとき">すべての機器から選ぶ</button><button id="connect-usb-btn" type="button" title="Chromebook で Arduino が見つからないとき">WebUSB で接続</button><button id="disconnect-btn" type="button" hidden>切断</button><button id="wake-btn" type="button">画面を消さない: OFF</button></div>
             </header>
             <div id="connection" class="patlite-connection patlite-warn" role="status" aria-live="polite">読み込み中…</div>
+            <div id="login-notice" class="patlite-connection patlite-bad" role="alert" hidden><span id="login-notice-text"></span> <a href="/site/patlite-admin/?login=1" target="_blank" rel="noopener">ログインし直す（別のタブで開きます）</a></div>
             <details class="patlite-help">
                 <summary>「対応デバイスが見つかりません」と出るとき（Chromebook）</summary>
                 <ol>
