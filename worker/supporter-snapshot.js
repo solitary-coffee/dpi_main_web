@@ -2,7 +2,7 @@ import { geographicEntitlements, geographicRuleAllowed } from './supporter-geo.j
 import { enrichCustomGroup } from './supporter-custom.js';
 import { billingReady } from './supporter-billing.js';
 import { planFeatures, hasFeature, imageTier } from '../site/supporter/plan-features.js';
-import { IMAGE_RULE_TYPES, isImageRuleType, isImageRuleV2Type, imageRulesEnabled, imageRulesV2Enabled, imageRuleSnapshotFields } from './supporter-image-rules.js';
+import { IMAGE_RULE_TYPES, isImageRuleType, isImageRuleV2Type, deliveredImageType, imageRulesEnabled, imageRulesV2Enabled, imageRuleSnapshotFields } from './supporter-image-rules.js';
 const ACTIVE_SUBSCRIPTION_STATUSES = new Set(['active', 'trialing', 'past_due', 'unpaid', 'paused']);
 const ALLOWED_RULE_TYPES = new Set(['earthquake', 'eew', 'weather', 'rain-radar', ...IMAGE_RULE_TYPES]);
 const SNAPSHOT_TTL_SECONDS = 30 * 60 * 60;
@@ -107,7 +107,7 @@ export async function buildSupporterSnapshot(db, env, loadSubscriptions, nowMs =
                 if (!fields) continue;
                 const id = `rule-${await digestPrefix(`${row.discord_user_id}:${Number(row.revision) || 0}:${index + 1}`)}`;
                 const base = normalizedRule(rule, id);
-                if (base) rules.push({id, name: clean(rule.name).slice(0, 80), type: base.type, guildId: base.guildId, channelId: base.channelId, channelIds: base.channelIds, ...fields});
+                if (base) rules.push({id, name: clean(rule.name).slice(0, 80), type: deliveredImageType(base.type), guildId: base.guildId, channelId: base.channelId, channelIds: base.channelIds, ...fields});
                 continue;
             }
             // Never broaden a previously paid geographic filter on downgrade.

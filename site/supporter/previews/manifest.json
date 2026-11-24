@@ -273,36 +273,38 @@
    "caption": "地方の表（沖縄地方）",
    "plan": "Pro以上",
    "group": "regional"
+  }
+ ],
+ "warning-timeseries": [
+  {
+   "file": "warning-timeseries-1.png",
+   "caption": "時系列予想（熊本地方気象台）",
+   "plan": "Pro以上",
+   "group": "all"
   },
   {
-   "file": "warning-table-timeseries.png",
-   "caption": "時系列の表（熊本地方気象台）",
+   "file": "warning-timeseries-2.png",
+   "caption": "時系列予想（岐阜地方気象台）",
    "plan": "Pro以上",
-   "group": "timeseries"
+   "group": "all"
   },
   {
-   "file": "warning-table-timeseries-2.png",
-   "caption": "時系列の表（岐阜地方気象台）",
+   "file": "warning-timeseries-3.png",
+   "caption": "時系列予想（山形地方気象台）",
    "plan": "Pro以上",
-   "group": "timeseries"
+   "group": "all"
   },
   {
-   "file": "warning-table-timeseries-3.png",
-   "caption": "時系列の表（山形地方気象台）",
+   "file": "warning-timeseries-4.png",
+   "caption": "時系列予想（新潟地方気象台）",
    "plan": "Pro以上",
-   "group": "timeseries"
+   "group": "all"
   },
   {
-   "file": "warning-table-timeseries-4.png",
-   "caption": "時系列の表（新潟地方気象台）",
+   "file": "warning-timeseries-5.png",
+   "caption": "時系列予想（富山地方気象台）",
    "plan": "Pro以上",
-   "group": "timeseries"
-  },
-  {
-   "file": "warning-table-timeseries-5.png",
-   "caption": "時系列の表（富山地方気象台）",
-   "plan": "Pro以上",
-   "group": "timeseries"
+   "group": "all"
   }
  ],
  "eew-map": [
@@ -483,6 +485,12 @@
    "caption": "地方（沖縄地方）",
    "plan": "Plus以上",
    "group": "region"
+  },
+  {
+   "file": "hires-radar-forecast.gif",
+   "caption": "1時間先までの予想（全国）",
+   "plan": "Pro以上",
+   "group": "forecast"
   }
  ]
 }

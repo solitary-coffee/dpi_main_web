@@ -31,6 +31,7 @@
 .comparison-table-grouped tbody+tbody{border-top:2px solid var(--line)}
 .comparison-table-grouped thead th:nth-child(n+3){width:92px}
 .comparison-table td{white-space:nowrap}
+.comparison-table-grouped td:not(:last-child){white-space:normal}
 .comparison-table .compare-cta-row td{padding:18px 10px}
 .compare-cta-row a{display:inline-flex;min-height:40px;align-items:center;justify-content:center;padding:8px 10px;border:1px solid #8ec9ff;border-radius:6px;background:#24445d;color:#fff!important;font-weight:800;text-decoration:none}
 .compare-cta-row a:hover{background:#326085}

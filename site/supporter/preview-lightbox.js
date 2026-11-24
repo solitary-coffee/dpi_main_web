@@ -10,7 +10,8 @@ export const MANIFEST_URL = `${PREVIEW_BASE}manifest.json`;
 export const PREVIEW_TYPES = Object.freeze({
  'earthquake-map': '地震情報の図',
  'weather-map': '気象警報・注意報の地図',
- 'warning-table': '警報・注意報の表',
+ 'warning-table': '気象警報・注意報の表',
+ 'warning-timeseries': '気象警報・注意報の時系列予想',
  'eew-map': '緊急地震速報（警報）の図',
  'tsunami-map': '津波警報・注意報・津波観測の図・表',
  'hires-radar': '雨雲レーダー（高解像度版）',
@@ -19,21 +20,21 @@ export const PREVIEW_PLANS = Object.freeze(['Basic以上', 'Plus以上', 'Pro以
 // まとまり（group）の見出し。拡大表示の見出しは「種類（まとまり）」。ここに無いまとまりは種類の名前だけ
 export const PREVIEW_GROUPS = Object.freeze({
  'weather-map': {national: '全国', region: '地方', municipality: '市区町村ごとの詳細', alert: '竜巻注意情報・線状降水帯'},
- 'warning-table': {national: '全国', regional: '地方', timeseries: '時系列'},
+ 'warning-table': {national: '全国', regional: '地方'},
  'tsunami-map': {map: '全国の図', enlarged: '地方の拡大図', table: '表'},
- 'hires-radar': {national: '全国', region: '地方'},
+ 'hires-radar': {national: '全国', region: '地方', forecast: '1時間先までの予想'},
 });
 // これだけ横に動かしたらスワイプとみなす（px）
 const SWIPE_DISTANCE = 50;
 
-// manifest.json の中身を確かめ、正しい見本だけを残す（ファイル名は英小文字・数字・ハイフンの .png だけ）
+// manifest.json の中身を確かめ、正しい見本だけを残す（ファイル名は英小文字・数字・ハイフンの .png / .gif だけ）
 export function validateManifest(data) {
  const result = {};
  if (!data || typeof data !== 'object' || Array.isArray(data)) return result;
  for (const type of Object.keys(PREVIEW_TYPES)) {
   const items = Array.isArray(data[type]) ? data[type] : [];
   const valid = items.filter(item => item && typeof item === 'object'
-   && typeof item.file === 'string' && /^[a-z0-9][a-z0-9-]*\.png$/.test(item.file)
+   && typeof item.file === 'string' && /^[a-z0-9][a-z0-9-]*\.(?:png|gif)$/.test(item.file)
    && typeof item.caption === 'string' && item.caption.trim() !== ''
    && PREVIEW_PLANS.includes(item.plan));
   // group が無い・正しくない見本は 'all'（その種類の見本すべてで 1 つのまとまり）

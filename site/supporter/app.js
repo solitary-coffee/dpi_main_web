@@ -1,4 +1,4 @@
-import { planFeatures, imageTypeAllowed } from './plan-features.js';
+import { planFeatures, imageTypeAllowed, PLAN_FEATURES } from './plan-features.js';
 import { PREVIEW_BASE, attachPreview } from './preview-lightbox.js';
 
 let session;
@@ -30,8 +30,9 @@ const status = text => { $('status').textContent = text; };
 const INTENSITIES = [['1','1'],['2','2'],['3','3'],['4','4'],['5-','5弱'],['5+','5強'],['6-','6弱'],['6+','6強'],['7','7']];
 const TYPES = [['earthquake','地震情報'],['eew','緊急地震速報'],['weather','気象情報'],['rain-radar','雨雲レーダー（簡略版）']];
 // Paid image rules; offered only when /api/supporter/options reports imageRulesEnabled.
-const IMAGE_TYPES = [['hires-radar','雨雲レーダー（高解像度版）'],['tsunami-map','津波警報・注意報・津波観測（地図・表）'],['weather-map','気象警報・注意報の地図'],['earthquake-map','地震情報（図）'],['eew-map','緊急地震速報（警報）の図'],['warning-table','警報・注意報の表']];
+const IMAGE_TYPES = [['hires-radar','雨雲レーダー（高解像度版）'],['tsunami-map','津波警報・注意報・津波観測（地図・表）'],['weather-map','気象警報・注意報の地図'],['earthquake-map','地震情報（図）'],['eew-map','緊急地震速報（警報）の図'],['warning-table','気象警報・注意報の表'],['warning-timeseries','気象警報・注意報の時系列予想']];
 // warning-table: which feature allows each table (plan-features.js).
+const RADAR_CONTENT_IDS = ['current','forecast'];
 const WARNING_TABLE_FEATURES = {national:'warningTableNational',regional:'warningTableRegional',timeseries:'warningTableTimeseries'};
 const TSUNAMI_OUTPUT_IDS = ['map','table','observation'];
 // 保存済みのルール（outputs）では、表を選んでいれば観測も届いていた。worker/supporter-image-rules.js の savedTsunamiOutputs と同じ
@@ -138,7 +139,7 @@ function field(article, rule, key, label, values, attributes = {}) {
    try { await loadChannels(rule.guildId, true); if(!different)status(''); } catch (error) { status(error.message); }
    render();
   } else if (key === 'type' || key === 'detail' || key === 'intensityMode' || key === 'magnitudeMode' || key === 'conditionLogic' || key === 'radarCondition' || key === 'region' || key === 'prefecture' || key === 'district' || key === 'municipality') {
-   if (key === 'type') {rule.detail = 'all';rule.conditions=[];rule.radarCondition=rule.type==='hires-radar'?'scheduled':'all';rule.rainfallThresholdMmPerHour=rule.type==='hires-radar'?'10':'';rule.products=defaultProducts(rule.type);if(isImageType(rule.type)){rule.conditionLogic='and';rule.region='all';rule.regions=[];rule.tables=defaultWarningTables();rule.deliverOn='changed';rule.showAllAreas=false;rule.tsunamiOutputs=entitlements.tsunamiMap?[...TSUNAMI_OUTPUT_IDS]:['map'];}}
+   if (key === 'type') {rule.detail = 'all';rule.conditions=[];rule.radarCondition=rule.type==='hires-radar'?'scheduled':'all';rule.rainfallThresholdMmPerHour=rule.type==='hires-radar'?'10':'';rule.products=defaultProducts(rule.type);if(isImageType(rule.type)){rule.conditionLogic='and';rule.region='all';rule.regions=[];rule.tables=defaultWarningTables();rule.radarContents=['current'];rule.deliveryIntervalMinutes=60;rule.forecastIntervalMinutes=60;rule.deliverOn='changed';rule.showAllAreas=false;rule.tsunamiOutputs=entitlements.tsunamiMap?[...TSUNAMI_OUTPUT_IDS]:['map'];}}
    if (key === 'region') {rule.prefecture='all';rule.district='all';rule.municipality='all';rule.strictMunicipality=false;rule.municipalities=[];}
    if (key === 'prefecture') {rule.district='all';rule.municipality='all';rule.strictMunicipality=false;rule.municipalities=[];}
    if (key === 'district') {rule.municipality='all';rule.strictMunicipality=false;}
@@ -237,7 +238,9 @@ function additionalConditionsField(article,rule){
 }
 
 function normalizeRule(rule) {
- const type = TYPES.some(([value]) => value === rule.type) || isImageType(rule.type) ? rule.type : 'earthquake';
+ let type = TYPES.some(([value]) => value === rule.type) || isImageType(rule.type) ? rule.type : 'earthquake';
+ // 時系列だけの表のルールは、独立した種類（時系列予想）として開く
+ if(type==='warning-table'&&Array.isArray(rule.tables)&&rule.tables.length===1&&rule.tables[0]==='timeseries')type='warning-timeseries';
  const detail = type === 'eew' && rule.detail === 'intensity-change' ? 'forecast' : (rule.detail || 'all');
  return {
   ...rule,
@@ -278,6 +281,10 @@ function normalizeRule(rule) {
   municipalityDetail: rule.municipalityDetail===true,
   rainfallThresholdMmPerHour: rule.rainfallThresholdMmPerHour ?? '',
   deliveryIntervalHours: String(rule.deliveryIntervalHours || '1'),
+  // hires-radar: 送るもの（現在の図・予想）と、それぞれの配信頻度（分）
+  radarContents: Array.isArray(rule.radarContents)&&rule.radarContents.length?RADAR_CONTENT_IDS.filter(id=>rule.radarContents.includes(id)):['current'],
+  deliveryIntervalMinutes: Number(rule.deliveryIntervalMinutes)||(type==='hires-radar'?(Number(rule.deliveryIntervalHours)||1)*60:60),
+  forecastIntervalMinutes: Number(rule.forecastIntervalMinutes)||60,
   channelIds: Array.isArray(rule.channelIds)&&rule.channelIds.length?rule.channelIds:[rule.channelId].filter(Boolean),
   conditionLogic: rule.conditionLogic || 'and',
   conditions: Array.isArray(rule.conditions)?rule.conditions.slice(0,8).map(condition=>({kind:String(condition.kind||'region'),operator:String(condition.operator||'equals'),value:condition.value??'all'})):[],
@@ -463,7 +470,7 @@ function earthquakeMapFields(box,rule){
 
 // New warning-table rule: the national table when the plan has it, otherwise the first allowed table.
 function defaultWarningTables(){
- const allowed=Object.keys(WARNING_TABLE_FEATURES).filter(id=>entitlements?.[WARNING_TABLE_FEATURES[id]]===true);
+ const allowed=['national','regional'].filter(id=>entitlements?.[WARNING_TABLE_FEATURES[id]]===true);
  return allowed.includes('national')?['national']:(allowed.length?[allowed[0]]:['national']);
 }
 
@@ -483,13 +490,14 @@ function previewImages(container,items){
  if(!items.length)return;
  const wrap=document.createElement('div');wrap.className='rule-preview';
  for(const [name,caption,type,prefer,group] of items){
+  const file=name.endsWith('.gif')?name:`${name}.png`;
   const figure=document.createElement('figure');figure.className='rule-preview-item';
   const label=document.createElement('span');label.className='rule-preview-label';label.textContent='見本';
-  const img=document.createElement('img');img.loading='lazy';img.decoding='async';img.src=`${PREVIEW_BASE}${name}.png`;img.alt=`見本：${caption}`;
+  const img=document.createElement('img');img.loading='lazy';img.decoding='async';img.src=PREVIEW_BASE+file;img.alt=`見本：${caption}`;
   img.addEventListener('error',()=>{figure.remove();if(!wrap.querySelector('figure'))wrap.remove();});
   const text=document.createElement('figcaption');text.textContent=caption;
   figure.append(label,img,text);wrap.append(figure);
-  if(type)attachPreview(figure,type,{prefer:[...(prefer||[]),`${name}.png`],group:group||'',caption});
+  if(type)attachPreview(figure,type,{prefer:[...(prefer||[]),file],group:group||'',caption});
  }
  container.append(wrap);
 }
@@ -504,13 +512,16 @@ function rulePreviews(rule){
   const prefer=entitlements.weatherMunicipality&&rule.municipalityDetail?['weather-map-municipality.png']:regional('weather-map');
   return [[`weather-map-${scope}`,`気象警報・注意報の地図（${where}）`,'weather-map',prefer,scope]];
  }
- if(rule.type==='hires-radar')return [[`hires-radar-${scope}`,`雨雲レーダー（高解像度版）（${where}）`,'hires-radar',regional('hires-radar'),scope]];
+ if(rule.type==='hires-radar')return rule.radarContents.map(id=>id==='forecast'
+  ?['hires-radar-forecast.gif','雨雲レーダー（高解像度版）の予想','hires-radar',[],'forecast']
+  :[`hires-radar-${scope}`,`雨雲レーダー（高解像度版）（${where}）`,'hires-radar',regional('hires-radar'),scope]);
  // 全国・地方を選ぶ場合も同じ図（配信する条件だけが違う）。
  if(rule.type==='eew-map')return [['eew-map-national','緊急地震速報（警報）の図（地方を選ぶ場合も同じ図です）','eew-map']];
+ if(rule.type==='warning-timeseries')return [['warning-timeseries-1','気象警報・注意報の時系列予想','warning-timeseries']];
  if(rule.type==='warning-table'){
-  const labels={national:'警報・注意報の表（全国）',regional:'警報・注意報の表（地方）',timeseries:'警報・注意報の表（時系列）'};
+  const labels={national:'気象警報・注意報の表（全国）',regional:'気象警報・注意報の表（地方）'};
   const first=(rule.regions||[])[0];
-  return rule.tables.map(id=>[`warning-table-${id}`,labels[id],'warning-table',id==='regional'&&first?[`warning-table-regional-${first}.png`]:[],id]);
+  return rule.tables.filter(id=>id in labels).map(id=>[`warning-table-${id}`,labels[id],'warning-table',id==='regional'&&first?[`warning-table-regional-${first}.png`]:[],id]);
  }
  // 津波の図: 全国の図の見本（Pro の拡大図を使う設定なら地方の拡大図の見本）。表: 表の見本
  if(rule.type==='tsunami-map')return rule.tsunamiOutputs.map(id=>{
@@ -551,16 +562,25 @@ function eewMapFields(box,rule){
  if(choose)checkboxGroup(box,'対象の地方（1つ以上・複数可）',regionChoices(),rule.regions,next=>{rule.regions=next;});
 }
 
-// warning-table (警報・注意報の表): national (Plus+), regional / timeseries (Pro+).
+// warning-table (気象警報・注意報の表): national (Plus+), regional (Pro+). warning-timeseries (時系列予想): Pro+.
 function warningTableFields(box,rule){
- const kinds=options.warningTableKinds||[['national','全国の表'],['regional','地方の表'],['timeseries','時系列の表']];
+ if(rule.type==='warning-timeseries'){
+  checkboxGroup(box,'対象の地方（1つ以上・複数可）',regionChoices(),rule.regions,next=>{rule.regions=next;});
+  warningTiming(box,rule);
+  return;
+ }
+ const kinds=[...(options.warningTableKinds||[['national','全国の表'],['regional','地方の表']]),...(rule.tables.includes('timeseries')?[['timeseries','時系列予想']]:[])];
  const allowed=id=>entitlements[WARNING_TABLE_FEATURES[id]]===true;
  const shown=kinds.filter(([id])=>allowed(id)||rule.tables.includes(id));
  checkboxGroup(box,'送る表（1つ以上）',shown.map(([id,text])=>[id,allowed(id)?text:`${text}（現在の契約では配信されません）`]),rule.tables,next=>{rule.tables=next;render();});
  const hidden=kinds.filter(([id])=>!shown.some(([value])=>value===id));
  if(hidden.length)helpNote(box,`${hidden.map(([,text])=>text).join('・')}はProで使えます。`);
  if(rule.tables.includes('regional')||rule.tables.includes('timeseries'))
-  checkboxGroup(box,'地方の表・時系列の表の対象地方（1つ以上・複数可）',regionChoices(),rule.regions,next=>{rule.regions=next;});
+  checkboxGroup(box,'地方の表の対象地方（1つ以上・複数可）',regionChoices(),rule.regions,next=>{rule.regions=next;});
+ warningTiming(box,rule);
+}
+
+function warningTiming(box,rule){
  const timing=(options.warningTableDeliverOn||[['changed','内容が変わったときだけ'],['every','発表のたびに毎回']])
   .filter(([id])=>id!=='every'||entitlements.warningTableEvery||rule.deliverOn==='every');
  plainSelect(box,'配信のタイミング',timing,rule.deliverOn,value=>{rule.deliverOn=value;render();});
@@ -568,6 +588,42 @@ function warningTableFields(box,rule){
   ?'「発表のたびに毎回」は現在の契約では使えないため、「内容が変わったときだけ」として配信されます。'
   :'「発表のたびに毎回」配信するのはProで使えます。');
  checkboxField(box,rule,'showAllAreas','発表のない区域も表に載せる');
+}
+
+// hires-radar: 送るもの（現在の図・予想）と配信頻度。Plus は選択肢から、Pro は10分単位で自由に指定できる。
+function radarMinutesField(box,label,minutes,max,apply){
+ const hours=Math.floor(minutes/60),rest=minutes%60;
+ const group=document.createElement('div');group.className='rule-interval';
+ const set=(nextHours,nextRest)=>{
+  const total=Math.min(max,Math.max(10,nextHours*60+nextRest));
+  apply(total);render();
+ };
+ plainSelect(group,`${label}（時間）`,Array.from({length:max/60+1},(_,value)=>[String(value),`${value}時間`]),String(hours),value=>set(Number(value),rest));
+ plainSelect(group,`${label}（分）`,[0,10,20,30,40,50].filter(value=>(hours>0||value>0)&&(hours*60+value<=max)).map(value=>[String(value),`${value}分`]),String(rest),value=>set(hours,Number(value)));
+ box.append(group);
+}
+function radarContentFields(box,rule){
+ const limits=options.hiresRadarLimits||{max:1440,forecastMax:720};
+ if(entitlements.hiresRadarForecast)checkboxGroup(box,'送るもの（1つ以上）',options.hiresRadarContents||[['current','現在の図'],['forecast','1時間先までの予想（GIF）']],rule.radarContents,next=>{rule.radarContents=next;render();});
+ else if(rule.radarContents.includes('forecast')){
+  upgradeNote(box,'保存済みの予想（GIF）は現在の契約では配信されません。Proへ変更するか、現在の図だけに切り替えて保存してください。');
+  const button=document.createElement('button');button.type='button';button.className='secondary';button.textContent='現在の図だけに切り替える';
+  button.onclick=()=>{rule.radarContents=['current'];render();};box.append(button);
+ }
+ if(rule.radarContents.includes('current')){
+  const choices=options.hiresRadarIntervals||[];
+  if(entitlements.hiresRadarInterval)radarMinutesField(box,'配信頻度',Number(rule.deliveryIntervalMinutes)||60,limits.max,value=>{rule.deliveryIntervalMinutes=value;});
+  else{
+   if(!choices.some(([id])=>id===String(rule.deliveryIntervalMinutes))&&choices.length)
+    rule.deliveryIntervalMinutes=Number((choices.find(([id])=>Number(id)>=Number(rule.deliveryIntervalMinutes))||choices.at(-1))[0]);
+   plainSelect(box,'配信頻度',choices,String(rule.deliveryIntervalMinutes),value=>{rule.deliveryIntervalMinutes=Number(value);});
+  }
+ }
+ if(entitlements.hiresRadarForecast&&rule.radarContents.includes('forecast')){
+  radarMinutesField(box,'予想の配信頻度',Number(rule.forecastIntervalMinutes)||60,limits.forecastMax,value=>{rule.forecastIntervalMinutes=value;});
+  helpNote(box,'予想は、実況から1時間先までを10分ごとに動かしたGIF画像です。現在の図とは別のメッセージで届きます。');
+ }
+ if(!entitlements.hiresRadarForecast)helpNote(box,'配信頻度の自由な指定（10分〜24時間）と、1時間先までの予想（GIF）はProで使えます。');
 }
 
 // Per-type settings of the paid image rules. Options the plan does not include are not shown;
@@ -582,7 +638,7 @@ function imageRuleFields(article,rule){
  if(!imageTypeAllowed(entitlements,rule.type))upgradeNote(box,'この画像配信は現在の契約では利用できないため配信されません。プランを変更するか、このルールを削除してください。');
  if(rule.type==='earthquake-map'){earthquakeMapFields(box,rule);previewImages(box,rulePreviews(rule));return;}
  if(rule.type==='eew-map'){eewMapFields(box,rule);previewImages(box,rulePreviews(rule));return;}
- if(rule.type==='warning-table'){warningTableFields(box,rule);previewImages(box,rulePreviews(rule));return;}
+ if(rule.type==='warning-table'||rule.type==='warning-timeseries'){warningTableFields(box,rule);previewImages(box,rulePreviews(rule));return;}
  // 津波: Basic は全国の地図だけ（地方・表・津波観測の表は Plus 以上）
  if(rule.type==='tsunami-map'&&!entitlements.tsunamiMap&&entitlements.tsunamiMapNational){
   const fits=rule.region==='all'&&rule.tsunamiOutputs.length===1&&rule.tsunamiOutputs[0]==='map'&&rule.enlargedArea!==true;
@@ -612,7 +668,7 @@ function imageRuleFields(article,rule){
    else rule.rainfallThresholdMmPerHour=String(rule.rainfallThresholdMmPerHour);
    field(box,rule,'rainfallThresholdMmPerHour','1時間降水量の閾値',thresholds).disabled=!entitlements.hiresRadarThreshold;
   }
-  field(box,rule,'deliveryIntervalHours','配信頻度',options.hiresRadarIntervals||[]);
+  radarContentFields(box,rule);
   previewImages(box,rulePreviews(rule));
   return;
  }
@@ -658,9 +714,12 @@ function updateImageRulesNote(){
  if(options?.imageRulesEnabled!==true){note.classList.add('hidden');return;}
  const types=options.imageRuleTypes||IMAGE_TYPES;
  const available=types.filter(([id])=>imageTypeAllowed(entitlements,id)).map(([,text])=>text);
- const missing=types.filter(([id])=>!imageTypeAllowed(entitlements,id)).map(([,text])=>text);
+ const isProOnly=id=>!imageTypeAllowed(PLAN_FEATURES.plus,id);
+ const missing=types.filter(([id])=>!imageTypeAllowed(entitlements,id)&&!isProOnly(id)).map(([,text])=>text);
+ const proOnly=types.filter(([id])=>!imageTypeAllowed(entitlements,id)&&isProOnly(id)).map(([,text])=>text);
  note.textContent=(available.length?`画像配信：${available.join('・')}を利用できます。`:'')
   +(missing.length?`${missing.join('・')}はPlus以上で使えます。`:'')
+  +(proOnly.length?`${proOnly.join('・')}はProで使えます。`:'')
   +(entitlements.tsunamiMapNational&&!entitlements.tsunamiMap?'津波は全国の地図だけを利用できます（地方・表・津波観測の表はPlus以上）。':'')
   +'画像配信ルールでは追加条件・OR条件は使用しません。';
  note.classList.remove('hidden');
