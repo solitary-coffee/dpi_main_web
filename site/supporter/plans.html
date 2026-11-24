@@ -52,55 +52,90 @@
   </div>
   <section aria-labelledby="comparison-title">
    <h2 id="comparison-title">プラン別の利用できる機能</h2>
-   <p id="comparison-help">表は横スクロールに対応しています。○は選択可能、—は対象外です。カスタムは、上限・機能のすべてを契約ごとに個別に設定します（「契約による」）。</p>
-   <div class="comparison-table-scroll" role="region" tabindex="0" aria-labelledby="comparison-title" aria-describedby="comparison-help">
-    <table class="comparison-table">
+   <p id="comparison-help">表は横スクロールに対応しています。津波の地図・表・津波観測の表は、それぞれ別のルールにして別々のチャンネルへ配信できます。○は選択可能、—は対象外です。カスタムは、上限・機能のすべてを契約ごとに個別に設定します（「契約による」）。</p>
+   <h3 class="comparison-subtitle">料金・上限</h3>
+   <div class="comparison-table-scroll" role="region" tabindex="0" aria-label="料金・上限">
+    <table class="comparison-table comparison-table-simple">
      <thead>
-      <tr><th scope="col">比較項目</th><th scope="col">Basic</th><th scope="col">Plus</th><th scope="col" class="featured">Pro</th><th scope="col">カスタム</th></tr>
+      <tr><th scope="col">項目</th><th scope="col">Basic</th><th scope="col">Plus</th><th scope="col" class="featured">Pro</th><th scope="col">カスタム</th></tr>
      </thead>
      <tbody>
-      <tr class="comparison-group"><th scope="row" colspan="5">プラン料金・配信枠</th></tr>
       <tr><th scope="row">月額（税込）</th><td>300円</td><td>800円</td><td>1,280円</td><td>個別見積もり</td></tr>
       <tr><th scope="row">登録サーバー上限</th><td>1</td><td>3</td><td>5</td><td>契約による</td></tr>
       <tr><th scope="row">通知チャンネル上限</th><td>2</td><td>10</td><td>20</td><td>契約による</td></tr>
       <tr><th scope="row">通知ルール上限</th><td>5</td><td>15</td><td>30</td><td>契約による</td></tr>
       <tr><th scope="row">追加チャンネル（3件）／追加サーバー（2件）／追加ルール（3件）</th><td>各＋200円／月</td><td>各＋200円／月</td><td>各＋200円／月</td><td>個別</td></tr>
-      <tr class="comparison-group"><th scope="row" colspan="5">対応する通知情報</th></tr>
-      <tr><th scope="row">地震情報（震度速報・震源・震度・長周期地震動など）</th><td>○</td><td>○</td><td>○</td><td>契約による</td></tr>
+      <tr class="compare-cta-row"><th scope="row">お申込み</th><td><a href="/site/supporter/?plan=supporter#billing">Basicを契約する</a></td><td><a href="/site/supporter/?plan=plus#billing">Plusを契約する</a></td><td><a href="/site/supporter/?plan=pro#billing">Proを契約する</a></td><td><a href="/site/supp/index.html">カスタムを相談する</a></td></tr>
+     </tbody>
+    </table>
+   </div>
+   <h3 class="comparison-subtitle">テキスト通知</h3>
+   <div class="comparison-table-scroll" role="region" tabindex="0" aria-label="テキスト通知">
+    <table class="comparison-table comparison-table-grouped">
+     <thead>
+      <tr><th scope="col">種類</th><th scope="col">設定</th><th scope="col">Basic</th><th scope="col">Plus</th><th scope="col" class="featured">Pro</th><th scope="col">カスタム</th></tr>
+     </thead>
+     <tbody>
+      <tr><th scope="rowgroup" rowspan="4" class="comparison-kind">対応する通知情報</th><th scope="row">地震情報（震度速報・震源・震度・長周期地震動など）</th><td>○</td><td>○</td><td>○</td><td>契約による</td></tr>
       <tr><th scope="row">緊急地震速報（地震動予報・警報）</th><td>○</td><td>○</td><td>○</td><td>契約による</td></tr>
       <tr><th scope="row">気象情報（警報・注意報・台風・大雨・洪水など）</th><td>○</td><td>○</td><td>○</td><td>契約による</td></tr>
       <tr><th scope="row">雨雲レーダー（地方単位）</th><td>○</td><td>○</td><td>○</td><td>契約による</td></tr>
-      <tr class="comparison-group"><th scope="row" colspan="5">対象地域・通知条件</th></tr>
-      <tr><th scope="row">地方単位の指定</th><td>○</td><td>○</td><td>○</td><td>契約による</td></tr>
+     </tbody>
+     <tbody>
+      <tr><th scope="rowgroup" rowspan="4" class="comparison-kind">対象地域</th><th scope="row">地方単位の指定</th><td>○</td><td>○</td><td>○</td><td>契約による</td></tr>
       <tr><th scope="row">都道府県単位の指定（北海道は振興局相当の地方区分も選択可能）</th><td>—</td><td>○</td><td>○</td><td>契約による</td></tr>
       <tr><th scope="row">市区町村単位の指定</th><td>—</td><td>—</td><td>○</td><td>契約による</td></tr>
       <tr><th scope="row">指定市区町村だけの本文抽出</th><td>—</td><td>—</td><td>○</td><td>契約による</td></tr>
-      <tr><th scope="row">震度・マグニチュード条件（すべて／上昇時のみ／閾値以上）</th><td>○</td><td>○</td><td>○</td><td>契約による</td></tr>
+     </tbody>
+     <tbody>
+      <tr><th scope="rowgroup" rowspan="6" class="comparison-kind">通知条件</th><th scope="row">震度・マグニチュード条件（すべて／上昇時のみ／閾値以上）</th><td>○</td><td>○</td><td>○</td><td>契約による</td></tr>
       <tr><th scope="row">緊急地震速報の最終報ON/OFF</th><td>○</td><td>○</td><td>○</td><td>契約による</td></tr>
       <tr><th scope="row">緊急地震速報・警報の対象地方による絞り込み</th><td>○</td><td>○</td><td>○</td><td>契約による</td></tr>
       <tr><th scope="row">気象警戒レベル・注意報／警報種別の指定</th><td>○</td><td>○</td><td>○</td><td>契約による</td></tr>
       <tr><th scope="row">AND・ORや追加条件（1ルール最大8件）</th><td>—</td><td>—</td><td>○</td><td>契約による</td></tr>
       <tr><th scope="row">1ルールから複数チャンネルへ配信</th><td>—</td><td>—</td><td>○</td><td>契約による</td></tr>
-      <tr class="comparison-group"><th scope="row" colspan="5">雨雲レーダーの配信設定</th></tr>
-      <tr><th scope="row">配信頻度（1・2・3・6・12・24時間ごと）</th><td>○</td><td>○</td><td>○</td><td>契約による</td></tr>
+     </tbody>
+     <tbody>
+      <tr><th scope="rowgroup" rowspan="3" class="comparison-kind">雨雲レーダーの配信設定</th><th scope="row">配信頻度（1・2・3・6・12・24時間ごと）</th><td>○</td><td>○</td><td>○</td><td>契約による</td></tr>
       <tr><th scope="row">定時更新・降雨検知の配信条件</th><td>○</td><td>○</td><td>○</td><td>契約による</td></tr>
       <tr><th scope="row">1時間降水量の閾値指定（0.1～20 mm/h）</th><td>—</td><td>○</td><td>○</td><td>契約による</td></tr>
-      <tr class="comparison-group"><th scope="row" colspan="5">画像配信</th></tr>
-      <tr><th scope="row">緊急地震速報（警報）の図：全国（警報が発表されたら配信）</th><td>○</td><td>○</td><td>○</td><td>契約による</td></tr>
-      <tr><th scope="row">緊急地震速報（警報）の図：地方を選ぶ（選んだ地方が対象地域になったとき、続報で追加された場合も含めて配信）</th><td>—</td><td>○</td><td>○</td><td>契約による</td></tr>
-      <tr><th scope="row">気象警報の図：全国・地方の選択</th><td>—</td><td>○</td><td>○</td><td>契約による</td></tr>
-      <tr><th scope="row">気象警報の図：都道府県・市区町村の指定と市区町村の詳細</th><td>—</td><td>—</td><td>○</td><td>契約による</td></tr>
-      <tr><th scope="row">警報・注意報の表：全国の表（内容が変わったときだけ配信・発表のない区域も載せる設定を含む）</th><td>—</td><td>○</td><td>○</td><td>契約による</td></tr>
-      <tr><th scope="row">警報・注意報の表：地方の表（地方を選ぶ）</th><td>—</td><td>—</td><td>○</td><td>契約による</td></tr>
-      <tr><th scope="row">警報・注意報の表：時系列の表（地方を選ぶ・複数可）</th><td>—</td><td>—</td><td>○</td><td>契約による</td></tr>
-      <tr><th scope="row">警報・注意報の表：発表のたびに毎回配信</th><td>—</td><td>—</td><td>○</td><td>契約による</td></tr>
-      <tr><th scope="row">雨雲レーダー（高解像度版）：全国・地方の選択／定時配信／線状降水帯の表示</th><td>—</td><td>○</td><td>○</td><td>契約による</td></tr>
-      <tr><th scope="row">雨雲レーダー（高解像度版）：閾値以上で配信（10・20・30・50・80 mm/h）</th><td>—</td><td>—</td><td>○</td><td>契約による</td></tr>
-      <tr><th scope="row">津波警報・注意報の地図・表・津波観測の表：全国・地方の選択（地図・表・観測を別々のチャンネルへ配信可）</th><td>—</td><td>○</td><td>○</td><td>契約による</td></tr>
-      <tr><th scope="row">津波警報・注意報の地図：発表地域拡大版</th><td>—</td><td>—</td><td>○</td><td>契約による</td></tr>
-      <tr><th scope="row">地震情報の図：すべての地震情報（震度速報・震源・各地の震度・長周期地震動から種類を選択）</th><td>—</td><td>○</td><td>○</td><td>契約による</td></tr>
-      <tr><th scope="row">地震情報の図：震度のしきい値（全国・地方別）と地図の中心にする市区町村の指定</th><td>—</td><td>—</td><td>○</td><td>契約による</td></tr>
-      <tr class="compare-cta-row"><th scope="row">お申込み</th><td><a href="/site/supporter/?plan=supporter#billing">Basicを契約する</a></td><td><a href="/site/supporter/?plan=plus#billing">Plusを契約する</a></td><td><a href="/site/supporter/?plan=pro#billing">Proを契約する</a></td><td><a href="/site/supp/index.html">カスタムを相談する</a></td></tr>
+     </tbody>
+    </table>
+   </div>
+   <h3 class="comparison-subtitle">画像配信</h3>
+   <div class="comparison-table-scroll" role="region" tabindex="0" aria-label="画像配信">
+    <table class="comparison-table comparison-table-grouped">
+     <thead>
+      <tr><th scope="col">種類</th><th scope="col">設定</th><th scope="col">Basic</th><th scope="col">Plus</th><th scope="col" class="featured">Pro</th><th scope="col">カスタム</th></tr>
+     </thead>
+     <tbody>
+      <tr><th scope="rowgroup" rowspan="2" class="comparison-kind">緊急地震速報（警報）の図</th><th scope="row">全国（警報が発表されたら配信）</th><td>○</td><td>○</td><td>○</td><td>契約による</td></tr>
+      <tr><th scope="row">地方を選ぶ（選んだ地方が対象地域になったとき、続報で追加された場合も含めて配信）</th><td>—</td><td>○</td><td>○</td><td>契約による</td></tr>
+     </tbody>
+     <tbody>
+      <tr><th scope="rowgroup" rowspan="2" class="comparison-kind">気象警報の図</th><th scope="row">全国・地方の選択</th><td>—</td><td>○</td><td>○</td><td>契約による</td></tr>
+      <tr><th scope="row">都道府県・市区町村の指定と市区町村の詳細</th><td>—</td><td>—</td><td>○</td><td>契約による</td></tr>
+     </tbody>
+     <tbody>
+      <tr><th scope="rowgroup" rowspan="4" class="comparison-kind">警報・注意報の表</th><th scope="row">全国の表（内容が変わったときだけ配信・発表のない区域も載せる設定を含む）</th><td>—</td><td>○</td><td>○</td><td>契約による</td></tr>
+      <tr><th scope="row">地方の表（地方を選ぶ）</th><td>—</td><td>—</td><td>○</td><td>契約による</td></tr>
+      <tr><th scope="row">時系列の表（地方を選ぶ・複数可）</th><td>—</td><td>—</td><td>○</td><td>契約による</td></tr>
+      <tr><th scope="row">発表のたびに毎回配信</th><td>—</td><td>—</td><td>○</td><td>契約による</td></tr>
+     </tbody>
+     <tbody>
+      <tr><th scope="rowgroup" rowspan="2" class="comparison-kind">雨雲レーダー（高解像度版）</th><th scope="row">全国・地方の選択／定時配信／線状降水帯の表示</th><td>—</td><td>○</td><td>○</td><td>契約による</td></tr>
+      <tr><th scope="row">閾値以上で配信（10・20・30・50・80 mm/h）</th><td>—</td><td>—</td><td>○</td><td>契約による</td></tr>
+     </tbody>
+     <tbody>
+      <tr><th scope="rowgroup" rowspan="5" class="comparison-kind">津波</th><th scope="row">地図（全国）</th><td>○</td><td>○</td><td>○</td><td>契約による</td></tr>
+      <tr><th scope="row">地図（地方）</th><td>—</td><td>○</td><td>○</td><td>契約による</td></tr>
+      <tr><th scope="row">表（満潮時刻を含む）</th><td>—</td><td>○</td><td>○</td><td>契約による</td></tr>
+      <tr><th scope="row">津波観測の表（沖合・沿岸）</th><td>—</td><td>○</td><td>○</td><td>契約による</td></tr>
+      <tr><th scope="row">発表地域の拡大図</th><td>—</td><td>—</td><td>○</td><td>契約による</td></tr>
+     </tbody>
+     <tbody>
+      <tr><th scope="rowgroup" rowspan="2" class="comparison-kind">地震情報の図</th><th scope="row">すべての地震情報（震度速報・震源・各地の震度・長周期地震動から種類を選択）</th><td>—</td><td>○</td><td>○</td><td>契約による</td></tr>
+      <tr><th scope="row">震度のしきい値（全国・地方別）と地図の中心にする市区町村の指定</th><td>—</td><td>—</td><td>○</td><td>契約による</td></tr>
      </tbody>
     </table>
    </div>
@@ -214,7 +249,7 @@
     <figure class="preview-thumb" data-preview-type="warning-table" data-preview-file="warning-table-timeseries.png" data-preview-plan="Pro以上"><span class="preview-thumb-label">見本</span><img src="/site/supporter/previews/warning-table-timeseries.png" alt="見本：警報・注意報の表（時系列）" loading="lazy" decoding="async"><figcaption>警報・注意報の表（時系列）</figcaption></figure>
     <figure class="preview-thumb" data-preview-type="hires-radar" data-preview-file="hires-radar-national.png" data-preview-plan="Plus以上"><span class="preview-thumb-label">見本</span><img src="/site/supporter/previews/hires-radar-national.png" alt="見本：雨雲レーダー（高解像度版・全国）" loading="lazy" decoding="async"><figcaption>雨雲レーダー（高解像度版・全国）</figcaption></figure>
     <figure class="preview-thumb" data-preview-type="hires-radar" data-preview-file="hires-radar-region.png" data-preview-plan="Plus以上"><span class="preview-thumb-label">見本</span><img src="/site/supporter/previews/hires-radar-region.png" alt="見本：雨雲レーダー（高解像度版・地方）" loading="lazy" decoding="async"><figcaption>雨雲レーダー（高解像度版・地方）</figcaption></figure>
-    <figure class="preview-thumb" data-preview-type="tsunami-map" data-preview-file="tsunami-map-map.png" data-preview-plan="Plus以上"><span class="preview-thumb-label">見本</span><img src="/site/supporter/previews/tsunami-map-map.png" alt="見本：津波警報・注意報の図（全国）" loading="lazy" decoding="async"><figcaption>津波警報・注意報の図（全国）</figcaption></figure>
+    <figure class="preview-thumb" data-preview-type="tsunami-map" data-preview-file="tsunami-map-map.png" data-preview-plan="Basic以上"><span class="preview-thumb-label">見本</span><img src="/site/supporter/previews/tsunami-map-map.png" alt="見本：津波警報・注意報の図（全国）" loading="lazy" decoding="async"><figcaption>津波警報・注意報の図（全国）</figcaption></figure>
     <figure class="preview-thumb" data-preview-type="tsunami-map" data-preview-file="tsunami-map-enlarged.png" data-preview-plan="Pro以上"><span class="preview-thumb-label">見本</span><img src="/site/supporter/previews/tsunami-map-enlarged.png" alt="見本：津波警報・注意報の図（地方の拡大図）" loading="lazy" decoding="async"><figcaption>津波警報・注意報の図（地方の拡大図）</figcaption></figure>
     <figure class="preview-thumb" data-preview-type="tsunami-map" data-preview-file="tsunami-map-table.png" data-preview-plan="Plus以上"><span class="preview-thumb-label">見本</span><img src="/site/supporter/previews/tsunami-map-table.png" alt="見本：津波警報・注意報の表" loading="lazy" decoding="async"><figcaption>津波警報・注意報の表</figcaption></figure>
    </div>

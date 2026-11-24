@@ -317,6 +317,11 @@ export function normalizeImageRuleFields(rule, type, limits = {}, catalogue = nu
  }
  if (type === 'tsunami-map') {
   const outputs = tsunamiOutputs(rule);
+  if (!hasFeature(limits, 'tsunamiMap')) {
+   // Basic: 全国の地図だけ（tsunamiMapNational）
+   if (region !== 'all') reject('津波の地方の配信はPlus以上のプランで利用できます（Basicは全国の地図だけ）。');
+   if (outputs.length !== 1 || outputs[0] !== 'map') reject('津波の表・津波観測の表はPlus以上のプランで利用できます（Basicは全国の地図だけ）。');
+  }
   // The enlarged images are maps: they are only attached to a rule that sends the map.
   const enlargedArea = bool(rule?.enlargedArea) && outputs.includes('map');
   if (enlargedArea && !hasFeature(limits, 'tsunamiEnlarged')) reject('津波の発表地域拡大版はPro以上のプランで利用できます。');
@@ -384,7 +389,12 @@ function imageRuleSnapshotFieldsOnly(rule, features, tier) {
   };
  }
  if (type === 'tsunami-map') {
-  const outputs = savedTsunamiOutputs(rule);
+  let outputs = savedTsunamiOutputs(rule);
+  if (!hasFeature(features, 'tsunamiMap')) {
+   // Basic (tsunamiMapNational): a regional rule is suspended, never widened; tables are dropped.
+   if (region !== 'all') return null;
+   outputs = outputs.filter(id => id === 'map');
+  }
   if (!outputs.length) return null;
   return {region, tier, ...tsunamiOutputFields(outputs), enlargedArea: rule?.enlargedArea === true && outputs.includes('map') && hasFeature(features, 'tsunamiEnlarged')};
  }

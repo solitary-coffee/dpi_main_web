@@ -33,7 +33,7 @@ test('the entitlement matrix per standard plan',()=>{
   warningTableNational:[false,true,true], warningTableRegional:[false,false,true],
   warningTableTimeseries:[false,false,true], warningTableEvery:[false,false,true],
   weatherMap:[false,true,true], weatherMunicipality:[false,false,true],
-  tsunamiMap:[false,true,true], tsunamiEnlarged:[false,false,true],
+  tsunamiMapNational:[true,true,true], tsunamiMap:[false,true,true], tsunamiEnlarged:[false,false,true],
   earthquakeMap:[false,true,true], earthquakeMapFilter:[false,false,true],
   rainfallThreshold:[false,true,true], prefectureScope:[false,true,true],
   municipalityScope:[false,false,true], strictMunicipality:[false,false,true],
@@ -42,8 +42,8 @@ test('the entitlement matrix per standard plan',()=>{
  assert.deepEqual(Object.keys(matrix).sort(),[...FEATURE_NAMES].sort());
  for(const [name,expected] of Object.entries(matrix))assert.deepEqual(['supporter','plus','pro'].map(plan=>yes(plan,name)),expected,name);
  for(const item of FEATURE_DEFINITIONS)assert.ok(item.label&&item.section,item.name);
- // Basic: only the eew-map type.
- assert.deepEqual(['eew-map','hires-radar','tsunami-map','weather-map','earthquake-map','warning-table'].filter(type=>imageTypeAllowed(PLAN_FEATURES.supporter,type)),['eew-map']);
+ // Basic: the eew-map and (national map only) the tsunami-map type.
+ assert.deepEqual(['eew-map','hires-radar','tsunami-map','weather-map','earthquake-map','warning-table'].filter(type=>imageTypeAllowed(PLAN_FEATURES.supporter,type)),['eew-map','tsunami-map']);
  assert.equal(imageTier([active('supporter')]),'supporter');
  // Dependencies of every preset are consistent.
  for(const names of Object.values(PLAN_FEATURE_NAMES))assert.equal(missingFeatureDependency(names),null);
@@ -136,9 +136,10 @@ test('snapshot: every image rule carries the owner features and the tier',async(
  assert.deepEqual([ts.outputs,ts.includeTables,ts.enlargedArea],[['table'],true,false]);
 });
 
-test('snapshot: Basic sends only the national eew-map; downgrades narrow, never widen',async()=>{
+test('snapshot: Basic sends only the national maps; downgrades narrow, never widen',async()=>{
  const basic=await build(active('supporter'));
- assert.deepEqual(basic.rules.map(rule=>[rule.type,rule.name,rule.tier,rule.features]),[['eew-map','画像','supporter',['eewMap']]]);
+ // the stored tsunami rule sends tables only: not available on Basic, so it is suspended
+ assert.deepEqual(basic.rules.map(rule=>[rule.type,rule.name,rule.tier,rule.features]),[['eew-map','画像','supporter',['eewMap','tsunamiMapNational']]]);
  const plus=await build(active('plus'));
  assert.deepEqual(plus.rules.map(rule=>rule.type),['eew-map','eew-map','warning-table','tsunami-map']);
  const wt=plus.rules[2];
@@ -233,4 +234,26 @@ test('dashboard: previews, plan-aware type list and the new editors',async()=>{
  for(const name of ['weather-map-national','weather-map-region','warning-table-national','warning-table-regional','warning-table-timeseries','eew-map-national','hires-radar-national','hires-radar-region','tsunami-map-map','tsunami-map-table'])
   assert.ok(plans.includes(`/site/supporter/previews/${name}.png`),name);
  assert.match(plans,/<script type="module" src="plans-previews\.js"><\/script>/);
+});
+
+test('Basic: 津波は全国の地図だけ。地方・表・津波観測の表・拡大図は保存できず、解約後のルールを全国へ広げない',async()=>{
+ const {imageRuleSnapshotFields}=await import('../worker/supporter-image-rules.js');
+ const limits=limitsFor(active('supporter'));
+ const features=planFeatures([active('supporter')]);
+ const [rule]=save([{...tsunami,tsunamiOutputs:['map']}],limits);
+ assert.deepEqual([rule.type,rule.region,rule.tsunamiOutputs,rule.enlargedArea],['tsunami-map','all',['map'],false]);
+ for(const bad of [{region:'tohoku',tsunamiOutputs:['map']},{tsunamiOutputs:['table']},{tsunamiOutputs:['observation']},{tsunamiOutputs:['map','table']},{outputs:['map','table']},{}])
+  assert.throws(()=>save([{...tsunami,...bad}],limits),/Plus以上/);
+ assert.throws(()=>save([{...tsunami,tsunamiOutputs:['map'],enlargedArea:true}],limits),/Pro以上/);
+ // スナップショット（Plus から Basic へ下げた後に残ったルール）
+ const sent=extra=>imageRuleSnapshotFields({...tsunami,...extra},features,'supporter');
+ assert.deepEqual([sent({tsunamiOutputs:['map']}).tsunamiOutputs,sent({tsunamiOutputs:['map']}).outputs,sent({tsunamiOutputs:['map']}).tier],[['map'],['map'],'supporter']);
+ assert.deepEqual(sent({outputs:['map','table']}).tsunamiOutputs,['map']);
+ assert.equal(sent({tsunamiOutputs:['map'],enlargedArea:true}).enlargedArea,false);
+ assert.equal(sent({tsunamiOutputs:['table']}),null);
+ assert.equal(sent({region:'tohoku',tsunamiOutputs:['map']}),null);
+ assert.ok(sent({tsunamiOutputs:['map']}).features.includes('tsunamiMapNational'));
+ // Plus は今までどおり
+ const plus=save([{...tsunami,region:'tohoku',tsunamiOutputs:['table','observation']}],limitsFor(active('plus')))[0];
+ assert.deepEqual([plus.region,plus.tsunamiOutputs],['tohoku',['table','observation']]);
 });

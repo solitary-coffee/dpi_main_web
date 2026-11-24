@@ -329,19 +329,19 @@
   {
    "file": "tsunami-map-map.png",
    "caption": "全国の図（大津波警報・津波警報・津波注意報）",
-   "plan": "Plus以上",
+   "plan": "Basic以上",
    "group": "map"
   },
   {
    "file": "tsunami-map-map-2.png",
    "caption": "全国の図（津波警報・津波注意報の例・見本用に区域を絞った電文）",
-   "plan": "Plus以上",
+   "plan": "Basic以上",
    "group": "map"
   },
   {
    "file": "tsunami-map-map-3.png",
    "caption": "全国の図（津波注意報の例・見本用に区域を絞った電文）",
-   "plan": "Plus以上",
+   "plan": "Basic以上",
    "group": "map"
   },
   {

@@ -158,9 +158,9 @@ test('dashboard and comparison page describe the earthquake maps with the Plus/P
  assert.match(app,/entitlements\.earthquakeMapFilter/);
  assert.match(app,/Pro限定の設定を解除する/);
  for(const key of ['earthquakeMapProducts','earthquakeMapIntensities','earthquakeMapRegions','earthquakeMunicipalitiesPath','centerMunicipality','regionMinIntensity','minIntensity'])assert.ok(app.includes(key),key);
- const row=label=>html.match(new RegExp(`<th scope="row">${label}[^<]*</th>((?:<td>[^<]*</td>){4})`))?.[1].match(/<td>([^<]*)<\/td>/g).map(cell=>cell.replace(/<\/?td>/g,''));
- assert.deepEqual(row('地震情報の図：すべての地震情報'),['—','○','○','契約による']);
- assert.deepEqual(row('地震情報の図：震度のしきい値'),['—','—','○','契約による']);
+ const row=(kind,label)=>{const body=html.match(new RegExp(`<th scope="rowgroup"[^>]*>${kind}</th>[\\s\\S]*?</tbody>`))?.[0]||'';return body.match(new RegExp(`<th scope="row">${label}[^<]*</th>((?:<td>[^<]*</td>){4})`))?.[1].match(/<td>([^<]*)<\/td>/g).map(cell=>cell.replace(/<\/?td>/g,''));};
+ assert.deepEqual(row('地震情報の図','すべての地震情報'),['—','○','○','契約による']);
+ assert.deepEqual(row('地震情報の図','震度のしきい値'),['—','—','○','契約による']);
  assert.match(html,/id="earthquake-map-detail"/);
  assert.match(index,/地震情報の図/);
  // Still private: no donation / payment wording added, no public switch flipped.

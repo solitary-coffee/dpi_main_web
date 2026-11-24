@@ -270,7 +270,7 @@ def _handle_action(body):
 
 def _validate_supporter_snapshot(value, now=None):
     # v4 adds paid image rules (hires-radar / tsunami-map / weather-map / earthquake-map / eew-map /
-    # warning-table); v1-v3 stay valid. eew-map is also available on Basic (tier "supporter").
+    # warning-table); v1-v3 stay valid. eew-map and the national tsunami-map are also available on Basic.
     if not isinstance(value, dict) or int(value.get("schemaVersion", 0)) not in (1, 2, 3, 4):
         raise ValueError("有料プラン配信設定の形式を確認してください。")
     version = _clean(value.get("version"), 128)
@@ -290,7 +290,7 @@ def _validate_supporter_snapshot(value, now=None):
                      "earthquake-map", "eew-map", "warning-table"}
     image_types = {"hires-radar", "tsunami-map", "weather-map", "earthquake-map", "eew-map", "warning-table"}
     image_tiers = {"plus", "pro", "custom"}
-    basic_image_types = {"eew-map"}
+    basic_image_types = {"eew-map", "tsunami-map"}
     image_regions = {"all", "hokkaido", "tohoku", "kanto-koshin", "hokuriku", "tokai", "kinki",
                      "chugoku", "shikoku", "kyushu-north", "kyushu-south-amami", "okinawa"}
     normalized_rules = []

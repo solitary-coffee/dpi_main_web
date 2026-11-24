@@ -26,9 +26,9 @@ test('plan features are defined once and attached to the plan catalogue',()=>{
  assert.equal(PLAN_CATALOG.pro.features,PLAN_FEATURES.pro);
  assert.ok(publicPlans().every(plan=>plan.features&&!('priceEnv' in plan)));
  const enabled=id=>FEATURE_NAMES.filter(name=>PLAN_FEATURES[id][name]);
- // Basic: only the 緊急地震速報（警報）の図 (national).
- assert.deepEqual(enabled('supporter'),['eewMap']);
- assert.deepEqual(enabled('plus'),['rainfallThreshold','prefectureScope','eewMap','eewMapRegion','weatherMap','warningTableNational','hiresRadar','tsunamiMap','earthquakeMap']);
+ // Basic: 緊急地震速報（警報）の図 (national) and the national tsunami map.
+ assert.deepEqual(enabled('supporter'),['eewMap','tsunamiMapNational']);
+ assert.deepEqual(enabled('plus'),['rainfallThreshold','prefectureScope','eewMap','eewMapRegion','weatherMap','warningTableNational','hiresRadar','tsunamiMapNational','tsunamiMap','earthquakeMap']);
  assert.equal(PLAN_FEATURES.supporter.imageDelivery,true);
  assert.equal(PLAN_FEATURES.supporter.hiresRadar,false);
  assert.deepEqual(enabled('pro'),FEATURE_NAMES);
@@ -184,9 +184,11 @@ test('downgrades exclude image rules instead of widening Pro-only filters',async
  assert.equal(t.enlargedArea,false);
  assert.equal(w.municipalityDetail,false);
  assert.equal('prefecture' in w,false);
+ // Basic keeps only the national tsunami map (no tables, no enlarged maps).
  const basic=await build(active('supporter'));
- assert.equal(basic.schemaVersion,1);
- assert.deepEqual(basic.rules.map(rule=>rule.type),['earthquake']);
+ assert.equal(basic.schemaVersion,4);
+ assert.deepEqual(basic.rules.map(rule=>rule.type),['tsunami-map','earthquake']);
+ assert.deepEqual([basic.rules[0].region,basic.rules[0].tsunamiOutputs,basic.rules[0].enlargedArea],['all',['map'],false]);
 });
 
 test('admin details describe image rule settings',()=>{
@@ -208,26 +210,28 @@ test('admin details describe image rule settings',()=>{
 test('comparison table lists the image delivery rows with the plan split (custom: per contract)',async()=>{
  const html=await readFile(new URL('../site/supporter/plans.html',import.meta.url),'utf8');
  assert.doesNotMatch(html,/準備中/);
- const row=label=>html.match(new RegExp(`<th scope="row">${label}[^<]*</th>((?:<td>[^<]*</td>){4})`))?.[1].match(/<td>([^<]*)<\/td>/g).map(cell=>cell.replace(/<\/?td>/g,''));
+ const row=(kind,label)=>{const body=html.match(new RegExp(`<th scope="rowgroup"[^>]*>${kind}</th>[\\s\\S]*?</tbody>`))?.[0]||'';return body.match(new RegExp(`<th scope="row">${label}[^<]*</th>((?:<td>[^<]*</td>){4})`))?.[1].match(/<td>([^<]*)<\/td>/g).map(cell=>cell.replace(/<\/?td>/g,''));};
  const C='契約による';
- assert.deepEqual(row('緊急地震速報（警報）の図：全国'),['○','○','○',C]);
- assert.deepEqual(row('緊急地震速報（警報）の図：地方を選ぶ'),['—','○','○',C]);
- assert.deepEqual(row('雨雲レーダー（高解像度版）：全国・地方'),['—','○','○',C]);
- assert.deepEqual(row('雨雲レーダー（高解像度版）：閾値以上'),['—','—','○',C]);
- assert.deepEqual(row('津波警報・注意報の地図・表・津波観測の表：全国・地方'),['—','○','○',C]);
- assert.deepEqual(row('津波警報・注意報の地図：発表地域拡大版'),['—','—','○',C]);
- assert.deepEqual(row('気象警報の図：全国・地方'),['—','○','○',C]);
- assert.deepEqual(row('気象警報の図：都道府県・市区町村'),['—','—','○',C]);
- assert.deepEqual(row('警報・注意報の表：全国の表'),['—','○','○',C]);
- assert.deepEqual(row('警報・注意報の表：地方の表'),['—','—','○',C]);
- assert.deepEqual(row('警報・注意報の表：時系列の表'),['—','—','○',C]);
- assert.deepEqual(row('警報・注意報の表：発表のたびに毎回'),['—','—','○',C]);
- assert.deepEqual(row('月額（税込）'),['300円','800円','1,280円','個別見積もり']);
- assert.equal(row('追加チャンネル（3件）／追加サーバー（2件）／追加ルール（3件）')[3],'個別');
- // Every other row of the custom column is decided by the contract.
- const customCells=[...html.matchAll(/<tr><th scope="row">([^<]*)<\/th>(?:<td>[^<]*<\/td>){3}<td>([^<]*)<\/td><\/tr>/g)];
- assert.ok(customCells.length>25);
- for(const [,label,cell] of customCells)if(!label.startsWith('月額')&&!label.startsWith('追加チャンネル'))assert.equal(cell,C,label);
+ for(const [kind,label,expected] of [
+  ['緊急地震速報（警報）の図','全国',['○','○','○',C]],['緊急地震速報（警報）の図','地方を選ぶ',['—','○','○',C]],
+  ['気象警報の図','全国・地方',['—','○','○',C]],['気象警報の図','都道府県・市区町村',['—','—','○',C]],
+  ['警報・注意報の表','全国の表',['—','○','○',C]],['警報・注意報の表','地方の表',['—','—','○',C]],
+  ['警報・注意報の表','時系列の表',['—','—','○',C]],['警報・注意報の表','発表のたびに毎回',['—','—','○',C]],
+  ['雨雲レーダー（高解像度版）','全国・地方',['—','○','○',C]],['雨雲レーダー（高解像度版）','閾値以上',['—','—','○',C]],
+  ['津波','地図（全国）',['○','○','○',C]],['津波','地図（地方）',['—','○','○',C]],['津波','表（満潮時刻を含む）',['—','○','○',C]],
+  ['津波','津波観測の表（沖合・沿岸）',['—','○','○',C]],['津波','発表地域の拡大図',['—','—','○',C]],
+  ['通知条件','AND・OR',['—','—','○',C]],['対象地域','市区町村単位',['—','—','○',C]],
+ ])assert.deepEqual(row(kind,label),expected,`${kind} ${label}`);
+ // 種類の見出し（rowspan）と、その行数が合っている
+ for(const body of html.match(/<tbody>\s*<tr><th scope="rowgroup"[\s\S]*?<\/tbody>/g))
+  assert.equal(Number(body.match(/rowspan="(\d+)"/)[1]),(body.match(/<tr>/g)||[]).length,body.slice(0,120));
+ // Every row of the custom column is decided by the contract (price and add-ons excepted).
+ const rows=[...html.matchAll(/<th scope="row">([^<]*)<\/th>((?:<td>[^<]*<\/td>){4})/g)];
+ assert.ok(rows.length>35);
+ const cell=text=>text.match(/<td>([^<]*)<\/td>/g).map(value=>value.replace(/<\/?td>/g,''));
+ assert.deepEqual(cell(rows.find(([,label])=>label==='月額（税込）')[2]),['300円','800円','1,280円','個別見積もり']);
+ for(const [,label,values] of rows)if(!label.startsWith('月額')&&!label.startsWith('追加チャンネル'))assert.equal(cell(values)[3],C,label);
+ assert.equal(cell(rows.find(([,label])=>label.startsWith('追加チャンネル'))[2])[3],'個別');
 });
 
 test('dashboard offers image types only when the server enables them',async()=>{

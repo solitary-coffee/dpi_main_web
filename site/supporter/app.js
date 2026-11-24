@@ -138,7 +138,7 @@ function field(article, rule, key, label, values, attributes = {}) {
    try { await loadChannels(rule.guildId, true); if(!different)status(''); } catch (error) { status(error.message); }
    render();
   } else if (key === 'type' || key === 'detail' || key === 'intensityMode' || key === 'magnitudeMode' || key === 'conditionLogic' || key === 'radarCondition' || key === 'region' || key === 'prefecture' || key === 'district' || key === 'municipality') {
-   if (key === 'type') {rule.detail = 'all';rule.conditions=[];rule.radarCondition=rule.type==='hires-radar'?'scheduled':'all';rule.rainfallThresholdMmPerHour=rule.type==='hires-radar'?'10':'';rule.products=defaultProducts(rule.type);if(isImageType(rule.type)){rule.conditionLogic='and';rule.region='all';rule.regions=[];rule.tables=defaultWarningTables();rule.deliverOn='changed';rule.showAllAreas=false;rule.tsunamiOutputs=[...TSUNAMI_OUTPUT_IDS];}}
+   if (key === 'type') {rule.detail = 'all';rule.conditions=[];rule.radarCondition=rule.type==='hires-radar'?'scheduled':'all';rule.rainfallThresholdMmPerHour=rule.type==='hires-radar'?'10':'';rule.products=defaultProducts(rule.type);if(isImageType(rule.type)){rule.conditionLogic='and';rule.region='all';rule.regions=[];rule.tables=defaultWarningTables();rule.deliverOn='changed';rule.showAllAreas=false;rule.tsunamiOutputs=entitlements.tsunamiMap?[...TSUNAMI_OUTPUT_IDS]:['map'];}}
    if (key === 'region') {rule.prefecture='all';rule.district='all';rule.municipality='all';rule.strictMunicipality=false;rule.municipalities=[];}
    if (key === 'prefecture') {rule.district='all';rule.municipality='all';rule.strictMunicipality=false;rule.municipalities=[];}
    if (key === 'district') {rule.municipality='all';rule.strictMunicipality=false;}
@@ -583,6 +583,19 @@ function imageRuleFields(article,rule){
  if(rule.type==='earthquake-map'){earthquakeMapFields(box,rule);previewImages(box,rulePreviews(rule));return;}
  if(rule.type==='eew-map'){eewMapFields(box,rule);previewImages(box,rulePreviews(rule));return;}
  if(rule.type==='warning-table'){warningTableFields(box,rule);previewImages(box,rulePreviews(rule));return;}
+ // 津波: Basic は全国の地図だけ（地方・表・津波観測の表は Plus 以上）
+ if(rule.type==='tsunami-map'&&!entitlements.tsunamiMap&&entitlements.tsunamiMapNational){
+  const fits=rule.region==='all'&&rule.tsunamiOutputs.length===1&&rule.tsunamiOutputs[0]==='map'&&rule.enlargedArea!==true;
+  if(!fits){
+   upgradeNote(box,'保存済みの地方・表・津波観測の表の設定は現在の契約では使えません（地方のルールを全国へ自動で広げることはありません）。Plus以上へ変更するか、全国の地図に切り替えて保存してください。');
+   const button=document.createElement('button');button.type='button';button.textContent='全国の地図に切り替える';
+   button.onclick=()=>{rule.region='all';rule.tsunamiOutputs=['map'];rule.enlargedArea=false;render();};
+   box.append(button);
+  }
+  helpNote(box,'全国の地図を、津波注意報以上が発表されたとき、または津波予報だけが発表されたときに配信します。地方の地図・表・津波観測の表はPlus以上で使えます。');
+  previewImages(box,rulePreviews(rule));
+  return;
+ }
  field(box,rule,'region','対象地方（全国・地方）',options.regions);
  if(rule.type==='hires-radar'){
   if(!['scheduled','rainfall-threshold'].includes(rule.radarCondition))rule.radarCondition='scheduled';
@@ -648,6 +661,7 @@ function updateImageRulesNote(){
  const missing=types.filter(([id])=>!imageTypeAllowed(entitlements,id)).map(([,text])=>text);
  note.textContent=(available.length?`画像配信：${available.join('・')}を利用できます。`:'')
   +(missing.length?`${missing.join('・')}はPlus以上で使えます。`:'')
+  +(entitlements.tsunamiMapNational&&!entitlements.tsunamiMap?'津波は全国の地図だけを利用できます（地方・表・津波観測の表はPlus以上）。':'')
   +'画像配信ルールでは追加条件・OR条件は使用しません。';
  note.classList.remove('hidden');
 }
