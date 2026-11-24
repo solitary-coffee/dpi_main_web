@@ -32,6 +32,7 @@ const TYPES = [['earthquake','地震情報'],['eew','緊急地震速報'],['weat
 // Paid image rules; offered only when /api/supporter/options reports imageRulesEnabled.
 const IMAGE_TYPES = [['hires-radar','雨雲レーダー（高解像度版）'],['tsunami-map','津波警報・注意報・津波観測（地図・表）'],['weather-map','気象警報・注意報の地図'],['earthquake-map','地震情報（図）'],['eew-map','緊急地震速報（警報）の図'],['warning-table','気象警報・注意報の表'],['warning-timeseries','気象警報・注意報の時系列予想']];
 // warning-table: which feature allows each table (plan-features.js).
+const AREA_NOTE = '選んだ地域が発表の対象に含まれないときは配信されません。';
 const RADAR_CONTENT_IDS = ['current','forecast'];
 const WARNING_TABLE_FEATURES = {national:'warningTableNational',regional:'warningTableRegional',timeseries:'warningTableTimeseries'};
 const TSUNAMI_OUTPUT_IDS = ['map','table','observation'];
@@ -301,6 +302,7 @@ function savedRules(account){
 
 function geoScopeFields(container,rule){
  if(rule.region==='all')return;
+ if(rule.type!=='rain-radar')helpNote(container,AREA_NOTE);
  const prefectures=(options.prefectures||[]).filter(item=>item.region===rule.region).map(item=>[item.code,item.name]);
  const prefecture=field(container,rule,'prefecture','都道府県・全域',[['all','地方全域'],...prefectures]);
  prefecture.disabled=!entitlements.prefecture||rule.type==='rain-radar';
@@ -559,13 +561,14 @@ function eewMapFields(box,rule){
  plainSelect(box,'配信する条件',[['national',national],['regions',regional]],choose?'regions':'national',value=>{
   eewRegionMode.set(rule,value==='regions');if(value!=='regions')rule.regions=[];render();
  });
- if(choose)checkboxGroup(box,'対象の地方（1つ以上・複数可）',regionChoices(),rule.regions,next=>{rule.regions=next;});
+ if(choose){checkboxGroup(box,'対象の地方（1つ以上・複数可）',regionChoices(),rule.regions,next=>{rule.regions=next;});helpNote(box,AREA_NOTE);}
 }
 
 // warning-table (気象警報・注意報の表): national (Plus+), regional (Pro+). warning-timeseries (時系列予想): Pro+.
 function warningTableFields(box,rule){
  if(rule.type==='warning-timeseries'){
   checkboxGroup(box,'対象の地方（1つ以上・複数可）',regionChoices(),rule.regions,next=>{rule.regions=next;});
+  helpNote(box,AREA_NOTE);
   warningTiming(box,rule);
   return;
  }
@@ -575,8 +578,10 @@ function warningTableFields(box,rule){
  checkboxGroup(box,'送る表（1つ以上）',shown.map(([id,text])=>[id,allowed(id)?text:`${text}（現在の契約では配信されません）`]),rule.tables,next=>{rule.tables=next;render();});
  const hidden=kinds.filter(([id])=>!shown.some(([value])=>value===id));
  if(hidden.length)helpNote(box,`${hidden.map(([,text])=>text).join('・')}はProで使えます。`);
- if(rule.tables.includes('regional')||rule.tables.includes('timeseries'))
+ if(rule.tables.includes('regional')||rule.tables.includes('timeseries')){
   checkboxGroup(box,'地方の表の対象地方（1つ以上・複数可）',regionChoices(),rule.regions,next=>{rule.regions=next;});
+  helpNote(box,'地方の表は、選んだ地方に警報・注意報が発表されていないときは配信されません（すべて解除されたときは1回配信します）。');
+ }
  warningTiming(box,rule);
 }
 
@@ -653,6 +658,9 @@ function imageRuleFields(article,rule){
   return;
  }
  field(box,rule,'region','対象地方（全国・地方）',options.regions);
+ if(rule.region!=='all')helpNote(box,rule.type!=='hires-radar'?AREA_NOTE
+  :rule.radarCondition==='rainfall-threshold'?'選んだ地方で閾値以上の雨を観測していないときは配信されません。'
+  :'定時配信は、雨の有無にかかわらず選んだ地方の図を配信します。');
  if(rule.type==='hires-radar'){
   if(!['scheduled','rainfall-threshold'].includes(rule.radarCondition))rule.radarCondition='scheduled';
   checkboxField(box,rule,'linearRainband','線状降水帯の発生情報を重ねて表示する');
