@@ -70,12 +70,6 @@ for (const [id, name] of [['5-', '震度5弱']]) add('pro', '画像', `地震図
 add('pro', '画像', '地震図-地方別しきい値', '地震情報の図・北海道で震度1以上、東北で震度3以上、関東甲信で震度4以上', {...allQuakes, regionMinIntensity: {hokkaido: '1', tohoku: '3', 'kanto-koshin': '4'}});
 for (const id of ['1']) add('pro', '画像', `地震図-長周期階級${id}以上`, `地震情報の図・長周期地震動階級${id}以上`, {...allQuakes, minLgInt: id});
 add('pro', '画像', '地震図-中心と震度3以上', '地震情報の図・東京都千代田区中心・震度3以上', {...allQuakes, centerMunicipality: '1310100', minIntensity: '3'});
-// --- 画像: カスタム（機能を 1 つずつ許可した契約）
-add('custom', '画像', '個別-緊急地震速報だけ', 'カスタム：緊急地震速報（警報）の図だけを許可', {type: 'eew-map'}, {features: ['eewMap']});
-add('custom', '画像', '個別-時系列予想だけ', 'カスタム：時系列予想だけを許可（北海道地方）', {type: 'warning-timeseries', regions: ['hokkaido']}, {features: ['warningTableTimeseries']});
-add('custom', '画像', '個別-雨雲予想だけ', 'カスタム：雨雲レーダー（高解像度版）＋予想だけを許可', {...radar, radarContents: ['forecast'], forecastIntervalMinutes: 360}, {features: ['hiresRadar', 'hiresRadarForecast']});
-add('custom', '画像', '個別-地震図だけ', 'カスタム：地震情報の図だけを許可', allQuakes, {features: ['earthquakeMap']});
-add('custom', '画像', '個別-津波全国だけ', 'カスタム：津波の全国の地図だけを許可', {...tsunami, tsunamiOutputs: ['map']}, {features: ['tsunamiMapNational']});
 
 // --- 文字: Basic
 const text = {region: 'all', detail: 'all'};
@@ -86,17 +80,18 @@ add('supporter', '文字', '地震-地方', 'テキスト：地震情報・北�
 for (const [id, name] of EEW_DETAILS) add('supporter', '文字', `速報-${{all: 'すべて', forecast: '予報', warning: '警報'}[id]}`, `テキスト：${name}`, {...text, type: 'eew', detail: id});
 add('supporter', '文字', '速報-最終報なし', 'テキスト：緊急地震速報・最終報は震度が変わったときだけ', {...text, type: 'eew', sendFinalReport: false});
 add('supporter', '文字', '速報-対象地方だけ', 'テキスト：緊急地震速報（警報）・関東甲信が対象のときだけ', {...text, type: 'eew', detail: 'warning', region: 'kanto-koshin', eewWarningAreaMode: 'target-only'});
-for (const [id, name] of WEATHER_DETAILS) add('supporter', '文字', `気象-${id === 'all' ? 'すべて' : name.replace(/（|）|・/g, '-').slice(0, 18)}`, `テキスト：${name}`, {...text, type: 'weather', detail: id});
+const KINDS = {join: ['気象-種類別-basic', '【Basic以上】テキスト：気象情報を種類ごとに（20種類）。都道府県の指定はPlus以上、市区町村の指定はPro']};
+for (const [id, name] of WEATHER_DETAILS) add('supporter', '文字', id === 'all' ? '気象-すべて' : `気象-${name}`, `テキスト：${name}`, {...text, type: 'weather', detail: id}, id === 'all' ? {} : KINDS);
 add('supporter', '文字', '簡略版-定時', '雨雲レーダー（簡略版）・関東甲信・6時間ごと', {...text, type: 'rain-radar', region: 'kanto-koshin', radarCondition: 'all', deliveryIntervalHours: '6'});
 add('supporter', '文字', '簡略版-降雨検知', '雨雲レーダー（簡略版）・関東甲信・降雨を検出・3時間ごと', {...text, type: 'rain-radar', region: 'kanto-koshin', radarCondition: 'rain-detected', deliveryIntervalHours: '3'});
 // --- 文字: Plus
 add('plus', '文字', '地震-都道府県', 'テキスト：地震情報・北海道（都道府県の指定）', {...text, type: 'earthquake', region: 'hokkaido', prefecture: '01'});
-add('plus', '文字', '気象-都道府県', 'テキスト：気象情報・北海道（都道府県の指定）', {...text, type: 'weather', region: 'hokkaido', prefecture: '01'});
+add('plus', '文字', '気象-都道府県', 'テキスト：気象情報・北海道（都道府県の指定）', {...text, type: 'weather', region: 'hokkaido', prefecture: '01'}, KINDS);
 add('plus', '文字', '簡略版-しきい値', '雨雲レーダー（簡略版）・全国・5mm/h以上', {...text, type: 'rain-radar', radarCondition: 'rainfall-threshold', rainfallThresholdMmPerHour: '5', deliveryIntervalHours: '3'});
 // --- 文字: Pro
 add('pro', '文字', '地震-市区町村', 'テキスト：地震情報・札幌市手稲区', {...text, type: 'earthquake', region: 'hokkaido', prefecture: '01', municipality: '0110900'});
-add('pro', '文字', '気象-市区町村', 'テキスト：気象情報・札幌市手稲区', {...text, type: 'weather', region: 'hokkaido', prefecture: '01', municipality: '0110900'});
-add('pro', '文字', '気象-市区町村-抽出', 'テキスト：気象情報・札幌市手稲区（その市区町村だけの本文）', {...text, type: 'weather', region: 'hokkaido', prefecture: '01', municipality: '0110900', strictMunicipality: true});
+add('pro', '文字', '気象-市区町村', 'テキスト：気象情報・札幌市手稲区', {...text, type: 'weather', region: 'hokkaido', prefecture: '01', municipality: '0110900'}, KINDS);
+add('pro', '文字', '気象-市区町村', 'テキスト：気象情報・札幌市手稲区（その市区町村だけの本文）', {...text, type: 'weather', region: 'hokkaido', prefecture: '01', municipality: '0110900', strictMunicipality: true});
 add('pro', '文字', '地震-and条件', 'テキスト：地震情報・震度3以上 かつ M4以上', {...text, type: 'earthquake', intensityMode: 'threshold', intensity: '3', conditions: [{kind: 'magnitude', value: '4'}]});
 add('pro', '文字', '地震-or条件', 'テキスト：地震情報・震度3以上 または M4以上', {...text, type: 'earthquake', conditionLogic: 'or', intensityMode: 'threshold', intensity: '3', conditions: [{kind: 'magnitude', value: '4'}]});
 add('pro', '文字', '地震-複数チャンネル', 'テキスト：地震情報・1ルールから複数チャンネル', {...text, type: 'earthquake'}, {channels: 2});
@@ -110,7 +105,7 @@ const database = rules => ({prepare: sql => ({all: async () => sql.includes('sup
  : {results: [{discord_user_id: '637850681666961408', customer_id: 'cus_1', revision: 1, settings_json: JSON.stringify({rules})}]}})});
 const snapshot = async (rules, sub) => (await buildSupporterSnapshot(database(rules), ENV, async () => new Map([['cus_1', [sub]]]))).rules;
 
-const entries = [], problems = [], checks = {saved: 0, higher: 0, refused: 0};
+const entries = [], joined = new Map(), problems = [], checks = {saved: 0, higher: 0, refused: 0};
 for (const [number, entry] of E.entries()) {
  const channelIds = Array.from({length: entry.channels || 1}, (_, index) => String(90000000000000000n + BigInt(number * 10 + index)));
  const label = `${PLAN_LABEL[entry.plan]}・${entry.channel}`;
@@ -120,10 +115,18 @@ for (const [number, entry] of E.entries()) {
   const delivered = await snapshot(save(raw, sub), sub);
   if (delivered.length !== raw.length) problems.push(`${label}: 保存 ${raw.length} 件に対し配信データ ${delivered.length} 件`);
   checks.saved += delivered.length;
-  entries.push({key: `${entry.plan}-${number}`, plan: PLAN_LABEL[entry.plan], group: entry.group, base: entry.channel,
-   category: `デバッグ｜${CATEGORY[entry.rules[0].type]}`,
-   channel: `${entry.group === '文字' && entry.rules[0].type !== 'rain-radar' ? 'テキスト-' : ''}${entry.channel.replace(/-+$/, '')}-${PLAN_LABEL[entry.plan]}`.toLowerCase(),
-   topic: `【${PLAN_NOTE[entry.plan]}】${entry.topic}`, channelIds, rules: delivered});
+  const category = `デバッグ｜${CATEGORY[entry.rules[0].type]}`;
+  const name = channel => `${entry.group === '文字' && entry.rules[0].type !== 'rain-radar' ? 'テキスト-' : ''}${channel}`.toLowerCase();
+  if (entry.join && joined.has(entry.join[0])) {          // 同じチャンネルにまとめる設定
+   const first = joined.get(entry.join[0]);
+   first.rules.push(...delivered.map(rule => ({...rule, channelId: first.channelIds[0], channelIds: first.channelIds})));
+  } else {
+   const made = {key: `${entry.plan}-${number}`, plan: PLAN_LABEL[entry.plan], group: entry.group, category,
+    channel: name(entry.join ? entry.join[0] : `${entry.channel.replace(/-+$/, '')}-${PLAN_LABEL[entry.plan]}`),
+    topic: entry.join ? entry.join[1] : `【${PLAN_NOTE[entry.plan]}】${entry.topic}`, channelIds, rules: delivered};
+   if (entry.join) joined.set(entry.join[0], made);
+   entries.push(made);
+  }
  } catch (error) { problems.push(`${label}: 保存できません（${error.message}）`); continue; }
  if (entry.plan === 'custom') continue;
  for (const plan of ORDER) {
