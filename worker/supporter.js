@@ -8,7 +8,7 @@ import { PREFECTURES, loadSupporterAreaCatalogue, geographicEntitlements, normal
 import { planFeatures } from '../site/supporter/plan-features.js';
 import { createPreviewCheckout, previewCheckoutResult } from './supporter-billing.js';
 import { basicCredentialsValid, reviewAccessConfigured, reviewChallenge, reviewCookie, reviewCookieValid } from './supporter-review.js';
-import { imageRulesEnabled, imageRulesV2Enabled, isImageRuleType, isImageRuleV2Type, imageRuleOptions, TSUNAMI_MAP_OUTPUTS, WARNING_TABLE_KINDS, WARNING_TABLE_DELIVER_ON, normalizeImageRuleFields, loadEarthquakeMunicipalities, IMAGE_RULE_TYPE_OPTIONS, HIRES_RADAR_CONDITIONS, WEATHER_MAP_PRODUCTS, WEATHER_MAP_SEVERITIES, EARTHQUAKE_MAP_PRODUCTS, EARTHQUAKE_MAP_INTENSITIES } from './supporter-image-rules.js';
+import { imageRulesEnabled, imageRulesV2Enabled, isImageRuleType, isImageRuleV2Type, imageRuleOptions, savedTsunamiOutputs, TSUNAMI_MAP_OUTPUTS, WARNING_TABLE_KINDS, WARNING_TABLE_DELIVER_ON, normalizeImageRuleFields, loadEarthquakeMunicipalities, IMAGE_RULE_TYPE_OPTIONS, HIRES_RADAR_CONDITIONS, WEATHER_MAP_PRODUCTS, WEATHER_MAP_SEVERITIES, EARTHQUAKE_MAP_PRODUCTS, EARTHQUAKE_MAP_INTENSITIES } from './supporter-image-rules.js';
 
 const response = (data, status = 200) => Response.json(data, {status, headers: {'Cache-Control':'no-store'}});
 const notFound = () => new Response('Not Found', {
@@ -471,8 +471,7 @@ function imageRuleAdminDetails(rule, type) {
   ];
  }
  if(type==='tsunami-map')return [
-  {label:'送るもの',value:(Array.isArray(rule?.outputs)?rule.outputs:(rule?.includeTables===false?['map']:['map','table'])).map(id=>optionLabel(TSUNAMI_MAP_OUTPUTS,clean(id))).join('・')},
-  {label:'津波予報区の表',value:rule?.includeTables===false?'添付しない':'添付する'},
+  {label:'送るもの',value:savedTsunamiOutputs(rule).map(id=>optionLabel(TSUNAMI_MAP_OUTPUTS,id)).join('・')},
   {label:'発表地域拡大版',value:rule?.enlargedArea===true?'有効（Pro）':'無効'},
  ];
  if(type==='earthquake-map'){
