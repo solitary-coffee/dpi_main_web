@@ -44,6 +44,7 @@ export const FEATURE_DEFINITIONS = Object.freeze([
  {name: 'hiresRadar', section: 'hires-radar', plan: 'plus', label: '全国・地方の選択・定時配信・線状降水帯の表示'},
  {name: 'hiresRadarThreshold', section: 'hires-radar', plan: 'pro', label: '閾値以上で配信（10・20・30・50・80mm/h）', requires: ['hiresRadar']},
  // --- tsunami-map: 津波警報・注意報の図・表 ---
+ {name: 'tsunamiMapNational', section: 'tsunami-map', plan: 'supporter', label: '全国の地図だけ'},
  {name: 'tsunamiMap', section: 'tsunami-map', plan: 'plus', label: '全国・地方の選択（地図・表・津波観測の表）'},
  {name: 'tsunamiEnlarged', section: 'tsunami-map', plan: 'pro', label: '発表地域の拡大図', requires: ['tsunamiMap']},
  // --- earthquake-map: 地震情報の図 ---
@@ -59,7 +60,7 @@ const DEFINITION = new Map(FEATURE_DEFINITIONS.map(item => [item.name, item]));
 export const IMAGE_TYPE_FEATURES = Object.freeze({
  'eew-map': Object.freeze(['eewMap']),
  'hires-radar': Object.freeze(['hiresRadar']),
- 'tsunami-map': Object.freeze(['tsunamiMap']),
+ 'tsunami-map': Object.freeze(['tsunamiMap', 'tsunamiMapNational']),
  'weather-map': Object.freeze(['weatherMap']),
  'earthquake-map': Object.freeze(['earthquakeMap']),
  'warning-table': Object.freeze(['warningTableNational', 'warningTableRegional', 'warningTableTimeseries']),
@@ -75,7 +76,8 @@ export function sortFeatureNames(names) {
 // features its old columns allowed. migrations/0032 writes exactly this list into features_json.
 export function legacyCustomFeatureNames(flags = {}) {
  const branching = flags.municipalityBranching === true;
- const names = FEATURE_DEFINITIONS.filter(item => item.section !== 'text').map(item => item.name);
+ // tsunamiMapNational は tsunamiMap に含まれる（従来のカスタム契約の一覧 = migrations/0032 は変えない）
+ const names = FEATURE_DEFINITIONS.filter(item => item.section !== 'text' && item.name !== 'tsunamiMapNational').map(item => item.name);
  names.push('rainfallThreshold');
  if (branching) names.push('prefectureScope', 'municipalityScope');
  if (branching && flags.contentExtraction === true) names.push('strictMunicipality');
@@ -173,7 +175,7 @@ export function imageTypeAllowed(features, type) {
 
 // Best plan tier for image rules ("supporter" | "plus" | "pro" | "custom"), or '' when the
 // account has no image delivery. Sent to the home server as `tier` (fallback for home servers
-// that do not read `features` yet; "supporter" only ever accompanies an eew-map rule).
+// that do not read `features` yet; "supporter" only ever accompanies an eew-map rule or a national tsunami-map rule).
 export function imageTier(subscriptions = []) {
  const rank = {supporter: 1, plus: 2, pro: 3, custom: 4};
  let best = '';

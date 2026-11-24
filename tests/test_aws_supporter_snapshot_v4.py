@@ -68,7 +68,7 @@ class RepositoryLambdaV4Tests(unittest.TestCase):
         self.assertEqual(result["rules"][1]["tier"], "plus")
 
     def test_image_rules_require_v4_tier_and_region(self):
-        bad = [snapshot(3, TSUNAMI), snapshot(4, {**TSUNAMI, "tier": "supporter"}),
+        bad = [snapshot(3, TSUNAMI), snapshot(4, {**RADAR, "tier": "supporter"}),
                snapshot(4, {**TSUNAMI, "tier": None}), snapshot(4, {**RADAR, "region": "kanto"}),
                snapshot(4, {**WEATHER, "type": "weather-image"})]
         for value in bad:
@@ -87,9 +87,10 @@ class RepositoryLambdaV4Tests(unittest.TestCase):
         self.assertEqual(result["rules"][0]["features"], features)
         self.assertEqual(result["rules"][1]["regions"], ["tohoku", "kanto-koshin"])
         self.assertEqual(result["rules"][2]["tables"], ["national", "timeseries"])
-        # "supporter" (Basic) is accepted for eew-map only.
+        # "supporter" (Basic) is accepted for eew-map and tsunami-map (national map) only.
+        self.validate(snapshot(4, {**TSUNAMI, "tier": "supporter", "tsunamiOutputs": ["map"]}), NOW)
         for bad in (snapshot(4, {**table, "tier": "supporter"}), snapshot(4, {**basic, "tier": ""}),
-                    snapshot(3, basic), snapshot(4, {**TSUNAMI, "tier": "supporter"})):
+                    snapshot(3, basic), snapshot(3, {**TSUNAMI, "tier": "supporter"})):
             with self.assertRaises(ValueError):
                 self.validate(bad, NOW)
 
@@ -118,7 +119,7 @@ def earthquake_map_v4_source():
     """The repository Lambda as deployed on 2026-11-18 (earthquake-map, no eew-map / warning-table)."""
     source = (ROOT / "aws/channel-directory-api/lambda_function.py").read_text(encoding="utf-8")
     old = source.replace(', "eew-map", "warning-table"}', '}').replace(
-        '    basic_image_types = {"eew-map"}\n', '').replace(
+        '    basic_image_types = {"eew-map", "tsunami-map"}\n', '').replace(
         '''not in (
                 image_tiers | ({"supporter"} if _clean(rule.get("type"), 30) in basic_image_types else set()))''',
         'not in image_tiers')

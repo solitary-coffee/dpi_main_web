@@ -24,6 +24,13 @@
 .comparison-table tbody tr:not(.comparison-group):hover td{background:#49535d}
 .comparison-table .comparison-group th{padding:10px 14px;background:#30516a;color:#f1f8ff;letter-spacing:.02em;font-weight:800}
 .comparison-table .compare-cta-row th{background:var(--panel-soft)}
+.comparison-subtitle{margin:26px 0 10px;color:#8ec9ff;font-size:1.1rem;font-weight:800}
+.comparison-table-grouped th:nth-child(2):not([scope=col]),.comparison-table-grouped tbody th[scope=row]{text-align:left}
+.comparison-table-grouped thead th:nth-child(2){text-align:left}
+.comparison-table-grouped tbody .comparison-kind{min-width:150px;vertical-align:top;background:#30516a;color:#f1f8ff;border-right:1px solid var(--line)}
+.comparison-table-grouped tbody+tbody{border-top:2px solid var(--line)}
+.comparison-table-grouped thead th:nth-child(n+3){width:92px}
+.comparison-table td{white-space:nowrap}
 .comparison-table .compare-cta-row td{padding:18px 10px}
 .compare-cta-row a{display:inline-flex;min-height:40px;align-items:center;justify-content:center;padding:8px 10px;border:1px solid #8ec9ff;border-radius:6px;background:#24445d;color:#fff!important;font-weight:800;text-decoration:none}
 .compare-cta-row a:hover{background:#326085}
@@ -47,7 +54,14 @@
  .comparison-page h2{font-size:1.2rem}
  .comparison-table{font-size:.86rem}
  .comparison-table th,.comparison-table td{padding:11px 12px}
- .comparison-table tbody th{min-width:250px}
+ .comparison-table tbody th{min-width:150px}
+ .comparison-table-simple{min-width:640px}
+ .comparison-table-grouped{min-width:0;table-layout:fixed}
+ .comparison-table-grouped th,.comparison-table-grouped td{padding:10px 6px;overflow-wrap:anywhere}
+ .comparison-table-grouped thead th:first-child{width:24%}
+ .comparison-table-grouped thead th:nth-child(n+3){width:13.5%;padding:10px 2px;font-size:.78rem;white-space:nowrap}
+ .comparison-table-grouped tbody th,.comparison-table-grouped tbody .comparison-kind{min-width:0}
+ .comparison-table-grouped thead th:last-child,.comparison-table-grouped tbody td:last-child{display:none}
  .comparison-notices{padding:16px}
  .comparison-main-link{width:100%}
 }

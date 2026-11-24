@@ -65,7 +65,7 @@ test('comparison describes the actual selectable earthquake, EEW and weather typ
  for(const label of ['震度速報','長周期地震動','地震動予報','気象情報','台風情報','指定河川洪水予報','雨雲レーダー']){
   assert.ok(html.includes(label),label);
  }
- assert.match(html,/class="comparison-table"/);
+ assert.match(html,/class="comparison-table comparison-table-grouped"/);
  assert.match(html,/カスタムを相談する/);
 });
 

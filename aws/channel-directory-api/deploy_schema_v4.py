@@ -48,7 +48,7 @@ KNOWN_CHECKS = (
 )
 # Markers of the current target validator (all six image rule types).
 CURRENT_MARKER = '"warning-table"'
-CURRENT_MARKERS = ('"earthquake-map"', '"eew-map"', CURRENT_MARKER)
+CURRENT_MARKERS = ('"earthquake-map"', '"eew-map"', CURRENT_MARKER, 'basic_image_types = {"eew-map", "tsunami-map"}')
 LOCAL_SOURCE = Path(__file__).resolve().with_name("lambda_function.py")
 
 
@@ -139,6 +139,8 @@ def verify(source):
             raise RuntimeError(f"v4 {kind} rule was rejected")
     if outcome(4, {"type": "eew-map", "region": "all", "tier": "supporter", "regions": []}) is None:
         raise RuntimeError("v4 Basic eew-map rule was rejected")
+    if outcome(4, {"type": "tsunami-map", "region": "all", "tier": "supporter", "tsunamiOutputs": ["map"]}) is None:
+        raise RuntimeError("v4 Basic national tsunami-map rule was rejected")
     if outcome(4, {"type": "warning-table", "region": "all", "tier": "supporter"}) is not None:
         raise RuntimeError("Validator accepted a Basic warning-table rule")
     found[5] = "rejected"
