@@ -6,13 +6,18 @@ import * as lightbox from '../site/supporter/preview-lightbox.js';
 
 const root = new URL('../', import.meta.url);
 const read = path => readFile(new URL(path, root), 'utf8');
-const TYPES = ['earthquake-map', 'weather-map', 'warning-table', 'eew-map', 'tsunami-map', 'hires-radar'];
+const TYPES = ['earthquake-map', 'weather-map', 'warning-table', 'warning-timeseries', 'eew-map', 'tsunami-map', 'hires-radar'];
 const MAX_BYTES = 400 * 1024;
+const MAX_GIF_BYTES = 600 * 1024; // 動く見本（予想）
 const MAX_WIDTH = 1200;
 
-// PNG の幅（IHDR）
+// PNG の幅（IHDR）・GIF の幅
 async function pngWidth(path) {
  const data = await readFile(new URL(path, root));
+ if (path.endsWith('.gif')) {
+  assert.equal(data.subarray(0, 6).toString('latin1'), 'GIF89a', path);
+  return data.readUInt16LE(6);
+ }
  assert.equal(data.subarray(1, 4).toString('latin1'), 'PNG', path);
  return data.readUInt32BE(16);
 }
@@ -42,7 +47,7 @@ test('manifest: 載っている画像はすべてあり、幅 1200px・400KB 以
   const path = `site/supporter/previews/${item.file}`;
   const info = await stat(new URL(path, root));
   assert.ok(info.isFile(), path);
-  assert.ok(info.size <= MAX_BYTES, `${path}: ${info.size}`);
+  assert.ok(info.size <= (path.endsWith('.gif') ? MAX_GIF_BYTES : MAX_BYTES), `${path}: ${info.size}`);
   assert.ok(await pngWidth(path) <= MAX_WIDTH, path);
  }
 });
@@ -163,7 +168,7 @@ test('ページ: 契約画面と機能比較ページが拡大表示を使う', 
  for (const type of TYPES) assert.ok(figures.some(([, t]) => t === type), type);
  // 契約画面のサムネイル（rulePreviews の名前）も manifest にある
  for (const name of ['weather-map-national', 'weather-map-region', 'hires-radar-national', 'hires-radar-region', 'eew-map-national',
-  'warning-table-national', 'warning-table-regional', 'warning-table-timeseries', 'tsunami-map-map', 'tsunami-map-table',
+  'warning-table-national', 'warning-table-regional', 'warning-timeseries-1', 'tsunami-map-map', 'tsunami-map-table',
   'earthquake-map-shindo', 'earthquake-map-hypocenter', 'earthquake-map-detail', 'earthquake-map-long-period'])
   assert.ok(Object.values(manifest).flat().some(item => item.file === `${name}.png`), name);
  assert.ok(JSON.parse(pkg).scripts.check.includes('node --check site/supporter/preview-lightbox.js'));

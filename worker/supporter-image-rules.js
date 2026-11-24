@@ -1,15 +1,18 @@
 // Paid image delivery rules (snapshot schemaVersion 4): hires-radar / tsunami-map / weather-map /
-// earthquake-map / eew-map / warning-table.
+// earthquake-map / eew-map / warning-table, plus warning-timeseries (site only: delivered as warning-table).
 // The home server (dpi_code Di/supporter_image_rules.py) re-validates every field and re-checks
 // the paid options against `features` (sorted feature names of the owner, see plan-features.js)
 // or, on an older home server, against `tier`; these definitions must stay in sync with it.
 import { PREFECTURES } from './supporter-geo.js';
 import { hasFeature, imageTypeAllowed, featureList } from '../site/supporter/plan-features.js';
 
-export const IMAGE_RULE_TYPES = Object.freeze(['hires-radar', 'tsunami-map', 'weather-map', 'earthquake-map', 'eew-map', 'warning-table']);
+export const IMAGE_RULE_TYPES = Object.freeze(['hires-radar', 'tsunami-map', 'weather-map', 'earthquake-map', 'eew-map', 'warning-table', 'warning-timeseries']);
 export const IMAGE_RULE_TYPE_SET = new Set(IMAGE_RULE_TYPES);
 // Types that need a home server and AWS Lambda that know them (SUPPORTER_IMAGE_RULES_V2_ENABLED).
-export const IMAGE_RULE_TYPES_V2 = Object.freeze(['eew-map', 'warning-table']);
+export const IMAGE_RULE_TYPES_V2 = Object.freeze(['eew-map', 'warning-table', 'warning-timeseries']);
+// Type name used in the delivery snapshot: the home servers and the AWS validator only know warning-table
+// (an unknown type rejects the WHOLE snapshot), where the time series is tables: ['timeseries'].
+export const deliveredImageType = type => type === 'warning-timeseries' ? 'warning-table' : type;
 const V2_TYPE_SET = new Set(IMAGE_RULE_TYPES_V2);
 export const IMAGE_RULE_TYPE_OPTIONS = Object.freeze([
  ['hires-radar', '雨雲レーダー（高解像度版）'],
@@ -17,15 +20,17 @@ export const IMAGE_RULE_TYPE_OPTIONS = Object.freeze([
  ['weather-map', '気象警報・注意報の地図'],
  ['earthquake-map', '地震情報（図）'],
  ['eew-map', '緊急地震速報（警報）の図'],
- ['warning-table', '警報・注意報の表'],
+ ['warning-table', '気象警報・注意報の表'],
+ ['warning-timeseries', '気象警報・注意報の時系列予想'],
 ]);
 // tsunami-map outputs: the map, the tables and the observations can go to different channels by separate rules.
 export const TSUNAMI_MAP_OUTPUTS = Object.freeze([['map', '地図'], ['table', '表（満潮時刻を含む）'], ['observation', '津波観測の表（沖合・沿岸）']]);
-// warning-table: national / regional = VPWS50（集約通報）, timeseries = VPWP50（時系列）.
+// warning-table: national / regional = VPWS50（集約通報）. timeseries = VPWP50: now its own type (warning-timeseries);
+// it stays valid inside warning-table for rules saved before.
 export const WARNING_TABLE_KINDS = Object.freeze([
  ['national', '全国の表'],
  ['regional', '地方の表'],
- ['timeseries', '時系列の表'],
+ ['timeseries', '時系列予想'],
 ]);
 export const WARNING_TABLE_DELIVER_ON = Object.freeze([
  ['changed', '内容が変わったときだけ'],
@@ -38,7 +43,15 @@ export const HIRES_RADAR_CONDITIONS = Object.freeze([
  ['rainfall-threshold', '1時間降水量が閾値以上'],
 ]);
 export const HIRES_RADAR_THRESHOLDS = Object.freeze([10, 20, 30, 50, 80].map(value => [String(value), `${value}mm/h以上`]));
-export const HIRES_RADAR_INTERVALS = Object.freeze([1, 2, 3, 6, 12, 24].map(value => [String(value), `${value}時間ごと`]));
+// 配信頻度（分）。Plus は選択肢から、Pro（hiresRadarInterval）は10分単位で自由（現在の図 24 時間・予想 12 時間まで）。
+// 選択肢と範囲は自宅の Di/supporter_image_rules.py（RADAR_PLUS_MINUTES ほか）と同じ。
+export const HIRES_RADAR_INTERVALS = Object.freeze([['30', '30分ごと'], ['60', '1時間ごと'], ['180', '3時間ごと'], ['360', '6時間ごと'], ['720', '12時間ごと']]);
+export const HIRES_RADAR_LIMITS = Object.freeze({step: 10, min: 10, max: 1440, forecastMax: 720});
+export const HIRES_RADAR_CONTENTS = Object.freeze([['current', '現在の図'], ['forecast', '1時間先までの予想（GIF）']]);
+export const radarIntervalText = minutes => {
+ const hours = Math.floor(minutes / 60), rest = minutes % 60;
+ return `${hours ? `${hours}時間` : ''}${rest ? `${rest}分` : ''}ごと`;
+};
 export const WEATHER_MAP_PRODUCTS = Object.freeze([
  ['VPWW55', '大雨'],
  ['VPWW56', '土砂災害'],
@@ -85,7 +98,20 @@ export const EARTHQUAKE_MUNICIPALITIES_PATH = '/site/supporter/earthquake-munici
 
 const REGIONS = new Set(IMAGE_REGION_IDS);
 const THRESHOLDS = new Set(HIRES_RADAR_THRESHOLDS.map(([id]) => Number(id)));
-const INTERVALS = new Set(HIRES_RADAR_INTERVALS.map(([id]) => Number(id)));
+const PLUS_MINUTES = HIRES_RADAR_INTERVALS.map(([id]) => Number(id));
+const CONTENT_IDS = HIRES_RADAR_CONTENTS.map(([id]) => id);
+const LEGACY_HOURS = [1, 2, 3, 6, 12, 24];
+const radarMinutes = (value, max) => {
+ const text = clean(value), minutes = Number(text);
+ return /^\d{1,4}$/.test(text) && minutes % HIRES_RADAR_LIMITS.step === 0 && minutes >= HIRES_RADAR_LIMITS.min && minutes <= max ? minutes : null;
+};
+// 以前の形（deliveryIntervalHours）のルール・受信側向けの値: 指定以上でいちばん短い時間数（配信を増やさない）
+const legacyHours = minutes => LEGACY_HOURS.find(hours => hours * 60 >= minutes) || 24;
+export const savedRadarMinutes = rule => radarMinutes(rule?.deliveryIntervalMinutes, HIRES_RADAR_LIMITS.max) ?? (Number(rule?.deliveryIntervalHours) || 1) * 60;
+export const savedRadarContents = rule => {
+ const chosen = Array.isArray(rule?.radarContents) ? CONTENT_IDS.filter(id => rule.radarContents.map(clean).includes(id)) : [];
+ return chosen.length ? chosen : ['current'];
+};
 const PRODUCTS = WEATHER_MAP_PRODUCTS.map(([id]) => id);
 const PRODUCT_SET = new Set(PRODUCTS);
 const SEVERITIES = new Set(WEATHER_MAP_SEVERITIES.map(([id]) => id));
@@ -125,12 +151,14 @@ export function imageRuleOptions(v2 = false) {
  return {
   imageRuleTypes: v2 ? IMAGE_RULE_TYPE_OPTIONS : IMAGE_RULE_TYPE_OPTIONS.filter(([id]) => !V2_TYPE_SET.has(id)),
   tsunamiMapOutputs: TSUNAMI_MAP_OUTPUTS,
-  warningTableKinds: WARNING_TABLE_KINDS,
+  warningTableKinds: WARNING_TABLE_KINDS.filter(([id]) => id !== 'timeseries'),
   warningTableDeliverOn: WARNING_TABLE_DELIVER_ON,
   imageRegions: IMAGE_REGION_IDS,
   hiresRadarConditions: HIRES_RADAR_CONDITIONS,
   hiresRadarThresholds: HIRES_RADAR_THRESHOLDS,
   hiresRadarIntervals: HIRES_RADAR_INTERVALS,
+  hiresRadarLimits: HIRES_RADAR_LIMITS,
+  hiresRadarContents: HIRES_RADAR_CONTENTS,
   weatherMapProducts: WEATHER_MAP_PRODUCTS,
   weatherMapDefaultProducts: WEATHER_MAP_DEFAULT_PRODUCTS,
   weatherMapSeverities: WEATHER_MAP_SEVERITIES,
@@ -240,17 +268,17 @@ function normalizeEewMapFields(rule, limits) {
 function normalizeWarningTableFields(rule, limits) {
  const requested = Array.isArray(rule?.tables) ? rule.tables.map(clean) : [];
  const kinds = WARNING_TABLE_KINDS.map(([id]) => id);
- if (!requested.length || requested.some(id => !kinds.includes(id))) reject('警報・注意報の表で送る表を1つ以上選択してください。');
+ if (!requested.length || requested.some(id => !kinds.includes(id))) reject('気象警報・注意報の表で送る表を1つ以上選択してください。');
  const tables = kinds.filter(id => requested.includes(id));
  for (const table of tables) {
-  if (!hasFeature(limits, WARNING_TABLE_FEATURE[table])) reject(table === 'national' ? '警報・注意報の表（全国）はPlus以上のプランで利用できます。' : '警報・注意報の表の地方の表・時系列の表はPro以上のプランで利用できます。');
+  if (!hasFeature(limits, WARNING_TABLE_FEATURE[table])) reject(table === 'national' ? '気象警報・注意報の表（全国）はPlus以上のプランで利用できます。' : table === 'regional' ? '気象警報・注意報の表（地方）はPro以上のプランで利用できます。' : '気象警報・注意報の時系列予想はPro以上のプランで利用できます。');
  }
  const needsRegions = tables.includes('regional') || tables.includes('timeseries');
- const regions = needsRegions ? regionList(rule?.regions, '警報・注意報の表の対象地方を確認してください。') : [];
- if (needsRegions && !regions.length) reject('地方の表・時系列の表を送る地方を1つ以上選択してください。');
+ const regions = needsRegions ? regionList(rule?.regions, '気象警報・注意報の対象地方を確認してください。') : [];
+ if (needsRegions && !regions.length) reject('地方の表・時系列予想を送る地方を1つ以上選択してください。');
  const deliverOn = clean(rule?.deliverOn) || 'changed';
- if (!WARNING_TABLE_DELIVER_ON.some(([id]) => id === deliverOn)) reject('警報・注意報の表の配信のタイミングを確認してください。');
- if (deliverOn === 'every' && !hasFeature(limits, 'warningTableEvery')) reject('警報・注意報の表を毎回配信する設定はPro以上のプランで利用できます。');
+ if (!WARNING_TABLE_DELIVER_ON.some(([id]) => id === deliverOn)) reject('気象警報・注意報の配信のタイミングを確認してください。');
+ if (deliverOn === 'every' && !hasFeature(limits, 'warningTableEvery')) reject('発表のたびに毎回配信する設定はPro以上のプランで利用できます。');
  return {region: 'all', tables, regions, deliverOn, showAllAreas: bool(rule?.showAllAreas)};
 }
 
@@ -287,7 +315,8 @@ function tsunamiOutputs(rule) {
 
 const TYPE_UPGRADE_MESSAGE = Object.freeze({
  'eew-map': '緊急地震速報（警報）の図は現在の契約では利用できません。',
- 'warning-table': '警報・注意報の表はPlus以上のプランで利用できます。',
+ 'warning-table': '気象警報・注意報の表はPlus以上のプランで利用できます。',
+ 'warning-timeseries': '気象警報・注意報の時系列予想はPro以上のプランで利用できます。',
 });
 
 // Validate the type-specific fields of an image rule against the account's features.
@@ -298,22 +327,43 @@ export function normalizeImageRuleFields(rule, type, limits = {}, catalogue = nu
  if (type === 'earthquake-map') return normalizeEarthquakeMapFields(rule, limits, catalogue);
  if (type === 'eew-map') return normalizeEewMapFields(rule, limits);
  if (type === 'warning-table') return normalizeWarningTableFields(rule, limits);
+ if (type === 'warning-timeseries') return normalizeWarningTableFields({...rule, tables: ['timeseries']}, limits);
  const region = clean(rule?.region) || 'all';
  if (!REGIONS.has(region)) reject('画像配信の対象地方を確認してください。');
  if (type === 'hires-radar') {
   const radarCondition = clean(rule?.radarCondition) || 'scheduled';
   if (!['scheduled', 'rainfall-threshold'].includes(radarCondition)) reject('雨雲レーダー（高解像度版）の配信条件を確認してください。');
   if (radarCondition === 'rainfall-threshold' && !hasFeature(limits, 'hiresRadarThreshold')) reject('雨雲レーダー（高解像度版）の閾値配信はPro以上のプランで利用できます。');
-  const intervalText = clean(rule?.deliveryIntervalHours) || '1';
-  const deliveryIntervalHours = Number(intervalText);
-  if (!/^\d+$/.test(intervalText) || !INTERVALS.has(deliveryIntervalHours)) reject('雨雲レーダー（高解像度版）の配信頻度を確認してください。');
+  const requestedContents = rule?.radarContents === undefined || rule?.radarContents === null ? ['current'] : (Array.isArray(rule.radarContents) ? rule.radarContents.map(clean) : []);
+  if (!requestedContents.length || requestedContents.some(id => !CONTENT_IDS.includes(id))) reject('雨雲レーダー（高解像度版）で送るもの（現在の図・予想）を1つ以上選択してください。');
+  const radarContents = CONTENT_IDS.filter(id => requestedContents.includes(id));
+  if (radarContents.includes('forecast') && !hasFeature(limits, 'hiresRadarForecast')) reject('雨雲レーダー（高解像度版）の予想はPro以上のプランで利用できます。');
+  const given = value => value !== undefined && value !== null && clean(value) !== '';
+  let deliveryIntervalMinutes = 60;
+  if (radarContents.includes('current')) {
+   if (!given(rule?.deliveryIntervalMinutes) && given(rule?.deliveryIntervalHours)) {
+    const hours = Number(clean(rule.deliveryIntervalHours));
+    if (!LEGACY_HOURS.includes(hours)) reject('雨雲レーダー（高解像度版）の配信頻度を確認してください。');
+    deliveryIntervalMinutes = hours * 60;
+   } else if (given(rule?.deliveryIntervalMinutes)) {
+    deliveryIntervalMinutes = radarMinutes(rule.deliveryIntervalMinutes, HIRES_RADAR_LIMITS.max);
+    if (deliveryIntervalMinutes === null) reject('雨雲レーダー（高解像度版）の配信頻度は10分〜24時間（10分単位）で指定してください。');
+   }
+   if (!PLUS_MINUTES.includes(deliveryIntervalMinutes) && !hasFeature(limits, 'hiresRadarInterval')) reject('雨雲レーダー（高解像度版）の配信頻度は30分・1時間・3時間・6時間・12時間から選択してください（自由な指定はPro以上）。');
+  }
+  let forecastIntervalMinutes = 60;
+  if (radarContents.includes('forecast') && given(rule?.forecastIntervalMinutes)) {
+   forecastIntervalMinutes = radarMinutes(rule.forecastIntervalMinutes, HIRES_RADAR_LIMITS.forecastMax);
+   if (forecastIntervalMinutes === null) reject('雨雲レーダー（高解像度版）の予想の配信頻度は10分〜12時間（10分単位）で指定してください。');
+  }
   let rainfallThresholdMmPerHour = null;
   if (radarCondition === 'rainfall-threshold') {
    const thresholdText = clean(rule?.rainfallThresholdMmPerHour);
    rainfallThresholdMmPerHour = Number(thresholdText);
    if (!/^\d+$/.test(thresholdText) || !THRESHOLDS.has(rainfallThresholdMmPerHour)) reject('1時間降水量の閾値は10・20・30・50・80mm/hから選択してください。');
   }
-  return {region, linearRainband: bool(rule?.linearRainband), radarCondition, rainfallThresholdMmPerHour, deliveryIntervalHours};
+  return {region, linearRainband: bool(rule?.linearRainband), radarCondition, rainfallThresholdMmPerHour, radarContents,
+   deliveryIntervalMinutes, deliveryIntervalHours: legacyHours(deliveryIntervalMinutes), forecastIntervalMinutes};
  }
  if (type === 'tsunami-map') {
   const outputs = tsunamiOutputs(rule);
@@ -376,16 +426,24 @@ function imageRuleSnapshotFieldsOnly(rule, features, tier) {
   return {region: 'all', tier, regions: EARTHQUAKE_MAP_REGION_IDS.filter(id => regions.includes(id))};
  }
  if (type === 'warning-table') return warningTableSnapshotFields(rule, features, tier);
+ if (type === 'warning-timeseries') return warningTableSnapshotFields({...rule, tables: ['timeseries']}, features, tier);
  const region = REGIONS.has(clean(rule?.region)) ? clean(rule.region) : null;
  if (!region) return null;
  if (type === 'hires-radar') {
   const threshold = rule?.radarCondition === 'rainfall-threshold';
   if (threshold && !hasFeature(features, 'hiresRadarThreshold')) return null;
+  // Forecast (Pro) is dropped after a downgrade; a forecast-only rule is suspended, never turned into maps.
+  const radarContents = savedRadarContents(rule).filter(id => id !== 'forecast' || hasFeature(features, 'hiresRadarForecast'));
+  if (!radarContents.length) return null;
+  // A custom interval falls back to the next longer Plus choice (12 hours at most).
+  let minutes = savedRadarMinutes(rule);
+  if (!hasFeature(features, 'hiresRadarInterval')) minutes = PLUS_MINUTES.find(value => value >= minutes) || PLUS_MINUTES.at(-1);
   return {
    region, tier, linearRainband: rule?.linearRainband === true,
    radarCondition: threshold ? 'rainfall-threshold' : 'scheduled',
    ...(threshold ? {rainfallThresholdMmPerHour: Number(rule?.rainfallThresholdMmPerHour)} : {}),
-   deliveryIntervalHours: Number(rule?.deliveryIntervalHours) || 1,
+   radarContents, deliveryIntervalMinutes: minutes, deliveryIntervalHours: legacyHours(minutes),
+   ...(radarContents.includes('forecast') ? {forecastIntervalMinutes: radarMinutes(rule?.forecastIntervalMinutes, HIRES_RADAR_LIMITS.forecastMax) ?? 60} : {}),
   };
  }
  if (type === 'tsunami-map') {

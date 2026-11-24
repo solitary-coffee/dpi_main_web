@@ -77,7 +77,7 @@ test('Basic cannot save any image rule',()=>{
 test('Plus saves region-level image rules but not Pro-only options',()=>{
  const limits=limitsFor(active('plus'));
  const [r,t,w]=normalizeSupporterRules([radar,tsunami,weather],guilds,limits,catalogue,ENABLED);
- assert.deepEqual({...r,name:undefined},{name:undefined,guildId:guilds[0].id,channelId:CHANNEL,channelIds:[CHANNEL],type:'hires-radar',conditionLogic:'and',conditions:[],region:'kanto-koshin',linearRainband:true,radarCondition:'scheduled',rainfallThresholdMmPerHour:null,deliveryIntervalHours:3});
+ assert.deepEqual({...r,name:undefined},{name:undefined,guildId:guilds[0].id,channelId:CHANNEL,channelIds:[CHANNEL],type:'hires-radar',conditionLogic:'and',conditions:[],region:'kanto-koshin',linearRainband:true,radarCondition:'scheduled',rainfallThresholdMmPerHour:null,radarContents:["current"],deliveryIntervalMinutes:180,deliveryIntervalHours:3,forecastIntervalMinutes:60});
  assert.deepEqual([t.includeTables,t.enlargedArea,t.region],[true,false,'all']);
  assert.deepEqual([w.products,w.minSeverity,w.prefecture,w.municipalities,w.municipalityDetail],[['VPWW55','VPWW58'],'warning',null,[],false]);
  assert.throws(()=>normalizeSupporterRules([{...radar,radarCondition:'rainfall-threshold',rainfallThresholdMmPerHour:'30'}],guilds,limits,catalogue,ENABLED),/Pro以上/);
@@ -210,13 +210,15 @@ test('admin details describe image rule settings',()=>{
 test('comparison table lists the image delivery rows with the plan split (custom: per contract)',async()=>{
  const html=await readFile(new URL('../site/supporter/plans.html',import.meta.url),'utf8');
  assert.doesNotMatch(html,/準備中/);
+ assert.match(html,/選んだ地域が発表の対象に含まれるときだけ配信します/);
  const row=(kind,label)=>{const body=html.match(new RegExp(`<th scope="rowgroup"[^>]*>${kind}</th>[\\s\\S]*?</tbody>`))?.[0]||'';return body.match(new RegExp(`<th scope="row">${label}[^<]*</th>((?:<td>[^<]*</td>){4})`))?.[1].match(/<td>([^<]*)<\/td>/g).map(cell=>cell.replace(/<\/?td>/g,''));};
  const C='契約による';
  for(const [kind,label,expected] of [
   ['緊急地震速報（警報）の図','全国',['○','○','○',C]],['緊急地震速報（警報）の図','地方',['—','○','○',C]],
   ['気象警報・注意報の地図','全国・地方',['—','○','○',C]],['気象警報・注意報の地図','都道府県・市区町村',['—','—','○',C]],
-  ['警報・注意報の表','全国',['—','○','○',C]],['警報・注意報の表','地方',['—','—','○',C]],
-  ['警報・注意報の表','時系列',['—','—','○',C]],['警報・注意報の表','発表のたびに配信',['—','—','○',C]],
+  ['気象警報・注意報の表','全国',['—','○','○',C]],['気象警報・注意報の表','地方',['—','—','○',C]],['気象警報・注意報の表','発表のたびに配信',['—','—','○',C]],
+  ['気象警報・注意報の時系列予想','地方',['—','—','○',C]],['気象警報・注意報の時系列予想','発表のたびに配信',['—','—','○',C]],
+  ['雨雲レーダー（高解像度版）','配信頻度の選択',['—','○','○',C]],['雨雲レーダー（高解像度版）','1時間先までの予想',['—','—','○',C]],['雨雲レーダー（高解像度版）','配信頻度の自由な指定',['—','—','○',C]],
   ['雨雲レーダー（簡略版）','地方',['○','○','○',C]],['雨雲レーダー（簡略版）','配信頻度・降雨検知',['○','○','○',C]],['雨雲レーダー（簡略版）','降水量のしきい値',['—','○','○',C]],
   ['雨雲レーダー（高解像度版）','全国・地方',['—','○','○',C]],['雨雲レーダー（高解像度版）','降水量のしきい値',['—','—','○',C]],
   ['津波','地図（全国）',['○','○','○',C]],['津波','地図（地方）',['—','○','○',C]],['津波','表（満潮時刻を含む）',['—','○','○',C]],

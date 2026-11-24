@@ -16,7 +16,8 @@ export const FEATURE_SECTIONS = Object.freeze([
  ['text', '文字の通知ルール'],
  ['eew-map', '緊急地震速報（警報）の図'],
  ['weather-map', '気象警報・注意報の地図'],
- ['warning-table', '警報・注意報の表'],
+ ['warning-table', '気象警報・注意報の表'],
+ ['warning-timeseries', '気象警報・注意報の時系列予想'],
  ['hires-radar', '雨雲レーダー（高解像度版）'],
  ['tsunami-map', '津波警報・注意報・津波観測（地図・表）'],
  ['earthquake-map', '地震情報（図）'],
@@ -35,14 +36,17 @@ export const FEATURE_DEFINITIONS = Object.freeze([
  // --- weather-map: 気象警報・注意報の地図 ---
  {name: 'weatherMap', section: 'weather-map', plan: 'plus', label: '全国・地方の選択'},
  {name: 'weatherMunicipality', section: 'weather-map', plan: 'pro', label: '都道府県・市区町村の指定と市区町村の詳細', requires: ['weatherMap']},
- // --- warning-table: 警報・注意報の表 (VPWS50 / VPWP50) ---
+ // --- warning-table: 気象警報・注意報の表 (VPWS50) ---
  {name: 'warningTableNational', section: 'warning-table', plan: 'plus', label: '全国の表'},
  {name: 'warningTableRegional', section: 'warning-table', plan: 'pro', label: '地方の表（地方を選ぶ）'},
- {name: 'warningTableTimeseries', section: 'warning-table', plan: 'pro', label: '時系列の表（地方を選ぶ・複数可）'},
- {name: 'warningTableEvery', section: 'warning-table', plan: 'pro', label: '発表のたびに毎回配信（「内容が変わったときだけ」はどの表でも利用可）', requires: ['warningTableNational', 'warningTableRegional', 'warningTableTimeseries']},
+ {name: 'warningTableEvery', section: 'warning-table', plan: 'pro', label: '発表のたびに毎回配信（表・時系列予想。「内容が変わったときだけ」は常に利用可）', requires: ['warningTableNational', 'warningTableRegional', 'warningTableTimeseries']},
+ // --- warning-timeseries: 気象警報・注意報の時系列予想 (VPWP50) ---
+ {name: 'warningTableTimeseries', section: 'warning-timeseries', plan: 'pro', label: '時系列予想（地方を選ぶ・複数可）'},
  // --- hires-radar: 雨雲レーダー（高解像度版） ---
- {name: 'hiresRadar', section: 'hires-radar', plan: 'plus', label: '全国・地方の選択・定時配信・線状降水帯の表示'},
+ {name: 'hiresRadar', section: 'hires-radar', plan: 'plus', label: '全国・地方の選択・定時配信（30分・1・3・6・12時間ごと）・線状降水帯の表示'},
  {name: 'hiresRadarThreshold', section: 'hires-radar', plan: 'pro', label: '閾値以上で配信（10・20・30・50・80mm/h）', requires: ['hiresRadar']},
+ {name: 'hiresRadarInterval', section: 'hires-radar', plan: 'pro', label: '配信頻度を自由に指定（10分〜24時間・10分単位）', requires: ['hiresRadar']},
+ {name: 'hiresRadarForecast', section: 'hires-radar', plan: 'pro', label: '1時間先までの予想（GIF・配信頻度は10分〜12時間）', requires: ['hiresRadar']},
  // --- tsunami-map: 津波警報・注意報の図・表 ---
  {name: 'tsunamiMapNational', section: 'tsunami-map', plan: 'supporter', label: '全国の地図だけ'},
  {name: 'tsunamiMap', section: 'tsunami-map', plan: 'plus', label: '全国・地方の選択（地図・表・津波観測の表）'},
@@ -63,7 +67,8 @@ export const IMAGE_TYPE_FEATURES = Object.freeze({
  'tsunami-map': Object.freeze(['tsunamiMap', 'tsunamiMapNational']),
  'weather-map': Object.freeze(['weatherMap']),
  'earthquake-map': Object.freeze(['earthquakeMap']),
- 'warning-table': Object.freeze(['warningTableNational', 'warningTableRegional', 'warningTableTimeseries']),
+ 'warning-table': Object.freeze(['warningTableNational', 'warningTableRegional']),
+ 'warning-timeseries': Object.freeze(['warningTableTimeseries']),
 });
 const IMAGE_BASE_FEATURES = [...new Set(Object.values(IMAGE_TYPE_FEATURES).flat())];
 
@@ -74,10 +79,11 @@ export function sortFeatureNames(names) {
 // Feature names of a legacy custom contract (saved before per-contract feature flags existed):
 // every image feature (custom used to match Pro) plus the rainfall threshold, and the text
 // features its old columns allowed. migrations/0032 writes exactly this list into features_json.
+const AFTER_LEGACY = new Set(['tsunamiMapNational', 'hiresRadarInterval', 'hiresRadarForecast']);
 export function legacyCustomFeatureNames(flags = {}) {
  const branching = flags.municipalityBranching === true;
- // tsunamiMapNational は tsunamiMap に含まれる（従来のカスタム契約の一覧 = migrations/0032 は変えない）
- const names = FEATURE_DEFINITIONS.filter(item => item.section !== 'text' && item.name !== 'tsunamiMapNational').map(item => item.name);
+ // 後から増えた機能（AFTER_LEGACY）は含めない（従来のカスタム契約の一覧 = migrations/0032 は変えない）
+ const names = FEATURE_DEFINITIONS.filter(item => item.section !== 'text' && !AFTER_LEGACY.has(item.name)).map(item => item.name);
  names.push('rainfallThreshold');
  if (branching) names.push('prefectureScope', 'municipalityScope');
  if (branching && flags.contentExtraction === true) names.push('strictMunicipality');

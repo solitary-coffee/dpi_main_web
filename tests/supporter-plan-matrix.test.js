@@ -30,6 +30,7 @@ test('the entitlement matrix per standard plan',()=>{
  const matrix={
   eewMap:[true,true,true], eewMapRegion:[false,true,true],
   hiresRadar:[false,true,true], hiresRadarThreshold:[false,false,true],
+  hiresRadarInterval:[false,false,true], hiresRadarForecast:[false,false,true],
   warningTableNational:[false,true,true], warningTableRegional:[false,false,true],
   warningTableTimeseries:[false,false,true], warningTableEvery:[false,false,true],
   weatherMap:[false,true,true], weatherMunicipality:[false,false,true],
@@ -43,7 +44,7 @@ test('the entitlement matrix per standard plan',()=>{
  for(const [name,expected] of Object.entries(matrix))assert.deepEqual(['supporter','plus','pro'].map(plan=>yes(plan,name)),expected,name);
  for(const item of FEATURE_DEFINITIONS)assert.ok(item.label&&item.section,item.name);
  // Basic: the eew-map and (national map only) the tsunami-map type.
- assert.deepEqual(['eew-map','hires-radar','tsunami-map','weather-map','earthquake-map','warning-table'].filter(type=>imageTypeAllowed(PLAN_FEATURES.supporter,type)),['eew-map','tsunami-map']);
+ assert.deepEqual(['eew-map','hires-radar','tsunami-map','weather-map','earthquake-map','warning-table','warning-timeseries'].filter(type=>imageTypeAllowed(PLAN_FEATURES.supporter,type)),['eew-map','tsunami-map']);
  assert.equal(imageTier([active('supporter')]),'supporter');
  // Dependencies of every preset are consistent.
  for(const names of Object.values(PLAN_FEATURE_NAMES))assert.equal(missingFeatureDependency(names),null);
@@ -62,7 +63,7 @@ test('Basic saves only the national 緊急地震速報（警報）の図',()=>{
  assert.throws(()=>save([eew],limits,{imageRules:true}),/準備中/);
  assert.equal(supporterOptions({SUPPORTER_IMAGE_RULES_ENABLED:'1'}).imageRuleTypes.some(([id])=>id==='eew-map'),false);
  const v2=supporterOptions({SUPPORTER_IMAGE_RULES_ENABLED:'1',SUPPORTER_IMAGE_RULES_V2_ENABLED:'1'});
- assert.deepEqual(v2.imageRuleTypes.slice(-2),[['eew-map','緊急地震速報（警報）の図'],['warning-table','警報・注意報の表']]);
+ assert.deepEqual(v2.imageRuleTypes.slice(-3),[['eew-map','緊急地震速報（警報）の図'],['warning-table','気象警報・注意報の表'],['warning-timeseries','気象警報・注意報の時系列予想']]);
  assert.deepEqual(v2.warningTableDeliverOn[0],['changed','内容が変わったときだけ']);
 });
 
@@ -154,11 +155,12 @@ test('custom: every feature is set per contract',async()=>{
  const only=custom(['eewMap','warningTableTimeseries','complexConditions']);
  const features=planFeatures([only]);
  assert.deepEqual(featureList(features),['complexConditions','eewMap','warningTableTimeseries']);
- assert.equal(imageTypeAllowed(features,'warning-table'),true);
+ assert.equal(imageTypeAllowed(features,'warning-table'),false);
+ assert.equal(imageTypeAllowed(features,'warning-timeseries'),true);
  assert.equal(imageTypeAllowed(features,'hires-radar'),false);
  const limits=limitsFor(only);
  assert.throws(()=>save([table],limits),/Plus以上/);
- assert.deepEqual(save([{...table,tables:['timeseries'],regions:['shikoku']}],limits)[0].tables,['timeseries']);
+ assert.deepEqual(save([{...table,type:'warning-timeseries',regions:['shikoku']}],limits)[0].tables,['timeseries']);
  assert.throws(()=>save([{...eew,regions:['tohoku']}],limits),/Plus以上/);
  const snapshot=await build(only);
  assert.deepEqual(snapshot.rules.map(rule=>[rule.type,rule.tier]),[['eew-map','custom']]);
@@ -231,7 +233,7 @@ test('dashboard: previews, plan-aware type list and the new editors',async()=>{
  assert.ok(app.includes('地方を選ぶ（Plus以上）：選んだ地方が対象地域になったとき（続報で追加された場合も含む）に配信'));
  assert.match(app,/rule\.deliverOn='changed'/);
  assert.match(css,/\.rule-preview/);
- for(const name of ['weather-map-national','weather-map-region','warning-table-national','warning-table-regional','warning-table-timeseries','eew-map-national','hires-radar-national','hires-radar-region','tsunami-map-map','tsunami-map-table'])
+ for(const name of ['weather-map-national','weather-map-region','warning-table-national','warning-table-regional','warning-timeseries-1','eew-map-national','hires-radar-national','hires-radar-region','tsunami-map-map','tsunami-map-table'])
   assert.ok(plans.includes(`/site/supporter/previews/${name}.png`),name);
  assert.match(plans,/<script type="module" src="plans-previews\.js"><\/script>/);
 });
@@ -256,4 +258,46 @@ test('Basic: 津波は全国の地図だけ。地方・表・津波観測の表�
  // Plus は今までどおり
  const plus=save([{...tsunami,region:'tohoku',tsunamiOutputs:['table','observation']}],limitsFor(active('plus')))[0];
  assert.deepEqual([plus.region,plus.tsunamiOutputs],['tohoku',['table','observation']]);
+});
+
+test('時系列予想は独立した種類。配信データでは受信側が知っている warning-table（timeseries）として出す',async()=>{
+ const {deliveredImageType}=await import('../worker/supporter-image-rules.js');
+ const pro=limitsFor(active('pro'));
+ const [rule]=save([{...base,type:'warning-timeseries',regions:['tohoku'],deliverOn:'every'}],pro);
+ assert.deepEqual([rule.type,rule.tables,rule.regions,rule.deliverOn],['warning-timeseries',['timeseries'],['tohoku'],'every']);
+ assert.throws(()=>save([{...base,type:'warning-timeseries',regions:[]}],pro),/地方/);
+ assert.throws(()=>save([{...base,type:'warning-timeseries',regions:['tohoku']}],limitsFor(active('plus'))),/Pro以上/);
+ assert.deepEqual([deliveredImageType('warning-timeseries'),deliveredImageType('tsunami-map')],['warning-table','tsunami-map']);
+ assert.deepEqual(imageRuleSnapshotFields(rule,PLAN_FEATURES.pro,'pro').tables,['timeseries']);
+ assert.equal(imageRuleSnapshotFields(rule,PLAN_FEATURES.plus,'plus'),null);
+ assert.deepEqual(supporterOptions({SUPPORTER_IMAGE_RULES_ENABLED:'1',SUPPORTER_IMAGE_RULES_V2_ENABLED:'1'}).warningTableKinds.map(([id])=>id),['national','regional']);
+ // 配信データ全体でも、受信側・AWS が知らない種類名は出さない
+ const snapshot=await build(active('pro'),V2ENV,[rule]);
+ assert.deepEqual(snapshot.rules.map(item=>[item.type,item.tables,item.regions,item.deliverOn]),[['warning-table',['timeseries'],['tohoku'],'every']]);
+ assert.deepEqual((await build(active('pro'),{SUPPORTER_IMAGE_RULES_ENABLED:'1'},[rule])).rules,[]);
+});
+
+test('雨雲レーダー（高解像度版）: 配信頻度（Plusは選択肢・Proは10分単位）と予想（Pro）',()=>{
+ const radar={...base,type:'hires-radar',region:'all'};
+ const plus=limitsFor(active('plus')),pro=limitsFor(active('pro'));
+ for(const minutes of [30,60,180,360,720])assert.equal(save([{...radar,deliveryIntervalMinutes:minutes}],plus)[0].deliveryIntervalMinutes,minutes);
+ for(const minutes of [10,90,1440])assert.throws(()=>save([{...radar,deliveryIntervalMinutes:minutes}],plus),/Pro以上/);
+ for(const minutes of [10,90,1440])assert.equal(save([{...radar,deliveryIntervalMinutes:minutes}],pro)[0].deliveryIntervalMinutes,minutes);
+ for(const minutes of [0,5,15,1450,'x'])assert.throws(()=>save([{...radar,deliveryIntervalMinutes:minutes}],pro),/10分〜24時間/);
+ // 以前の受信側向けの時間数は、指定より短くならない（増やさない）
+ assert.deepEqual([10,60,90,720,1440].map(minutes=>save([{...radar,deliveryIntervalMinutes:minutes}],pro)[0].deliveryIntervalHours),[1,1,2,12,24]);
+ assert.throws(()=>save([{...radar,radarContents:['forecast']}],plus),/Pro以上/);
+ assert.throws(()=>save([{...radar,radarContents:[]}],pro),/1つ以上/);
+ for(const minutes of [5,730,1440])assert.throws(()=>save([{...radar,radarContents:['forecast'],forecastIntervalMinutes:minutes}],pro),/10分〜12時間/);
+ const [both]=save([{...radar,radarContents:['forecast','current'],deliveryIntervalMinutes:10,forecastIntervalMinutes:720}],pro);
+ assert.deepEqual([both.radarContents,both.deliveryIntervalMinutes,both.forecastIntervalMinutes],[['current','forecast'],10,720]);
+ const sent=imageRuleSnapshotFields(both,PLAN_FEATURES.pro,'pro');
+ assert.deepEqual([sent.radarContents,sent.deliveryIntervalMinutes,sent.forecastIntervalMinutes],[['current','forecast'],10,720]);
+ // 解約・変更後: 予想は止まり、自由な頻度は次に長い選択肢になる
+ const down=imageRuleSnapshotFields(both,PLAN_FEATURES.plus,'plus');
+ assert.deepEqual([down.radarContents,down.deliveryIntervalMinutes,'forecastIntervalMinutes' in down],[['current'],30,false]);
+ assert.equal(imageRuleSnapshotFields({...both,radarContents:['forecast']},PLAN_FEATURES.plus,'plus'),null);
+ // 保存済みの古いルール（時間）はそのまま
+ const old=imageRuleSnapshotFields({type:'hires-radar',region:'all',deliveryIntervalHours:3},PLAN_FEATURES.plus,'plus');
+ assert.deepEqual([old.radarContents,old.deliveryIntervalMinutes,old.deliveryIntervalHours],[['current'],180,3]);
 });

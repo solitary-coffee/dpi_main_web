@@ -111,9 +111,12 @@
       <tr><th scope="row">都道府県・市区町村</th><td>—</td><td>—</td><td>○</td><td>契約による</td></tr>
      </tbody>
      <tbody>
-      <tr><th scope="rowgroup" rowspan="4" class="comparison-kind">警報・注意報の表</th><th scope="row">全国</th><td>—</td><td>○</td><td>○</td><td>契約による</td></tr>
+      <tr><th scope="rowgroup" rowspan="3" class="comparison-kind">気象警報・注意報の表</th><th scope="row">全国</th><td>—</td><td>○</td><td>○</td><td>契約による</td></tr>
       <tr><th scope="row">地方</th><td>—</td><td>—</td><td>○</td><td>契約による</td></tr>
-      <tr><th scope="row">時系列</th><td>—</td><td>—</td><td>○</td><td>契約による</td></tr>
+      <tr><th scope="row">発表のたびに配信</th><td>—</td><td>—</td><td>○</td><td>契約による</td></tr>
+     </tbody>
+     <tbody>
+      <tr><th scope="rowgroup" rowspan="2" class="comparison-kind">気象警報・注意報の時系列予想</th><th scope="row">地方</th><td>—</td><td>—</td><td>○</td><td>契約による</td></tr>
       <tr><th scope="row">発表のたびに配信</th><td>—</td><td>—</td><td>○</td><td>契約による</td></tr>
      </tbody>
      <tbody>
@@ -122,8 +125,11 @@
       <tr><th scope="row">降水量のしきい値</th><td>—</td><td>○</td><td>○</td><td>契約による</td></tr>
      </tbody>
      <tbody>
-      <tr><th scope="rowgroup" rowspan="2" class="comparison-kind">雨雲レーダー（高解像度版）</th><th scope="row">全国・地方</th><td>—</td><td>○</td><td>○</td><td>契約による</td></tr>
+      <tr><th scope="rowgroup" rowspan="5" class="comparison-kind">雨雲レーダー（高解像度版）</th><th scope="row">全国・地方</th><td>—</td><td>○</td><td>○</td><td>契約による</td></tr>
+      <tr><th scope="row">配信頻度の選択</th><td>—</td><td>○</td><td>○</td><td>契約による</td></tr>
       <tr><th scope="row">降水量のしきい値</th><td>—</td><td>—</td><td>○</td><td>契約による</td></tr>
+      <tr><th scope="row">1時間先までの予想（GIF）</th><td>—</td><td>—</td><td>○</td><td>契約による</td></tr>
+      <tr><th scope="row">配信頻度の自由な指定</th><td>—</td><td>—</td><td>○</td><td>契約による</td></tr>
      </tbody>
      <tbody>
       <tr><th scope="rowgroup" rowspan="5" class="comparison-kind">津波</th><th scope="row">地図（全国）</th><td>○</td><td>○</td><td>○</td><td>契約による</td></tr>
@@ -144,6 +150,7 @@
   <section class="comparison-catalog" aria-labelledby="catalog-title">
    <h2 id="catalog-title">選択できる配信情報の詳細</h2>
    <p>ルールで選択できる項目です。実際の配信は、各情報の発表・提供状況によって異なります。</p>
+   <p>地方・都道府県・市区町村を選んだルールは、選んだ地域が発表の対象に含まれるときだけ配信します（対象に含まれない発表では配信しません）。雨雲レーダーの定時配信は、雨の有無にかかわらず選んだ地方の図を配信します。</p>
    <p class="comparison-future-note">対応する配信情報や便利な機能は、今後も随時追加予定です。</p>
    <div class="delivery-grid">
     <details class="delivery-category">
@@ -209,11 +216,16 @@
      </ul>
     </details>
     <details class="delivery-category" id="warning-table-detail">
-     <summary>警報・注意報の表 <span class="delivery-count">画像配信・Plus以上</span></summary>
+     <summary>気象警報・注意報の表 <span class="delivery-count">画像配信・Plus以上</span></summary>
      <ul>
       <li>Plus：全国の表（内容が変わったときに配信）</li>
-      <li>Pro：地方の表・時系列の表</li>
-      <li>Pro：発表のたびに配信</li>
+      <li>Pro：地方の表、発表のたびに配信</li>
+     </ul>
+    </details>
+    <details class="delivery-category" id="warning-timeseries-detail">
+     <summary>気象警報・注意報の時系列予想 <span class="delivery-count">画像配信・Pro以上</span></summary>
+     <ul>
+      <li>Pro：選んだ地方の時系列予想（内容が変わったとき、または発表のたびに配信）</li>
      </ul>
     </details>
     <details class="delivery-category" id="rain-radar-detail">
@@ -229,8 +241,9 @@
      <summary>雨雲レーダー（高解像度版） <span class="delivery-count">画像配信・Plus以上</span></summary>
      <ul>
       <li>Plus：全国・地方、線状降水帯の表示</li>
-      <li>配信頻度：1・2・3・6・12・24時間ごと</li>
-      <li>Pro：1時間降水量のしきい値（10・20・30・50・80 mm/h）</li>
+      <li>Plus：配信頻度は30分・1・3・6・12時間ごと</li>
+      <li>Pro：配信頻度は10分〜24時間で自由に指定、1時間降水量のしきい値（10・20・30・50・80 mm/h）</li>
+      <li>Pro：1時間先までの予想（GIF。配信頻度は10分〜12時間で自由に指定）</li>
      </ul>
     </details>
     <details class="delivery-category" id="tsunami-map-detail">
@@ -262,11 +275,12 @@
     <figure class="preview-thumb" data-preview-type="weather-map" data-preview-file="weather-map-region.png" data-preview-plan="Plus以上"><span class="preview-thumb-label">見本</span><img src="/site/supporter/previews/weather-map-region.png" alt="見本：気象警報・注意報の地図（地方）" loading="lazy" decoding="async"><figcaption>気象警報・注意報の地図（地方）</figcaption></figure>
     <figure class="preview-thumb" data-preview-type="weather-map" data-preview-file="weather-map-municipality.png" data-preview-plan="Pro以上"><span class="preview-thumb-label">見本</span><img src="/site/supporter/previews/weather-map-municipality.png" alt="見本：気象警報・注意報の地図（市区町村ごとの詳細）" loading="lazy" decoding="async"><figcaption>気象警報・注意報の地図（市区町村ごとの詳細）</figcaption></figure>
     <figure class="preview-thumb" data-preview-type="weather-map" data-preview-file="weather-map-tornado.png" data-preview-plan="Plus以上"><span class="preview-thumb-label">見本</span><img src="/site/supporter/previews/weather-map-tornado.png" alt="見本：竜巻注意情報・線状降水帯の図" loading="lazy" decoding="async"><figcaption>竜巻注意情報・線状降水帯の図</figcaption></figure>
-    <figure class="preview-thumb" data-preview-type="warning-table" data-preview-file="warning-table-national.png" data-preview-plan="Plus以上"><span class="preview-thumb-label">見本</span><img src="/site/supporter/previews/warning-table-national.png" alt="見本：警報・注意報の表（全国）" loading="lazy" decoding="async"><figcaption>警報・注意報の表（全国）</figcaption></figure>
-    <figure class="preview-thumb" data-preview-type="warning-table" data-preview-file="warning-table-regional.png" data-preview-plan="Pro以上"><span class="preview-thumb-label">見本</span><img src="/site/supporter/previews/warning-table-regional.png" alt="見本：警報・注意報の表（地方）" loading="lazy" decoding="async"><figcaption>警報・注意報の表（地方）</figcaption></figure>
-    <figure class="preview-thumb" data-preview-type="warning-table" data-preview-file="warning-table-timeseries.png" data-preview-plan="Pro以上"><span class="preview-thumb-label">見本</span><img src="/site/supporter/previews/warning-table-timeseries.png" alt="見本：警報・注意報の表（時系列）" loading="lazy" decoding="async"><figcaption>警報・注意報の表（時系列）</figcaption></figure>
+    <figure class="preview-thumb" data-preview-type="warning-table" data-preview-file="warning-table-national.png" data-preview-plan="Plus以上"><span class="preview-thumb-label">見本</span><img src="/site/supporter/previews/warning-table-national.png" alt="見本：気象警報・注意報の表（全国）" loading="lazy" decoding="async"><figcaption>気象警報・注意報の表（全国）</figcaption></figure>
+    <figure class="preview-thumb" data-preview-type="warning-table" data-preview-file="warning-table-regional.png" data-preview-plan="Pro以上"><span class="preview-thumb-label">見本</span><img src="/site/supporter/previews/warning-table-regional.png" alt="見本：気象警報・注意報の表（地方）" loading="lazy" decoding="async"><figcaption>気象警報・注意報の表（地方）</figcaption></figure>
+    <figure class="preview-thumb" data-preview-type="warning-timeseries" data-preview-file="warning-timeseries-1.png" data-preview-plan="Pro以上"><span class="preview-thumb-label">見本</span><img src="/site/supporter/previews/warning-timeseries-1.png" alt="見本：気象警報・注意報の時系列予想" loading="lazy" decoding="async"><figcaption>気象警報・注意報の時系列予想</figcaption></figure>
     <figure class="preview-thumb" data-preview-type="hires-radar" data-preview-file="hires-radar-national.png" data-preview-plan="Plus以上"><span class="preview-thumb-label">見本</span><img src="/site/supporter/previews/hires-radar-national.png" alt="見本：雨雲レーダー（高解像度版・全国）" loading="lazy" decoding="async"><figcaption>雨雲レーダー（高解像度版・全国）</figcaption></figure>
     <figure class="preview-thumb" data-preview-type="hires-radar" data-preview-file="hires-radar-region.png" data-preview-plan="Plus以上"><span class="preview-thumb-label">見本</span><img src="/site/supporter/previews/hires-radar-region.png" alt="見本：雨雲レーダー（高解像度版・地方）" loading="lazy" decoding="async"><figcaption>雨雲レーダー（高解像度版・地方）</figcaption></figure>
+    <figure class="preview-thumb" data-preview-type="hires-radar" data-preview-file="hires-radar-forecast.gif" data-preview-plan="Pro以上"><span class="preview-thumb-label">見本</span><img src="/site/supporter/previews/hires-radar-forecast.gif" alt="見本：雨雲レーダー（高解像度版）の予想" loading="lazy" decoding="async"><figcaption>雨雲レーダー（高解像度版）の予想（GIF）</figcaption></figure>
     <figure class="preview-thumb" data-preview-type="tsunami-map" data-preview-file="tsunami-map-map.png" data-preview-plan="Basic以上"><span class="preview-thumb-label">見本</span><img src="/site/supporter/previews/tsunami-map-map.png" alt="見本：津波警報・注意報の図（全国）" loading="lazy" decoding="async"><figcaption>津波警報・注意報の図（全国）</figcaption></figure>
     <figure class="preview-thumb" data-preview-type="tsunami-map" data-preview-file="tsunami-map-enlarged.png" data-preview-plan="Pro以上"><span class="preview-thumb-label">見本</span><img src="/site/supporter/previews/tsunami-map-enlarged.png" alt="見本：津波警報・注意報の図（地方の拡大図）" loading="lazy" decoding="async"><figcaption>津波警報・注意報の図（地方の拡大図）</figcaption></figure>
     <figure class="preview-thumb" data-preview-type="tsunami-map" data-preview-file="tsunami-map-table.png" data-preview-plan="Plus以上"><span class="preview-thumb-label">見本</span><img src="/site/supporter/previews/tsunami-map-table.png" alt="見本：津波警報・注意報の表" loading="lazy" decoding="async"><figcaption>津波警報・注意報の表</figcaption></figure>

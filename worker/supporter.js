@@ -8,7 +8,7 @@ import { PREFECTURES, loadSupporterAreaCatalogue, geographicEntitlements, normal
 import { planFeatures } from '../site/supporter/plan-features.js';
 import { createPreviewCheckout, previewCheckoutResult } from './supporter-billing.js';
 import { basicCredentialsValid, reviewAccessConfigured, reviewChallenge, reviewCookie, reviewCookieValid } from './supporter-review.js';
-import { imageRulesEnabled, imageRulesV2Enabled, isImageRuleType, isImageRuleV2Type, imageRuleOptions, savedTsunamiOutputs, TSUNAMI_MAP_OUTPUTS, WARNING_TABLE_KINDS, WARNING_TABLE_DELIVER_ON, normalizeImageRuleFields, loadEarthquakeMunicipalities, IMAGE_RULE_TYPE_OPTIONS, HIRES_RADAR_CONDITIONS, WEATHER_MAP_PRODUCTS, WEATHER_MAP_SEVERITIES, EARTHQUAKE_MAP_PRODUCTS, EARTHQUAKE_MAP_INTENSITIES } from './supporter-image-rules.js';
+import { imageRulesEnabled, imageRulesV2Enabled, isImageRuleType, isImageRuleV2Type, imageRuleOptions, savedTsunamiOutputs, savedRadarContents, savedRadarMinutes, radarIntervalText, HIRES_RADAR_CONTENTS, TSUNAMI_MAP_OUTPUTS, WARNING_TABLE_KINDS, WARNING_TABLE_DELIVER_ON, normalizeImageRuleFields, loadEarthquakeMunicipalities, IMAGE_RULE_TYPE_OPTIONS, HIRES_RADAR_CONDITIONS, WEATHER_MAP_PRODUCTS, WEATHER_MAP_SEVERITIES, EARTHQUAKE_MAP_PRODUCTS, EARTHQUAKE_MAP_INTENSITIES } from './supporter-image-rules.js';
 
 const response = (data, status = 200) => Response.json(data, {status, headers: {'Cache-Control':'no-store'}});
 const notFound = () => new Response('Not Found', {
@@ -453,19 +453,21 @@ function imageRuleAdminDetails(rule, type) {
    {label:'線状降水帯の表示',value:rule?.linearRainband===true?'有効':'無効'},
    {label:'配信条件',value:optionLabel(HIRES_RADAR_CONDITIONS,clean(rule?.radarCondition)||'scheduled')+(threshold?'（Pro）':'')},
    ...(threshold?[{label:'1時間降水量',value:`${Number(rule?.rainfallThresholdMmPerHour)}mm/h以上`}]:[]),
-   {label:'配信頻度',value:`${Number(rule?.deliveryIntervalHours)||1}時間ごと`},
+   {label:'送るもの',value:savedRadarContents(rule).map(id=>optionLabel(HIRES_RADAR_CONTENTS,id)).join('・')},
+   ...(savedRadarContents(rule).includes('current')?[{label:'配信頻度',value:radarIntervalText(savedRadarMinutes(rule))}]:[]),
+   ...(savedRadarContents(rule).includes('forecast')?[{label:'予想の配信頻度（Pro）',value:radarIntervalText(Number(rule?.forecastIntervalMinutes)||60)}]:[]),
   ];
  }
  if(type==='eew-map'){
   const regions=Array.isArray(rule?.regions)?rule.regions.map(clean).filter(Boolean):[];
   return [{label:'配信する条件',value:regions.length?`選んだ地方が対象のとき：${regions.map(id=>optionLabel(SUPPORTER_REGIONS,id)).join('、')}（Plus以上）`:'全国：警報が発表されたら配信'}];
  }
- if(type==='warning-table'){
+ if(type==='warning-table'||type==='warning-timeseries'){
   const tables=Array.isArray(rule?.tables)?rule.tables.map(id=>optionLabel(WARNING_TABLE_KINDS,clean(id))).join('、'):'';
   const regions=Array.isArray(rule?.regions)?rule.regions.map(id=>optionLabel(SUPPORTER_REGIONS,clean(id))).join('、'):'';
   return [
-   {label:'送る表',value:tables||'未設定'},
-   ...(regions?[{label:'対象地方（地方・時系列の表）',value:regions}]:[]),
+   ...(type==='warning-table'?[{label:'送る表',value:tables||'未設定'}]:[]),
+   ...(regions?[{label:'対象地方',value:regions}]:[]),
    {label:'配信のタイミング',value:optionLabel(WARNING_TABLE_DELIVER_ON,clean(rule?.deliverOn)||'changed')},
    {label:'発表のない区域',value:rule?.showAllAreas===true?'載せる':'載せない'},
   ];
@@ -517,7 +519,7 @@ export function supporterAdminDetails(row, channelsByGuild = {}) {
     {label:'情報種別',value:SUPPORTER_TYPE_LABELS[type]||type||'未設定'},
    ];
    if(isImageRuleType(type)){
-    if(!['earthquake-map','eew-map','warning-table'].includes(type))details.push({label:'対象地方',value:optionLabel(SUPPORTER_REGIONS,clean(rule?.region)||'all')});
+    if(!['earthquake-map','eew-map','warning-table','warning-timeseries'].includes(type))details.push({label:'対象地方',value:optionLabel(SUPPORTER_REGIONS,clean(rule?.region)||'all')});
     details.push(...imageRuleAdminDetails(rule,type));
    }else details.push(
     {label:'詳細種別',value:type==='rain-radar'?'雨雲レーダー（簡略版）':optionLabel(type==='earthquake'?EARTHQUAKE_DETAILS:type==='eew'?EEW_DETAILS:WEATHER_DETAILS,clean(rule?.detail)||'all')},
@@ -622,7 +624,7 @@ export function normalizeSupporterRules(input, guilds, limits = {servers:1,chann
   const type = clean(rule?.type);
   if (isImageRuleType(type)) {
    // Image rules are gated by SUPPORTER_IMAGE_RULES_ENABLED (default off); eew-map and
-   // warning-table also by SUPPORTER_IMAGE_RULES_V2_ENABLED (default off).
+   // warning-table / warning-timeseries also by SUPPORTER_IMAGE_RULES_V2_ENABLED (default off).
    if (!imageRules || (isImageRuleV2Type(type) && !imageRulesV2)) {
     const kept = storedImageRuleMatch(rule, storedImageRules);
     if (kept && guilds.some(g=>g.id===kept.guildId)) return kept;
