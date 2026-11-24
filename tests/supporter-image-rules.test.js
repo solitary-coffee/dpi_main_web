@@ -214,8 +214,8 @@ test('comparison table lists the image delivery rows with the plan split (custom
  assert.deepEqual(row('緊急地震速報（警報）の図：地方を選ぶ'),['—','○','○',C]);
  assert.deepEqual(row('雨雲レーダー（高解像度版）：全国・地方'),['—','○','○',C]);
  assert.deepEqual(row('雨雲レーダー（高解像度版）：閾値以上'),['—','—','○',C]);
- assert.deepEqual(row('津波警報・注意報の図・表：全国・地方'),['—','○','○',C]);
- assert.deepEqual(row('津波警報・注意報の図・表：発表地域拡大版'),['—','—','○',C]);
+ assert.deepEqual(row('津波警報・注意報の地図・表・津波観測の表：全国・地方'),['—','○','○',C]);
+ assert.deepEqual(row('津波警報・注意報の地図：発表地域拡大版'),['—','—','○',C]);
  assert.deepEqual(row('気象警報の図：全国・地方'),['—','○','○',C]);
  assert.deepEqual(row('気象警報の図：都道府県・市区町村'),['—','—','○',C]);
  assert.deepEqual(row('警報・注意報の表：全国の表'),['—','○','○',C]);
