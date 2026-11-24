@@ -19,29 +19,24 @@ const CATALOGUE = {prefectures: PREFECTURES, municipalities: [TEINE], districts:
 const WEATHER6 = ['VPWW55', 'VPWW56', 'VPWW57', 'VPWW58', 'VPWW59', 'VPWW60'];
 
 const E = [];
+// 既存の試験チャンネル（自宅の data/supporter_image_test_targets.json）と同じ条件は作らない（重複させない）。
 // channel = チャンネル名、rules = 設定（1 つ以上）、opt.features = カスタム契約の機能、opt.same = 下のプランでも保存できる設定（確認を省く）
-const add = (plan, group, channel, topic, rules, opt = {}) => E.push({plan, group, channel, topic, rules: [].concat(rules), ...opt});
+const EXISTING = {'地震-すべて': '文字-地震', '速報-すべて': '文字-緊急地震速報', '気象-市区町村': '文字-気象-手稲区'};
+const add = (plan, group, channel, topic, rules, opt = {}) => E.push({plan, group, channel, topic, rules: [].concat(rules),
+ ...(group === '文字' && EXISTING[channel] ? {existing: ['有料テスト｜文字配信', EXISTING[channel]]} : {}), ...opt});
 const each = make => REGIONS.map(make);
 
 // --- 画像: Basic
-add('supporter', '画像', '緊急地震速報-全国', '緊急地震速報（警報）の図・全国', {type: 'eew-map'});
 add('supporter', '画像', '津波-地図-全国', '津波の地図・全国', {type: 'tsunami-map', region: 'all', tsunamiOutputs: ['map']});
 // --- 画像: Plus
 add('plus', '画像', '緊急地震速報-地方', '緊急地震速報（警報）の図・11地方を1地方ずつ（対象になった地方だけ）', each(id => ({type: 'eew-map', regions: [id]})));
 const weather = {type: 'weather-map', region: 'all', products: WEATHER6, minSeverity: 'warning'};
-add('plus', '画像', '気象地図-全国-警報以上', '気象警報・注意報の地図・全国・警報以上', weather);
-add('plus', '画像', '気象地図-全国-注意報以上', '気象警報・注意報の地図・全国・注意報以上', {...weather, minSeverity: 'advisory'});
 add('plus', '画像', '気象地図-地方-警報以上', '気象警報・注意報の地図・11地方・警報以上', each(region => ({...weather, region})));
-add('plus', '画像', '気象地図-地方-注意報以上', '気象警報・注意報の地図・11地方・注意報以上', each(region => ({...weather, region, minSeverity: 'advisory'})));
-for (const [id, name] of [['VPWW55', '大雨'], ['VPWW56', '土砂災害'], ['VPWW57', '高潮'], ['VPWW58', '暴風'], ['VPWW59', '波浪'], ['VPWW60', '大雪'], ['VPWW61', 'その他注意報'], ['VPHW50', '竜巻'], ['VPBS50', '線状降水帯']])
+for (const [id, name] of [['VPWW55', '大雨'], ['VPWW56', '土砂災害'], ['VPWW57', '高潮'], ['VPWW58', '暴風'], ['VPWW59', '波浪'], ['VPWW60', '大雪']])
  add('plus', '画像', `気象地図-${name}だけ`, `気象警報・注意報の地図・全国・${name}だけ（注意報以上）`, {...weather, products: [id], minSeverity: 'advisory'});
 add('plus', '画像', '気象表-全国', '気象警報・注意報の表・全国・内容が変わったときだけ', {type: 'warning-table', tables: ['national']});
 add('plus', '画像', '気象表-全国-発表なしも', '気象警報・注意報の表・全国・発表のない区域も載せる', {type: 'warning-table', tables: ['national'], showAllAreas: true});
 const radar = {type: 'hires-radar', region: 'all'};
-for (const [minutes, name] of [[30, '30分'], [60, '1時間'], [180, '3時間'], [360, '6時間'], [720, '12時間']])
- add('plus', '画像', `雨雲-全国-${name}`, `雨雲レーダー（高解像度版）・全国・${name}ごと`, {...radar, deliveryIntervalMinutes: minutes});
-add('plus', '画像', '雨雲-全国-線状降水帯', '雨雲レーダー（高解像度版）・全国・線状降水帯を重ねる・1時間ごと', {...radar, linearRainband: true, deliveryIntervalMinutes: 60});
-add('plus', '画像', '雨雲-地方', '雨雲レーダー（高解像度版）・11地方・6時間ごと', each(region => ({...radar, region, deliveryIntervalMinutes: 360})));
 const tsunami = {type: 'tsunami-map', region: 'all'};
 add('plus', '画像', '津波-地図-地方', '津波の地図・11地方', each(region => ({...tsunami, region, tsunamiOutputs: ['map']})));
 add('plus', '画像', '津波-表-全国', '津波の表（満潮時刻を含む）・全国', {...tsunami, tsunamiOutputs: ['table']});
@@ -53,40 +48,27 @@ add('plus', '画像', '津波-表と観測', '津波の表＋津波観測の表�
 add('plus', '画像', '津波-すべて', '津波の地図＋表＋津波観測の表・全国（1つのルール）', {...tsunami, tsunamiOutputs: ['map', 'table', 'observation']});
 const quake = {type: 'earthquake-map'};
 const QUAKES = [['VXSE51', '震度速報'], ['VXSE52', '震源'], ['VXSE53', '各地の震度'], ['VXSE62', '長周期']];
-add('plus', '画像', '地震図-すべて', '地震情報の図・全種類', {...quake, products: QUAKES.map(([id]) => id)});
-for (const [id, name] of QUAKES) add('plus', '画像', `地震図-${name}だけ`, `地震情報の図・${name}だけ`, {...quake, products: [id]});
+for (const [id, name] of QUAKES.filter(([id]) => id === 'VXSE52')) add('plus', '画像', `地震図-${name}だけ`, `地震情報の図・${name}だけ`, {...quake, products: [id]});
 // --- 画像: Pro
 add('pro', '画像', '緊急地震速報-複数チャンネル', '緊急地震速報（警報）の図・全国（1ルールから複数チャンネル。もう1つは「複数チャンネル-2」）', {type: 'eew-map'}, {channels: 2});
-add('pro', '画像', '気象地図-都道府県', '気象警報・注意報の地図・都道府県（北海道）', {...weather, region: 'hokkaido', prefecture: '01', minSeverity: 'advisory'});
-add('pro', '画像', '気象地図-都道府県-詳細', '気象警報・注意報の地図・都道府県（北海道）＋市区町村の詳細', {...weather, region: 'hokkaido', prefecture: '01', minSeverity: 'advisory', municipalityDetail: true});
-add('pro', '画像', '気象地図-市区町村', '気象警報・注意報の地図・札幌市手稲区', {...weather, region: 'hokkaido', prefecture: '01', municipalities: ['0110900'], minSeverity: 'advisory'});
-add('pro', '画像', '気象地図-市区町村-詳細', '気象警報・注意報の地図・札幌市手稲区＋市区町村の詳細', {...weather, region: 'hokkaido', prefecture: '01', municipalities: ['0110900'], minSeverity: 'advisory', municipalityDetail: true});
 add('pro', '画像', '気象地図-全国-詳細', '気象警報・注意報の地図・全国＋市区町村の詳細（警報以上）', {...weather, municipalityDetail: true});
-add('pro', '画像', '気象表-全国-毎回', '気象警報・注意報の表・全国・発表のたびに毎回', {type: 'warning-table', tables: ['national'], deliverOn: 'every'});
 add('pro', '画像', '気象表-地方', '気象警報・注意報の表・11地方・内容が変わったときだけ', {type: 'warning-table', tables: ['regional'], regions: REGIONS});
-add('pro', '画像', '気象表-地方-毎回', '気象警報・注意報の表・11地方・発表のたびに毎回', {type: 'warning-table', tables: ['regional'], regions: REGIONS, deliverOn: 'every'});
 add('pro', '画像', '気象表-全国と地方', '気象警報・注意報の表・全国＋北海道地方（1つのルール）', {type: 'warning-table', tables: ['national', 'regional'], regions: ['hokkaido']});
 add('pro', '画像', '時系列予想', '気象警報・注意報の時系列予想・北海道地方・内容が変わったときだけ', {type: 'warning-timeseries', regions: ['hokkaido']});
-add('pro', '画像', '時系列予想-毎回', '気象警報・注意報の時系列予想・北海道地方・発表のたびに毎回', {type: 'warning-timeseries', regions: ['hokkaido'], deliverOn: 'every'});
 add('pro', '画像', '時系列予想-複数地方', '気象警報・注意報の時系列予想・東北＋近畿', {type: 'warning-timeseries', regions: ['tohoku', 'kinki']});
-for (const [minutes, name] of [[10, '10分'], [20, '20分'], [90, '1時間30分'], [1440, '24時間']])
- add('pro', '画像', `雨雲-全国-${name}`, `雨雲レーダー（高解像度版）・全国・${name}ごと（自由な指定）`, {...radar, deliveryIntervalMinutes: minutes});
-for (const mm of ['10', '20', '30', '50', '80'])
+for (const mm of ['10', '20', '50', '80'])
  add('pro', '画像', `雨雲-${mm}mm以上`, `雨雲レーダー（高解像度版）・全国・1時間降水量${mm}mm以上・1時間ごと`, {...radar, radarCondition: 'rainfall-threshold', rainfallThresholdMmPerHour: mm, deliveryIntervalMinutes: 60});
 add('pro', '画像', '雨雲-地方-30mm以上', '雨雲レーダー（高解像度版）・11地方・1時間降水量30mm以上・3時間ごと', each(region => ({...radar, region, radarCondition: 'rainfall-threshold', rainfallThresholdMmPerHour: '30', deliveryIntervalMinutes: 180})));
-for (const [minutes, name] of [[10, '10分'], [60, '1時間'], [180, '3時間'], [720, '12時間']])
- add('pro', '画像', `雨雲予想-全国-${name}`, `雨雲レーダー（高解像度版）の予想（GIF）・全国・${name}ごと`, {...radar, radarContents: ['forecast'], forecastIntervalMinutes: minutes});
+add('pro', '画像', '雨雲予想-全国', '雨雲レーダー（高解像度版）の予想（GIF）・全国・1時間ごと', {...radar, radarContents: ['forecast'], forecastIntervalMinutes: 60});
 add('pro', '画像', '雨雲予想-地方', '雨雲レーダー（高解像度版）の予想（GIF）・11地方・6時間ごと', each(region => ({...radar, region, radarContents: ['forecast'], forecastIntervalMinutes: 360})));
-add('pro', '画像', '雨雲-現在と予想', '雨雲レーダー（高解像度版）・全国・現在の図1時間ごと＋予想（GIF）3時間ごと（1つのルール）', {...radar, radarContents: ['current', 'forecast'], deliveryIntervalMinutes: 60, forecastIntervalMinutes: 180});
+add('pro', '画像', '雨雲-現在と予想', '雨雲レーダー（高解像度版）・全国・現在の図30分ごと＋予想（GIF）3時間ごと（1つのルール）', {...radar, radarContents: ['current', 'forecast'], deliveryIntervalMinutes: 30, forecastIntervalMinutes: 180});
 add('pro', '画像', '雨雲予想-30mm以上', '雨雲レーダー（高解像度版）の予想（GIF）・全国・1時間降水量30mm以上を観測したとき・1時間ごと', {...radar, radarContents: ['forecast'], radarCondition: 'rainfall-threshold', rainfallThresholdMmPerHour: '30', forecastIntervalMinutes: 60});
 add('pro', '画像', '津波-拡大図-全国', '津波の地図・全国＋発表地域の拡大図', {...tsunami, tsunamiOutputs: ['map'], enlargedArea: true});
 add('pro', '画像', '津波-拡大図-地方', '津波の地図・11地方＋発表地域の拡大図', each(region => ({...tsunami, region, tsunamiOutputs: ['map'], enlargedArea: true})));
-add('pro', '画像', '津波-すべて-拡大図', '津波の地図＋表＋津波観測の表＋拡大図・全国', {...tsunami, tsunamiOutputs: ['map', 'table', 'observation'], enlargedArea: true});
 const allQuakes = {...quake, products: QUAKES.map(([id]) => id)};
-for (const [id, name] of [['1', '震度1'], ['3', '震度3'], ['4', '震度4'], ['5-', '震度5弱'], ['6+', '震度6強']]) add('pro', '画像', `地震図-${name}以上`, `地震情報の図・全国で${name}以上`, {...allQuakes, minIntensity: id});
+for (const [id, name] of [['1', '震度1'], ['4', '震度4'], ['5-', '震度5弱'], ['6+', '震度6強']]) add('pro', '画像', `地震図-${name}以上`, `地震情報の図・全国で${name}以上`, {...allQuakes, minIntensity: id});
 add('pro', '画像', '地震図-地方別しきい値', '地震情報の図・北海道で震度1以上、東北で震度3以上、関東甲信で震度4以上', {...allQuakes, regionMinIntensity: {hokkaido: '1', tohoku: '3', 'kanto-koshin': '4'}});
 for (const id of ['1', '2', '3', '4']) add('pro', '画像', `地震図-長周期階級${id}以上`, `地震情報の図・長周期地震動階級${id}以上`, {...allQuakes, minLgInt: id});
-add('pro', '画像', '地震図-中心-手稲区', '地震情報の図・地図の中心を札幌市手稲区に', {...allQuakes, centerMunicipality: '0110900'});
 add('pro', '画像', '地震図-中心と震度3以上', '地震情報の図・東京都千代田区中心・震度3以上', {...allQuakes, centerMunicipality: '1310100', minIntensity: '3'});
 // --- 画像: カスタム（機能を 1 つずつ許可した契約）
 add('custom', '画像', '個別-緊急地震速報だけ', 'カスタム：緊急地震速報（警報）の図だけを許可', {type: 'eew-map'}, {features: ['eewMap']});
@@ -138,7 +120,7 @@ for (const [number, entry] of E.entries()) {
   const delivered = await snapshot(save(raw, sub), sub);
   if (delivered.length !== raw.length) problems.push(`${label}: 保存 ${raw.length} 件に対し配信データ ${delivered.length} 件`);
   checks.saved += delivered.length;
-  entries.push({key: `${entry.plan}-${number}`, plan: PLAN_LABEL[entry.plan], group: entry.group, channel: entry.channel, topic: entry.topic, channelIds, rules: delivered});
+  entries.push({key: `${entry.plan}-${number}`, plan: PLAN_LABEL[entry.plan], group: entry.group, channel: entry.channel, topic: entry.topic, ...(entry.existing ? {existing: entry.existing} : {}), channelIds, rules: delivered});
  } catch (error) { problems.push(`${label}: 保存できません（${error.message}）`); continue; }
  if (entry.plan === 'custom') continue;
  for (const plan of ORDER) {
