@@ -13,14 +13,14 @@ export const IMAGE_RULE_TYPES_V2 = Object.freeze(['eew-map', 'warning-table']);
 const V2_TYPE_SET = new Set(IMAGE_RULE_TYPES_V2);
 export const IMAGE_RULE_TYPE_OPTIONS = Object.freeze([
  ['hires-radar', '雨雲レーダー（高解像度版）'],
- ['tsunami-map', '津波警報・注意報（図・表）'],
+ ['tsunami-map', '津波警報・注意報・津波観測（地図・表）'],
  ['weather-map', '気象警報（図）'],
  ['earthquake-map', '地震情報（図）'],
  ['eew-map', '緊急地震速報（警報）の図'],
  ['warning-table', '警報・注意報の表'],
 ]);
-// tsunami-map outputs: the map and the table can be sent to different channels by separate rules.
-export const TSUNAMI_MAP_OUTPUTS = Object.freeze([['map', '図'], ['table', '表']]);
+// tsunami-map outputs: the map, the tables and the observations can go to different channels by separate rules.
+export const TSUNAMI_MAP_OUTPUTS = Object.freeze([['map', '地図'], ['table', '表（満潮時刻を含む）'], ['observation', '津波観測の表（沖合・沿岸）']]);
 // warning-table: national / regional = VPWS50（集約通報）, timeseries = VPWP50（時系列）.
 export const WARNING_TABLE_KINDS = Object.freeze([
  ['national', '全国の表'],
@@ -254,13 +254,35 @@ function normalizeWarningTableFields(rule, limits) {
  return {region: 'all', tables, regions, deliverOn, showAllAreas: bool(rule?.showAllAreas)};
 }
 
-// tsunami-map outputs (absent = both, as before; legacy includeTables:false = map only).
+const TSUNAMI_OUTPUT_IDS = TSUNAMI_MAP_OUTPUTS.map(([id]) => id);
+
+// What a rule sends. `tsunamiOutputs` is the current field; rules saved before it have `outputs`
+// (["map"] / ["table"] / both; absent = both, legacy includeTables:false = map only), where the
+// table always came with the observations.
+export function savedTsunamiOutputs(rule) {
+ if (Array.isArray(rule?.tsunamiOutputs)) return TSUNAMI_OUTPUT_IDS.filter(id => rule.tsunamiOutputs.map(clean).includes(id));
+ const outputs = Array.isArray(rule?.outputs) ? rule.outputs.map(clean) : (rule?.includeTables === false ? ['map'] : ['map', 'table']);
+ return TSUNAMI_OUTPUT_IDS.filter(id => outputs.includes(id === 'observation' ? 'table' : id));
+}
+
+// Fields stored in the rule and sent in the snapshot. `outputs` / `includeTables` stay for receivers that do
+// not know tsunamiOutputs yet (an observation-only rule is a table rule there).
+function tsunamiOutputFields(chosen) {
+ const outputs = ['map', 'table'].filter(id => chosen.includes(id) || (id === 'table' && chosen.includes('observation')));
+ return {tsunamiOutputs: chosen, outputs, includeTables: outputs.includes('table')};
+}
+
 function tsunamiOutputs(rule) {
- if (rule?.outputs === undefined || rule?.outputs === null) return bool(rule?.includeTables, true) ? ['map', 'table'] : ['map'];
- const requested = Array.isArray(rule.outputs) ? rule.outputs.map(clean) : [];
- const ids = TSUNAMI_MAP_OUTPUTS.map(([id]) => id);
- if (!requested.length || requested.some(id => !ids.includes(id))) reject('津波警報・注意報で送るもの（図・表）を1つ以上選択してください。');
- return ids.filter(id => requested.includes(id));
+ if (rule?.tsunamiOutputs !== undefined && rule?.tsunamiOutputs !== null) {
+  const requested = Array.isArray(rule.tsunamiOutputs) ? rule.tsunamiOutputs.map(clean) : [];
+  if (!requested.length || requested.some(id => !TSUNAMI_OUTPUT_IDS.includes(id))) reject('津波警報・注意報で送るもの（地図・表・津波観測の表）を1つ以上選択してください。');
+  return TSUNAMI_OUTPUT_IDS.filter(id => requested.includes(id));
+ }
+ if (rule?.outputs !== undefined && rule?.outputs !== null) {
+  const requested = Array.isArray(rule.outputs) ? rule.outputs.map(clean) : [];
+  if (!requested.length || requested.some(id => !['map', 'table'].includes(id))) reject('津波警報・注意報で送るもの（地図・表・津波観測の表）を1つ以上選択してください。');
+ }
+ return savedTsunamiOutputs({...rule, includeTables: bool(rule?.includeTables, true)});
 }
 
 const TYPE_UPGRADE_MESSAGE = Object.freeze({
@@ -298,7 +320,7 @@ export function normalizeImageRuleFields(rule, type, limits = {}, catalogue = nu
   // The enlarged images are maps: they are only attached to a rule that sends the map.
   const enlargedArea = bool(rule?.enlargedArea) && outputs.includes('map');
   if (enlargedArea && !hasFeature(limits, 'tsunamiEnlarged')) reject('津波の発表地域拡大版はPro以上のプランで利用できます。');
-  return {region, outputs, includeTables: outputs.includes('table'), enlargedArea};
+  return {region, ...tsunamiOutputFields(outputs), enlargedArea};
  }
  if (type !== 'weather-map') reject('情報種別を確認してください。');
  const requested = Array.isArray(rule?.products) ? rule.products.map(clean) : [];
@@ -362,10 +384,9 @@ function imageRuleSnapshotFieldsOnly(rule, features, tier) {
   };
  }
  if (type === 'tsunami-map') {
-  const ids = TSUNAMI_MAP_OUTPUTS.map(([id]) => id);
-  const outputs = Array.isArray(rule?.outputs) ? ids.filter(id => rule.outputs.includes(id)) : (rule?.includeTables === false ? ['map'] : ['map', 'table']);
+  const outputs = savedTsunamiOutputs(rule);
   if (!outputs.length) return null;
-  return {region, tier, outputs, includeTables: outputs.includes('table'), enlargedArea: rule?.enlargedArea === true && outputs.includes('map') && hasFeature(features, 'tsunamiEnlarged')};
+  return {region, tier, ...tsunamiOutputFields(outputs), enlargedArea: rule?.enlargedArea === true && outputs.includes('map') && hasFeature(features, 'tsunamiEnlarged')};
  }
  const prefecture = clean(rule?.prefecture);
  const municipalities = Array.isArray(rule?.municipalities) ? rule.municipalities.map(clean).filter(Boolean) : [];

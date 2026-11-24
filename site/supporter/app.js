@@ -30,10 +30,16 @@ const status = text => { $('status').textContent = text; };
 const INTENSITIES = [['1','1'],['2','2'],['3','3'],['4','4'],['5-','5弱'],['5+','5強'],['6-','6弱'],['6+','6強'],['7','7']];
 const TYPES = [['earthquake','地震情報'],['eew','緊急地震速報'],['weather','気象情報'],['rain-radar','雨雲レーダー']];
 // Paid image rules; offered only when /api/supporter/options reports imageRulesEnabled.
-const IMAGE_TYPES = [['hires-radar','雨雲レーダー（高解像度版）'],['tsunami-map','津波警報・注意報（図・表）'],['weather-map','気象警報（図）'],['earthquake-map','地震情報（図）'],['eew-map','緊急地震速報（警報）の図'],['warning-table','警報・注意報の表']];
+const IMAGE_TYPES = [['hires-radar','雨雲レーダー（高解像度版）'],['tsunami-map','津波警報・注意報・津波観測（地図・表）'],['weather-map','気象警報（図）'],['earthquake-map','地震情報（図）'],['eew-map','緊急地震速報（警報）の図'],['warning-table','警報・注意報の表']];
 // warning-table: which feature allows each table (plan-features.js).
 const WARNING_TABLE_FEATURES = {national:'warningTableNational',regional:'warningTableRegional',timeseries:'warningTableTimeseries'};
-const TSUNAMI_OUTPUT_IDS = ['map','table'];
+const TSUNAMI_OUTPUT_IDS = ['map','table','observation'];
+// 保存済みのルール（outputs）では、表を選んでいれば観測も届いていた。worker/supporter-image-rules.js の savedTsunamiOutputs と同じ
+function savedTsunamiOutputs(rule){
+ if(Array.isArray(rule.tsunamiOutputs)&&rule.tsunamiOutputs.length)return TSUNAMI_OUTPUT_IDS.filter(id=>rule.tsunamiOutputs.includes(id));
+ const outputs=Array.isArray(rule.outputs)&&rule.outputs.length?rule.outputs:(rule.includeTables===false?['map']:['map','table']);
+ return TSUNAMI_OUTPUT_IDS.filter(id=>outputs.includes(id==='observation'?'table':id));
+}
 const isImageType = type => IMAGE_TYPES.some(([value]) => value === type);
 // Default (new rule) selection stays VPWW55..VPWW60; VPWW61/VPHW50/VPBS50 are opt-in.
 const WEATHER_MAP_DEFAULT_PRODUCT_IDS = ['VPWW55','VPWW56','VPWW57','VPWW58','VPWW59','VPWW60'];
@@ -132,7 +138,7 @@ function field(article, rule, key, label, values, attributes = {}) {
    try { await loadChannels(rule.guildId, true); if(!different)status(''); } catch (error) { status(error.message); }
    render();
   } else if (key === 'type' || key === 'detail' || key === 'intensityMode' || key === 'magnitudeMode' || key === 'conditionLogic' || key === 'radarCondition' || key === 'region' || key === 'prefecture' || key === 'district' || key === 'municipality') {
-   if (key === 'type') {rule.detail = 'all';rule.conditions=[];rule.radarCondition=rule.type==='hires-radar'?'scheduled':'all';rule.rainfallThresholdMmPerHour=rule.type==='hires-radar'?'10':'';rule.products=defaultProducts(rule.type);if(isImageType(rule.type)){rule.conditionLogic='and';rule.region='all';rule.regions=[];rule.tables=defaultWarningTables();rule.deliverOn='changed';rule.showAllAreas=false;rule.outputs=[...TSUNAMI_OUTPUT_IDS];}}
+   if (key === 'type') {rule.detail = 'all';rule.conditions=[];rule.radarCondition=rule.type==='hires-radar'?'scheduled':'all';rule.rainfallThresholdMmPerHour=rule.type==='hires-radar'?'10':'';rule.products=defaultProducts(rule.type);if(isImageType(rule.type)){rule.conditionLogic='and';rule.region='all';rule.regions=[];rule.tables=defaultWarningTables();rule.deliverOn='changed';rule.showAllAreas=false;rule.tsunamiOutputs=[...TSUNAMI_OUTPUT_IDS];}}
    if (key === 'region') {rule.prefecture='all';rule.district='all';rule.municipality='all';rule.strictMunicipality=false;rule.municipalities=[];}
    if (key === 'prefecture') {rule.district='all';rule.municipality='all';rule.strictMunicipality=false;rule.municipalities=[];}
    if (key === 'district') {rule.municipality='all';rule.strictMunicipality=false;}
@@ -260,8 +266,8 @@ function normalizeRule(rule) {
   tables: Array.isArray(rule.tables)&&rule.tables.length?rule.tables.filter(id=>id in WARNING_TABLE_FEATURES):defaultWarningTables(),
   deliverOn: rule.deliverOn==='every'?'every':'changed',
   showAllAreas: rule.showAllAreas===true,
-  // tsunami-map: 図・表 (absent = both, includeTables:false = map only, as saved before).
-  outputs: Array.isArray(rule.outputs)&&rule.outputs.length?TSUNAMI_OUTPUT_IDS.filter(id=>rule.outputs.includes(id)):(rule.includeTables===false?['map']:[...TSUNAMI_OUTPUT_IDS]),
+  // tsunami-map: 地図・表・津波観測の表
+  tsunamiOutputs: savedTsunamiOutputs(rule),
   minIntensity: typeof rule.minIntensity==='string'?rule.minIntensity:'',
   minLgInt: typeof rule.minLgInt==='string'?rule.minLgInt:'',
   regionMinIntensity: rule.regionMinIntensity&&typeof rule.regionMinIntensity==='object'&&!Array.isArray(rule.regionMinIntensity)?{...rule.regionMinIntensity}:{},
@@ -507,7 +513,8 @@ function rulePreviews(rule){
   return rule.tables.map(id=>[`warning-table-${id}`,labels[id],'warning-table',id==='regional'&&first?[`warning-table-regional-${first}.png`]:[],id]);
  }
  // 津波の図: 全国の図の見本（Pro の拡大図を使う設定なら地方の拡大図の見本）。表: 表の見本
- if(rule.type==='tsunami-map')return rule.outputs.map(id=>{
+ if(rule.type==='tsunami-map')return rule.tsunamiOutputs.map(id=>{
+  if(id==='observation')return ['tsunami-map-observation','津波観測の表','tsunami-map',[],'table'];
   if(id!=='map')return ['tsunami-map-table','津波警報・注意報の表','tsunami-map',[],'table'];
   return entitlements.tsunamiEnlarged&&rule.enlargedArea===true
    ?['tsunami-map-enlarged','津波警報・注意報の図（地方の拡大図）','tsunami-map',[],'enlarged']
@@ -597,16 +604,16 @@ function imageRuleFields(article,rule){
   return;
  }
  if(rule.type==='tsunami-map'){
-  checkboxGroup(box,'送るもの（1つ以上）',options.tsunamiMapOutputs||[['map','図'],['table','表']],rule.outputs,next=>{rule.outputs=next;render();});
-  helpNote(box,'図と表を別々のチャンネルへ送るときは、「図」だけのルールと「表」だけのルールを分けて作成してください（それぞれ1ルールとして数えます）。');
-  if(rule.outputs.includes('map')){
+  checkboxGroup(box,'送るもの（1つ以上）',options.tsunamiMapOutputs||[['map','地図'],['table','表（満潮時刻を含む）'],['observation','津波観測の表（沖合・沿岸）']],rule.tsunamiOutputs,next=>{rule.tsunamiOutputs=next;render();});
+  helpNote(box,'地図・表・津波観測の表を別々のチャンネルへ送るときは、ルールを分けて作成してください（それぞれ1ルールとして数えます）。');
+  if(rule.tsunamiOutputs.includes('map')){
    if(entitlements.tsunamiEnlarged)checkboxField(box,rule,'enlargedArea','発表地域の拡大図を追加する');
    else if(rule.enlargedArea===true){
     upgradeNote(box,'発表地域拡大版は現在の契約では添付されません。Proへ変更するか、チェックを外して保存してください。');
     checkboxField(box,rule,'enlargedArea','発表地域の拡大図を追加する（Pro）');
    }else helpNote(box,'発表地域の拡大図を追加するのはProで使えます。');
   }
-  helpNote(box,'選択した地方に津波注意報以上が発表されたときに配信します。');
+  helpNote(box,'選択した地方に津波注意報以上が発表されたとき、または津波予報だけが発表されたときに配信します。津波観測の表は、津波注意報以上が発表されている間に配信します。');
   previewImages(box,rulePreviews(rule));
   return;
  }

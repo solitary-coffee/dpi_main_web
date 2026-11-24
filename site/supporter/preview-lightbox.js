@@ -12,7 +12,7 @@ export const PREVIEW_TYPES = Object.freeze({
  'weather-map': '気象警報の図',
  'warning-table': '警報・注意報の表',
  'eew-map': '緊急地震速報（警報）の図',
- 'tsunami-map': '津波警報・注意報の図・表',
+ 'tsunami-map': '津波警報・注意報・津波観測の図・表',
  'hires-radar': '雨雲レーダー（高解像度版）',
 });
 export const PREVIEW_PLANS = Object.freeze(['Basic以上', 'Plus以上', 'Pro以上']);

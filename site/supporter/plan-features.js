@@ -18,7 +18,7 @@ export const FEATURE_SECTIONS = Object.freeze([
  ['weather-map', '気象警報（図）'],
  ['warning-table', '警報・注意報の表'],
  ['hires-radar', '雨雲レーダー（高解像度版）'],
- ['tsunami-map', '津波警報・注意報（図・表）'],
+ ['tsunami-map', '津波警報・注意報・津波観測（地図・表）'],
  ['earthquake-map', '地震情報（図）'],
 ]);
 export const FEATURE_DEFINITIONS = Object.freeze([
@@ -44,7 +44,7 @@ export const FEATURE_DEFINITIONS = Object.freeze([
  {name: 'hiresRadar', section: 'hires-radar', plan: 'plus', label: '全国・地方の選択・定時配信・線状降水帯の表示'},
  {name: 'hiresRadarThreshold', section: 'hires-radar', plan: 'pro', label: '閾値以上で配信（10・20・30・50・80mm/h）', requires: ['hiresRadar']},
  // --- tsunami-map: 津波警報・注意報の図・表 ---
- {name: 'tsunamiMap', section: 'tsunami-map', plan: 'plus', label: '全国・地方の選択（図・表）'},
+ {name: 'tsunamiMap', section: 'tsunami-map', plan: 'plus', label: '全国・地方の選択（地図・表・津波観測の表）'},
  {name: 'tsunamiEnlarged', section: 'tsunami-map', plan: 'pro', label: '発表地域の拡大図', requires: ['tsunamiMap']},
  // --- earthquake-map: 地震情報の図 ---
  {name: 'earthquakeMap', section: 'earthquake-map', plan: 'plus', label: 'すべての地震情報（種類を選択）'},

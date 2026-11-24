@@ -63,7 +63,7 @@ test('image rule options are hidden and saving is rejected while the flag is off
  assert.equal(off.imageRulesEnabled,false);
  assert.equal(off.imageRuleTypes,undefined);
  const on=supporterOptions({SUPPORTER_IMAGE_RULES_ENABLED:'1'});
- assert.deepEqual(on.imageRuleTypes,[['hires-radar','雨雲レーダー（高解像度版）'],['tsunami-map','津波警報・注意報（図・表）'],['weather-map','気象警報（図）'],['earthquake-map','地震情報（図）']]);
+ assert.deepEqual(on.imageRuleTypes,[['hires-radar','雨雲レーダー（高解像度版）'],['tsunami-map','津波警報・注意報・津波観測（地図・表）'],['weather-map','気象警報（図）'],['earthquake-map','地震情報（図）']]);
  for(const rule of [radar,tsunami,weather]){
   assert.throws(()=>normalizeSupporterRules([rule],guilds,limitsFor(active('pro'))),/準備中/);
   assert.throws(()=>normalizeSupporterRules([rule],guilds,limitsFor(active('pro')),null,{imageRules:false}),/準備中/);
@@ -196,7 +196,7 @@ test('admin details describe image rule settings',()=>{
  assert.equal(r['情報種別'],'雨雲レーダー（高解像度版）');
  assert.equal(r['線状降水帯の表示'],'有効');
  assert.equal(r['1時間降水量'],'30mm/h以上');
- assert.equal(t['情報種別'],'津波警報・注意報（図・表）');
+ assert.equal(t['情報種別'],'津波警報・注意報・津波観測（地図・表）');
  assert.equal(t['発表地域拡大版'],'有効（Pro）');
  assert.equal(w['情報種別'],'気象警報（図）');
  assert.equal(w['対象の警報・注意報'],'大雨、暴風雪・暴風');
@@ -248,4 +248,29 @@ test('flag off keeps an unchanged stored image rule but refuses new or edited on
  assert.equal(saved[1].type,'earthquake');
  assert.throws(()=>normalizeSupporterRules([{...stored,region:'okinawa'}],guilds,limits,null,{imageRules:false,storedImageRules:[stored]}),/準備中/);
  assert.throws(()=>normalizeSupporterRules([radar],guilds,limits,null,{imageRules:false,storedImageRules:[stored]}),/準備中/);
+});
+
+test('tsunami-map: 地図・表・津波観測の表を別々に選べる。保存済みのルールに届くものは変わらない', async () => {
+ const {normalizeImageRuleFields, imageRuleSnapshotFields, savedTsunamiOutputs} = await import('../worker/supporter-image-rules.js');
+ const limits = {features: undefined, tsunamiMap: true, tsunamiEnlarged: true};
+ const rule = extra => ({type: 'tsunami-map', region: 'all', ...extra});
+ // 保存済み（outputs）: 表を選んでいれば観測も
+ assert.deepEqual(savedTsunamiOutputs(rule({})), ['map', 'table', 'observation']);
+ assert.deepEqual(savedTsunamiOutputs(rule({outputs: ['map']})), ['map']);
+ assert.deepEqual(savedTsunamiOutputs(rule({outputs: ['table']})), ['table', 'observation']);
+ assert.deepEqual(savedTsunamiOutputs(rule({includeTables: false})), ['map']);
+ // 新しい項目は outputs より優先
+ assert.deepEqual(savedTsunamiOutputs(rule({outputs: ['table'], tsunamiOutputs: ['observation']})), ['observation']);
+ for (const [chosen, outputs, tables] of [
+  [['map'], ['map'], false], [['table'], ['table'], true], [['observation'], ['table'], true],
+  [['observation', 'map'], ['map', 'table'], true], [['map', 'table', 'observation'], ['map', 'table'], true],
+ ]) {
+  const fields = imageRuleSnapshotFields(rule({tsunamiOutputs: chosen}), limits, 'plus');
+  assert.deepEqual(fields.tsunamiOutputs, ['map', 'table', 'observation'].filter(id => chosen.includes(id)));
+  assert.deepEqual([fields.outputs, fields.includeTables], [outputs, tables]);
+ }
+ for (const bad of [[], ['x'], 'map', ['map', 'x']]) assert.throws(() => normalizeImageRuleFields(rule({tsunamiOutputs: bad}), 'tsunami-map', limits));
+ assert.throws(() => normalizeImageRuleFields(rule({outputs: ['observation']}), 'tsunami-map', limits));
+ const saved = normalizeImageRuleFields(rule({tsunamiOutputs: ['observation'], enlargedArea: true}), 'tsunami-map', limits);
+ assert.deepEqual([saved.tsunamiOutputs, saved.enlargedArea], [['observation'], false]);   // 拡大図は地図を送るルールだけ
 });

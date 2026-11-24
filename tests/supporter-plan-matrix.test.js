@@ -214,7 +214,7 @@ test('admin details describe eew-map, warning-table and tsunami outputs',()=>{
  assert.equal(wt['送る表'],'全国の表、地方の表');
  assert.equal(wt['配信のタイミング'],'発表のたびに毎回');
  assert.equal(wt['発表のない区域'],'載せる');
- assert.equal(ts['送るもの'],'表');
+ assert.equal(ts['送るもの'],'表（満潮時刻を含む）・津波観測の表（沖合・沿岸）');
  assert.equal(national['対象地方'],undefined);
 });
 
