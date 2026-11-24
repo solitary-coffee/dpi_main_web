@@ -21,9 +21,12 @@ const WEATHER6 = ['VPWW55', 'VPWW56', 'VPWW57', 'VPWW58', 'VPWW59', 'VPWW60'];
 const E = [];
 // 既存の試験チャンネル（自宅の data/supporter_image_test_targets.json）と同じ条件は作らない（重複させない）。
 // channel = チャンネル名、rules = 設定（1 つ以上）、opt.features = カスタム契約の機能、opt.same = 下のプランでも保存できる設定（確認を省く）
-const EXISTING = {'地震-すべて': '文字-地震', '速報-すべて': '文字-緊急地震速報', '気象-市区町村': '文字-気象-手稲区'};
-const add = (plan, group, channel, topic, rules, opt = {}) => E.push({plan, group, channel, topic, rules: [].concat(rules),
- ...(group === '文字' && EXISTING[channel] ? {existing: ['有料テスト｜文字配信', EXISTING[channel]]} : {}), ...opt});
+// カテゴリは情報の種類で分け、契約できるプランはチャンネル名の末尾と説明の先頭に入れる。
+const add = (plan, group, channel, topic, rules, opt = {}) => E.push({plan, group, channel, topic, rules: [].concat(rules), ...opt});
+const CATEGORY = {'eew-map': '緊急地震速報', eew: '緊急地震速報', 'earthquake-map': '地震情報', earthquake: '地震情報', 'tsunami-map': '津波',
+ 'weather-map': '気象警報・注意報', 'warning-table': '気象警報・注意報', 'warning-timeseries': '気象警報・注意報', weather: '気象情報（テキスト）',
+ 'hires-radar': '雨雲レーダー', 'rain-radar': '雨雲レーダー'};
+const PLAN_NOTE = {supporter: 'Basic以上', plus: 'Plus以上', pro: 'Proのみ', custom: 'カスタム契約'};
 const each = make => REGIONS.map(make);
 
 // --- 画像: Basic
@@ -120,7 +123,10 @@ for (const [number, entry] of E.entries()) {
   const delivered = await snapshot(save(raw, sub), sub);
   if (delivered.length !== raw.length) problems.push(`${label}: 保存 ${raw.length} 件に対し配信データ ${delivered.length} 件`);
   checks.saved += delivered.length;
-  entries.push({key: `${entry.plan}-${number}`, plan: PLAN_LABEL[entry.plan], group: entry.group, channel: entry.channel, topic: entry.topic, ...(entry.existing ? {existing: entry.existing} : {}), channelIds, rules: delivered});
+  entries.push({key: `${entry.plan}-${number}`, plan: PLAN_LABEL[entry.plan], group: entry.group, base: entry.channel,
+   category: `デバッグ｜${CATEGORY[entry.rules[0].type]}`,
+   channel: `${entry.group === '文字' ? 'テキスト-' : ''}${entry.channel}-${PLAN_LABEL[entry.plan]}`.toLowerCase(),
+   topic: `【${PLAN_NOTE[entry.plan]}】${entry.topic}`, channelIds, rules: delivered});
  } catch (error) { problems.push(`${label}: 保存できません（${error.message}）`); continue; }
  if (entry.plan === 'custom') continue;
  for (const plan of ORDER) {
