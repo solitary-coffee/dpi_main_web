@@ -51,7 +51,9 @@ add('plus', '画像', '津波-表と観測', '津波の表＋津波観測の表�
 add('plus', '画像', '津波-すべて', '津波の地図＋表＋津波観測の表・全国（1つのルール）', {...tsunami, tsunamiOutputs: ['map', 'table', 'observation']});
 const quake = {type: 'earthquake-map'};
 const QUAKES = [['VXSE51', '震度速報'], ['VXSE52', '震源'], ['VXSE53', '各地の震度'], ['VXSE62', '長周期']];
-for (const [id, name] of QUAKES.filter(([id]) => id === 'VXSE52')) add('plus', '画像', `地震図-${name}だけ`, `地震情報の図・${name}だけ`, {...quake, products: [id]});
+const QUAKE_KINDS = {join: ['地震図-種類別-plus', '【Plus以上】地震情報の図：種類ごとのルール（震度速報・震源・各地の震度・長周期地震動）']};
+for (const [id, name] of QUAKES) add('plus', '画像', `地震図-${name}だけ`, '', {...quake, products: [id]}, QUAKE_KINDS);
+const QUAKE_FILTERS = {join: ['地震図-条件別-pro', '【Proのみ】地震情報の図：条件ごとのルール（震度3以上・地方別のしきい値・長周期地震動階級・地図の中心の指定）']};
 // --- 画像: Pro
 add('pro', '画像', '緊急地震速報-複数チャンネル', '緊急地震速報（警報）の図・全国（1ルールから複数チャンネル。もう1つは「複数チャンネル-2」）', {type: 'eew-map'}, {channels: 2});
 add('pro', '画像', '気象地図-全国-詳細', '気象警報・注意報の地図・全国＋市区町村の詳細（警報以上）', {...weather, municipalityDetail: true});
@@ -66,17 +68,18 @@ add('pro', '画像', '雨雲-現在と予想', '雨雲レーダー（高解像�
 add('pro', '画像', '津波-拡大図-全国', '津波の地図・全国＋発表地域の拡大図', {...tsunami, tsunamiOutputs: ['map'], enlargedArea: true});
 add('pro', '画像', '津波-拡大図-地方', '津波の地図・11地方＋発表地域の拡大図', each(region => ({...tsunami, region, tsunamiOutputs: ['map'], enlargedArea: true})));
 const allQuakes = {...quake, products: QUAKES.map(([id]) => id)};
-for (const [id, name] of [['5-', '震度5弱']]) add('pro', '画像', `地震図-${name}以上`, `地震情報の図・全国で${name}以上`, {...allQuakes, minIntensity: id});
-add('pro', '画像', '地震図-地方別しきい値', '地震情報の図・北海道で震度1以上、東北で震度3以上、関東甲信で震度4以上', {...allQuakes, regionMinIntensity: {hokkaido: '1', tohoku: '3', 'kanto-koshin': '4'}});
-for (const id of ['1']) add('pro', '画像', `地震図-長周期階級${id}以上`, `地震情報の図・長周期地震動階級${id}以上`, {...allQuakes, minLgInt: id});
-add('pro', '画像', '地震図-中心と震度3以上', '地震情報の図・東京都千代田区中心・震度3以上', {...allQuakes, centerMunicipality: '1310100', minIntensity: '3'});
+add('pro', '画像', '地震図-震度3以上', '', {...allQuakes, minIntensity: '3'}, QUAKE_FILTERS);
+add('pro', '画像', '地震図-地方別しきい値', '', {...allQuakes, regionMinIntensity: {hokkaido: '1', tohoku: '3', 'kanto-koshin': '4'}}, QUAKE_FILTERS);
+add('pro', '画像', '地震図-長周期階級1以上', '', {...allQuakes, minLgInt: '1'}, QUAKE_FILTERS);
+add('pro', '画像', '地震図-中心-手稲区', '', {...allQuakes, centerMunicipality: '0110900'}, QUAKE_FILTERS);
 
 // --- 文字: Basic
 const text = {region: 'all', detail: 'all'};
-for (const [id, name] of EARTHQUAKE_DETAILS) add('supporter', '文字', `地震-${id === 'all' ? 'すべて' : name.slice(0, 18)}`, `テキスト：${name}`, {...text, type: 'earthquake', detail: id});
-for (const [id, name] of [['3', '震度3']]) add('supporter', '文字', `地震-${name}以上`, `テキスト：地震情報・${name}以上`, {...text, type: 'earthquake', intensityMode: 'threshold', intensity: id});
-add('supporter', '文字', '地震-m4以上', 'テキスト：地震情報・M4以上', {...text, type: 'earthquake', magnitudeMode: 'threshold', magnitudeMin: '4'});
-add('supporter', '文字', '地震-地方', 'テキスト：地震情報・北海道地方', {...text, type: 'earthquake', region: 'hokkaido'});
+const QUAKE_TEXT = {join: ['地震-種類別-basic', '【Basic以上】テキスト：地震情報を種類・条件ごとに（種類6・震度・M・地方）。都道府県の指定はPlus以上、市区町村・AND・ORはPro']};
+for (const [id, name] of EARTHQUAKE_DETAILS) add('supporter', '文字', `地震-${id === 'all' ? 'すべて' : name}`, `テキスト：${name}`, {...text, type: 'earthquake', detail: id}, id === 'all' ? {} : QUAKE_TEXT);
+add('supporter', '文字', '地震-震度3以上', '', {...text, type: 'earthquake', intensityMode: 'threshold', intensity: '3'}, QUAKE_TEXT);
+add('supporter', '文字', '地震-m4以上', '', {...text, type: 'earthquake', magnitudeMode: 'threshold', magnitudeMin: '4'}, QUAKE_TEXT);
+add('supporter', '文字', '地震-地方', '', {...text, type: 'earthquake', region: 'hokkaido'}, QUAKE_TEXT);
 for (const [id, name] of EEW_DETAILS) add('supporter', '文字', `速報-${{all: 'すべて', forecast: '予報', warning: '警報'}[id]}`, `テキスト：${name}`, {...text, type: 'eew', detail: id});
 add('supporter', '文字', '速報-最終報なし', 'テキスト：緊急地震速報・最終報は震度が変わったときだけ', {...text, type: 'eew', sendFinalReport: false});
 add('supporter', '文字', '速報-対象地方だけ', 'テキスト：緊急地震速報（警報）・関東甲信が対象のときだけ', {...text, type: 'eew', detail: 'warning', region: 'kanto-koshin', eewWarningAreaMode: 'target-only'});
@@ -85,16 +88,15 @@ for (const [id, name] of WEATHER_DETAILS) add('supporter', '文字', id === 'all
 add('supporter', '文字', '簡略版-定時', '雨雲レーダー（簡略版）・関東甲信・6時間ごと', {...text, type: 'rain-radar', region: 'kanto-koshin', radarCondition: 'all', deliveryIntervalHours: '6'});
 add('supporter', '文字', '簡略版-降雨検知', '雨雲レーダー（簡略版）・関東甲信・降雨を検出・3時間ごと', {...text, type: 'rain-radar', region: 'kanto-koshin', radarCondition: 'rain-detected', deliveryIntervalHours: '3'});
 // --- 文字: Plus
-add('plus', '文字', '地震-都道府県', 'テキスト：地震情報・北海道（都道府県の指定）', {...text, type: 'earthquake', region: 'hokkaido', prefecture: '01'});
+add('plus', '文字', '地震-都道府県', 'テキスト：地震情報・北海道（都道府県の指定）', {...text, type: 'earthquake', region: 'hokkaido', prefecture: '01'}, QUAKE_TEXT);
 add('plus', '文字', '気象-都道府県', 'テキスト：気象情報・北海道（都道府県の指定）', {...text, type: 'weather', region: 'hokkaido', prefecture: '01'}, KINDS);
 add('plus', '文字', '簡略版-しきい値', '雨雲レーダー（簡略版）・全国・5mm/h以上', {...text, type: 'rain-radar', radarCondition: 'rainfall-threshold', rainfallThresholdMmPerHour: '5', deliveryIntervalHours: '3'});
 // --- 文字: Pro
-add('pro', '文字', '地震-市区町村', 'テキスト：地震情報・札幌市手稲区', {...text, type: 'earthquake', region: 'hokkaido', prefecture: '01', municipality: '0110900'});
+add('pro', '文字', '地震-市区町村', 'テキスト：地震情報・札幌市手稲区', {...text, type: 'earthquake', region: 'hokkaido', prefecture: '01', municipality: '0110900'}, QUAKE_TEXT);
 add('pro', '文字', '気象-市区町村', 'テキスト：気象情報・札幌市手稲区', {...text, type: 'weather', region: 'hokkaido', prefecture: '01', municipality: '0110900'}, KINDS);
 add('pro', '文字', '気象-市区町村', 'テキスト：気象情報・札幌市手稲区（その市区町村だけの本文）', {...text, type: 'weather', region: 'hokkaido', prefecture: '01', municipality: '0110900', strictMunicipality: true});
-add('pro', '文字', '地震-and条件', 'テキスト：地震情報・震度3以上 かつ M4以上', {...text, type: 'earthquake', intensityMode: 'threshold', intensity: '3', conditions: [{kind: 'magnitude', value: '4'}]});
-add('pro', '文字', '地震-or条件', 'テキスト：地震情報・震度3以上 または M4以上', {...text, type: 'earthquake', conditionLogic: 'or', intensityMode: 'threshold', intensity: '3', conditions: [{kind: 'magnitude', value: '4'}]});
-add('pro', '文字', '地震-複数チャンネル', 'テキスト：地震情報・1ルールから複数チャンネル', {...text, type: 'earthquake'}, {channels: 2});
+add('pro', '文字', '地震-and条件', 'テキスト：地震情報・震度3以上 かつ M4以上', {...text, type: 'earthquake', intensityMode: 'threshold', intensity: '3', conditions: [{kind: 'magnitude', value: '4'}]}, QUAKE_TEXT);
+add('pro', '文字', '地震-or条件', 'テキスト：地震情報・震度3以上 または M4以上', {...text, type: 'earthquake', conditionLogic: 'or', intensityMode: 'threshold', intensity: '3', conditions: [{kind: 'magnitude', value: '4'}]}, QUAKE_TEXT);
 
 const subscription = (plan, features) => plan === 'custom'
  ? {status: 'active', recognizedPlan: true, planId: 'custom', managedCustom: true, customFeatures: features, complexConditions: false, multiDestination: false, ...LIMITS.custom}
