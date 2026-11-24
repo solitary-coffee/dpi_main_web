@@ -419,7 +419,7 @@ const DETAILS = {
 };
 const WEATHER_ALERT_DETAILS = new Set(['heavy-rain-level','landslide-level','flood-level','storm-surge-level']);
 const WEATHER_WARNING_DETAILS = new Set(['storm-blizzard-warning','wave-warning','heavy-snow-warning','other-advisory']);
-const SUPPORTER_TYPE_LABELS = Object.freeze({earthquake:'地震情報',eew:'緊急地震速報',weather:'気象情報','rain-radar':'雨雲レーダー',...Object.fromEntries(IMAGE_RULE_TYPE_OPTIONS)});
+const SUPPORTER_TYPE_LABELS = Object.freeze({earthquake:'地震情報',eew:'緊急地震速報',weather:'気象情報','rain-radar':'雨雲レーダー（簡略版）',...Object.fromEntries(IMAGE_RULE_TYPE_OPTIONS)});
 const INTENSITY_LABELS = Object.freeze({'1':'震度1','2':'震度2','3':'震度3','4':'震度4','5-':'震度5弱','5+':'震度5強','6-':'震度6弱','6+':'震度6強','7':'震度7'});
 
 function optionLabel(options, value, fallback = '未設定') {
@@ -520,7 +520,7 @@ export function supporterAdminDetails(row, channelsByGuild = {}) {
     if(!['earthquake-map','eew-map','warning-table'].includes(type))details.push({label:'対象地方',value:optionLabel(SUPPORTER_REGIONS,clean(rule?.region)||'all')});
     details.push(...imageRuleAdminDetails(rule,type));
    }else details.push(
-    {label:'詳細種別',value:type==='rain-radar'?'雨雲レーダー':optionLabel(type==='earthquake'?EARTHQUAKE_DETAILS:type==='eew'?EEW_DETAILS:WEATHER_DETAILS,clean(rule?.detail)||'all')},
+    {label:'詳細種別',value:type==='rain-radar'?'雨雲レーダー（簡略版）':optionLabel(type==='earthquake'?EARTHQUAKE_DETAILS:type==='eew'?EEW_DETAILS:WEATHER_DETAILS,clean(rule?.detail)||'all')},
     {label:'対象地方',value:optionLabel(SUPPORTER_REGIONS,clean(rule?.region)||'all')},
     {label:'条件の組み合わせ',value:clean(rule?.conditionLogic)==='or'?'いずれかを満たす（OR）':'すべて満たす（AND）'},
     ...(type==='eew'?[{label:'最終報を送信',value:rule?.sendFinalReport===false?'震度が変化した場合のみ':'送信する（初期値）'}]:[]),

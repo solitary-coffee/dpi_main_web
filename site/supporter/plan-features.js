@@ -15,7 +15,7 @@ const PLAN_RANK = Object.freeze({supporter: 0, plus: 1, pro: 2});
 export const FEATURE_SECTIONS = Object.freeze([
  ['text', '文字の通知ルール'],
  ['eew-map', '緊急地震速報（警報）の図'],
- ['weather-map', '気象警報（図）'],
+ ['weather-map', '気象警報・注意報の地図'],
  ['warning-table', '警報・注意報の表'],
  ['hires-radar', '雨雲レーダー（高解像度版）'],
  ['tsunami-map', '津波警報・注意報・津波観測（地図・表）'],
@@ -23,7 +23,7 @@ export const FEATURE_SECTIONS = Object.freeze([
 ]);
 export const FEATURE_DEFINITIONS = Object.freeze([
  // --- text rules (earthquake / eew / weather / rain-radar) ---
- {name: 'rainfallThreshold', section: 'text', plan: 'plus', label: '雨雲レーダー：1時間降水量の閾値指定'},
+ {name: 'rainfallThreshold', section: 'text', plan: 'plus', label: '雨雲レーダー（簡略版）：1時間降水量のしきい値'},
  {name: 'prefectureScope', section: 'text', plan: 'plus', label: '都道府県単位の指定'},
  {name: 'municipalityScope', section: 'text', plan: 'pro', label: '市区町村単位の指定', requires: ['prefectureScope']},
  {name: 'strictMunicipality', section: 'text', plan: 'pro', label: '指定した市区町村だけの本文抽出', requires: ['municipalityScope']},
@@ -32,7 +32,7 @@ export const FEATURE_DEFINITIONS = Object.freeze([
  // --- eew-map: 緊急地震速報（警報）の図 (VXSE43) ---
  {name: 'eewMap', section: 'eew-map', plan: 'supporter', label: '全国：警報が発表されたら配信'},
  {name: 'eewMapRegion', section: 'eew-map', plan: 'plus', label: '地方を選んで、その地方が対象になったときだけ配信', requires: ['eewMap']},
- // --- weather-map: 気象警報の図 ---
+ // --- weather-map: 気象警報・注意報の地図 ---
  {name: 'weatherMap', section: 'weather-map', plan: 'plus', label: '全国・地方の選択'},
  {name: 'weatherMunicipality', section: 'weather-map', plan: 'pro', label: '都道府県・市区町村の指定と市区町村の詳細', requires: ['weatherMap']},
  // --- warning-table: 警報・注意報の表 (VPWS50 / VPWP50) ---

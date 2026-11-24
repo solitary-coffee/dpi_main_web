@@ -27,7 +27,7 @@ test('地方区分、警戒レベル、詳細情報種別を提供する', () =>
 test('有料プラン画面は雨雲レーダーと二次利用申請の案内を表示する',async()=>{
  const app=await readFile(new URL('../site/supporter/app.js',import.meta.url),'utf8');
  const html=await readFile(new URL('../site/supporter/index.html',import.meta.url),'utf8');
- assert.match(app,/\['rain-radar','雨雲レーダー'\]/u);
+ assert.match(app,/\['rain-radar','雨雲レーダー（簡略版）'\]/u);
  assert.match(app,/配信頻度/u);
  assert.match(app,/rainfallThresholdMmPerHour/u);
  assert.match(html,/二次利用申請/u);

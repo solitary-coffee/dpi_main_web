@@ -9,7 +9,7 @@ export const MANIFEST_URL = `${PREVIEW_BASE}manifest.json`;
 // 見本の種類（manifest.json のキー）と、拡大表示の見出しに使う名前
 export const PREVIEW_TYPES = Object.freeze({
  'earthquake-map': '地震情報の図',
- 'weather-map': '気象警報の図',
+ 'weather-map': '気象警報・注意報の地図',
  'warning-table': '警報・注意報の表',
  'eew-map': '緊急地震速報（警報）の図',
  'tsunami-map': '津波警報・注意報・津波観測の図・表',
