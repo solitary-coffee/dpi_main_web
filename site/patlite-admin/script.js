@@ -313,7 +313,7 @@ const LEVEL_NOTES = { 重大: '時間帯設定・絞り込みの「重大のみ�
 // 色の一覧: 重大 / 中 / 軽 ごとに、色見本（2 色は 2 つ）・色の名前・点滅・内容・消えるまで
 function renderLegend() {
     $('legend').innerHTML = legendByLevel().map(({ level, items }) => `<div><h3>${levelBadge(level)} ${esc(LEVEL_NOTES[level])}</h3><div class="table-wrap"><table><thead><tr><th>色</th><th>点き方</th><th>情報・障害</th><th>消えるまで</th></tr></thead><tbody>${
-        items.map((value) => `<tr><td>${swatches(value.colors, value.flashSeconds !== 0)} ${esc(colorText(value.colors))}</td><td>${esc(flashText(value.flashSeconds))}</td><td>${esc(value.label)}${value.group === '防災' ? '（防災）' : ''}</td><td>${esc(value.until)}</td></tr>`).join('')
+        items.map((value) => `<tr><td>${swatches(value.colors, value.flashSeconds !== 0)} ${esc(colorText(value.colors))}</td><td>${esc(value.colors.length ? flashText(value.flashSeconds) : '点灯しない')}</td><td>${esc(value.label)}${value.group === '防災' ? '（防災）' : ''}</td><td>${esc(value.until)}</td></tr>`).join('')
     }</tbody></table></div></div>`).join('') + '<p class="muted">すべて正常なときは全部消灯。</p>';
 }
 

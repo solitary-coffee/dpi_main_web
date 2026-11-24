@@ -259,7 +259,7 @@ test('段階: すべての項目に 重大 / 中 / 軽 があり、critical は 
         home_critical: '重大', aws_failover: '重大', link_lost: '重大', eew_warning: '重大', tsunami_major: '重大', tsunami_warning: '重大',
         special_warning: '重大', quake_6plus: '重大', nankai_investigating: '重大',
         home_restart_loop: '中', aws_alarm: '中', tsunami_advisory: '中', quake_5: '中', long_term_caution: '中',
-        home_degraded: '軽', home_resource: '軽', aws_degraded: '軽', recovered: '軽',
+        home_degraded: '軽', home_resource: '軽', aws_degraded: '軽', recovered: '軽', maintenance: '軽',
     };
     assert.deepEqual(Object.fromEntries(Object.entries(LEGEND).map(([kind, value]) => [kind, value.level])), expected);
     for (const value of Object.values(LEGEND)) {
@@ -282,7 +282,7 @@ test('段階: すべての項目に 重大 / 中 / 軽 があり、critical は 
     assert.deepEqual(shared.sort(), ['eew_warning,tsunami_major', 'home_degraded,home_resource', 'long_term_caution,quake_5,tsunami_advisory']);
     // 障害の項目は白を使わない（白が点いていれば防災情報）
     for (const value of Object.values(LEGEND)) if (value.group === '障害') assert.ok(!value.colors.includes('white'));
-    assert.deepEqual(legendByLevel().map((group) => [group.level, group.items.length]), [['重大', 9], ['中', 5], ['軽', 4]]);
+    assert.deepEqual(legendByLevel().map((group) => [group.level, group.items.length]), [['重大', 9], ['中', 5], ['軽', 5]]);
 });
 
 test('防災情報は最長5分か確認まで点けたら繰り返さない。障害は30分ごとに繰り返す', () => {
@@ -455,4 +455,39 @@ test('画面: 色の一覧は段階ごと、絞り込みの操作、操作盤の
     // 確認（2×2）＋ 14 マス ＝ 6 列 × 3 段
     assert.equal((deckHtml.match(/class="deck-tile/gu) || []).length, 15);
     assert.equal((deckHtml.match(/deck-ack/gu) || []).length, 1);
+});
+
+test('メンテナンス中: 灯は点けず、期限までは途絶を出さない。期限を過ぎたら途絶を出し、メンテナンスの表示は消す', () => {
+    const t = 1_000_000;
+    const maintenance = { id: 'maintenance:window', kind: 'maintenance', title: 'メンテナンス中（1月12日　22時47分まで）', since: t, until: t + 3600 };
+    const engine = new PatliteEngine(t);
+    engine.update([maintenance], t, 0, t);
+    assert.deepEqual(engine.pattern(t + 1).lamps, lamps());
+    assert.deepEqual(engine.items(t + 1).map((item) => item.kind), ['maintenance']);
+    // 自宅が止まって届かなくなっても、期限までは途絶にしない
+    for (const passed of [181, 1800, 3599]) assert.equal(engine.linkLost(t + passed), false, String(passed));
+    // 期限を過ぎたら途絶（期限の時刻から点き始める = すぐ点滅する）。メンテナンスの表示は残さない
+    assert.equal(engine.linkLost(t + 3601), true);
+    assert.deepEqual(engine.items(t + 3601).map((item) => [item.kind, item.since]), [['link_lost', t + 3600]]);
+    assert.deepEqual(engine.pattern(t + 3601).lamps, lamps({ blue: 'flash' }));
+    // 防災情報はメンテナンス中も点く
+    engine.update([maintenance, { id: 'e', kind: 'eew_warning', since: t + 10 }], t + 10, 0, t + 10);
+    assert.deepEqual(engine.pattern(t + 12).lamps, lamps({ white: 'flash', red: 'flash' }));
+});
+
+test('メンテナンスの期限: この PC の時計のずれを直す・長すぎる期限は信用しない・解除したらすぐ元に戻る', () => {
+    const t = 1_000_000;
+    const offset = 500;   // この PC の時計が 500 秒進んでいる
+    const engine = new PatliteEngine(t + offset);
+    engine.update([{ id: 'm', kind: 'maintenance', since: t, until: t + 600 }], t + offset, offset, t + offset);
+    assert.equal(engine.linkLost(t + offset + 599), false);
+    assert.equal(engine.linkLost(t + offset + 601), true);
+    const long = new PatliteEngine(t);
+    long.update([{ id: 'm', kind: 'maintenance', since: t, until: t + 24 * 3600 }], t, 0, t);
+    assert.equal(long.linkLost(t + 181), true);
+    const ended = new PatliteEngine(t);
+    ended.update([{ id: 'm', kind: 'maintenance', since: t, until: t + 3600 }], t, 0, t);
+    ended.update([], t + 60, 0, t + 60);
+    assert.equal(ended.linkLost(t + 60 + 181), true);
+    assert.deepEqual([...ended.recovered.keys()], []);   // メンテナンスの終了は「復旧」の緑にしない
 });
