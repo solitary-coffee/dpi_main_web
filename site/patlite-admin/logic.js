@@ -41,6 +41,7 @@ export const LEGEND = Object.freeze({
     home_degraded: item(['yellow'], 0, '軽', '障害', '自宅のその他のプログラム停止', SYSTEM_UNTIL),
     home_resource: item(['yellow'], 0, '軽', '障害', '自宅サーバーの空き容量・メモリ不足、CPU 高負荷の継続', SYSTEM_UNTIL),
     aws_degraded: item(['yellow', 'blue'], 0, '軽', '障害', 'AWS 予備系の準備中・AWS の状態を読めない', SYSTEM_UNTIL),
+    maintenance: item([], 0, '軽', 'お知らせ', 'メンテナンス中（障害の項目と、監視情報の途絶を出さない。防災情報は出す）', '期限か解除まで'),
     recovered: item(['green'], 0, '軽', '障害', '障害から復旧した', '5秒（確認を押すとすぐ消灯）'),
     eew_warning: item(['white', 'red'], null, '重大', '防災', '緊急地震速報（警報）', `${DISASTER_UNTIL}。最後の報から3分・取消ですぐ消灯`),
     tsunami_major: item(['white', 'red'], null, '重大', '防災', '大津波警報', `${DISASTER_UNTIL}。津波警報などから切り替わったらまた表示`),
@@ -56,6 +57,7 @@ export const SYSTEM_KINDS = Object.freeze(new Set(Object.entries(LEGEND).filter(
 
 // Arduino の EEPROM 設定（CFG_GET）が読めるまでの既定値
 export const DEFAULT_TIMING = Object.freeze({ maxDisplay: 300, reminderInterval: 1800, reminder: 30, recovery: MAX_RECOVERY_SECONDS });
+export const MAINTENANCE_MAX_SECONDS = 6 * 3600 + 120;   // これより長いメンテナンスは信用しない
 export const LINK_TIMEOUT_SECONDS = 180;   // ブリッジは 60 秒ごとに送る
 export const ACK_EVENTS = Object.freeze(new Set(['ACK_BUTTON', 'DISPLAY_BUZZER_OFF', 'BUZZER_OFF_BUTTON']));
 
@@ -239,6 +241,8 @@ export class PatliteEngine {
             if (wasLost && this.lastFresh !== null) this.addRecovered('link_lost', LEGEND.link_lost.label, now);
             this.lastFresh = receivedAt;
         }
+        // until もこの PC の時刻に直す（メンテナンスの期限の判定に使う）
+        for (const c of clean) if (c.kind === 'maintenance' && Number.isFinite(c.until)) c.until += offset;
         this.conditions = clean;
         const system = new Map(clean.filter((c) => SYSTEM_KINDS.has(c.kind)).map((c) => [String(c.id), c]));
         for (const [id, previous] of this.prevSystem) {
@@ -260,18 +264,27 @@ export class PatliteEngine {
         this.recovered.clear();
     }
 
+    // 最後に届いた「メンテナンス中」の期限（この PC の時刻）。無ければ null。長すぎる期限は無視する
+    maintenanceUntil() {
+        const found = this.conditions.find((c) => c.kind === 'maintenance' && Number.isFinite(c.until));
+        return found && found.until - found.since <= MAINTENANCE_MAX_SECONDS ? found.until : null;
+    }
+
+    // 監視情報の途絶が始まった時刻（メンテナンスの期限までは途絶としない）
+    linkLostAt() {
+        const reference = (this.lastFresh ?? this.startedAt) + LINK_TIMEOUT_SECONDS;
+        return Math.max(reference, this.maintenanceUntil() ?? reference);
+    }
+
     linkLost(now) {
-        const reference = this.lastFresh ?? this.startedAt;
-        return now - reference > LINK_TIMEOUT_SECONDS;
+        return now > this.linkLostAt();
     }
 
     items(now) {
         for (const [id, value] of this.recovered) if (value.until <= now) this.recovered.delete(id);
-        const list = [...this.conditions, ...this.recovered.values()];
-        if (this.linkLost(now)) {
-            const reference = this.lastFresh ?? this.startedAt;
-            list.push({ id: 'link_lost', kind: 'link_lost', title: LEGEND.link_lost.label, since: reference + LINK_TIMEOUT_SECONDS });
-        }
+        // 期限の過ぎた「メンテナンス中」は出さない（自宅が止まっていて消えないことがある）
+        const list = [...this.conditions.filter((c) => c.kind !== 'maintenance' || !(c.until <= now)), ...this.recovered.values()];
+        if (this.linkLost(now)) list.push({ id: 'link_lost', kind: 'link_lost', title: LEGEND.link_lost.label, since: this.linkLostAt() });
         return list;
     }
 
