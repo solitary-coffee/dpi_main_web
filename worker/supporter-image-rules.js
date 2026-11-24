@@ -14,7 +14,7 @@ const V2_TYPE_SET = new Set(IMAGE_RULE_TYPES_V2);
 export const IMAGE_RULE_TYPE_OPTIONS = Object.freeze([
  ['hires-radar', '雨雲レーダー（高解像度版）'],
  ['tsunami-map', '津波警報・注意報・津波観測（地図・表）'],
- ['weather-map', '気象警報（図）'],
+ ['weather-map', '気象警報・注意報の地図'],
  ['earthquake-map', '地震情報（図）'],
  ['eew-map', '緊急地震速報（警報）の図'],
  ['warning-table', '警報・注意報の表'],
@@ -329,19 +329,19 @@ export function normalizeImageRuleFields(rule, type, limits = {}, catalogue = nu
  }
  if (type !== 'weather-map') reject('情報種別を確認してください。');
  const requested = Array.isArray(rule?.products) ? rule.products.map(clean) : [];
- if (!requested.length || requested.some(id => !PRODUCT_SET.has(id))) reject('気象警報（図）の対象を1つ以上選択してください。');
+ if (!requested.length || requested.some(id => !PRODUCT_SET.has(id))) reject('気象警報・注意報の地図の対象を1つ以上選択してください。');
  const products = PRODUCTS.filter(id => requested.includes(id));
  const minSeverity = clean(rule?.minSeverity) || 'warning';
- if (!SEVERITIES.has(minSeverity)) reject('気象警報（図）の配信基準を確認してください。');
+ if (!SEVERITIES.has(minSeverity)) reject('気象警報・注意報の地図の配信基準を確認してください。');
  const prefectureText = clean(rule?.prefecture);
  const prefecture = prefectureText && prefectureText !== 'all' ? prefectureText : null;
  const municipalities = [...new Set((Array.isArray(rule?.municipalities) ? rule.municipalities : []).map(clean).filter(Boolean))];
  const municipalityDetail = bool(rule?.municipalityDetail);
  if ((prefecture || municipalities.length || municipalityDetail) && !hasFeature(limits, 'weatherMunicipality'))
-  reject('気象警報（図）の都道府県・市区町村の指定と市区町村の詳細はPro以上のプランで利用できます。');
+  reject('気象警報・注意報の地図の都道府県・市区町村の指定と市区町村の詳細はPro以上のプランで利用できます。');
  if (prefecture) {
   const pref = PREFECTURES.find(item => item.code === prefecture);
-  if (!pref || (region !== 'all' && pref.region !== region)) reject('気象警報（図）の都道府県と対象地方を確認してください。');
+  if (!pref || (region !== 'all' && pref.region !== region)) reject('気象警報・注意報の地図の都道府県と対象地方を確認してください。');
  }
  if (municipalities.length) {
   if (!prefecture) reject('市区町村を指定する場合は都道府県を選択してください。');

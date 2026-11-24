@@ -37,7 +37,7 @@ test('comparison reuses the existing DPI-Bot sidebar, palette and private dashbo
 
 test('prefecture and Hokkaido shinko-kyoku-equivalent detail share one row',async()=>{
  const html=await read('site/supporter/plans.html');
- assert.match(html,/都道府県単位の指定（北海道は振興局相当の地方区分も選択可能）/);
+ assert.match(html,/<th scope="row">都道府県<\/th>/);
  assert.doesNotMatch(html,/<th scope="row">北海道内の地方区分<\/th>/);
  assert.match(html,/行政上の振興局区分との完全一致を保証するものではありません/);
 });
@@ -48,9 +48,12 @@ test('radar rates and rainfall conditions reflect current selectable Worker valu
  assert.deepEqual(RAIN_RADAR_CONDITIONS.map(([id])=>id),['all','rain-detected','rainfall-threshold']);
  assert.match(html,/1・2・3・6・12・24時間ごと/);
  assert.match(html,/0\.1～20 mm\/h/);
- assert.match(html,/定時更新・降雨検知の配信条件/);
- assert.match(html,/1時間降水量の閾値指定（0\.1～20 mm\/h）<\/th><td>—<\/td><td>○<\/td>/);
- assert.match(html,/雨雲レーダー（地方単位）/);
+ assert.match(html,/<th scope="row">配信頻度・降雨検知<\/th>/);
+ assert.match(html,/<th scope="row">降水量のしきい値<\/th><td>—<\/td><td>○<\/td>/);
+ assert.match(html,/雨雲レーダー（簡略版）/);
+ // 雨雲レーダー（簡略版）は画像配信の表にある
+ assert.ok(html.indexOf('>雨雲レーダー（簡略版）</th>')>html.indexOf('<h3 class="comparison-subtitle">画像配信</h3>'));
+ assert.match(html,/<h3 class="comparison-subtitle">テキスト配信<\/h3>/);
 });
 
 test('comparison describes the actual selectable earthquake, EEW and weather types',async()=>{
@@ -72,7 +75,7 @@ test('comparison describes the actual selectable earthquake, EEW and weather typ
 
 test('new add-on presentation and weather list reflect the revised contract',async()=>{
  const [html,home]=await Promise.all([read('site/supporter/plans.html'),read('site/supporter/index.html')]);
- assert.match(html,/追加サーバー（2件）／追加ルール（3件）/);
+ assert.match(html,/追加（チャンネル3・サーバー2・ルール3）/);
  assert.match(html,/今後も随時追加予定/);
  assert.match(home,/サーバー上限を2件追加/);
  assert.match(home,/通知ルール上限を3件追加/);

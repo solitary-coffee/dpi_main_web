@@ -28,9 +28,9 @@ const RULE_PACK_OPTIONS=[[0,'ルール追加なし'],[1,'＋3ルール / 月額�
 const $ = id => document.getElementById(id);
 const status = text => { $('status').textContent = text; };
 const INTENSITIES = [['1','1'],['2','2'],['3','3'],['4','4'],['5-','5弱'],['5+','5強'],['6-','6弱'],['6+','6強'],['7','7']];
-const TYPES = [['earthquake','地震情報'],['eew','緊急地震速報'],['weather','気象情報'],['rain-radar','雨雲レーダー']];
+const TYPES = [['earthquake','地震情報'],['eew','緊急地震速報'],['weather','気象情報'],['rain-radar','雨雲レーダー（簡略版）']];
 // Paid image rules; offered only when /api/supporter/options reports imageRulesEnabled.
-const IMAGE_TYPES = [['hires-radar','雨雲レーダー（高解像度版）'],['tsunami-map','津波警報・注意報・津波観測（地図・表）'],['weather-map','気象警報（図）'],['earthquake-map','地震情報（図）'],['eew-map','緊急地震速報（警報）の図'],['warning-table','警報・注意報の表']];
+const IMAGE_TYPES = [['hires-radar','雨雲レーダー（高解像度版）'],['tsunami-map','津波警報・注意報・津波観測（地図・表）'],['weather-map','気象警報・注意報の地図'],['earthquake-map','地震情報（図）'],['eew-map','緊急地震速報（警報）の図'],['warning-table','警報・注意報の表']];
 // warning-table: which feature allows each table (plan-features.js).
 const WARNING_TABLE_FEATURES = {national:'warningTableNational',regional:'warningTableRegional',timeseries:'warningTableTimeseries'};
 const TSUNAMI_OUTPUT_IDS = ['map','table','observation'];
@@ -201,7 +201,7 @@ function detailOptions(type) {
 
 function conditionKinds(rule){
  const common=[['region','対象地方'],['detail','詳細種別']];
- if(rule.type==='rain-radar')return [['region','対象地方'],['radarCondition','雨雲レーダーの配信条件'],['rainfallThreshold','1時間降水量の下限']];
+ if(rule.type==='rain-radar')return [['region','対象地方'],['radarCondition','雨雲レーダー（簡略版）の配信条件'],['rainfallThreshold','1時間降水量の下限']];
  return rule.type==='weather'?[...common,['weatherLevel','警戒レベル'],['warningLevel','警報・注意報']]:[...common,['intensity','震度の下限'],['magnitude','マグニチュードの下限']];
 }
 function conditionValues(rule,kind){
@@ -299,7 +299,7 @@ function geoScopeFields(container,rule){
  prefecture.disabled=!entitlements.prefecture||rule.type==='rain-radar';
  if(rule.type==='rain-radar'&&entitlements.prefecture){
   const note=document.createElement('p');note.className='geo-upgrade';
-  note.textContent='雨雲レーダーの取得元は地方単位の画像です。精密な都道府県・市区町村判定には非対応のため選択できません。';
+  note.textContent='雨雲レーダー（簡略版）の取得元は地方単位の画像です。精密な都道府県・市区町村判定には非対応のため選択できません。';
   container.append(note);return;
  }
  if(!entitlements.prefecture){
@@ -502,7 +502,7 @@ function rulePreviews(rule){
  const regional=type=>scope==='region'?[`${type}-${rule.region}.png`]:[];
  if(rule.type==='weather-map'){
   const prefer=entitlements.weatherMunicipality&&rule.municipalityDetail?['weather-map-municipality.png']:regional('weather-map');
-  return [[`weather-map-${scope}`,`気象警報の図（${where}）`,'weather-map',prefer,scope]];
+  return [[`weather-map-${scope}`,`気象警報・注意報の地図（${where}）`,'weather-map',prefer,scope]];
  }
  if(rule.type==='hires-radar')return [[`hires-radar-${scope}`,`雨雲レーダー（高解像度版）（${where}）`,'hires-radar',regional('hires-radar'),scope]];
  // 全国・地方を選ぶ場合も同じ図（配信する条件だけが違う）。

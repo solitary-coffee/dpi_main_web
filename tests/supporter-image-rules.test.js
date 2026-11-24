@@ -63,7 +63,7 @@ test('image rule options are hidden and saving is rejected while the flag is off
  assert.equal(off.imageRulesEnabled,false);
  assert.equal(off.imageRuleTypes,undefined);
  const on=supporterOptions({SUPPORTER_IMAGE_RULES_ENABLED:'1'});
- assert.deepEqual(on.imageRuleTypes,[['hires-radar','雨雲レーダー（高解像度版）'],['tsunami-map','津波警報・注意報・津波観測（地図・表）'],['weather-map','気象警報（図）'],['earthquake-map','地震情報（図）']]);
+ assert.deepEqual(on.imageRuleTypes,[['hires-radar','雨雲レーダー（高解像度版）'],['tsunami-map','津波警報・注意報・津波観測（地図・表）'],['weather-map','気象警報・注意報の地図'],['earthquake-map','地震情報（図）']]);
  for(const rule of [radar,tsunami,weather]){
   assert.throws(()=>normalizeSupporterRules([rule],guilds,limitsFor(active('pro'))),/準備中/);
   assert.throws(()=>normalizeSupporterRules([rule],guilds,limitsFor(active('pro')),null,{imageRules:false}),/準備中/);
@@ -200,7 +200,7 @@ test('admin details describe image rule settings',()=>{
  assert.equal(r['1時間降水量'],'30mm/h以上');
  assert.equal(t['情報種別'],'津波警報・注意報・津波観測（地図・表）');
  assert.equal(t['発表地域拡大版'],'有効（Pro）');
- assert.equal(w['情報種別'],'気象警報（図）');
+ assert.equal(w['情報種別'],'気象警報・注意報の地図');
  assert.equal(w['対象の警報・注意報'],'大雨、暴風雪・暴風');
  assert.equal(w['都道府県（Pro）'],'東京都');
  assert.equal(w['市区町村（気象庁コード・Pro）'],'1310100');
@@ -213,25 +213,26 @@ test('comparison table lists the image delivery rows with the plan split (custom
  const row=(kind,label)=>{const body=html.match(new RegExp(`<th scope="rowgroup"[^>]*>${kind}</th>[\\s\\S]*?</tbody>`))?.[0]||'';return body.match(new RegExp(`<th scope="row">${label}[^<]*</th>((?:<td>[^<]*</td>){4})`))?.[1].match(/<td>([^<]*)<\/td>/g).map(cell=>cell.replace(/<\/?td>/g,''));};
  const C='契約による';
  for(const [kind,label,expected] of [
-  ['緊急地震速報（警報）の図','全国',['○','○','○',C]],['緊急地震速報（警報）の図','地方を選ぶ',['—','○','○',C]],
-  ['気象警報の図','全国・地方',['—','○','○',C]],['気象警報の図','都道府県・市区町村',['—','—','○',C]],
-  ['警報・注意報の表','全国の表',['—','○','○',C]],['警報・注意報の表','地方の表',['—','—','○',C]],
-  ['警報・注意報の表','時系列の表',['—','—','○',C]],['警報・注意報の表','発表のたびに毎回',['—','—','○',C]],
-  ['雨雲レーダー（高解像度版）','全国・地方',['—','○','○',C]],['雨雲レーダー（高解像度版）','閾値以上',['—','—','○',C]],
+  ['緊急地震速報（警報）の図','全国',['○','○','○',C]],['緊急地震速報（警報）の図','地方',['—','○','○',C]],
+  ['気象警報・注意報の地図','全国・地方',['—','○','○',C]],['気象警報・注意報の地図','都道府県・市区町村',['—','—','○',C]],
+  ['警報・注意報の表','全国',['—','○','○',C]],['警報・注意報の表','地方',['—','—','○',C]],
+  ['警報・注意報の表','時系列',['—','—','○',C]],['警報・注意報の表','発表のたびに配信',['—','—','○',C]],
+  ['雨雲レーダー（簡略版）','地方',['○','○','○',C]],['雨雲レーダー（簡略版）','配信頻度・降雨検知',['○','○','○',C]],['雨雲レーダー（簡略版）','降水量のしきい値',['—','○','○',C]],
+  ['雨雲レーダー（高解像度版）','全国・地方',['—','○','○',C]],['雨雲レーダー（高解像度版）','降水量のしきい値',['—','—','○',C]],
   ['津波','地図（全国）',['○','○','○',C]],['津波','地図（地方）',['—','○','○',C]],['津波','表（満潮時刻を含む）',['—','○','○',C]],
-  ['津波','津波観測の表（沖合・沿岸）',['—','○','○',C]],['津波','発表地域の拡大図',['—','—','○',C]],
-  ['通知条件','AND・OR',['—','—','○',C]],['対象地域','市区町村単位',['—','—','○',C]],
+  ['津波','津波観測の表',['—','○','○',C]],['津波','発表地域の拡大図',['—','—','○',C]],
+  ['配信条件','AND・OR',['—','—','○',C]],['対象地域','都道府県',['—','○','○',C]],['対象地域','市区町村',['—','—','○',C]],
  ])assert.deepEqual(row(kind,label),expected,`${kind} ${label}`);
  // 種類の見出し（rowspan）と、その行数が合っている
  for(const body of html.match(/<tbody>\s*<tr><th scope="rowgroup"[\s\S]*?<\/tbody>/g))
   assert.equal(Number(body.match(/rowspan="(\d+)"/)[1]),(body.match(/<tr>/g)||[]).length,body.slice(0,120));
  // Every row of the custom column is decided by the contract (price and add-ons excepted).
  const rows=[...html.matchAll(/<th scope="row">([^<]*)<\/th>((?:<td>[^<]*<\/td>){4})/g)];
- assert.ok(rows.length>35);
+ assert.ok(rows.length>30);
  const cell=text=>text.match(/<td>([^<]*)<\/td>/g).map(value=>value.replace(/<\/?td>/g,''));
- assert.deepEqual(cell(rows.find(([,label])=>label==='月額（税込）')[2]),['300円','800円','1,280円','個別見積もり']);
- for(const [,label,values] of rows)if(!label.startsWith('月額')&&!label.startsWith('追加チャンネル'))assert.equal(cell(values)[3],C,label);
- assert.equal(cell(rows.find(([,label])=>label.startsWith('追加チャンネル'))[2])[3],'個別');
+ assert.deepEqual(cell(rows.find(([,label])=>label==='月額（税込）')[2]),['300円','800円','1,280円','個別']);
+ for(const [,label,values] of rows)if(!label.startsWith('月額')&&!label.startsWith('追加'))assert.equal(cell(values)[3],C,label);
+ assert.equal(cell(rows.find(([,label])=>label.startsWith('追加'))[2])[3],'個別');
 });
 
 test('dashboard offers image types only when the server enables them',async()=>{
