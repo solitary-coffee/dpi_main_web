@@ -4,13 +4,21 @@
   "main": "./worker/index.js",
   "keep_vars": true,
   "triggers": {
-    "crons": ["0 3 * * *", "5 15 * * *"]
+    "crons": ["0 3 * * *", "0 15 * * *"]
   },
   "assets": {
     "directory": "./",
     "binding": "ASSETS",
     "run_worker_first": true
   },
+
+  "ratelimits": [
+    {
+      "name": "SUPPORTER_RATE_LIMITER",
+      "namespace_id": "2026112501",
+      "simple": { "limit": 10, "period": 60 }
+    }
+  ],
 
   "kv_namespaces": [
     {
@@ -95,7 +103,8 @@
     "SUPPORTER_PREVIEW_OPEN": "true",
     "SUPPORTER_INTAKE_PAUSED": "true",
     "SUPPORTER_PREVIEW_OPENED_AT": "2026-11-19T04:42:55Z",
-    "SUPPORTER_CONSENT_VERSION": "2026-11-15",
+    "SUPPORTER_SUBSCRIBER_LIMIT": "30",
+    "SUPPORTER_CONSENT_VERSION": "2026-11-25",
     "SUPPORTER_IMAGE_RULES_ENABLED": "1",
     "SUPPORTER_IMAGE_RULES_V2_ENABLED": "1",
     "STRIPE_PRICE_SUPPORTER": "price_1UdNZiPALHnKyqYsJhmArumU",

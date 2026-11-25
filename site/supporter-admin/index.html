@@ -37,6 +37,11 @@
     <label class="search-label">契約者名・Discord ID・メール・プランで絞り込み<input id="account-search" type="search" autocomplete="off" placeholder="契約者名 / Discord ID / メール / BASIC / Plus / Pro"></label>
     <div id="accounts" class="account-list" aria-live="polite"></div>
    </section>
+   <section class="admin-section" aria-labelledby="payment-alerts-title">
+    <div class="section-heading"><div><p class="eyebrow">PAYMENT ALERTS</p><h2 id="payment-alerts-title">返金・支払異議・不正の警告</h2></div></div>
+    <p class="section-description">Stripeから届いた記録の新しい30件です。契約・配信は自動では変わりません。必要な対応を確認してください。</p>
+    <div id="payment-alerts" aria-live="polite"></div>
+   </section>
    <section class="admin-section" aria-labelledby="compensation-title">
     <div class="section-heading"><div><p class="eyebrow">COMPENSATION CREDITS</p><h2 id="compensation-title">補償クレジット配布</h2></div></div>
     <p class="section-description">インシデントなどの補償クレジットを、全登録者・特定ユーザー・特定プランの契約者へ配布します。理由と有効期限は利用者の画面にも表示されます。</p>

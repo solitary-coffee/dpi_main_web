@@ -40,7 +40,7 @@ test('custom entitlements require exact Stripe subscription id, revision and pri
  assert.equal(eligible.rules,40);
  assert.equal(eligible.contentExtraction,true);
  assert.equal(geographicEntitlements([eligible]).strictMunicipality,true);
- for(const mismatch of [{amount:2981},{customRevision:2},{subscriptionId:'sub_other'},{currency:'usd'},{status:'past_due'}]){
+ for(const mismatch of [{amount:2981},{customRevision:2},{subscriptionId:'sub_other'},{currency:'usd'},{status:'canceled'},{status:'incomplete'}]){
   assert.equal(customSubscriptionMatches(offer,{...paid,...mismatch}),false);
  }
 });

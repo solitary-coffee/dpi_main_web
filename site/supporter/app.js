@@ -815,6 +815,11 @@ function setRuleAccess(enabled){
 }
 
 // 準備中（メンテナンス中）：案内を出し、申込み・支払い・設定のボタンを押せなくする（サーバー側でも拒否する）。
+// テスト段階の注意書きとログイン不要のテスト支払いは、本番決済では出さない（取得できないときは出したまま）。
+function applyBillingMode(state) {
+ document.body.classList.toggle('billing-live', state?.mode === 'live');
+ if (state?.previewOpen !== undefined) document.body.classList.toggle('preview-closed', state.previewOpen !== true);
+}
 function applyIntakePaused(paused) {
  $('intake-paused-notice')?.classList.toggle('hidden', paused !== true);
  document.body.classList.toggle('intake-paused', paused === true);
@@ -822,7 +827,7 @@ function applyIntakePaused(paused) {
 async function checkIntakePaused() {
  try {
   const response = await fetch('/api/supporter/plans', {credentials:'same-origin', cache:'no-store', headers:{Accept:'application/json'}});
-  if (response.ok) applyIntakePaused((await response.json()).intakePaused === true);
+  if (response.ok) { const state = await response.json(); applyBillingMode(state); applyIntakePaused(state.intakePaused === true); }
  } catch { /* 案内を出せなくても、受付はサーバー側で止まっている。 */ }
 }
 
@@ -838,7 +843,8 @@ async function load() {
  updateImageRulesNote();
  try{const data=await api('/api/supporter/areas');areaCatalogue={municipalities:data.municipalities||[],districts:data.districts||[]};areaCatalogueFailed=false;}
  catch(error){areaCatalogue={municipalities:[],districts:[]};areaCatalogueFailed=true;status(error.message);}
- const {account,billingEnabled,intakePaused} = await api('/api/supporter/account');
+ const {account,billingEnabled,intakePaused,mode} = await api('/api/supporter/account');
+ applyBillingMode({mode});
  applyIntakePaused(intakePaused);
  stripeBillingEnabled=billingEnabled===true;
  applyAccountEnforcement({suspended:account?.account_status==='suspended',status:account?.account_status||'active',reason:account?.status_reason||'',updatedAt:account?.status_updated_at||null});
@@ -1137,7 +1143,7 @@ topupSignupButton.onclick=async()=>{
 
 const dateText = seconds => seconds ? new Intl.DateTimeFormat('ja-JP',{dateStyle:'medium',timeStyle:'short',timeZone:'Asia/Tokyo'}).format(new Date(seconds * 1000)) : '—';
 const moneyText = (amount,currency) => new Intl.NumberFormat('ja-JP',{style:'currency',currency:(currency || 'jpy').toUpperCase(),maximumFractionDigits:0}).format(amount || 0);
-const STATUS_LABELS = {active:'有効',trialing:'有効（次回請求待ち）',past_due:'支払い遅延',unpaid:'未払い',paused:'一時停止',incomplete:'手続き未完了',paid:'支払い済み',open:'支払い待ち',draft:'作成中',void:'無効'};
+const STATUS_LABELS = {active:'有効',trialing:'有効（次回請求待ち）',past_due:'支払い遅延',unpaid:'未払い',paused:'一時停止',incomplete:'手続き未完了',paid:'支払い済み',refunded:'返金済み',open:'支払い待ち',draft:'作成中',void:'無効'};
 const TOPUP_STATUS_LABELS={pending:'決済待ち',credited:'チャージ済み',failed:'未完了',expired:'失効済み',refunded:'返金済み',disputed:'異議申立て'};
 
 function renderCreditDetails(details={}){
@@ -1198,10 +1204,10 @@ function renderInvoices(invoices){
  if(!invoices.length){invoiceHistory.textContent='表示できる支払い明細はまだありません。';return;}
  for(const invoice of invoices){
   const card=document.createElement('article');card.className='invoice-card';
-  const heading=document.createElement('h4');heading.textContent=invoice.number?`請求書 ${invoice.number}`:'請求書';
-  const meta=document.createElement('p');meta.textContent=`${dateText(invoice.created)}・${STATUS_LABELS[invoice.status]||invoice.status}・${moneyText(invoice.total,invoice.currency)}`;
+  const heading=document.createElement('h4');heading.textContent=invoice.number?`請求書 ${invoice.number}`:invoice.label||'請求書';
+  const meta=document.createElement('p');meta.textContent=`${dateText(invoice.created)}・${STATUS_LABELS[invoice.status]||invoice.status}・${moneyText(invoice.total,invoice.currency)}${Number(invoice.refunded)>0?`（返金 ${moneyText(invoice.refunded,invoice.currency)}）`:''}`;
   const actions=document.createElement('div');actions.className='invoice-actions';
-  for(const [label,url] of [['請求書を見る',invoice.hostedInvoiceUrl],['PDFを開く',invoice.invoicePdf]])if(url){const anchor=document.createElement('a');anchor.className='secondary-btn';anchor.textContent=label;anchor.href=stripeDocumentDestination(url);anchor.target='_blank';anchor.rel='noopener noreferrer';actions.append(anchor);}
+  for(const [label,url] of [['請求書を見る',invoice.hostedInvoiceUrl],['PDFを開く',invoice.invoicePdf],['領収書を見る',invoice.receiptUrl]])if(url){const anchor=document.createElement('a');anchor.className='secondary-btn';anchor.textContent=label;anchor.href=stripeDocumentDestination(url);anchor.target='_blank';anchor.rel='noopener noreferrer';actions.append(anchor);}
   card.append(heading,meta,actions);invoiceHistory.append(card);
  }
 }
@@ -1238,14 +1244,16 @@ function renderContracts(subscriptions,dunning={},customPlan=null,customCheckout
  customPlanLocked=customPlan?.locked===true;
  for(const button of document.querySelectorAll('[data-billing-action]')){
   if(['checkout','update','portal'].includes(button.dataset.billingAction)){
-   button.disabled=customPlanLocked;
-   button.title=customPlanLocked?'管理者提供のカスタムプラン中は変更できません。':'';
+   const cancelable=button.dataset.billingAction==='portal'&&customPlan?.status==='active';
+   button.disabled=customPlanLocked&&!cancelable;
+   button.title=customPlanLocked?(cancelable?'カスタムプランは解約のみ手続きできます。':'管理者提供のカスタムプラン中は変更できません。'):'';
+   if(button.dataset.billingAction==='portal')button.textContent=cancelable&&customPlanLocked?'解約の手続き':'支払い方法・解約';
   }
  }
  if(customPlanLocked){
   const card=document.createElement('section');card.className='contract-card';
   const title=document.createElement('h3');title.textContent=customPlan.name||'カスタムプラン';
-  const details=document.createElement('p');details.textContent=`管理者提供／${customPlan.status==='active'?'利用中':'支払い待ち'}／月額 ${Number(customPlan.monthlyYen).toLocaleString('ja-JP')}円。上限：${customPlan.channels}チャンネル、${customPlan.servers}サーバー、${customPlan.rules}ルール。プラン変更は管理者のみ可能です。`;
+  const details=document.createElement('p');details.textContent=`管理者提供／${customPlan.status==='active'?'利用中':'支払い待ち'}／月額 ${Number(customPlan.monthlyYen).toLocaleString('ja-JP')}円。上限：${customPlan.channels}チャンネル、${customPlan.servers}サーバー、${customPlan.rules}ルール。${customPlan.status==='active'?'解約はこの画面から手続きできます。支払い方法・プランなど、それ以外の変更はお問い合わせください。':'プラン変更は管理者のみ可能です。'}`;
   card.append(title,details);
   if(customPlan.status==='offered'&&customCheckoutUrl){const pay=document.createElement('a');pay.href=stripeDestination(customCheckoutUrl);pay.textContent='専用の支払い手続きへ';pay.rel='noopener noreferrer';card.append(pay);}
   if(customChange){
@@ -1276,7 +1284,7 @@ function renderContracts(subscriptions,dunning={},customPlan=null,customCheckout
  const active=subscriptions.filter(item=>item.recognizedPlan!==false&&['active','trialing','past_due','unpaid','paused'].includes(item.status));
  entitlements={...active.reduce((limits,item)=>({servers:Math.max(limits.servers,Number(item.servers)||1),channels:Math.max(limits.channels,Number(item.channels)||2),rules:Math.max(limits.rules,Number(item.rules)||5),complexConditions:limits.complexConditions||item.complexConditions===true,multiDestination:limits.multiDestination||item.multiDestination===true}),{servers:1,channels:2,rules:5,complexConditions:false,multiDestination:false}),...featureEntitlements(active)};
  const current=active[0]||subscriptions[0];
- if(dunning?.usageSuspended){const warning=document.createElement('p');warning.className='billing-suspension';warning.textContent='月末再決済を確認できなかったため、有料プランの通知設定は利用停止中です。契約管理画面からお支払いを完了してください。';contract.append(warning);}
+ if(dunning?.usageSuspended){const warning=document.createElement('p');warning.className='billing-suspension';warning.textContent='お支払いを確認できなかったため、有料プランの通知設定は利用停止中です。未払いの請求書をすべてお支払いいただくと再開します。停止中は新しい月額料金を請求しません。停止から2か月間お支払いを確認できない場合は、自動的に解約します。';contract.append(warning);}
  if(current){
   plan.value=current.planId||'supporter';channelPacks.value=String(current.channelPacks||0);serverPacks.value=String(current.serverPacks||0);rulePacks.value=String(current.rulePacks||0);
   topupPlan.value=current.planId||'supporter';topupChannelPacks.value=String(current.channelPacks||0);topupServerPacks.value=String(current.serverPacks||0);topupRulePacks.value=String(current.rulePacks||0);
@@ -1418,7 +1426,7 @@ for (const [label,action] of [['このプランで申し込む','checkout'],['�
  if(action==='checkout'){checkoutButton=button;updateCheckoutAvailability();}
  button.onclick = async () => {
   billingActionStatus.textContent='';
-  if(customPlanLocked&&['checkout','update','portal'].includes(action)){billingActionStatus.textContent='カスタムプランの変更は管理者にお問い合わせください。';return;}
+  if(customPlanLocked&&['checkout','update'].includes(action)){billingActionStatus.textContent='カスタムプランの変更は管理者にお問い合わせください。';return;}
   if(accountSuspended&&['checkout','update'].includes(action)){billingActionStatus.textContent='有料プランアカウントがBANされているため、この操作は利用できません。';return;}
   if(action==='checkout'&&!billingEmail.reportValidity())return;
   if(action==='checkout'&&!legalConsent.reportValidity())return;

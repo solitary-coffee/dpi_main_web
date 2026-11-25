@@ -166,11 +166,14 @@ test('missing subscription is recovered from the newest paid Checkout for the sa
   const create=calls.find(call=>call.path==='/v1/subscriptions'&&call.params.size);assert.equal(create.params.get('items[0][price]'),'price_plus');assert.equal(create.key,'dpi-initial-subscription-v2-cs_latest');
  }finally{globalThis.fetch=originalFetch;}
 });
-test('live secrets can never enable billing',()=>{
+test('決済はモードとキーの種類が一致したときだけ有効（既定・誤字・食い違いは無効）',()=>{
  const env={SUPPORTER_BILLING_MODE:'test',STRIPE_SECRET_KEY:'sk_live_example',STRIPE_WEBHOOK_SECRET:'x',STRIPE_PRICE_SUPPORTER:'x',STRIPE_PRICE_PLUS:'x',STRIPE_PRICE_PRO:'x',STRIPE_PRICE_ADDON:'x',STRIPE_PORTAL_CONFIG:'x'};
  assert.equal(billingReady(env),false);env.STRIPE_SECRET_KEY='sk_test_example';assert.equal(billingReady(env),true);
  env.STRIPE_SECRET_KEY='rk_test_example';assert.equal(billingReady(env),true);
  env.STRIPE_SECRET_KEY='rk_live_example';assert.equal(billingReady(env),false);
+ env.SUPPORTER_BILLING_MODE='live';assert.equal(billingReady(env),true);
+ env.STRIPE_SECRET_KEY='rk_test_example';assert.equal(billingReady(env),false);
+ for(const mode of ['Live','LIVE','production','',undefined]){env.SUPPORTER_BILLING_MODE=mode;env.STRIPE_SECRET_KEY='sk_live_example';assert.equal(billingReady(env),false);}
 });
 test('subscription summary includes plan, dates, amount and item details',()=>{
  const env={STRIPE_PRICE_SUPPORTER:'price_supporter',STRIPE_PRICE_ADDON:'price_addon'};
@@ -510,7 +513,7 @@ test('scheduled change summaries expose the next plan without Stripe identifiers
 test('invoice history only returns safe Stripe document links',async()=>{
  const env={SUPPORTER_BILLING_MODE:'test',STRIPE_SECRET_KEY:'rk_test_example',STRIPE_WEBHOOK_SECRET:'whsec_x',STRIPE_PRICE_SUPPORTER:'price_basic',STRIPE_PRICE_PLUS:'price_plus',STRIPE_PRICE_PRO:'price_pro',STRIPE_PRICE_ADDON:'price_addon',STRIPE_PORTAL_CONFIG:'bpc_x'};
  const originalFetch=globalThis.fetch;globalThis.fetch=async()=>new Response(JSON.stringify({livemode:false,data:[{number:'DPI-001',status:'paid',created:1700000000,currency:'jpy',total:800,amount_due:800,amount_paid:800,hosted_invoice_url:'https://invoice.stripe.com/i/test',invoice_pdf:'https://pay.stripe.com/invoice/test/pdf'},{number:'DPI-002',status:'open',created:1700000001,currency:'jpy',total:300,hosted_invoice_url:'https://evil.example/invoice'}]}),{status:200,headers:{'content-type':'application/json'}});
- try{const invoices=await customerInvoices(env,'cus_x');assert.equal(invoices[0].hostedInvoiceUrl,'https://invoice.stripe.com/i/test');assert.equal(invoices[0].invoicePdf,'https://pay.stripe.com/invoice/test/pdf');assert.equal(invoices[1].hostedInvoiceUrl,null);}finally{globalThis.fetch=originalFetch;}
+ try{const invoices=(await customerInvoices(env,'cus_x')).sort((a,b)=>Number(b.number==='DPI-001')-Number(a.number==='DPI-001'));assert.equal(invoices[0].hostedInvoiceUrl,'https://invoice.stripe.com/i/test');assert.equal(invoices[0].invoicePdf,'https://pay.stripe.com/invoice/test/pdf');assert.equal(invoices[1].hostedInvoiceUrl,null);}finally{globalThis.fetch=originalFetch;}
 });
 test('update preview prorates only the base plan and confirms options without proration',async()=>{
  const env={SUPPORTER_BILLING_MODE:'test',STRIPE_SECRET_KEY:'rk_test_example',STRIPE_WEBHOOK_SECRET:'whsec_x',STRIPE_PRICE_SUPPORTER:'price_basic',STRIPE_PRICE_PLUS:'price_plus',STRIPE_PRICE_PRO:'price_pro',STRIPE_PRICE_ADDON:'price_addon',STRIPE_PORTAL_CONFIG:'bpc_x',SUPPORTER_PUBLIC_ORIGIN:'https://dpi-bot.com'};
@@ -669,7 +672,7 @@ test('billing dunning sends success and failure mail and blocks access after mon
  assert.match(billingSource,/クレジットチャージ完了のお知らせ/);assert.match(billingSource,/クレジット有効期限切れのお知らせ/);
  assert.match(supporterSource,/supporter_dunning[\s\S]*status='suspended'/);assert.match(uiSource,/usageSuspended/);
  assert.match(migration,/CREATE TABLE IF NOT EXISTS supporter_dunning/);assert.match(migration,/supporter_billing_notifications/);
- assert.deepEqual(JSON.parse(configText).triggers.crons,['0 3 * * *','5 15 * * *']);assert.match(indexSource,/runSupporterBillingSchedule/);
+ assert.deepEqual(JSON.parse(configText).triggers.crons,['0 3 * * *','0 15 * * *']);assert.match(indexSource,/runSupporterBillingSchedule/);
 });
 test('supporter rule creation is resilient to WebKit input and channel errors',async()=>{
  const source=await readFile(new URL('../site/supporter/app.js',import.meta.url),'utf8');

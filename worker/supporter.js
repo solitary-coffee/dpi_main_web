@@ -6,7 +6,7 @@ import { customChangeQuote,currentCustomChange,customChangePublic,stageCustomCha
 import { refreshSupporterSnapshotSafely } from './supporter-snapshot.js';
 import { PREFECTURES, loadSupporterAreaCatalogue, geographicEntitlements, normalizeGeographicRule } from './supporter-geo.js';
 import { planFeatures } from '../site/supporter/plan-features.js';
-import { createPreviewCheckout, previewCheckoutResult } from './supporter-billing.js';
+import { billingMode, createPreviewCheckout, previewCheckoutResult } from './supporter-billing.js';
 import { basicCredentialsValid, reviewAccessConfigured, reviewChallenge, reviewCookie, reviewCookieValid } from './supporter-review.js';
 import { imageRulesEnabled, imageRulesV2Enabled, isImageRuleType, isImageRuleV2Type, imageRuleOptions, savedTsunamiOutputs, savedRadarContents, savedRadarMinutes, radarIntervalText, HIRES_RADAR_CONTENTS, TSUNAMI_MAP_OUTPUTS, WARNING_TABLE_KINDS, WARNING_TABLE_DELIVER_ON, normalizeImageRuleFields, loadEarthquakeMunicipalities, IMAGE_RULE_TYPE_OPTIONS, HIRES_RADAR_CONDITIONS, WEATHER_MAP_PRODUCTS, WEATHER_MAP_SEVERITIES, EARTHQUAKE_MAP_PRODUCTS, EARTHQUAKE_MAP_INTENSITIES } from './supporter-image-rules.js';
 
@@ -739,6 +739,18 @@ export const SUPPORTER_INTAKE_PAUSED_MESSAGE = '現在準備中（メンテナ�
 export function supporterIntakePaused(env) {
  return clean(env.SUPPORTER_INTAKE_PAUSED).toLowerCase() === 'true';
 }
+// 申込み・チャージの連続作成を抑える（Cloudflare の Rate Limiting。1分10回）。設定が無い・確認できないときは通す。
+async function assertSupporterRate(env, key) {
+ const limiter = env.SUPPORTER_RATE_LIMITER;
+ if (typeof limiter?.limit !== 'function') return;
+ let allowed = true;
+ try { allowed = (await limiter.limit({key})).success !== false; }
+ catch (error) { console.error('Supporter rate limiter is unavailable', {errorName: error?.name || 'Error'}); }
+ if (!allowed) throw Object.assign(new Error('短時間に操作が続いたため受け付けられません。1分ほど待ってからお試しください。'), {status: 429});
+}
+function supporterPlansResponse(env) {
+ return {mode:billingMode(env), billingEnabled:billingReady(env), intakePaused:supporterIntakePaused(env), previewOpen:supporterPreviewOpen(env)&&!supporterPublicEnabled(env), deliveryEnabled:supporterPublicEnabled(env)&&billingReady(env), plans:publicPlans(), addons:{channel:{yen:200,channels:3},server:{yen:200,servers:2},rule:{yen:200,rules:3},prorated:false},billingDay:26};
+}
 export function supporterTestUserAllowed(env, discordUserId) {
  if (supporterPublicEnabled(env) || supporterPreviewOpen(env)) return true;
  const allowed = new Set(clean(env.SUPPORTER_TEST_USER_IDS)
@@ -1094,7 +1106,11 @@ export async function handleSupporterRequest(request, env, ctx) {
     let creditCampaigns=[];
     try{const result=await db.prepare('SELECT * FROM supporter_credit_campaigns ORDER BY created_at DESC LIMIT 20').all();creditCampaigns=(result.results||[]).map(compensationCampaignView);}
     catch(error){console.error('Paid plan credit campaigns failed',{errorName:error?.name||'Error'});}
-    return response({billingEnabled:stripeEnabled,accounts,creditSummary,creditSummaryError,creditCampaigns});
+    let paymentAlerts=[];
+    try{const result=await db.prepare('SELECT event_id,kind,outcome,discord_user_id,amount,created_at FROM supporter_payment_alerts ORDER BY created_at DESC LIMIT 30').all();
+     paymentAlerts=(result.results||[]).map(row=>({id:clean(row.event_id),kind:clean(row.kind),outcome:clean(row.outcome),discordUserId:clean(row.discord_user_id),amount:Number(row.amount)||0,createdAt:Number(row.created_at)||null}));}
+    catch(error){console.error('Paid plan payment alerts failed',{errorName:error?.name||'Error'});}
+    return response({billingMode:billingMode(env),paymentAlerts,billingEnabled:stripeEnabled,accounts,creditSummary,creditSummaryError,creditCampaigns});
    }
    const detailMatch=path.match(/^\/site\/supporter-admin\/api\/accounts\/(\d{17,20})$/);
    if(detailMatch){
@@ -1137,10 +1153,11 @@ export async function handleSupporterRequest(request, env, ctx) {
    if (request.method !== 'POST') return response({message:'Method not allowed'},405);
    assertSameOrigin(request);
    const input = await readJson(request);
+   await assertSupporterRate(env, `preview:${clean(request.headers.get('cf-connecting-ip')) || 'unknown'}`);
    return response(await createPreviewCheckout(env, clean(input?.plan), input));
   }
   if (path === '/api/supporter/plans' && request.method === 'GET' && (supporterPublicEnabled(env) || supporterPreviewOpen(env))) {
-   return response({billingEnabled:false, intakePaused:supporterIntakePaused(env), deliveryEnabled:false, plans:publicPlans(), addons:{channel:{yen:200,channels:3},server:{yen:200,servers:2},rule:{yen:200,rules:3},prorated:false},billingDay:26});
+   return response(supporterPlansResponse(env));
   }
   let session;
   try { session = await requireSession(request, {...env,REUSE_DB:db}); }
@@ -1148,7 +1165,7 @@ export async function handleSupporterRequest(request, env, ctx) {
   const uid = session.discord_user_id;
   if (!supporterTestUserAllowed(env, uid) && !(await reviewCookieValid(request, env))) return notFound();
   if (path === '/api/supporter/plans' && request.method === 'GET') {
-   return response({billingEnabled:false, intakePaused:supporterIntakePaused(env), deliveryEnabled:false, plans:publicPlans(), addons:{channel:{yen:200,channels:3},server:{yen:200,servers:2},rule:{yen:200,rules:3},prorated:false},billingDay:26});
+   return response(supporterPlansResponse(env));
   }
   if (path === '/api/supporter/options' && request.method === 'GET') {
    return response(supporterOptions(env));
@@ -1157,12 +1174,16 @@ export async function handleSupporterRequest(request, env, ctx) {
    const areas=await loadSupporterAreaCatalogue();
    return response({municipalities:areas.municipalities,districts:areas.districts,source:areas.source});
   }
-  if (request.method !== 'GET' && supporterIntakePaused(env)) return response({message:SUPPORTER_INTAKE_PAUSED_MESSAGE,intakePaused:true},503);
+  // 受付停止中でも、契約者の支払い方法の変更と解約（portal）は止めない。
+  const pausedPortal = supporterIntakePaused(env) && path === '/api/supporter/billing/portal';
+  if (request.method !== 'GET' && supporterIntakePaused(env) && !pausedPortal) return response({message:SUPPORTER_INTAKE_PAUSED_MESSAGE,intakePaused:true},503);
   if (request.method !== 'GET') { assertSameOrigin(request); assertCsrf(request,session); }
   if (/^\/api\/supporter\/billing\/(checkout|topup|preview-update|update|portal|status)$/.test(path)) {
    const expected=path.endsWith('/status')?'GET':'POST';
    if(request.method!==expected)return response({message:'Method not allowed'},405);
    const input=request.method==='POST'?await readJson(request):{};
+   if(pausedPortal)input.existingOnly=true;
+   if(path.endsWith('/checkout')||path.endsWith('/topup'))await assertSupporterRate(env,`billing:${uid}`);
    if(path.endsWith('/checkout')||path.endsWith('/topup')){
     const currentAccount=await db.prepare('SELECT account_status,status_reason,status_updated_at FROM supporter_accounts WHERE discord_user_id=?').bind(uid).first();
     if(currentAccount)assertSupporterAccountActive(currentAccount);
@@ -1181,7 +1202,7 @@ export async function handleSupporterRequest(request, env, ctx) {
    const discordName=clean(session.discord_username).slice(0,100);
    if(discordName)await db.prepare('UPDATE supporter_accounts SET discord_name=? WHERE discord_user_id=? AND COALESCE(discord_name,\'\')<>?').bind(discordName,uid,discordName).run();
    const account = await db.prepare('SELECT * FROM supporter_accounts WHERE discord_user_id=?').bind(uid).first();
-   return response({account,customPlan:customPublic(await getCustomPlan(db,uid)),deliveryEnabled:false,billingEnabled:billingReady(env),intakePaused:supporterIntakePaused(env)});
+   return response({account,customPlan:customPublic(await getCustomPlan(db,uid)),mode:billingMode(env),deliveryEnabled:supporterPublicEnabled(env)&&billingReady(env),billingEnabled:billingReady(env),intakePaused:supporterIntakePaused(env)});
   }
   if (path === '/api/supporter/account' && request.method === 'POST') {
    const input = await readJson(request);

@@ -91,5 +91,6 @@
 .intake-paused-notice.hidden{display:none}
 .intake-paused-notice strong{display:block;margin-bottom:4px;font-size:1.2rem;color:#ffb3ba}
 .intake-paused-notice p{margin:2px 0}
-body.intake-paused main button:not(#reload):not([data-preview-plan]){pointer-events:none;opacity:.45}
+body.billing-live .preview-notice,body.billing-live #preview-checkout,body.billing-live .preview-only,body.preview-closed #preview-checkout,body.preview-closed .preview-only{display:none}
+body.intake-paused main button:not(#reload):not([data-preview-plan]):not([data-billing-action="portal"]):not([data-billing-action="status"]){pointer-events:none;opacity:.45}
 body.intake-paused main :is(#rules,#billing) :is(input,select,textarea){pointer-events:none;opacity:.6}
