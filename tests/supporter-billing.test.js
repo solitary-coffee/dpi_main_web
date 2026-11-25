@@ -254,8 +254,9 @@ test('paid plans stay separate from secondary-use applications and private in na
  assert.match(billingUi,/クレジットが.*不足しています/);
  assert.match(billingUi,/selectedInitialCharge/);
  assert.match(billingUi,/email:topupEmail\.value[\s\S]*useCredits:true/);
- assert.match(billingUi,/クレジットで全額支払う/);
- assert.match(billingUi,/useCredits:creditPaymentInput\.checked/);
+ assert.match(billingUi,/残高だけで申し込めます/);
+ assert.match(billingUi,/payment\.state==='credits'\?\{useCredits:true\}/);
+ assert.match(billingUi,/payment\.state==='split'\?\{applyCredits:true,expectedCreditApplied:payment\.creditApplied\}/);
  assert.match(billingUi,/クレジット＋登録済みのお支払い方法/);
  assert.match(billingUi,/クレジットを使って変更を確定/);
  assert.match(billingUi,/hasExistingContract[\s\S]*残クレジットでプラン・オプションを変更[\s\S]*preview-update/);
