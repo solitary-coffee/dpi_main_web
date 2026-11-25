@@ -180,7 +180,7 @@ test('料金プレビューの期限切れとクレジット残高変動は契�
   const preview=await previewResponse.json();assert.equal(preview.creditApplied,400);
   credits=300;calls.length=0;
   const changed=await billingAction(new Request('https://dpi-bot.com/api/supporter/billing/update'),envBase(),contractDb(),'123',{plan:'supporter',channelPacks:1,serverPacks:0,prorationDate:preview.prorationDate,expectedCreditApplied:400,useCredits:true,requestId:'123e4567-e89b-42d3-a456-426614174202'});
-  assert.equal(changed.status,409);assert.match((await changed.json()).message,/クレジットが変更/);
+  assert.equal(changed.status,409);assert.match((await changed.json()).message,/残高が変更/);
   assert.equal(calls.some(call=>call.path==='/v1/subscriptions/sub_basic'&&call.method==='POST'),false);
  }finally{globalThis.fetch=originalFetch;}
 });
