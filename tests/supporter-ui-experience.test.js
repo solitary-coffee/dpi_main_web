@@ -72,7 +72,7 @@ test('comparison page and CSS share the paid dashboard access gate',async()=>{
   assert.match(html,new RegExp(plan.yen.toLocaleString('ja-JP')+'円'));
   assert.ok(html.includes('?plan='+plan.id+'#billing'));
  }
- assert.match(html,/<th scope="row">市区町村<\/th>/);
+ assert.match(html,/<th scope="row">市区町村(?:<a[^>]*>※<\/a>)?<\/th>/);
  assert.match(html,/雨雲レーダー（簡略版）/);
  assert.match(html,/カスタムを相談する/);
  assert.match(html,/別途.*二次利用申請/s);

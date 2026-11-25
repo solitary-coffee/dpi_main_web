@@ -3,6 +3,43 @@
 // 各見本の枠は data-preview-type（種類）・data-preview-file（最初に表示する見本）・data-preview-plan（対象プラン）を持つ。
 import {attachPreview} from './preview-lightbox.js';
 
+const detailReferences = [...document.querySelectorAll('.detail-ref[href^="#"]')];
+const detailTarget = hash => {
+ if (!hash || hash === '#') return null;
+ try {
+  const target = document.getElementById(decodeURIComponent(hash.slice(1)));
+  return target?.matches('.comparison-catalog details') ? target : null;
+ } catch { return null; }
+};
+const openDetail = (hash, source) => {
+ const target = detailTarget(hash);
+ if (!target) return null;
+ target.open = true;
+ const back = target.querySelector('.detail-back a');
+ if (back && source) back.href = `#${source.id}`;
+ return target;
+};
+detailReferences.forEach((reference, index) => {
+ if (!reference.id) reference.id = `comparison-detail-ref-${index + 1}`;
+ reference.addEventListener('click', () => openDetail(reference.hash, reference));
+});
+for (const back of document.querySelectorAll('.detail-back a')) {
+ back.addEventListener('click', event => {
+  const source = document.getElementById(decodeURIComponent(back.hash.slice(1)));
+  if (!source?.matches('.detail-ref')) return;
+  event.preventDefault();
+  location.hash = source.id;
+  source.focus({preventScroll: true});
+  source.scrollIntoView({block: 'center'});
+ });
+}
+const openHashDetail = () => {
+ const target = openDetail(location.hash);
+ if (target) requestAnimationFrame(() => target.scrollIntoView({block: 'start'}));
+};
+window.addEventListener('hashchange', openHashDetail);
+openHashDetail();
+
 const section = document.querySelector('.comparison-previews');
 if (section) {
  const update = () => { if (!section.querySelector('.preview-thumb')) section.hidden = true; };

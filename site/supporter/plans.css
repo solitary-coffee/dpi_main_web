@@ -13,7 +13,7 @@
 .comparison-page h2{margin:26px 0 14px;padding-bottom:10px;border-bottom:2px solid var(--blue);color:var(--blue);font-size:1.35rem}
 #comparison-help,.comparison-catalog>p{margin:8px 0 15px;color:var(--muted);font-size:.92rem}
 .comparison-table-scroll{max-width:100%;overflow-x:auto;border:1px solid var(--line);border-radius:8px;background:var(--panel)}
-.comparison-table-scroll:focus-visible,.delivery-category summary:focus-visible,.comparison-main-link:focus-visible{outline:3px solid #8ec9ff;outline-offset:3px}
+.comparison-table-scroll:focus-visible,.delivery-category summary:focus-visible,.comparison-main-link:focus-visible,.detail-ref:focus-visible,.detail-back a:focus-visible{outline:3px solid #8ec9ff;outline-offset:3px}
 .comparison-table{width:100%;min-width:880px;border-collapse:collapse;font-size:.93rem;line-height:1.55}
 .comparison-table th,.comparison-table td{padding:13px 14px;border-bottom:1px solid var(--line);text-align:center;vertical-align:middle}
 .comparison-table th:first-child,.comparison-table td:first-child{text-align:left}
@@ -31,18 +31,20 @@
 .comparison-table-grouped tbody+tbody{border-top:2px solid var(--line)}
 .comparison-table-grouped thead th:nth-child(n+3){width:92px}
 .comparison-table td{white-space:nowrap}
+.detail-ref{display:inline-block;margin-inline-start:.28em;padding:0 .12em;color:#8ec9ff!important;font-size:.84em;line-height:1;text-decoration:underline;text-underline-offset:2px;white-space:nowrap}
 .comparison-table .compare-cta-row td{padding:18px 10px}
 .compare-cta-row a{display:inline-flex;min-height:40px;align-items:center;justify-content:center;padding:8px 10px;border:1px solid #8ec9ff;border-radius:6px;background:#24445d;color:#fff!important;font-weight:800;text-decoration:none}
 .compare-cta-row a:hover{background:#326085}
 .comparison-catalog{margin-top:28px}
 .delivery-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
-.delivery-category{min-width:0;align-self:start;padding:0;border:1px solid var(--line);border-radius:8px;background:var(--panel)}
+.delivery-category{min-width:0;align-self:start;padding:0;border:1px solid var(--line);border-radius:8px;background:var(--panel);scroll-margin-top:96px}
 .delivery-category summary{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px;min-height:58px;padding:14px 17px;cursor:pointer;color:#8ec9ff;font-weight:800;list-style-position:inside}
 .delivery-category summary:hover{background:var(--panel-soft)}
 .delivery-count{font-size:.76rem;font-weight:650;color:var(--muted)}
 .delivery-category ul{margin:0;padding:0 23px 15px 36px;color:var(--text);font-size:.91rem}
 .delivery-category li{margin:7px 0;overflow-wrap:anywhere}
 .delivery-category>p{margin:0 16px 16px;color:var(--muted);font-size:.88rem}
+.delivery-category>.detail-back{margin-top:4px}.detail-back a{display:inline-flex;min-height:36px;align-items:center}
 .comparison-notices{margin-top:28px;padding:18px 22px 24px;border:1px solid var(--line);border-radius:8px;background:var(--panel)}
 .comparison-notices h2{margin-top:3px}
 .comparison-notices h3{margin:18px 0 6px;color:#8ec9ff;font-size:1.02rem}.comparison-notices ul{margin:0 0 4px;padding-left:1.4em}.comparison-notices li{margin:7px 0;color:var(--text);line-height:1.7;overflow-wrap:anywhere}

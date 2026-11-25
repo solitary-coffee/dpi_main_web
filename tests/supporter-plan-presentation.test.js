@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {
- EARTHQUAKE_DETAILS,EEW_DETAILS,WEATHER_DETAILS,
+ SUPPORTER_REGIONS,WEATHER_LEVELS,WARNING_LEVELS,EARTHQUAKE_DETAILS,EEW_DETAILS,
+ EEW_WARNING_AREA_MODES,WEATHER_DETAILS,THRESHOLD_MODES,
  RAIN_RADAR_CONDITIONS,RAIN_RADAR_INTERVALS
 } from '../worker/supporter.js';
 
@@ -37,7 +38,7 @@ test('comparison reuses the existing DPI-Bot sidebar, palette and private dashbo
 
 test('prefecture and Hokkaido shinko-kyoku-equivalent detail share one row',async()=>{
  const html=await read('site/supporter/plans.html');
- assert.match(html,/<th scope="row">都道府県<\/th>/);
+ assert.match(html,/<th scope="row">都道府県(?:<a[^>]*>※<\/a>)?<\/th>/);
  assert.doesNotMatch(html,/<th scope="row">北海道内の地方区分<\/th>/);
  assert.match(html,/行政上の振興局区分との完全一致を保証するものではありません/);
  // 選択前の案内は、実際の料金・停止・解約・地域の仕様と一致する
@@ -51,11 +52,11 @@ test('radar rates and rainfall conditions reflect current selectable Worker valu
  assert.deepEqual(RAIN_RADAR_CONDITIONS.map(([id])=>id),['all','rain-detected','rainfall-threshold']);
  assert.match(html,/1・2・3・6・12・24時間ごと/);
  assert.match(html,/0\.1～20 mm\/h/);
- assert.match(html,/<th scope="row">配信頻度・降雨検知<\/th>/);
- assert.match(html,/<th scope="row">降水量のしきい値<\/th><td>—<\/td><td>○<\/td>/);
+ assert.match(html,/<th scope="row">配信頻度・降雨検知(?:<a[^>]*>※<\/a>)?<\/th>/);
+ assert.match(html,/<th scope="row">降水量のしきい値(?:<a[^>]*>※<\/a>)?<\/th><td>—<\/td><td>○<\/td>/);
  assert.match(html,/雨雲レーダー（簡略版）/);
  // 雨雲レーダー（簡略版）は画像配信の表にある
- assert.ok(html.indexOf('>雨雲レーダー（簡略版）</th>')>html.indexOf('<h3 class="comparison-subtitle">画像配信</h3>'));
+ assert.ok(html.indexOf('>雨雲レーダー（簡略版）<a class="detail-ref"')>html.indexOf('<h3 class="comparison-subtitle">画像配信</h3>'));
  assert.match(html,/<h3 class="comparison-subtitle">テキスト配信<\/h3>/);
 });
 
@@ -73,6 +74,37 @@ test('comparison describes the actual selectable earthquake, EEW and weather typ
  }
  assert.match(html,/class="comparison-table comparison-table-grouped"/);
  assert.match(html,/カスタムを相談する/);
+});
+
+test('comparison detail references resolve and list the Worker choices',async()=>{
+ const [html,css,script]=await Promise.all([
+  read('site/supporter/plans.html'),read('site/supporter/plans.css'),read('site/supporter/plans-previews.js')
+ ]);
+ const documentIds=[...html.matchAll(/\sid="([^"]+)"/g)].map(match=>match[1]);
+ const detailIds=[...html.matchAll(/<details\b[^>]*\sid="([^"]+)"[^>]*>/g)].map(match=>match[1]);
+ assert.equal(new Set(detailIds).size,detailIds.length,'details id must be unique');
+ const references=[...html.matchAll(/<a class="detail-ref" href="#([^"]+)"/g)].map(match=>match[1]);
+ assert.ok(references.length>0);
+ for(const target of references)assert.ok(documentIds.includes(target),target);
+ const detail=id=>html.match(new RegExp(`<details\\b[^>]*\\sid="${id}"[^>]*>[\\s\\S]*?</details>`))?.[0]||'';
+ const earthquake=detail('text-earthquake-detail');
+ const forecast=detail('text-eew-forecast-detail');
+ const warning=detail('text-eew-warning-detail');
+ const weather=detail('text-weather-detail');
+ const area=detail('text-area-detail');
+ for(const label of EARTHQUAKE_DETAILS.map(([,label])=>label))assert.ok(earthquake.includes(label),label);
+ for(const label of EEW_DETAILS.map(([,label])=>label))assert.ok((forecast+warning).includes(label),label);
+ for(const label of WEATHER_DETAILS.map(([,label])=>label))assert.ok(weather.includes(label),label);
+ for(const label of THRESHOLD_MODES.map(([,label])=>label))assert.ok(earthquake.includes(label)&&forecast.includes(label)&&warning.includes(label),label);
+ for(const label of EEW_WARNING_AREA_MODES.map(([,label])=>label))assert.ok(warning.includes(label),label);
+ for(const label of [...WEATHER_LEVELS,...WARNING_LEVELS].map(([,label])=>label))assert.ok(weather.includes(label),label);
+ for(const label of SUPPORTER_REGIONS.map(([,label])=>label))assert.ok(area.includes(label),label);
+ assert.doesNotMatch(forecast,/警報の対象地方/);
+ assert.match(script,/target\.open = true/);
+ assert.match(script,/addEventListener\('hashchange', openHashDetail\)/);
+ assert.match(script,/source\.focus\(\{preventScroll: true\}\)/);
+ assert.match(css,/\.delivery-category\{[^}]*scroll-margin-top:/);
+ assert.match(css,/\.detail-ref:focus-visible/);
 });
 
 
