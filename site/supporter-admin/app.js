@@ -132,12 +132,26 @@ async function loadAccounts() {
   accounts = data.accounts || [];
   creditSummary = data.creditSummary || null;
   creditCampaigns = data.creditCampaigns || [];
-  $('billing-mode').textContent = data.billingEnabled ? 'Stripeテスト環境 接続中' : 'Stripeテスト環境 未接続';
+  $('billing-mode').textContent = `Stripe${data.billingMode==='live'?'本番環境':'テスト環境'} ${data.billingEnabled ? '接続中' : '未接続'}`;
+  renderPaymentAlerts(data.paymentAlerts || []);
   renderSummary();
   renderAccounts();
   renderCompensationCampaigns();
   setStatus(data.creditSummaryError||'',data.creditSummaryError?'error':'');
  } catch (error) { setStatus(error.message,'error'); }
+}
+
+const PAYMENT_ALERT_LABELS={refunded:'返金',disputed:'支払異議',dispute_closed:'支払異議の終了',fraud_warning:'不正の警告'};
+function renderPaymentAlerts(alerts){
+ const list=$('payment-alerts');
+ list.replaceChildren();
+ if(!alerts.length){list.textContent='返金・支払異議・不正の警告はありません。';return;}
+ for(const alert of alerts){
+  const row=document.createElement('p');
+  const time=alert.createdAt?new Date(alert.createdAt*1000).toLocaleString('ja-JP',{timeZone:'Asia/Tokyo'}):'—';
+  row.textContent=`${time}　${PAYMENT_ALERT_LABELS[alert.kind]||alert.kind}${alert.outcome?`（${alert.outcome}）`:''}　${Number(alert.amount||0).toLocaleString('ja-JP')}円　${alert.discordUserId?`Discord ID ${alert.discordUserId}`:'利用者を特定できません'}`;
+  list.append(row);
+ }
 }
 
 function initializeCompensationExpiry(){

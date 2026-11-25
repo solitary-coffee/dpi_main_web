@@ -76,3 +76,4 @@
 .preview-notice li{margin:2px 0}
 /* 画像配信の見本（画像が無いものは plans-previews.js が隠す） */
 .comparison-previews{margin-top:28px}.preview-gallery{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:16px}.preview-thumb{position:relative;margin:0;padding:8px;border:1px solid var(--line);border-radius:8px;background:var(--panel)}.preview-thumb img{display:block;width:100%;height:auto;border-radius:4px}.preview-thumb figcaption{margin-top:8px;font-size:1.05rem;font-weight:700;line-height:1.5;color:var(--text,#e8f1f8)}.preview-thumb-label{position:absolute;top:12px;left:12px;padding:2px 8px;border-radius:999px;background:#24445d;color:#dff1ff;font-size:1rem;font-weight:700}
+body.billing-live .preview-notice,body.billing-live .preview-only,body.preview-closed .preview-only{display:none}

@@ -6,6 +6,8 @@
 import {FEATURE_NAMES,featureLabel,legacyCustomFeatureNames,missingFeatureDependency,sortFeatureNames} from '../site/supporter/plan-features.js';
 export const CUSTOM_LOCKED_STATUSES=new Set(['offered','active']);
 const ACTIVE=new Set(['active','trialing']); // past_due/unpaid never grant new custom access
+// 提供中のカスタムは標準プランと同じく、未払い・一時停止でも翌月1日0時（supporter_dunning の停止）までは配信する。
+const CONTINUING=new Set(['active','trialing','past_due','unpaid','paused']);
 const message=(text,status=400)=>{throw Object.assign(new Error(text),{status});};
 const bool=value=>value===true||value===1;
 export function estimateCustomMonthly(input){
@@ -81,7 +83,7 @@ export function customPublic(row){
 }
 export function customSubscriptionMatches(row,summary){
  return row?.status==='active'&&summary?.customId===row.id&&Number(summary.customRevision)===Number(row.revision)
-  &&summary?.subscriptionId===row.stripe_subscription_id&&ACTIVE.has(summary.status)
+  &&summary?.subscriptionId===row.stripe_subscription_id&&CONTINUING.has(summary.status)
   &&Number(summary.amount)===Number(row.confirmed_yen)&&summary.currency==='jpy';
 }
 export function enrichCustomSubscriptions(summaries,row){

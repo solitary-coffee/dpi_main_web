@@ -6,7 +6,7 @@
 // 2. 次を作成する（同じキーで再実行しても料金は重複して作らない）。
 //    - 月額の料金 4 つ（BASIC 300 円・Plus 800 円・Pro 1,280 円・追加オプション 200 円、税込・JPY）
 //    - カスタマーポータルの設定（支払い方法の変更・請求履歴・期間末解約。プラン変更は無効）
-//    - Webhook の送信先（https://dpi-bot.com/api/supporter/stripe/webhook、13 イベント）
+//    - Webhook の送信先（https://dpi-bot.com/api/supporter/stripe/webhook、14 イベント）
 //    - 既定の支払い方法の設定で、設定できる支払い方法をすべて有効化（PayPay を含む）
 // 3. wrangler.jsonc の料金 ID・ポータル ID を書き換え、Worker Secrets の
 //    STRIPE_SECRET_KEY と STRIPE_WEBHOOK_SECRET を登録する（値は画面に出さない）。
@@ -23,7 +23,7 @@ const WEBHOOK_URL = `${ORIGIN}/api/supporter/stripe/webhook`;
 const EVENTS = ['checkout.session.completed', 'checkout.session.async_payment_succeeded', 'checkout.session.async_payment_failed',
  'checkout.session.expired', 'customer.updated', 'customer.subscription.created', 'customer.subscription.updated',
  'customer.subscription.deleted', 'invoice.paid', 'invoice.payment_failed', 'charge.refunded', 'charge.dispute.created',
- 'radar.early_fraud_warning.created'];
+ 'charge.dispute.closed', 'radar.early_fraud_warning.created'];
 const PRICES = [
  ['STRIPE_PRICE_SUPPORTER', 'dpi_supporter_basic_monthly', 'DPI-Bot BASIC プラン', 300],
  ['STRIPE_PRICE_PLUS', 'dpi_supporter_plus_monthly', 'DPI-Bot Plus プラン', 800],

@@ -85,7 +85,7 @@ export async function buildSupporterSnapshot(db, env, loadSubscriptions, nowMs =
         const features = planFeatures(subscriptions);
         const rainfallThresholdAllowed = hasFeature(features, 'rainfallThreshold');
         const tier = imageTier(subscriptions);
-        const custom=subscriptions.find(item=>item?.managedCustom===true&&['active','trialing'].includes(item.status));
+        const custom=subscriptions.find(item=>item?.managedCustom===true&&ACTIVE_SUBSCRIPTION_STATUSES.has(item.status));
         const allRules=rulesFromSettings(row.settings_json);
         // Fail closed on unapproved custom-plan combinations, without deleting settings.
         if(custom&&allRules.length>custom.rules)continue;

@@ -118,8 +118,9 @@ const application = {
     async queue(batch, env) {
         await handleNewsletterQueue(batch, env);
     },
-    async scheduled(_controller, env) {
-        await runSupporterBillingSchedule(env);
+    async scheduled(controller, env) {
+        // 予定時刻より早く起動しても、0時の停止・12時の再決済を次回へ持ち越さない。
+        await runSupporterBillingSchedule(env, Math.max(Date.now(), Number(controller?.scheduledTime) || 0));
     },
 };
 
