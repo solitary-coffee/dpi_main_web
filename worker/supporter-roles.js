@@ -3,13 +3,13 @@ import { isActiveSupporterSubscription, supporterEntitlementRows } from './suppo
 
 const clean = value => String(value ?? '').trim();
 const snowflake = value => /^\d{17,20}$/.test(clean(value));
-const ROLE_KEYS = ['SUPPORTER_ROLE_MEMBER', 'SUPPORTER_ROLE_BASIC', 'SUPPORTER_ROLE_PLUS', 'SUPPORTER_ROLE_PRO'];
+const ROLE_KEYS = ['SUPPORTER_ROLE_MEMBER', 'SUPPORTER_ROLE_BASIC', 'SUPPORTER_ROLE_PLUS', 'SUPPORTER_ROLE_PRO', 'SUPPORTER_ROLE_CUSTOM'];
 const rank = {supporter: 1, plus: 2, pro: 3};
 
 export function supporterRoleConfig(env) {
  const roles = ROLE_KEYS.map(key => clean(env?.[key]));
  if (env?.SUPPORTER_BILLING_MODE !== 'live' || !clean(env?.DISCORD_BOT_TOKEN) || !snowflake(env?.SUPPORTER_ROLE_GUILD_ID) || roles.some(role => !snowflake(role)) || new Set(roles).size !== roles.length) return null;
- return {guild: clean(env.SUPPORTER_ROLE_GUILD_ID), token: clean(env.DISCORD_BOT_TOKEN), member: roles[0], plans: {supporter: roles[1], plus: roles[2], pro: roles[3]}, all: new Set(roles)};
+ return {guild: clean(env.SUPPORTER_ROLE_GUILD_ID), token: clean(env.DISCORD_BOT_TOKEN), member: roles[0], plans: {supporter: roles[1], plus: roles[2], pro: roles[3], custom: roles[4]}, all: new Set(roles)};
 }
 
 export function desiredSupporterRoles(config, subscriptions) {
@@ -18,6 +18,7 @@ export function desiredSupporterRoles(config, subscriptions) {
  const desired = new Set([config.member]);
  const plan = active.map(item => item?.planId).filter(id => rank[id]).sort((a, b) => rank[b] - rank[a])[0];
  if (plan) desired.add(config.plans[plan]);
+ if (active.some(item => item?.managedCustom === true || item?.planId === 'custom')) desired.add(config.plans.custom);
  return desired;
 }
 

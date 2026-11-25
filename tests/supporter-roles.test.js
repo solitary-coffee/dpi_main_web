@@ -4,8 +4,8 @@ import { readdir, readFile } from 'node:fs/promises';
 import { reconcileSupporterRoles } from '../worker/supporter-roles.js';
 
 const UID='123456789012345678', GUILD='123456789012345679';
-const ROLES={member:'1575053346904080424',supporter:'1575053348586131528',plus:'1575053350016385075',pro:'1575053351198920704'};
-const env=db=>({REUSE_DB:db,SUPPORTER_BILLING_MODE:'live',DISCORD_BOT_TOKEN:'not-a-real-token',SUPPORTER_ROLE_GUILD_ID:GUILD,SUPPORTER_ROLE_MEMBER:ROLES.member,SUPPORTER_ROLE_BASIC:ROLES.supporter,SUPPORTER_ROLE_PLUS:ROLES.plus,SUPPORTER_ROLE_PRO:ROLES.pro});
+const ROLES={member:'1575053346904080424',supporter:'1575053348586131528',plus:'1575053350016385075',pro:'1575053351198920704',custom:'1575058113663475722'};
+const env=db=>({REUSE_DB:db,SUPPORTER_BILLING_MODE:'live',DISCORD_BOT_TOKEN:'not-a-real-token',SUPPORTER_ROLE_GUILD_ID:GUILD,SUPPORTER_ROLE_MEMBER:ROLES.member,SUPPORTER_ROLE_BASIC:ROLES.supporter,SUPPORTER_ROLE_PLUS:ROLES.plus,SUPPORTER_ROLE_PRO:ROLES.pro,SUPPORTER_ROLE_CUSTOM:ROLES.custom});
 
 async function store(t,count=1){
  let DatabaseSync;try{({DatabaseSync}=await import('node:sqlite'));}catch{t.skip('node:sqlite unavailable');return null;}
@@ -34,7 +34,7 @@ test('各標準プラン、アップグレード、ダウングレードを最�
  assert.ok(calls.every(call=>call.headers.Authorization==='Bot not-a-real-token'&&call.headers['X-Audit-Log-Reason']));
 });
 
-test('停止・BAN・期間末解約で外し、支払い確認・解除で戻す。カスタムは加入者のみ',async t=>{
+test('停止・BAN・期間末解約で外し、支払い確認・解除で戻す。カスタムは加入者とカスタム',async t=>{
  const s=await store(t);if(!s)return;const calls=mockFetch(t),e=env(s.db),basic=loaderFor([[active('supporter')]]);
  await reconcileSupporterRoles(e,s.db,basic,{discordUserId:UID});
  const suspend=Math.floor(Date.now()/1000)-1;s.raw.prepare("INSERT INTO supporter_dunning(invoice_id,customer_id,amount_due,currency,status,initial_failed_at,retry_at,suspend_at,updated_at) VALUES('in_x','cus_0',1,'jpy','suspend_scheduled',0,0,?,0)").run(suspend);
@@ -42,7 +42,7 @@ test('停止・BAN・期間末解約で外し、支払い確認・解除で戻�
  s.raw.prepare("UPDATE supporter_dunning SET status='paid'").run();await reconcileSupporterRoles(e,s.db,basic,{discordUserId:UID});
  s.raw.prepare("UPDATE supporter_accounts SET account_status='suspended'").run();await reconcileSupporterRoles(e,s.db,basic,{discordUserId:UID});
  s.raw.prepare("UPDATE supporter_accounts SET account_status='active'").run();await reconcileSupporterRoles(e,s.db,loaderFor([[{...active('custom'),managedCustom:true}]]),{discordUserId:UID});
- assert.deepEqual(s.raw.prepare("SELECT role_id FROM supporter_discord_roles WHERE status='granted'").all().map(x=>x.role_id),[ROLES.member]);
+ assert.deepEqual(s.raw.prepare("SELECT role_id FROM supporter_discord_roles WHERE status='granted'").all().map(x=>x.role_id).sort(),[ROLES.member,ROLES.custom].sort());
  await reconcileSupporterRoles(e,s.db,loaderFor([[{status:'canceled',recognizedPlan:true,planId:'supporter'}]]),{discordUserId:UID});assert.equal(s.raw.prepare("SELECT COUNT(*) n FROM supporter_discord_roles WHERE status='granted'").get().n,0);
 });
 

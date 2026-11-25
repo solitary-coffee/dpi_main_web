@@ -169,7 +169,7 @@ test('日本時間の日付', () => {
 test('本番の Webhook で、公式サーバーのロールを付け外しする。Discord が止まっていても 200 を返す', async t => {
  for (const down of [false, true]) {
   const store = await database(t); if (!store) return;
-  const env = envFor(store.db, {BILLING_NOTICE_WEBHOOK: '', MEMBERSHIP_NOTICE_WEBHOOK: '', DISCORD_BOT_TOKEN: 'token', SUPPORTER_ROLE_GUILD_ID: '123456789012345679', SUPPORTER_ROLE_MEMBER: '123456789012345671', SUPPORTER_ROLE_BASIC: '123456789012345672', SUPPORTER_ROLE_PLUS: '123456789012345673', SUPPORTER_ROLE_PRO: '123456789012345674'});
+  const env = envFor(store.db, {BILLING_NOTICE_WEBHOOK: '', MEMBERSHIP_NOTICE_WEBHOOK: '', DISCORD_BOT_TOKEN: 'token', SUPPORTER_ROLE_GUILD_ID: '123456789012345679', SUPPORTER_ROLE_MEMBER: '123456789012345671', SUPPORTER_ROLE_BASIC: '123456789012345672', SUPPORTER_ROLE_PLUS: '123456789012345673', SUPPORTER_ROLE_PRO: '123456789012345674', SUPPORTER_ROLE_CUSTOM: '123456789012345675'});
   const calls = [], original = globalThis.fetch; let current = subscription();
   globalThis.fetch = async (url, init = {}) => {
    const target = new URL(url);
