@@ -579,7 +579,7 @@ async function main() {
  if (endpoints.length && !args.includes('--shared')) throw new Error('このサンドボックスには本番サイトの Webhook 送信先があります。--shared を付けると、試験の間だけ送信先を止めて実行します（本番サイトが受付停止・テストモードのときだけ）。');
  if (endpoints.length) {
   const state = await siteState();
-  if (!state || (state.mode !== 'live' && state.intakePaused !== true)) throw new Error('本番サイトがテストモードで受付中のため、送信先を止められません。');
+  if (!state || (state.mode !== 'live' && state.published && state.intakePaused !== true)) throw new Error('本番サイトがテストモードで受付中のため、送信先を止められません。');
   for (const endpoint of endpoints) await stripe('POST', `webhook_endpoints/${endpoint.id}`, {disabled: 'true'});
   console.log(`試験の間、Webhook 送信先 ${endpoints.length} 件を止めます。`);
   stopped.push(...endpoints.map(item => item.id));

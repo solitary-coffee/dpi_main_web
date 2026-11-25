@@ -3,8 +3,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
 import { readdir, readFile } from 'node:fs/promises';
-import { adminBillingAction, autoCancelAt, billingAction, billingMode, billingWebhook, createPreviewCheckout, customerInvoices, dunningSchedule, releaseDisputeHolds, runSupporterBillingSchedule, subscriptionSummary } from '../worker/supporter-billing.js';
-import { handleSupporterRequest } from '../worker/supporter.js';
+import { adminBillingAction, autoCancelAt, billingAction, billingMode, billingWebhook, customerInvoices, dunningSchedule, releaseDisputeHolds, runSupporterBillingSchedule, subscriptionSummary } from '../worker/supporter-billing.js';
+import { assertSupporterRate, handleSupporterRequest } from '../worker/supporter.js';
 import { buildSupporterSnapshot } from '../worker/supporter-snapshot.js';
 import { subscriptionSummariesByCustomer } from '../worker/supporter-billing.js';
 
@@ -309,7 +309,7 @@ test('返金・支払異議・不正の警告を記録する', async t => {
  assert.deepEqual(rows, [{kind: 'dispute_closed', outcome: 'won', discord_user_id: UID, amount: 300}, {kind: 'fraud_warning', outcome: '', discord_user_id: UID, amount: 0}]);
 });
 
-test('テストと本番の食い違いは、応答・Webhookとも拒否する。本番ではテスト支払いを作らない', async t => {
+test('テストと本番の食い違いは、応答・Webhookとも拒否する', async t => {
  const store = await database(t); if (!store) return;
  const live = envFor(store.db, 'live'), testEnv = envFor(store.db);
  assert.equal(billingMode(live), 'live'); assert.equal(billingMode(testEnv), 'test');
@@ -317,7 +317,6 @@ test('テストと本番の食い違いは、応答・Webhookとも拒否する�
  stripeMock(t, {'GET invoices': {livemode: false, data: []}});
  await assert.rejects(() => customerInvoices(live, CUSTOMER), error => error.status === 503);
  for (const [env, livemode] of [[live, false], [testEnv, true]]) assert.equal((await webhook(env, 'invoice.paid', {id: 'in_x'}, {event: {livemode}})).status, 400);
- await assert.rejects(() => createPreviewCheckout(live, 'plus'), error => error.status === 404);
 });
 
 test('期間末解約は cancel_at の予約も表示する', () => {
@@ -325,18 +324,15 @@ test('期間末解約は cancel_at の予約も表示する', () => {
  assert.equal(subscriptionSummary(subscription({cancel_at: null}), {}).cancelAtPeriodEnd, false);
 });
 
-test('プラン一覧は決済モードを返し、申込みの連続作成は429で止める', async t => {
- stripeMock(t, {'POST checkout/sessions': {livemode: false, url: 'https://checkout.stripe.com/c/pay/x'}});
+test('プラン一覧は決済モードを返し、申込みの連続作成は429で止める', async () => {
  const env = {...envFor(null), SUPPORTER_PUBLIC_ENABLED: '', SUPPORTER_PREVIEW_OPEN: 'true'};
  const plans = await (await handleSupporterRequest(new Request('https://dpi-bot.com/api/supporter/plans'), env)).json();
  assert.deepEqual([plans.mode, plans.previewOpen, plans.deliveryEnabled], ['test', true, false]);
  const keys = [];
- const send = limiter => handleSupporterRequest(new Request('https://dpi-bot.com/api/supporter/preview-checkout', {method: 'POST', body: JSON.stringify({plan: 'plus'}),
-  headers: {'Content-Type': 'application/json', Origin: 'https://dpi-bot.com', 'Sec-Fetch-Site': 'same-origin', 'cf-connecting-ip': '192.0.2.1'}}), {...env, SUPPORTER_RATE_LIMITER: limiter});
- assert.equal((await send({limit: async ({key}) => { keys.push(key); return {success: false}; }})).status, 429);
- assert.deepEqual(keys, ['preview:192.0.2.1']);
- assert.equal((await send({limit: async () => { throw new Error('down'); }})).status, 200);
- assert.equal((await send(undefined)).status, 200);
+ await assert.rejects(() => assertSupporterRate({SUPPORTER_RATE_LIMITER: {limit: async ({key}) => { keys.push(key); return {success: false}; }}}, 'billing:1'), error => error.status === 429);
+ assert.deepEqual(keys, ['billing:1']);
+ await assertSupporterRate({SUPPORTER_RATE_LIMITER: {limit: async () => { throw new Error('down'); }}}, 'billing:1');
+ await assertSupporterRate({}, 'billing:1');
 });
 
 test('停止中は新しい請求を止め、支払いを確認したら請求も再開する', async t => {

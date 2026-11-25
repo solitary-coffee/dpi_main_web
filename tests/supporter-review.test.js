@@ -83,8 +83,7 @@ test('非公開の間は、審査用の入口を出さず一律404にする（�
  const env = {SUPPORTER_REVIEW_USER: 'review', SUPPORTER_REVIEW_PASSWORD: 'x'.repeat(16), SUPPORTER_PREVIEW_OPEN: 'false', SUPPORTER_PUBLIC_ENABLED: 'false', REUSE_DB: {}, ASSETS: {fetch: async () => new Response('secret page')}};
  const status = async (path, extra = {}, init = {}) => (await handleSupporterRequest(new Request(`https://dpi-bot.com${path}`, init), {...env, ...extra})).status;
  assert.equal(await status('/site/supporter/'), 401);
- for (const path of ['/site/supporter/', '/site/supporter/plans.html', '/site/supporter/app.js', '/api/supporter/plans', '/api/supporter/preview-checkout/result']) assert.equal(await status(path, {SUPPORTER_REVIEW_ENABLED: 'false'}), 404, path);
- assert.equal(await status('/api/supporter/preview-checkout', {SUPPORTER_REVIEW_ENABLED: 'false'}, {method: 'POST', body: '{}'}), 404);
+ for (const path of ['/site/supporter/', '/site/supporter/plans.html', '/site/supporter/app.js', '/api/supporter/plans', '/api/supporter/account']) assert.equal(await status(path, {SUPPORTER_REVIEW_ENABLED: 'false'}), 404, path);
  const basic = {headers: {Authorization: `Basic ${btoa(`review:${'x'.repeat(16)}`)}`}};
  assert.equal(await status('/site/supporter/', {SUPPORTER_REVIEW_ENABLED: 'false'}, basic), 404);
 });
