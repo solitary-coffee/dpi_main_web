@@ -67,9 +67,9 @@ test('加入・変更・変更予約・解約予約・取消・解約・再加�
  await webhook(env, 'customer.subscription.deleted', {...current, id: 'sub_auto', status: 'canceled', metadata: {...current.metadata, dpi_auto_cancel: 'in_1'}});
  await webhook(env, 'customer.subscription.created', subscription({id: 'sub_y'}));
  assert.deepEqual(posts.map(post => [post.channel, post.embed.title]), [['membership', '新規加入'], ['membership', 'プラン変更'], ['membership', '変更の予約'], ['membership', '解約の予約'], ['membership', '解約の予約の取り消し'], ['membership', '解約'], ['membership', '解約（自動）'], ['membership', '再加入']]);
- assert.match(posts[0].embed.description, /テスト利用者（ID 123456789012345678）[\s\S]*BASIC（月額 300円）/);
- assert.match(posts[1].embed.description, /変更前: BASIC（月額 300円）\n変更後: Plus（月額 1,200円、チャンネル追加×2）/);
- assert.match(posts[2].embed.description, /から: BASIC/);
+ assert.match(posts[0].embed.description, /テスト利用者（ID 123456789012345678）[\s\S]*Basic（月額 300円）/);
+ assert.match(posts[1].embed.description, /変更前: Basic（月額 300円）\n変更後: Plus（月額 1,200円、チャンネル追加×2）/);
+ assert.match(posts[2].embed.description, /から: Basic/);
  assert.ok(posts.every(post => !JSON.stringify(post.body).includes('secret@example.jp') && !/cus_|sub_|evt_/.test(JSON.stringify(post.body))), 'メールや Stripe の ID を載せない');
  assert.ok(posts.every(post => JSON.stringify(post.body.allowed_mentions) === '{"parse":[]}'));
 });
@@ -177,7 +177,7 @@ test('名前の装飾・メンション・改行を無害にし、テストモ�
  const env = envFor(store.db, {SUPPORTER_BILLING_MODE: 'test', STRIPE_SECRET_KEY: 'rk_test_example'});
  const posts = mock(t);
  const { queueMembershipNotice } = await import('../worker/supporter-ops-notice.js');
- await queueMembershipNotice(env, store.db, {id: 'evt', type: 'customer.subscription.created', created: 1, data: {object: subscription()}}, {summarize: () => ({plan: 'BASIC', amount: 300}), cancelScheduled: () => false});
+ await queueMembershipNotice(env, store.db, {id: 'evt', type: 'customer.subscription.created', created: 1, data: {object: subscription()}}, {summarize: () => ({plan: 'Basic', amount: 300}), cancelScheduled: () => false});
  await flushNotices(env, store.db);
  assert.equal(posts[0].embed.title, '【テスト】新規加入');
  assert.doesNotMatch(posts[0].embed.description, /[@[\]`*()]/);

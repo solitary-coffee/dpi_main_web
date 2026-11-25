@@ -1031,6 +1031,85 @@ test('カードなし: 停止した後でも、チャージして画面から支
  assert.equal(await world.rules(), 0); assert.equal(await only.credits(), 700, '解約で残高が変わった');
 });
 
+test('追加: 未払いが2か月分', async () => {
+ const world=await World.create();const only=creditOnly(world);await world.subscribe('supporter');
+ await world.useCard('pm_card_chargeCustomerFail');let anchor=(await world.sub()).items.data[0].current_period_end;
+ await world.advance(renewal(anchor));await world.settle();anchor=(await world.sub()).items.data[0].current_period_end;
+ await world.advance(renewal(anchor));await world.settle();
+ const unpaid=(await world.act('status')).body.unpaid;assert.equal(unpaid.count,2);assert.equal(unpaid.total,600);
+ await only.grant(300);const before=await only.credits();const refused=await world.act('pay-unpaid',{requestId:randomUUID(),expectedTotal:600});
+ assert.equal(refused.status,409);assert.equal(await only.credits(),before);assert.equal((await world.act('status')).body.unpaid.count,2);
+ const first=world.dunning().find(row=>row.status==='retry_scheduled');const card=await world.useCard('pm_card_visa');await stripe('POST',`invoices/${first.invoice_id}/pay`,{payment_method:card});await world.settle();
+ assert.equal((await world.act('status')).body.unpaid.count,1);await only.grant(300);const paid=await world.act('pay-unpaid',{requestId:randomUUID(),expectedTotal:300});assert.equal(paid.status,200);await world.settle();assert.equal((await world.act('status')).body.unpaid.count,0);
+});
+
+test('追加: 残高併用の申込みの後', async () => {
+ const world=await World.create({clock:false}),only=creditOnly(world),months=billing.billingSchedule(Date.now()).initialMonths;
+ await only.grant(200);const started=await world.act('checkout',{plan:'supporter',channelPacks:0,serverPacks:0,rulePacks:0,applyCredits:true,expectedCreditApplied:200});assert.equal(started.status,200);await payInBrowser(started.body.url);await world.settle(6000);
+ assert.equal(await only.credits(),0);const sub=await world.sub(),before=await only.credits();
+ const invoiceCount=(await only.invoices()).length;await billing.adminBillingAction(world.env,world.customer,world.uid,{action:'cancel_immediately',requestId:randomUUID(),reason:'追加通し試験のため'});await world.settle();
+ assert.equal(await only.credits(),before);assert.ok((await only.invoices()).length>=invoiceCount);assert.equal((await world.subs()).filter(x=>x.status!=='canceled').length,0);assert.ok(sub);
+}, {browser:true});
+
+test('追加: 残高とカードの併用で申し込んだ後の、26日の更新と返金', async () => {
+ const world = await World.create(), only = creditOnly(world), total = 300 * billing.billingSchedule(Date.now()).initialMonths;
+ await only.grant(200);
+ const started = await world.act('checkout', {plan: 'supporter', channelPacks: 0, serverPacks: 0, rulePacks: 0, applyCredits: true, expectedCreditApplied: 200}); assert.equal(started.status, 200, JSON.stringify(started.body));
+ await payInBrowser(started.body.url); await world.settle(6000);
+ assert.equal(await only.credits(), 0); assert.equal(await world.rules(), 1);
+ // カードで払った分（総額 - 200円）を返金しても、残高は勝手に増えず、契約と配信は続く
+ const shown = (await billing.customerInvoices(world.env, world.customer)).find(item => item.label === '初回利用料'); assert.equal(shown.total, total - 200);
+ await billing.adminBillingAction(world.env, world.customer, world.uid, {action: 'refund_latest', amount: total - 200, requestId: randomUUID(), reason: '併用の返金の試験'}); await world.settle();
+ assert.equal(await only.credits(), 0, '返金で残高が増えた'); assert.equal(await world.rules(), 1);
+ await assert.rejects(() => billing.adminBillingAction(world.env, world.customer, world.uid, {action: 'refund_latest', amount: 1, requestId: randomUUID(), reason: '併用の返金の試験'}));
+ // 26日の更新: 残高 100円 → 足りない 200円だけをカードに請求
+ await only.grant(100);
+ await world.advance(renewal((await world.sub()).items.data[0].current_period_end)); await world.settle();
+ const renewed = (await only.invoices()).filter(item => item.billing_reason === 'subscription_cycle'); assert.equal(renewed.length, 1);
+ assert.equal(renewed[0].status, 'paid'); assert.equal(renewed[0].amount_paid, 200); assert.equal(await only.credits(), 0); assert.equal(await world.rules(), 1);
+}, {browser: true});
+
+test('追加: 更新で差額が50円未満', async () => {
+ const world=await World.create(),only=creditOnly(world);await only.grant(280);const {schedule}=await world.subscribe('supporter');
+ await world.advance(renewal(schedule.anchor));await world.settle();const invoices=(await only.invoices()).filter(x=>x.billing_reason==='subscription_cycle');
+ assert.equal(new Set(invoices.map(x=>x.id)).size,invoices.length);assert.equal(await world.rules(),1);assert.ok(invoices.some(x=>x.status==='paid'));assert.equal(await only.credits(),0);
+});
+
+test('追加: 入金待ちの間の操作（申込みの支払い画面・BAN・入金）', async () => {
+ for (const kind of ['bank', 'succeed_immediately@example.com']) {
+  const world = await World.create({clock: false}), pending = await delayedTopup(world, kind); await pending.send('checkout.session.completed');
+  assert.equal(await billing.customerCredits(world.env, world.customer), 0);
+  assert.equal((await world.act('checkout', {plan: 'supporter', channelPacks: 0, serverPacks: 0, rulePacks: 0})).status, 200, '入金待ちでもカードでの申込み画面は作れる');
+  // BAN の後に入金が届いたら、残高に入れず返金する
+  world.raw.prepare("UPDATE supporter_accounts SET account_status='suspended'").run();
+  if (kind === 'bank') await stripe('POST', `test_helpers/customers/${world.customer}/fund_cash_balance`, {amount: '700', currency: 'jpy'});
+  await pending.wait('succeeded');
+  await pending.send('checkout.session.async_payment_succeeded', {payment_status: 'paid'}); // 返金が断られても、処理は止まらない
+  await pending.send('checkout.session.async_payment_succeeded', {payment_status: 'paid'});
+  console.log(`  ${kind === 'bank' ? '銀行振込' : 'コンビニ'}: 付与 ${await billing.customerCredits(world.env, world.customer)}円、チャージの状態 ${pending.row().status}`);
+  const refunds = (await stripe('GET', `refunds?payment_intent=${pending.intent.id}`)).data;
+  console.log(`  ${kind === 'bank' ? '銀行振込' : 'コンビニ'}の返金: ${refunds.map(item => `${item.status} ${item.amount}円`).join('、') || 'なし'}`);
+  assert.equal(await billing.customerCredits(world.env, world.customer), 0, 'BAN 中に付与された'); assert.equal(pending.row().status, 'failed', 'チャージが確認待ちのまま残った');
+  const needed = world.notices().filter(row => row.kind === 'refund_needed');
+  assert.equal(refunds.length + needed.length, 1, '返金も、運営への知らせも無い（または二重）');
+  if (needed.length) { assert.match(needed[0].description, /金額: 700円/); assert.doesNotMatch(needed[0].description, new RegExp(`${world.uid}|cus_|pi_|cs_|@`)); assert.equal(world.adminMails.length, 1); console.log('  → 自動の返金は断られ、運営に知らせた'); }
+ }
+});
+
+test('追加: 利用者2人の更新（片方は失敗）', async () => {
+ const good = await World.create(); await good.subscribe('supporter');
+ await good.advance(renewal((await good.sub()).items.data[0].current_period_end)); await good.settle();
+ assert.equal(good.dunning().length, 0); assert.equal(await good.rules(), 1);
+ const bad = await World.create(); await bad.subscribe('supporter'); await bad.useCard('pm_card_chargeCustomerFail');
+ await bad.advance(renewal((await bad.sub()).items.data[0].current_period_end)); await bad.settle();
+ assert.equal(bad.dunning().filter(row => !row.invoice_id.startsWith('hold:')).length, 1); assert.equal(await bad.rules(), 1, '月末までは配信を続ける');
+ assert.equal(good.dunning().length, 0, '別の利用者の失敗が混ざった');
+ // 失敗した人の通知を、別の利用者の DB に渡しても影響しない
+ const invoice = await stripe('GET', `invoices/${bad.dunning().find(row => !row.invoice_id.startsWith('hold:')).invoice_id}`);
+ await good.deliver({id: `evt_e2e${randomUUID().replaceAll('-', '')}`, type: 'invoice.payment_failed', livemode: false, created: now(), data: {object: invoice}});
+ assert.equal(good.dunning().length, 0); assert.equal((await good.sub()).status, 'active');
+});
+
 test('安全: 署名の誤り・本番のイベント・別の顧客の請求を受け付けない', async () => {
  const world = await World.create({clock: false});
  const body = JSON.stringify({id: 'evt_x', type: 'invoice.paid', livemode: false, data: {object: {}}});

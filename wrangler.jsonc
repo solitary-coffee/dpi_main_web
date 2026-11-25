@@ -17,6 +17,16 @@
       "name": "SUPPORTER_RATE_LIMITER",
       "namespace_id": "2026112501",
       "simple": { "limit": 10, "period": 60 }
+    },
+    {
+      "name": "ACCESS_LOG_RATE_LIMITER",
+      "namespace_id": "2026112502",
+      "simple": { "limit": 60, "period": 60 }
+    },
+    {
+      "name": "OAUTH_START_RATE_LIMITER",
+      "namespace_id": "2026112503",
+      "simple": { "limit": 10, "period": 60 }
     }
   ],
 

@@ -5,7 +5,7 @@
 const CHANNELS=Object.freeze({billing:'BILLING_NOTICE_WEBHOOK',membership:'MEMBERSHIP_NOTICE_WEBHOOK'});
 const COLORS=Object.freeze({info:0x3b82f6,good:0x16a34a,warn:0xf59e0b,bad:0xdc2626,quiet:0x6b7280});
 const MAX_ATTEMPTS=20;
-export const ADMIN_EMAIL_NOTICE_KINDS=new Set(['disputed','fraud_warning']);
+export const ADMIN_EMAIL_NOTICE_KINDS=new Set(['disputed','fraud_warning','refund_needed']);
 export const yen=value=>`${Math.round(Number(value)||0).toLocaleString('ja-JP')}円`;
 // Discord の装飾・メンションとして働かない文字にする。
 const plain=(value,limit=200)=>String(value??'').replace(/[\r\n\t]+/g,' ').replace(/[`*_~|<>@\\[\]()#]/g,character=>({'<':'＜','>':'＞','@':'＠','[':'［',']':'］','(':'（',')':'）'}[character]||'')).trim().slice(0,limit);

@@ -13,6 +13,7 @@ import { handleStatuspageAdminRequest } from './statuspage-admin.js';
 import { handleAccessLogRequest, withAccessLog } from './access-log.js';
 import { handlePatliteIngest, handlePatliteLamp } from './patlite-admin.js';
 import { handleAssetLinksRequest } from './asset-links.js';
+import { withSiteSecurity } from './site-security.js';
 
 const TOPICS = Object.freeze({
     bot_issue: 'BOTの不具合',
@@ -128,7 +129,13 @@ const application = {
 
 export default {
     fetch(request, env, ctx) {
-        return withAccessLog(request, env, ctx, 'dpi-bot.com', () => application.fetch(request, resolveBillingEnv(env), ctx));
+        return withSiteSecurity(request, () => withAccessLog(
+            request,
+            env,
+            ctx,
+            'dpi-bot.com',
+            () => application.fetch(request, resolveBillingEnv(env), ctx),
+        ));
     },
     queue(batch, env) {
         return application.queue(batch, env);

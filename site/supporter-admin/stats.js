@@ -35,7 +35,7 @@ async function load(){
   metric(cards,'月額合計（契約額）',yen(active.reduce((sum,s)=>sum+Number(s.amount||0),0)));
   metric(cards,'解約予定',number(active.filter(s=>s.cancelAtPeriodEnd).length));
   metric(cards,'BAN中の登録者',number(accounts.filter(a=>a.accountStatus==='suspended').length));
-  chart($('stats-plans'),[['BASIC',active.filter(s=>s.planId==='supporter').length],['Plus',active.filter(s=>s.planId==='plus').length],['Pro',active.filter(s=>s.planId==='pro').length]]);
+  chart($('stats-plans'),[['Basic',active.filter(s=>s.planId==='supporter').length],['Plus',active.filter(s=>s.planId==='plus').length],['Pro',active.filter(s=>s.planId==='pro').length]]);
   const statusLabels={active:'有効',trialing:'次回請求待ち',past_due:'支払遅延',unpaid:'未払い',paused:'一時停止',canceled:'解約済み',incomplete:'手続き未完了'};
   chart($('stats-status-chart'),[...new Set(subscriptions.map(s=>s.status))].map(status=>[statusLabels[status]||status,subscriptions.filter(s=>s.status===status).length]));
   chart($('stats-credits'),[['購入クレジット残高',credit.purchasedBalance||0],['管理者付与等の残高',credit.otherCredits||0]]);
