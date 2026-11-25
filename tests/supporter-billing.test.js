@@ -451,6 +451,7 @@ test('利用者ごとのStripeチャージURLへ任意金額と同意情報を�
   assert.equal(checkout.params.get('metadata[dpi_topup_request_id]'),requestId);
   assert.equal(checkout.params.get('metadata[dpi_legal_consent_version]'),'2026-11-13');
   assert.equal(checkout.params.get('payment_method_types'),null);
+  assert.equal(checkout.params.get('excluded_payment_method_types[0]'),null);
  }finally{globalThis.fetch=originalFetch;}
 });
 
@@ -635,7 +636,7 @@ test('paid plan configuration contains test catalog IDs and consent storage',asy
  assert.match(migration,/legal_consent_version/);assert.match(migration,/legal_consent_at/);
  assert.match(creditMigration,/supporter_credit_topups/);assert.match(creditMigration,/supporter_credit_lots/);assert.match(creditMigration,/expires_at/);
  assert.match(billingSource,/dpi_legal_consent_version/);
- assert.match(billingSource,/dpi_checkout_kind.*credit_topup/);assert.match(uiSource,/チャージ手続きへ/);assert.match(uiSource,/購入日から1年間/);
+ assert.match(billingSource,/dpi_checkout_kind.*credit_topup/);assert.match(uiSource,/チャージ手続きへ/);assert.match(uiSource,/付与日（入金の確認日）から1年間/);
  assert.match(terms,/第 10 条（有料通知プラン）/);assert.match(terms,/故意または重大な過失/);
  assert.match(terms,/利用者の都合による取消し、払戻しまたは現金への交換には原則として応じません/);
  assert.match(specified,/購入済みクレジットの払戻し.*原則として応じません/);
@@ -742,7 +743,7 @@ test('契約状態の再取得はWebhookを補完して発効済み上限をDB�
 
 test('請求Webhookは初回決済成功メールとダウングレード発効時のルール同期を扱う',async()=>{
  const source=await readFile(new URL('../worker/supporter-billing.js',import.meta.url),'utf8');
- assert.match(source,/checkout\.session\.async_payment_succeeded[\s\S]*sendBillingNotification\(env,db,'payment_succeeded'/);
+ assert.match(source,/checkout\.session\.async_payment_succeeded[\s\S]*sendBillingNotificationSafely\(env,db,'payment_succeeded'/);
  assert.match(source,/customer\.subscription\.created[\s\S]*customer\.subscription\.updated[\s\S]*reconcileStoredRulesForCustomer/);
  assert.match(source,/changeTiming==='next_period'[\s\S]*scheduleSubscriptionChange/);
  assert.doesNotMatch(source,/scheduleSubscriptionChange[\s\S]{0,500}reconcileStoredRulesForCustomer/);

@@ -41,3 +41,25 @@ export async function payInBrowser(url, card = '4242424242424242') {
   return page.url();
  } finally { await page.close().catch(() => {}); }
 }
+
+// 契約管理画面（Stripe のカスタマーポータル、テストモード）で解約する。画面の文を返す。解約できないときは例外。
+export async function cancelInPortal(url) {
+ if (new URL(url).hostname !== 'billing.stripe.com' || !/(?:\/|secret=)test_/.test(url)) throw new Error('テストモードの契約管理画面ではありません。');
+ const page = await (await openBrowser()).newPage();
+ const labels = () => page.$$eval('a,button', items => items.filter(item => item.offsetParent !== null).map(item => item.innerText.trim()).filter(Boolean));
+ const press = async pattern => {
+  const done = await page.$$eval('a,button', (items, source) => { const found = items.find(item => item.offsetParent !== null && new RegExp(source, 'i').test(item.innerText.trim())); found?.click(); return !!found; }, pattern);
+  if (!done) throw Object.assign(new Error(`契約管理画面に「${pattern}」がありません: ${(await labels()).join('／')}`), {text: await page.evaluate(() => document.body.innerText)});
+ };
+ try {
+  await page.setViewport({width: 1200, height: 1400});
+  await page.goto(url, {waitUntil: 'networkidle2', timeout: 60000});
+  await page.waitForFunction(() => document.body.innerText.length > 200, {timeout: 30000});
+  await press('キャンセル|解約|^Cancel (subscription|plan)');
+  await new Promise(resolve => setTimeout(resolve, 5000));
+  await press('キャンセル|解約|^Cancel (subscription|plan)');
+  await new Promise(resolve => setTimeout(resolve, 6000));
+  return await page.evaluate(() => document.body.innerText);
+ } catch (error) { if (process.env.E2E_SHOT) await page.screenshot({path: process.env.E2E_SHOT}).catch(() => {}); throw error; }
+ finally { await page.close().catch(() => {}); }
+}

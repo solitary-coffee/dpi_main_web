@@ -9,7 +9,7 @@
 // 3. 運用用キーで読み取れるかを確かめる。
 // 4. wrangler.jsonc の STRIPE_LIVE_* と、Worker Secrets の STRIPE_LIVE_SECRET_KEY・STRIPE_LIVE_WEBHOOK_SECRET を登録する。
 // 支払い方法（カード・PayPay など）・領収書メール・自動再試行は変えない。ダッシュボードで設定する（docs/billing-cutover.md）。
-import { ask, askHidden, ensurePortal, ensurePrices, findWebhooks, putSecret, stripeClient, webhookParams, writeConfigValues, EVENTS } from './stripe-setup-lib.mjs';
+import { ask, askHidden, ensurePortal, ensurePrices, findWebhooks, putSecret, stripeClient, verifyStripeWritePermissions, webhookParams, writeConfigValues, EVENTS } from './stripe-setup-lib.mjs';
 
 const READS = ['customers', 'subscriptions', 'subscription_schedules', 'invoices', 'checkout/sessions', 'payment_intents', 'charges', 'disputes', 'refunds', 'prices', 'products', 'billing_portal/configurations'];
 
@@ -33,6 +33,9 @@ async function main() {
  for (const path of READS) await runtime('GET', `${path}?limit=1`).catch(error => denied.push(`${path}（${error.status || error.message}）`));
  if (denied.length) throw new Error(`運用用キーで読み取れないものがあります: ${denied.join('、')}。権限を足してからやり直してください（まだ何も作っていません）。`);
  console.log(`確認: 運用用キーの読み取り ${READS.length} 種類`);
+
+ const writeChecks = await verifyStripeWritePermissions(runtimeKey);
+ console.log(`確認: 運用用キーの書き込み ${writeChecks} 種類（副作用のない失敗要求）`);
 
  const prices = await ensurePrices(stripe);
  const portal = await ensurePortal(stripe);

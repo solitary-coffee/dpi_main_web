@@ -74,7 +74,8 @@ export async function ensurePrices(stripe, log = console.log) {
  const found = await stripe('GET', `prices?${new URLSearchParams(PRICES.map(([, lookup]) => ['lookup_keys[]', lookup])).toString()}&limit=20`);
  for (const [name, lookup, title, yen] of PRICES) {
   const existing = (found.data || []).find(price => price.lookup_key === lookup && price.active);
-  if (existing && (existing.unit_amount !== yen || existing.currency !== 'jpy' || existing.recurring?.interval !== 'month' || (existing.recurring?.interval_count ?? 1) !== 1 || existing.tax_behavior === 'exclusive'))
+  const product = existing && (typeof existing.product === 'string' ? await stripe('GET', `products/${existing.product}`) : existing.product);
+  if (existing && (existing.unit_amount !== yen || existing.currency !== 'jpy' || existing.recurring?.interval !== 'month' || (existing.recurring?.interval_count ?? 1) !== 1 || existing.recurring?.usage_type !== 'licensed' || existing.tax_behavior !== 'inclusive' || product?.active !== true))
    throw new Error(`${title} の料金（${existing.id}）の内容が想定と違います。Stripe で確認してください。`);
   const price = existing || await stripe('POST', 'prices', {currency: 'jpy', unit_amount: String(yen), 'recurring[interval]': 'month', tax_behavior: 'inclusive', lookup_key: lookup, 'product_data[name]': title});
   ids[name] = price.id;
@@ -82,6 +83,40 @@ export async function ensurePrices(stripe, log = console.log) {
  }
  return ids;
 }
+export const RUNTIME_WRITE_PROBES = Object.freeze([
+ ['POST','customers/dpi_permission_probe_missing',{}],
+ ['POST','customers/dpi_permission_probe_missing/balance_transactions',{amount:'not-an-integer',currency:'jpy'}],
+ ['POST','checkout/sessions',{mode:'dpi_invalid_mode'}],
+ ['POST','checkout/sessions/dpi_permission_probe_missing/expire',{}],
+ ['POST','subscriptions',{customer:'dpi_permission_probe_missing'}],
+ ['POST','subscriptions/dpi_permission_probe_missing',{}],
+ ['DELETE','subscriptions/dpi_permission_probe_missing'],
+ ['POST','subscription_schedules',{customer:'dpi_permission_probe_missing'}],
+ ['POST','subscription_schedules/dpi_permission_probe_missing/release',{}],
+ ['POST','invoices/dpi_permission_probe_missing/pay',{}],
+ ['POST','invoices/dpi_permission_probe_missing/void',{}],
+ ['POST','invoices/create_preview',{customer:'dpi_permission_probe_missing'}],
+ ['POST','refunds',{charge:'dpi_permission_probe_missing'}],
+ ['POST','products',{name:''}],
+ ['POST','billing_portal/sessions',{customer:'dpi_permission_probe_missing',return_url:ORIGIN}],
+]);
+
+// 存在しない ID または必ず不正になる引数だけを使うため、何度実行しても Stripe 上の資源を作成・更新しない。
+export async function verifyStripeWritePermissions(key,{fetchImpl=globalThis.fetch}={}){
+ const denied=[];
+ for(const [method,apiPath,params] of RUNTIME_WRITE_PROBES){
+  const body=method==='DELETE'?undefined:new URLSearchParams(params);
+  const response=await fetchImpl(`https://api.stripe.com/v1/${apiPath}`,{method,body,signal:AbortSignal.timeout(60000),headers:{Authorization:`Bearer ${key}`,'Stripe-Version':STRIPE_VERSION,...(body?{'Content-Type':'application/x-www-form-urlencoded'}:{})}});
+  if(response.status===403){denied.push(apiPath);continue;}
+  // 400（引数が不正）・404（対象が無い）だけを「権限あり」とみなす。401（無効なキー）・429（混雑）などは確認できていない。
+  if(response.status===400||response.status===404)continue;
+  if(response.status>=200&&response.status<300)throw new Error(`書き込み権限の確認要求が成功してしまいました: ${method} ${apiPath}`);
+  throw new Error(`書き込み権限を確認できませんでした: ${method} ${apiPath} (HTTP ${response.status})`);
+ }
+ if(denied.length)throw Object.assign(new Error(`運用用キーの書き込み権限が不足しています: ${denied.join(', ')}`),{status:403,denied});
+ return RUNTIME_WRITE_PROBES.length;
+}
+
 export async function ensurePortal(stripe, log = console.log) {
  const list = await stripe('GET', 'billing_portal/configurations?active=true&limit=100');
  const existing = (list.data || []).find(item => item.metadata?.dpi === 'supporter');
