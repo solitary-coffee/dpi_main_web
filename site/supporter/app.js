@@ -1,5 +1,6 @@
 import { planFeatures, imageTypeAllowed } from './plan-features.js';
 import { PREVIEW_BASE, attachPreview } from './preview-lightbox.js';
+import { creditFirstPayment } from './credit-first.js';
 
 let session;
 let revision = 0;
@@ -1015,23 +1016,13 @@ const optionGrid=document.createElement('div');optionGrid.className='billing-opt
 for(const [labelText,input] of [['プラン',plan],['チャンネル追加',channelPacks],['サーバー追加',serverPacks],['ルール追加',rulePacks]]){const label=document.createElement('label');const span=document.createElement('span');span.textContent=labelText;label.append(span,input);optionGrid.append(label);}
 const pricePreview=document.createElement('p');pricePreview.className='price-preview';
 const checkoutSummary=document.createElement('dl');checkoutSummary.className='checkout-summary';
-const paymentMethodChoices=document.createElement('fieldset');paymentMethodChoices.className='credit-payment-choices';
-const paymentMethodLegend=document.createElement('legend');paymentMethodLegend.textContent='支払い方法';
-const cardPaymentChoice=document.createElement('label');cardPaymentChoice.className='credit-payment-choice';
-const cardPaymentInput=document.createElement('input');cardPaymentInput.type='radio';cardPaymentInput.name='signup-payment-method';cardPaymentInput.value='card';
-const cardPaymentText=document.createElement('span');cardPaymentText.textContent='カードなどで支払う';cardPaymentChoice.append(cardPaymentInput,cardPaymentText);
-const creditPaymentChoice=document.createElement('label');creditPaymentChoice.className='credit-payment-choice';
-const creditPaymentInput=document.createElement('input');creditPaymentInput.type='radio';creditPaymentInput.name='signup-payment-method';creditPaymentInput.value='credits';
-const creditPaymentText=document.createElement('span');creditPaymentText.textContent='チャージ済みクレジットで支払う（カード不要）';creditPaymentChoice.append(creditPaymentInput,creditPaymentText);
 const creditPaymentDetails=document.createElement('div');creditPaymentDetails.className='credit-payment-details';creditPaymentDetails.setAttribute('role','status');creditPaymentDetails.setAttribute('aria-live','polite');
 const creditPaymentHelp=document.createElement('p');
-const creditShortageAction=document.createElement('button');creditShortageAction.type='button';creditShortageAction.className='secondary-btn';creditShortageAction.textContent='クレジットをチャージ';
-creditPaymentDetails.append(creditPaymentHelp,creditShortageAction);paymentMethodChoices.append(paymentMethodLegend,cardPaymentChoice,creditPaymentChoice,creditPaymentDetails);
-let paymentChoiceTouched=false;
-const updatePricePreview=()=>{const base={supporter:300,plus:800,pro:1280}[plan.value]||300;const monthly=base+200*(Number(channelPacks.value)+Number(serverPacks.value)+Number(rulePacks.value));const jstDay=Number(new Intl.DateTimeFormat('en-US',{day:'numeric',timeZone:'Asia/Tokyo'}).format(new Date()));const initial=monthly*(jstDay>=26?2:1);const shortage=Math.max(0,initial-availableCredits);if(creditBalanceLoaded&&!paymentChoiceTouched){creditPaymentInput.checked=shortage===0;cardPaymentInput.checked=shortage>0;}if(!creditBalanceLoaded&&!cardPaymentInput.checked&&!creditPaymentInput.checked)cardPaymentInput.checked=true;pricePreview.textContent=`月額 ${monthly.toLocaleString('ja-JP')}円／新規申込時 ${initial.toLocaleString('ja-JP')}円（${jstDay>=26?'当月分＋翌月分':'当月分'}）`;checkoutSummary.replaceChildren();const rows=[['申込みプラン',{supporter:'BASIC',plus:'Plus',pro:'Pro'}[plan.value]],['クレジット残高',creditBalanceLoaded?`${availableCredits.toLocaleString('ja-JP')}円`:'確認中'],['初回支払額',`${initial.toLocaleString('ja-JP')}円`],['支払い後の残高',creditBalanceLoaded&&creditPaymentInput.checked&&shortage===0?`${(availableCredits-initial).toLocaleString('ja-JP')}円`:'—'],['次回26日に必要な額',`${monthly.toLocaleString('ja-JP')}円`],['申込時の支払方法',creditPaymentInput.checked?'チャージ済みクレジット（カード不要）':'カードなど'],['提供開始','決済確認後'],['解約','契約管理画面から手続きし、期間末で終了。支払済み料金の返金なし']];for(const [term,value] of rows){const dt=document.createElement('dt');dt.textContent=term;const dd=document.createElement('dd');dd.textContent=value;checkoutSummary.append(dt,dd);}creditShortageAction.hidden=!creditBalanceLoaded||!creditPaymentInput.checked||shortage===0;creditPaymentHelp.textContent=!creditBalanceLoaded?'クレジット残高を確認しています。':creditPaymentInput.checked&&shortage>0?`クレジットが${shortage.toLocaleString('ja-JP')}円不足しているため申し込めません。先に不足額以上をチャージしてください。`:availableCredits<monthly?'次回26日までにチャージが必要です。カードがなく残高も足りない場合は未払いとなり、月末の再請求でも足りなければ翌月1日0時に停止します。':'クレジットで全額支払うことができ、次回26日の更新分にも足りる残高があります。';creditShortageAction.onclick=()=>{topupAmount.value=String(Math.max(500,shortage));setBillingMode('topup');topupAmount.focus();};updateCheckoutAvailability();};
+const creditShortageAction=document.createElement('button');creditShortageAction.type='button';creditShortageAction.className='secondary-btn';creditShortageAction.textContent='残高だけで申し込むためにチャージ';
+creditPaymentDetails.append(creditPaymentHelp,creditShortageAction);
+const updatePricePreview=()=>{const base={supporter:300,plus:800,pro:1280}[plan.value]||300;const monthly=base+200*(Number(channelPacks.value)+Number(serverPacks.value)+Number(rulePacks.value));const jstDay=Number(new Intl.DateTimeFormat('en-US',{day:'numeric',timeZone:'Asia/Tokyo'}).format(new Date()));const initial=monthly*(jstDay>=26?2:1);const payment=creditFirstPayment(initial,availableCredits,creditBalanceLoaded);pricePreview.textContent=`月額 ${monthly.toLocaleString('ja-JP')}円／新規申込時 ${initial.toLocaleString('ja-JP')}円（${jstDay>=26?'当月分＋翌月分':'当月分'}）`;checkoutSummary.replaceChildren();const rows=[['申込みプラン',{supporter:'BASIC',plus:'Plus',pro:'Pro'}[plan.value]],['初回支払額',`${initial.toLocaleString('ja-JP')}円`]];if(payment.state==='checking')rows.push(['クレジット残高','確認中']);if(payment.state==='split'||payment.state==='credits')rows.push(['事前チャージの残高から',`${payment.creditApplied.toLocaleString('ja-JP')}円`],['カードへの請求',payment.cardCharge?`${payment.cardCharge.toLocaleString('ja-JP')}円`:'ありません'],['支払い後の残高',`${payment.remainingCredits.toLocaleString('ja-JP')}円`]);rows.push(['次回26日に必要な額',`${monthly.toLocaleString('ja-JP')}円`],['提供開始','決済確認後'],['解約','契約管理画面から手続きし、期間末で終了。支払済み料金の返金なし']);for(const [term,value] of rows){const dt=document.createElement('dt');dt.textContent=term;const dd=document.createElement('dd');dd.textContent=value;checkoutSummary.append(dt,dd);}creditPaymentDetails.hidden=payment.state==='card';creditShortageAction.hidden=payment.state!=='split';creditPaymentHelp.textContent=payment.state==='checking'?'クレジット残高を確認しています。':payment.state==='credits'?'残高だけで申し込めます（カードへの請求はありません）。':payment.state==='split'?`カードを使わない場合は、あと${payment.topupNeeded.toLocaleString('ja-JP')}円チャージすると残高だけで申し込めます（チャージは500円から）。`:'';creditShortageAction.onclick=()=>{topupAmount.value=String(Math.max(500,payment.topupNeeded));setBillingMode('topup');topupAmount.focus();};updateCheckoutAvailability();};
 for(const input of [plan,channelPacks,serverPacks,rulePacks])input.addEventListener('change',updatePricePreview);
-for(const input of [cardPaymentInput,creditPaymentInput])input.addEventListener('change',()=>{paymentChoiceTouched=true;updatePricePreview();});
-updatePricePreview();application.append(optionGrid,pricePreview,checkoutSummary,paymentMethodChoices);
+updatePricePreview();application.append(optionGrid,pricePreview,checkoutSummary,creditPaymentDetails);
 
 const selectedInitialCharge=(selectedPlan,selectedChannelPacks,selectedServerPacks,selectedRulePacks)=>{
  const base={supporter:300,plus:800,pro:1280}[selectedPlan]||300;
@@ -1417,10 +1408,10 @@ application.append(billingActions,billingActionStatus);
 
 function updateCheckoutAvailability(){
  if(!checkoutButton)return;
- const price=selectedInitialCharge(plan.value,channelPacks.value,serverPacks.value,rulePacks.value);const creditShortage=creditBalanceLoaded&&creditPaymentInput.checked&&availableCredits<price.initial;
- checkoutButton.disabled=!billingAvailable||customPlanLocked||!legalConsent.checked||hasExistingContract||creditShortage;
- checkoutButton.title=accountSuspended?'有料プランアカウントがBANされています。':hasExistingContract?'既に契約済みです。プラン変更をご利用ください。':creditShortage?'クレジット残高が不足しています。':'';
- checkoutButton.textContent=hasExistingContract?'契約中':creditPaymentInput.checked?'クレジットで申し込む':'このプランで申し込む';
+ const price=selectedInitialCharge(plan.value,channelPacks.value,serverPacks.value,rulePacks.value);const payment=creditFirstPayment(price.initial,availableCredits,creditBalanceLoaded);
+ checkoutButton.disabled=!billingAvailable||customPlanLocked||!legalConsent.checked||hasExistingContract||!creditBalanceLoaded;
+ checkoutButton.title=accountSuspended?'有料プランアカウントがBANされています。':hasExistingContract?'既に契約済みです。プラン変更をご利用ください。':!creditBalanceLoaded?'クレジット残高を確認しています。':'';
+ checkoutButton.textContent=hasExistingContract?'契約中':payment.state==='checking'?'確認中':payment.state==='credits'?'残高で申し込む（カード請求なし）':payment.state==='split'?`残高を使って申し込む（カード ${payment.cardCharge.toLocaleString('ja-JP')}円）`:'カードで申し込む';
 }
 
 for (const [label,action] of [['このプランで申し込む','checkout'],['プラン・オプションを変更','update'],['支払い方法・解約','portal'],['契約・明細を更新','status']]) {
@@ -1444,7 +1435,9 @@ for (const [label,action] of [['このプランで申し込む','checkout'],['�
     const result=await api('/api/supporter/billing/preview-update','POST',selection);
     showBillingPreview(result,selection);return;
    }
-   const body=action==='checkout'?{...selection,email:billingEmail.value,legalConsent:true,useCredits:creditPaymentInput.checked,requestId:crypto.randomUUID()}:{};
+   const price=selectedInitialCharge(plan.value,channelPacks.value,serverPacks.value,rulePacks.value);const payment=creditFirstPayment(price.initial,availableCredits,creditBalanceLoaded);
+   const creditRequest=payment.state==='credits'?{useCredits:true}:payment.state==='split'?{applyCredits:true,expectedCreditApplied:payment.creditApplied}:{};
+   const body=action==='checkout'?{...selection,email:billingEmail.value,legalConsent:true,...creditRequest,requestId:crypto.randomUUID()}:{};
    const result = await api(`/api/supporter/billing/${action}`,action === 'status' ? 'GET' : 'POST',action === 'status' ? undefined : body);
    if (result.url) {
     location.href = stripeDestination(result.url);

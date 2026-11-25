@@ -961,6 +961,37 @@ test('カードなし: クレジットだけで申込み → 変更 → 26日の
  assert.equal((await reserveIn(world)('supporter')).status, 200);
  assert.ok((await only.invoices()).every(item => item.status === 'paid'));
 });
+test('残高を先に使う申込み: 差額だけをカードに請求し、残高は1回だけ引く（支払い画面の実操作）', async () => {
+ const world = await World.create({clock: false}), only = creditOnly(world), total = 800 * billing.billingSchedule(Date.now()).initialMonths;
+ const choice = {plan: 'plus', channelPacks: 0, serverPacks: 0, rulePacks: 0};
+ await only.grant(300);
+ assert.equal((await world.act('checkout', {...choice, applyCredits: true, expectedCreditApplied: 299})).status, 409, '金額が違うのに作られた');
+ const started = await world.act('checkout', {...choice, applyCredits: true, expectedCreditApplied: 300}); assert.equal(started.status, 200, JSON.stringify(started.body));
+ const session = async () => (await stripe('GET', `checkout/sessions?customer=${world.customer}&limit=10`)).data;
+ assert.equal((await session()).find(item => item.status === 'open').amount_total, total - 300); assert.equal(await only.credits(), 300, '支払う前に引かれた');
+ // 残高が増えたら、前の支払い画面を取り消して作り直す
+ await only.grant(100);
+ assert.equal((await world.act('checkout', {...choice, applyCredits: true, expectedCreditApplied: 400})).status, 409);
+ const again = await world.act('checkout', {...choice, applyCredits: true, expectedCreditApplied: 400}); assert.equal(again.status, 200, JSON.stringify(again.body));
+ assert.deepEqual((await session()).filter(item => item.status === 'open').map(item => item.amount_total), [total - 400]);
+ await payInBrowser(again.body.url); await world.settle(6000);
+ assert.equal(await only.credits(), 0, '残高が引かれていない'); assert.equal((await world.act('status')).body.subscriptions[0].planId, 'plus'); assert.equal(await world.rules(), 1);
+ const done = (await session()).find(item => item.payment_status === 'paid');
+ await world.deliver({id: `evt_e2e${randomUUID().replaceAll('-', '')}`, type: 'checkout.session.completed', livemode: false, created: now(), data: {object: done}});
+ const transactions = (await stripe('GET', `customers/${world.customer}/balance_transactions?limit=20`)).data.filter(item => item.metadata?.dpi_initial_credit_session === done.id);
+ assert.deepEqual(transactions.map(item => item.amount), [400], '二重に引かれた');
+ assert.ok(world.mailTexts.some(text => /事前チャージの残高から: 400円/.test(text) && new RegExp(`カードなどへの請求額: ￥${(total - 400).toLocaleString('ja-JP')}`).test(text)), world.mailTexts.join('|').slice(0, 300));
+ assert.equal(world.raw.prepare("SELECT COUNT(*) n FROM supporter_credit_events WHERE reason='initial_plan_credit'").get().n, 1);
+}, {browser: true});
+test('残高を先に使う申込み: 支払い画面を開いたまま残高だけで申し込んでも、二重に支払えない', async () => {
+ const world = await World.create({clock: false}), only = creditOnly(world), total = 300 * billing.billingSchedule(Date.now()).initialMonths;
+ await only.grant(total - 10);
+ const choice = {plan: 'supporter', channelPacks: 0, serverPacks: 0, rulePacks: 0};
+ const started = await world.act('checkout', {...choice, applyCredits: true, expectedCreditApplied: total - 50}); assert.equal(started.status, 200, JSON.stringify(started.body));
+ await only.grant(10); assert.equal((await only.signup('supporter')).status, 200); await world.settle();
+ const sessions = (await stripe('GET', `checkout/sessions?customer=${world.customer}&limit=10`)).data;
+ assert.ok(sessions.every(item => item.status === 'expired'), '支払い画面が開いたまま'); assert.equal(await only.credits(), 0); assert.equal((await world.subs()).length, 1);
+});
 test('カードなし: 残高不足で未払い → チャージして画面から支払う → 配信が続く。再請求・停止後もクレジットで払える', async () => {
  const world = await World.create(), only = creditOnly(world);
  const months = billing.billingSchedule(Date.now()).initialMonths;

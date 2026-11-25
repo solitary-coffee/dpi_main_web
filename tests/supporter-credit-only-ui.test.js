@@ -4,10 +4,11 @@ import {readFile} from 'node:fs/promises';
 
 const read=path=>readFile(new URL(`../${path}`,import.meta.url),'utf8');
 
-test('カードなしの申込み・変更・未払い支払いを画面から案内する',async()=>{
+test('残高優先の申込み・変更・未払い支払いを画面から案内する',async()=>{
  const app=await read('site/supporter/app.js');
- for(const text of ['カードなどで支払う','チャージ済みクレジットで支払う（カード不要）','creditBalanceLoaded','paymentMethodRegistered','creditShortage','/api/supporter/billing/pay-unpaid','expectedTotal','未払いは一部だけ支払えません'])assert.match(app,new RegExp(text,'u'));
- assert.match(app,/useCredits:creditPaymentInput\.checked/u);
+ for(const text of ['creditBalanceLoaded','paymentMethodRegistered','creditShortage','/api/supporter/billing/pay-unpaid','expectedTotal','未払いは一部だけ支払えません','applyCredits:true','expectedCreditApplied:payment.creditApplied'])assert.match(app,new RegExp(text,'u'));
+ assert.match(app,/payment\.state==='credits'\?\{useCredits:true\}/u);
+ assert.doesNotMatch(app,/signup-payment-method|creditPaymentInput/u);
  assert.doesNotMatch(app,/innerHTML/u);
 });
 

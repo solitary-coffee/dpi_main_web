@@ -480,7 +480,7 @@ function billingMailContent(env,kind,invoice,retryAt,suspendAt,sentAt){
  const date=value=>value?new Intl.DateTimeFormat('ja-JP',{dateStyle:'long',timeStyle:'short',timeZone:'Asia/Tokyo'}).format(new Date(Number(value)*1000)):'—';
  const number=clean(invoice.number)||clean(invoice.id);
  const definitions={
-  payment_succeeded:['【DPI-Bot】お支払い完了のお知らせ',[`DPI-Bot有料プランのお支払いが完了しました。`,`請求額: ${amount}`,`請求書: ${number}`]],
+  payment_succeeded:['【DPI-Bot】お支払い完了のお知らせ',[`DPI-Bot有料プランのお支払いが完了しました。`,...(Number(invoice.credit_applied)>0?[`事前チャージの残高から: ${Number(invoice.credit_applied).toLocaleString('ja-JP')}円`,`カードなどへの請求額: ${amount}`]:[`請求額: ${amount}`]),`請求書: ${number}`]],
   retry_succeeded:['【DPI-Bot】再決済完了のお知らせ',[`月末の再決済が完了しました。引き続き有料プランをご利用いただけます。`,`請求額: ${amount}`,`請求書: ${number}`]],
   payment_failed:['【DPI-Bot】お支払い失敗と月末再決済のお知らせ',[`26日のお支払いを完了できませんでした。`,`月末再決済日時: ${date(retryAt)}`,`請求額: ${amount}`,`請求書: ${number}`,'月末までに契約管理画面から支払方法をご確認ください。','請求額以上のクレジットをチャージすると、契約・支払い方法の管理画面の操作、または月末の再決済でクレジットから支払えます（一部だけの充当はできません）。']],
   final_failed:['【DPI-Bot】月末再決済失敗・利用停止のお知らせ',[`月末の再決済を完了できませんでした。`,`利用停止日時: ${date(suspendAt)}`,`請求額: ${amount}`,`請求書: ${number}`,'翌月以降、有料プランの通知設定は支払い完了まで利用停止となります。未払いの請求が複数ある場合は、すべてのお支払いを確認してから再開します。','停止中は新しい月額料金を請求しません。停止から1か月間お支払いを確認できない場合は、契約を自動的に解約し、未払いの請求を取り消します。','請求額以上のクレジットをチャージすると、契約・支払い方法の管理画面の操作、または月末の再決済でクレジットから支払えます（一部だけの充当はできません）。']],
@@ -772,6 +772,42 @@ async function assertCheckoutOwner(db,session){
  const billing=uid?await db.prepare('SELECT customer_id FROM supporter_billing WHERE discord_user_id=?').bind(uid).first():null;
  if(billing?.customer_id&&billing.customer_id!==customer)fail('初回決済の利用者を確認できませんでした。',409);
 }
+// 申込みで先に使う事前チャージの額。カードの最低請求額（50円）を残す。全額を払えるときはカードを使わない別の流れ。
+export const CARD_MINIMUM_YEN=50;
+export function initialCreditUse(credits,total){
+ const available=Math.max(0,Math.floor(Number(credits)||0));
+ if(available<=0||available>=total)return 0;
+ return Math.max(0,Math.min(available,total-CARD_MINIMUM_YEN));
+}
+// カードの支払いが済んだ申込みの、事前チャージで払う分を1回だけ引き落とす。同じ支払いの通知が何度届いても増えない。
+// 支払いまでの間に残高が減っていたら、足りない分は残高のマイナス（次回の請求に加算）になる。
+async function applyInitialCredit(env,session){
+ const metadata=checkoutMetadata(session),amount=Number(metadata.dpi_credit_applied||0),customer=stripeId(session?.customer);
+ if(!customer||!Number.isSafeInteger(amount)||amount<=0)return;
+ let applied=false;
+ await stripeListAll(env,`customers/${encodeURIComponent(customer)}/balance_transactions?limit=100`,item=>{if(item?.metadata?.dpi_initial_credit_session===session.id)applied=true;});
+ if(applied)return;
+ const transaction=await stripe(env,`customers/${encodeURIComponent(customer)}/balance_transactions`,{amount:String(amount),currency:'jpy',description:`DPI-Bot initial plan credit: ${session.id}`,
+  'metadata[dpi_user]':clean(metadata.dpi_user),'metadata[dpi_credit_action]':'initial_plan_credit','metadata[dpi_initial_credit_session]':session.id},`dpi-initial-credit-${session.id}`);
+ if(Number(transaction?.ending_balance)>0)console.error('Initial plan credit exceeded the balance',{sessionId:session.id,shortage:Number(transaction.ending_balance)});
+}
+// 事前チャージの履歴に1回だけ記録し、台帳を残高に合わせる。
+async function recordInitialCredit(env,db,session){
+ const metadata=checkoutMetadata(session),amount=Number(metadata.dpi_credit_applied||0),uid=clean(metadata.dpi_user),customer=stripeId(session?.customer);
+ if(!customer||!/^\d{17,20}$/.test(uid)||!Number.isSafeInteger(amount)||amount<=0)return;
+ const credits=await customerCredits(env,customer);
+ await db.prepare(`INSERT INTO supporter_credit_events(id,discord_user_id,credit_delta,balance_after,stripe_transaction_id,reason,actor,created_at)
+  VALUES(?,?,?,?,?,'initial_plan_credit','user',?) ON CONFLICT DO NOTHING`).bind(`initial:${session.id}`,uid,-amount,credits,`initial:${session.id}`,new Date().toISOString()).run();
+ await purchasedCreditStatus(db,uid,credits);
+}
+// 開いたままの支払い画面を取り消して記録を消す。支払いの途中なら取り消せず、そのまま残す。
+async function discardOpenCheckout(env,db,uid,row){
+ if(!row?.checkout_id)return;
+ const checkout=await stripe(env,`checkout/sessions/${encodeURIComponent(row.checkout_id)}`);
+ if(checkout.status==='open')await stripe(env,`checkout/sessions/${encodeURIComponent(row.checkout_id)}/expire`,{});
+ else if(checkout.status==='complete')fail('決済結果を確認中です。契約状態を更新してください。',409);
+ await db.prepare('UPDATE supporter_billing SET checkout_key=NULL,checkout_id=NULL,checkout_params=NULL WHERE discord_user_id=? AND checkout_key=?').bind(uid,row.checkout_key).run();
+}
 export async function provisionPaidCheckoutSubscription(env,session){
  const metadata=checkoutMetadata(session);
  if(session?.mode!=='payment'||metadata.dpi_checkout_kind!=='initial_subscription'||session.payment_status!=='paid')return null;
@@ -787,6 +823,7 @@ export async function provisionPaidCheckoutSubscription(env,session){
  const paymentIntent=await stripe(env,`payment_intents/${encodeURIComponent(paymentIntentId)}`);
  const params=paidCheckoutSubscriptionParams(env,session,paymentIntent);
  params['metadata[dpi_initial_session]']=String(session.id||'');
+ await applyInitialCredit(env,session);
  return await stripe(env,'subscriptions',params,`dpi-initial-subscription-v2-${session.id}`);
 }
 function recoverablePaidCheckout(session,customer,uid){
@@ -823,6 +860,7 @@ export async function reconcilePaidCheckoutSubscription(env,customer,uid,db=null
  let session=null;for(const candidate of candidates){if(db&&await rejectDisciplinedCheckout(env,db,candidate))continue;session=candidate;break;}
  if(!session)return {subscription:null,recovered:false,checkoutId:null};
  const subscription=await provisionPaidCheckoutSubscription(env,session);
+ if(subscription&&db)await recordInitialCredit(env,db,session);
  return {subscription,recovered:!!subscription,checkoutId:session.id};
 }
 function sameCreditSignup(attempt,customer,choice,legalConsentVersion){
@@ -1218,6 +1256,8 @@ export async function billingAction(request,env,db,uid,input={}){
  const legalConsentVersion=String(input.legalConsentVersion||'');
  if(!legalConsentVersion)return json({message:'申込み同意を確認できません。画面を再読み込みしてください。'},400);
  if(input.useCredits===true){
+  // カードの支払い画面を開いたまま残高で申し込むと、両方で支払えてしまう。先に取り消す。
+  await discardOpenCheckout(env,db,uid,row);
   const result=await provisionCreditFundedSignup(env,db,uid,row.customer_id,choice,input);
   const [summaries,credits]=await Promise.all([customerSubscriptionSummaries(env,row.customer_id),customerCredits(env,row.customer_id)]);
   const creditDetails=await purchasedCreditStatus(db,uid,credits);
@@ -1225,6 +1265,14 @@ export async function billingAction(request,env,db,uid,input={}){
   return json({message:`${result.amount.toLocaleString('ja-JP')}クレジットでお申し込みが完了しました。カード情報の入力は不要でした。`,paidWithCredits:true,creditApplied:result.amount,balanceAfter:result.balanceAfter,billingDay:26,subscriptions:summaries,credits,creditDetails,deliveryEnabled:false});
  }
  row=await recoverStaleCheckoutAttempt(db,uid,row);
+ const initialTotal=choice.monthly*schedule.initialMonths;
+ let creditApplied=0;
+ if(input.applyCredits===true){
+  const available=await customerCredits(env,row.customer_id);
+  if(available>=initialTotal)return json({message:'事前チャージの残高だけで申し込めます。画面を再読み込みして、もう一度お試しください。'},409);
+  creditApplied=initialCreditUse(available,initialTotal);
+  if(Number(input.expectedCreditApplied)!==creditApplied)return json({message:'事前チャージの残高が変わりました。画面を再読み込みして、もう一度お試しください。'},409);
+ }
  // Persist exact parameters and key before network IO. Concurrent clicks share one session.
  const params={mode:'payment',customer:row.customer_id,client_reference_id:uid,...SUBSCRIPTION_EXCLUDED_PAYMENT_METHODS,
   'payment_intent_data[setup_future_usage]':'off_session','payment_intent_data[metadata][dpi_user]':uid,
@@ -1234,8 +1282,9 @@ export async function billingAction(request,env,db,uid,input={}){
   success_url:`${origin}/site/supporter/?checkout=returned`,cancel_url:`${origin}/site/supporter/?checkout=canceled`,expires_at:String(Math.floor(Date.now()/1000)+3600),integration_identifier:integrationIdentifier('dpi_paid_')};
  const line=0;
  params[`line_items[${line}][price_data][currency]`]='jpy';
- params[`line_items[${line}][price_data][unit_amount]`]=String(choice.monthly*schedule.initialMonths);
- params[`line_items[${line}][price_data][product_data][name]`]=`${PLAN_CATALOG[choice.plan].name} ${schedule.lateMonth?'初回利用料（当月分・翌月分の2か月分）':'初回利用料（当月分）'}`;
+ params[`line_items[${line}][price_data][unit_amount]`]=String(initialTotal-creditApplied);
+ if(creditApplied>0){params['metadata[dpi_credit_applied]']=String(creditApplied);params['metadata[dpi_initial_total]']=String(initialTotal);}
+ params[`line_items[${line}][price_data][product_data][name]`]=`${PLAN_CATALOG[choice.plan].name} ${schedule.lateMonth?'初回利用料（当月分・翌月分の2か月分）':'初回利用料（当月分）'}${creditApplied>0?`（総額${initialTotal.toLocaleString('ja-JP')}円のうち事前チャージ${creditApplied.toLocaleString('ja-JP')}円を使用）`:''}`;
  params[`line_items[${line}][quantity]`]='1';
  await db.prepare('UPDATE supporter_billing SET checkout_key=?,checkout_params=? WHERE discord_user_id=? AND checkout_key IS NULL').bind(crypto.randomUUID(),JSON.stringify(params),uid).run();
  row=await db.prepare('SELECT * FROM supporter_billing WHERE discord_user_id=?').bind(uid).first();
@@ -1251,7 +1300,11 @@ export async function billingAction(request,env,db,uid,input={}){
   return json({message:'前回のお申込みは完了済みでした。もう一度「申し込む」を押してください。'},409);
  }
  if(checkout.status!=='open')return json({message:'決済結果を確認中です。契約状態を更新してください。'},409);
- if(saved['metadata[dpi_plan]']!==params['metadata[dpi_plan]']||saved['metadata[dpi_channel_packs]']!==params['metadata[dpi_channel_packs]']||saved['metadata[dpi_server_packs]']!==params['metadata[dpi_server_packs]']||String(saved['metadata[dpi_rule_packs]']||0)!==params['metadata[dpi_rule_packs]'])return json({message:'別の条件で決済画面を作成済みです。期限切れ後に変更できます（最大1時間）。'},409);
+ if(saved['metadata[dpi_plan]']!==params['metadata[dpi_plan]']||saved['metadata[dpi_channel_packs]']!==params['metadata[dpi_channel_packs]']||saved['metadata[dpi_server_packs]']!==params['metadata[dpi_server_packs]']||String(saved['metadata[dpi_rule_packs]']||0)!==params['metadata[dpi_rule_packs]']||String(saved['metadata[dpi_credit_applied]']||0)!==String(params['metadata[dpi_credit_applied]']||0)){
+  // プラン・残高が変わった。前の支払い画面は取り消し、新しい条件で作り直せるようにする。
+  await discardOpenCheckout(env,db,uid,row);
+  return json({message:'条件が変わったため、前の決済画面を取り消しました。もう一度「申し込む」を押してください。'},409);
+ }
  return json({url:checkout.url,mode:billingMode(env)});
 }
 // 途中で止まった申込みの復旧。Stripe の状態を確かめ、支払い済みなら契約を作り、未払いの支払い画面は失効させてから記録を消す。
@@ -1657,7 +1710,8 @@ export async function billingWebhook(request,env,ctx){
   else{
    if(checkoutMetadata(session).dpi_checkout_kind==='initial_subscription')await assertCheckoutOwner(db,session);
    const provisioned=await provisionPaidCheckoutSubscription(env,session);
-   if(provisioned&&session?.payment_status==='paid')await sendBillingNotificationSafely(env,db,'payment_succeeded',{id:session.id,customer:session.customer,amount_paid:Number(session.amount_total||0),currency:session.currency||'jpy'});
+   if(provisioned)await recordInitialCredit(env,db,session);
+   if(provisioned&&session?.payment_status==='paid')await sendBillingNotificationSafely(env,db,'payment_succeeded',{id:session.id,customer:session.customer,amount_paid:Number(session.amount_total||0),currency:session.currency||'jpy',credit_applied:Number(checkoutMetadata(session).dpi_credit_applied||0)});
   }
  }
  if(event.type==='invoice.paid'){
@@ -2165,7 +2219,7 @@ async function restoreFailedBillingNotice(env,db,row){
  if(kind==='payment_succeeded'){
   const invoice=id.startsWith('in_')?await stripe(env,`invoices/${encodeURIComponent(id)}`):id.startsWith('cs_')?await stripe(env,`checkout/sessions/${encodeURIComponent(id)}`):null;
   if(!invoice||(id.startsWith('in_')?invoice.status!=='paid':invoice.payment_status!=='paid'))return null;
-  return{invoice:{...invoice,amount_paid:Number(invoice.amount_paid??invoice.amount_total??0)}};
+  return{invoice:{...invoice,amount_paid:Number(invoice.amount_paid??invoice.amount_total??0),credit_applied:Number(checkoutMetadata(invoice).dpi_credit_applied||0)}};
  }
  if(['credit_topup_succeeded','credit_topup_failed'].includes(kind)){
   if(!id.startsWith('cs_'))return null;
