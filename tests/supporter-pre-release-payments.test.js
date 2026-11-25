@@ -12,7 +12,7 @@ test('正式リリース前の案内はJSなしでも両画面と支払い欄に
  for(const html of [index, plans]){
   assert.match(html, /<!-- 正式リリース前の案内（正式リリース時に外す） -->/);
   assert.match(html, /class="pre-release-notice"/);
-  assert.match(html, /有料プランは正式リリース前です/);
+  assert.match(html, /有料プランはβ版（正式リリース前）です/);
   assert.match(html, /当方の故意または重大な過失/);
  }
  assert.match(index, /id="billing"[\s\S]*?class="pre-release-notice"[\s\S]*?原則として補填はありません[\s\S]*?\/terms\/terms\.html/);
