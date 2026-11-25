@@ -36,14 +36,18 @@
   <main class="main-content comparison-main">
    <div class="comparison-page">
   <nav aria-label="パンくずリスト"><a href="/">ホーム</a><span aria-hidden="true"> / </span><a href="/site/supporter/">有料プラン管理</a><span aria-hidden="true"> / </span><strong>機能比較</strong></nav>
+  <aside class="pre-release-notice" data-launch-notice hidden aria-labelledby="launch-notice-title">
+   <strong id="launch-notice-title">本日（11月25日）から26日0時30分までのご注意</strong>
+   <p>・25日23時57分ごろから26日0時までの間は、請求日の切り替えのため契約を作成できません。この間にカードのお支払いが完了した場合は、0時以降に自動で契約されます（残高でのお申込みは、0時を過ぎてからもう一度お試しください）。<br>・25日中にお申込みの方は、26日0時30分まで、プラン・オプションの変更、解約、お支払い方法の変更ができません。0時30分以降に行ってください。通知設定と配信はご利用いただけます。</p>
+  </aside>
   <!-- 正式リリース前の案内（正式リリース時に外す） -->
   <aside class="pre-release-notice" role="note" aria-labelledby="pre-release-title">
-   <strong id="pre-release-title">有料プランは正式リリース前です</strong>
-   <p>現在の有料プランは、正式リリース前の提供です。予期しない不具合や、配信の遅延・停止が起こる場合があります。正式リリースまでの間に生じた不具合や配信の停止については、原則として残高への加算等による補填を行いません。ただし、当方の故意または重大な過失による場合、二重請求など当方が返金相当と認めた場合、法令上返金や賠償が必要な場合を除きます。</p>
+   <strong id="pre-release-title">有料プランはβ版（正式リリース前）です</strong>
+   <p>現在の有料プランは、β版（正式リリース前）としての提供です。予期しない不具合や、配信の遅延・停止が起こる場合があります。正式リリースまでの間に生じた不具合や配信の停止については、原則として残高への加算等による補填を行いません。ただし、当方の故意または重大な過失による場合、二重請求など当方が返金相当と認めた場合、法令上返金や賠償が必要な場合を除きます。</p>
   </aside>
   <header class="comparison-hero">
    <p class="comparison-eyebrow">DPI-BOT SUPPORTER PLANS</p>
-   <h1>有料プランの機能比較</h1>
+   <h1>有料プラン（β版）の機能比較</h1>
    <p>通知先の規模や配信条件に合わせて、Basic・Plus・Pro・カスタムの違いを確認できます。</p>
    <a class="comparison-main-link" href="/site/supporter/#billing">契約・プラン変更はこちら</a>
   </header>
@@ -496,6 +500,7 @@
   </main>
  </div>
  <script src="../../script.js"></script>
+ <script type="module" src="launch-notice.js"></script>
  <script type="module" src="plans-previews.js"></script>
 </body>
 </html>

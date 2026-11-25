@@ -1,3 +1,4 @@
+import {showLaunchNotice} from './launch-notice.js';
 import { planFeatures, imageTypeAllowed } from './plan-features.js';
 import { PREVIEW_BASE, attachPreview } from './preview-lightbox.js';
 import { creditFirstPayment } from './credit-first.js';
@@ -976,7 +977,7 @@ const topupPaymentHelp=document.createElement('p');topupPaymentHelp.className='h
 // 正式リリース前の案内（正式リリース時に外す）
 const creditConsent=document.createElement('label');creditConsent.className='credit-consent pre-release-notice';
 const creditConsentInput=document.createElement('input');creditConsentInput.type='checkbox';creditConsentInput.required=true;
-const creditConsentText=document.createElement('span');creditConsentText.append('正式リリース前の提供であり、不具合や配信停止が起こる場合があります。原則として補填はありません。',document.createElement('br'),'入金確認後にチャージ金額が残高へ反映され、反映した日から1年後に未使用分が失効すること、および');const creditConsentTerms=document.createElement('a');creditConsentTerms.href='/terms/terms.html';creditConsentTerms.target='_blank';creditConsentTerms.rel='noopener noreferrer';creditConsentTerms.textContent='利用規約';creditConsentText.append(creditConsentTerms,'を確認しました。');
+const creditConsentText=document.createElement('span');creditConsentText.append('β版（正式リリース前）の提供であり、不具合や配信停止が起こる場合があります。原則として補填はありません。',document.createElement('br'),'入金確認後にチャージ金額が残高へ反映され、反映した日から1年後に未使用分が失効すること、および');const creditConsentTerms=document.createElement('a');creditConsentTerms.href='/terms/terms.html';creditConsentTerms.target='_blank';creditConsentTerms.rel='noopener noreferrer';creditConsentTerms.textContent='利用規約';creditConsentText.append(creditConsentTerms,'を確認しました。');
 creditConsent.append(creditConsentInput,creditConsentText);
 const topupButton=document.createElement('button');topupButton.type='button';topupButton.className='primary-btn';topupButton.textContent='チャージ手続きへ';
 topupButton.disabled=true;
@@ -1046,7 +1047,7 @@ if(new URLSearchParams(location.search).get('credit')==='completed'){
 // 正式リリース前の案内（正式リリース時に外す）
 const legalConsentLabel=document.createElement('label');legalConsentLabel.className='legal-consent pre-release-notice';
 const legalConsent=document.createElement('input');legalConsent.type='checkbox';legalConsent.id='legal-consent';legalConsent.required=true;
-const legalConsentText=document.createElement('span');legalConsentText.append('正式リリース前の提供であり、不具合や配信停止が起こる場合があります。原則として補填はありません。申込み内容を確認し、');
+const legalConsentText=document.createElement('span');legalConsentText.append('β版（正式リリース前）の提供であり、不具合や配信停止が起こる場合があります。原則として補填はありません。申込み内容を確認し、');
 for(const [label,href] of [['利用規約','/terms/terms.html'],['プライバシーポリシー','/terms/policy.html'],['特定商取引法に基づく表記','/terms/Specified.html']]){const link=document.createElement('a');link.textContent=label;link.href=href;link.target='_blank';link.rel='noopener noreferrer';legalConsentText.append(link,label==='特定商取引法に基づく表記'?'に同意します。':'、');}
 legalConsentLabel.append(legalConsent,legalConsentText);application.append(legalConsentLabel);
 legalConsent.addEventListener('change',updateCheckoutAvailability);
@@ -1375,7 +1376,10 @@ topupChoiceButton.onclick=()=>{
  topupEmail.value=billingEmail.value;focusTopup(Math.max(0,price.initial-availableCredits));
 };
 paymentChoices.append(topupChoiceButton);
-application.append(paymentChoiceTitle,paymentChoices,billingActions,billingActionStatus);
+// 2026年11月25日の夜だけの案内（26日0時30分に消える）
+const launchNotice=document.createElement('p');launchNotice.className='pre-release-notice';launchNotice.dataset.launchNotice='';launchNotice.hidden=true;
+launchNotice.textContent='25日23時57分ごろから26日0時までは契約を作成できません（この間のカードのお支払いは、0時以降に自動で契約されます）。25日中にお申込みの方は、26日0時30分まで、変更・解約・お支払い方法の変更ができません。';
+application.append(launchNotice,paymentChoiceTitle,paymentChoices,billingActions,billingActionStatus);
 
 function updateCheckoutAvailability(){
  if(!checkoutButton)return;
@@ -1433,5 +1437,6 @@ for (const [label,action] of [['このプランで申し込む','checkout'],['�
 }
 billing.append(invoiceTitle,invoiceHistory);
 updateCheckoutAvailability();
+showLaunchNotice();
 if(new URLSearchParams(location.search).has('credit'))requestAnimationFrame(()=>creditPanel.scrollIntoView({block:'start'}));
 run(load)();

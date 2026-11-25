@@ -35,11 +35,15 @@
       </ul>
   </nav>
   <main class="main-content">
-   <header><h1>有料プラン</h1></header>
+   <header><h1>有料プラン（β版）</h1></header>
+   <aside class="pre-release-notice" data-launch-notice hidden aria-labelledby="launch-notice-title">
+    <strong id="launch-notice-title">本日（11月25日）から26日0時30分までのご注意</strong>
+    <p>・25日23時57分ごろから26日0時までの間は、請求日の切り替えのため契約を作成できません。この間にカードのお支払いが完了した場合は、0時以降に自動で契約されます（残高でのお申込みは、0時を過ぎてからもう一度お試しください）。<br>・25日中にお申込みの方は、26日0時30分まで、プラン・オプションの変更、解約、お支払い方法の変更ができません。0時30分以降に行ってください。通知設定と配信はご利用いただけます。</p>
+   </aside>
    <!-- 正式リリース前の案内（正式リリース時に外す） -->
    <aside class="pre-release-notice" role="note" aria-labelledby="pre-release-title">
-    <strong id="pre-release-title">有料プランは正式リリース前です</strong>
-    <p>現在の有料プランは、正式リリース前の提供です。予期しない不具合や、配信の遅延・停止が起こる場合があります。正式リリースまでの間に生じた不具合や配信の停止については、原則として残高への加算等による補填を行いません。ただし、当方の故意または重大な過失による場合、二重請求など当方が返金相当と認めた場合、法令上返金や賠償が必要な場合を除きます。</p>
+    <strong id="pre-release-title">有料プランはβ版（正式リリース前）です</strong>
+    <p>現在の有料プランは、β版（正式リリース前）としての提供です。予期しない不具合や、配信の遅延・停止が起こる場合があります。正式リリースまでの間に生じた不具合や配信の停止については、原則として残高への加算等による補填を行いません。ただし、当方の故意または重大な過失による場合、二重請求など当方が返金相当と認めた場合、法令上返金や賠償が必要な場合を除きます。</p>
    </aside>
    <!-- 準備中（メンテナンス中）の案内：/api/supporter/plans の intakePaused が true のときだけ app.js が表示する -->
    <div id="intake-paused-notice" class="intake-paused-notice hidden" role="alert">
@@ -119,7 +123,7 @@
     <div id="rules"></div>
     <div class="button-row"><button id="add" class="secondary-btn" disabled>＋ ルールを追加</button><button id="save" class="primary-btn" disabled>通知設定を保存</button></div>
    </section>
-   <section id="billing" class="section"><h2>お支払い・契約情報</h2><!-- 正式リリース前の案内（正式リリース時に外す） --><p class="pre-release-notice">正式リリース前の提供であり、不具合や配信停止が起こる場合があります。原則として補填はありません。詳しくは<a href="/terms/terms.html">利用規約</a>をご確認ください。</p><p>読み込み中…</p></section>
+   <section id="billing" class="section"><h2>お支払い・契約情報</h2><!-- 正式リリース前の案内（正式リリース時に外す） --><p class="pre-release-notice">β版（正式リリース前）の提供であり、不具合や配信停止が起こる場合があります。原則として補填はありません。詳しくは<a href="/terms/terms.html">利用規約</a>をご確認ください。</p><p>読み込み中…</p></section>
    <section class="section billing-policy"><h2>請求日のご案内</h2><p><strong>2026年11月中（11月30日まで）のお申込みに限り、月額1か月分のお支払いで、11月と12月の両方をご利用いただけます。次回の請求日は12月26日です。</strong></p><p>請求日は毎月26日です。1〜25日の申込は当月分を申込時、翌月分を26日に請求します。26〜31日の申込は当月分と翌月分の2か月分を申込時にまとめて請求し、以後は毎月26日に翌月分を請求します。</p><p>アップグレードは即時適用し、基本プランの差額を精算します。ダウングレードは返金を行わず、現在の内容を今期末まで利用したうえで次回26日から適用します。</p></section>
       <!-- dpi-public-footer:start -->
       <footer class="site-footer" style="margin-top:48px;padding:20px 0 8px;border-top:1px solid rgba(128,128,128,.35);font-size:13px;line-height:1.9;opacity:.85;text-align:center">
@@ -139,6 +143,7 @@
  </div>
  <dialog id="billing-preview-dialog" aria-labelledby="billing-preview-title"><div class="billing-preview-panel"><h2 id="billing-preview-title">契約変更の確認</h2><div id="billing-preview-content"></div><div class="confirmation-actions"><button id="billing-preview-cancel" class="secondary-btn" type="button">戻る</button><button id="billing-preview-confirm" class="primary-btn" type="button">変更を確定</button></div></div></dialog>
  <script src="../../script.js"></script>
+ <script type="module" src="launch-notice.js"></script>
  <script type="module" src="app.js"></script>
 </body>
 </html>
