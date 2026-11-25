@@ -12,7 +12,7 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { ORIGIN, PRICES, ROOT, ask, readConfigValue, wrangler, writeConfigValues } from './stripe-setup-lib.mjs';
+import { PRICES, ROOT, ask, readConfigValue, siteState, wrangler, writeConfigValues } from './stripe-setup-lib.mjs';
 
 const DB = 'REUSE_DB';
 // 子 → 親の順（外部キー）。
@@ -38,15 +38,11 @@ function counts() {
   for (const row of query(PURGE_TABLES.slice(index, index + 4).map(name => `SELECT '${name}' AS name, COUNT(*) AS n FROM ${name}`).join(' UNION ALL '))) rows[row.name] = Number(row.n);
  return rows;
 }
-async function publicState() {
- const response = await fetch(`${ORIGIN}/api/supporter/plans`, {headers: {Accept: 'application/json', 'Cache-Control': 'no-store'}, signal: AbortSignal.timeout(20000)});
- return response.ok ? await response.json() : null;
-}
 async function inspect() {
  const items = [];
  const add = (ok, label, detail = '') => items.push({ok, label, detail});
- const state = await publicState().catch(() => null);
- add(!!state, '本番サイトの状態を取得できる', state ? `モード ${state.mode || '無効'}・受付停止 ${state.intakePaused}・テスト公開 ${state.previewOpen}` : '');
+ const state = await siteState().catch(() => null);
+ add(!!state, '本番サイトの状態を取得できる', state ? `${state.published ? '公開' : '非公開'}・モード ${state.mode || '無効'}・受付停止 ${state.intakePaused}・テスト公開 ${state.previewOpen}` : '');
  for (const [name] of PRICES) { const key = name.replace('STRIPE_', 'STRIPE_LIVE_'); const value = await readConfigValue(key); add(/^price_\w+$/.test(value || ''), `${key} が設定済み`); }
  add(/^bpc_\w+$/.test(await readConfigValue('STRIPE_LIVE_PORTAL_CONFIG') || ''), 'STRIPE_LIVE_PORTAL_CONFIG が設定済み');
  const secrets = wrangler(['secret', 'list']);
@@ -75,7 +71,7 @@ async function backup() {
  return {dir, before};
 }
 async function purge() {
- const state = await publicState();
+ const state = await siteState();
  if (state?.mode !== 'test' || state.intakePaused !== true) throw new Error('受付停止中・テストモードのときだけ削除できます。');
  const {before} = await backup();
  for (const [name, n] of Object.entries(before)) if (n) console.log(`  ${name}: ${n} 件`);
@@ -104,7 +100,7 @@ async function main() {
   return;
  }
  if (command === 'stage' && STAGES[value]) {
-  if (value !== 'pause' && (await publicState())?.mode !== 'live') throw new Error('本番モードに切り替わってから受付を開いてください。');
+  if (value !== 'pause' && (await siteState())?.mode !== 'live') throw new Error('本番モードに切り替わってから受付を開いてください。');
   await writeConfigValues(STAGES[value]);
   console.log(`wrangler.jsonc を ${value} の設定にしました（${Object.entries(STAGES[value]).map(([name, text]) => `${name}=${text}`).join('、')}）。PR にしてマージすると反映されます。`);
   return;

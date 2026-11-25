@@ -70,5 +70,9 @@ node scripts/billing-cutover.mjs stage public     … 一般公開（人数の�
 
 ## 5. 止める・戻す
 
+- 非公開にする: `SUPPORTER_PREVIEW_OPEN=false`・`SUPPORTER_PUBLIC_ENABLED=false`・`SUPPORTER_REVIEW_ENABLED=false`（2026-11-25〜。許可リストの人と管理者以外には 404。審査用のパスワードは登録したまま止めている）
+- もう一度テスト公開するとき: `SUPPORTER_PREVIEW_OPEN=true`。審査担当者にだけ見せるとき: `SUPPORTER_REVIEW_ENABLED=true`
+- 正式公開のとき: 「開発者紹介」の案内（有料プランで応援する）を戻す
+
 - 新しい受付だけを止める: `node scripts/billing-cutover.mjs stage pause`（契約者の解約・支払い方法の変更・配信は続く）
 - 契約者がいる間は、モードをテストに戻さない（配信の設定が更新されなくなる）
