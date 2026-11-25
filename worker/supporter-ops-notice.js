@@ -5,6 +5,7 @@
 const CHANNELS=Object.freeze({billing:'BILLING_NOTICE_WEBHOOK',membership:'MEMBERSHIP_NOTICE_WEBHOOK'});
 const COLORS=Object.freeze({info:0x3b82f6,good:0x16a34a,warn:0xf59e0b,bad:0xdc2626,quiet:0x6b7280});
 const MAX_ATTEMPTS=20;
+export const ADMIN_EMAIL_NOTICE_KINDS=new Set(['disputed','fraud_warning']);
 export const yen=value=>`${Math.round(Number(value)||0).toLocaleString('ja-JP')}円`;
 // Discord の装飾・メンションとして働かない文字にする。
 const plain=(value,limit=200)=>String(value??'').replace(/[\r\n\t]+/g,' ').replace(/[`*_~|<>@\\[\]()#]/g,character=>({'<':'＜','>':'＞','@':'＠','[':'［',']':'］','(':'（',')':'）'}[character]||'')).trim().slice(0,limit);
@@ -22,8 +23,28 @@ export async function queueNotice(env,db,{id,channel,kind,title,lines=[],tone='i
   const payload=JSON.stringify({title:`${prefix}${plain(title,180)}`,description:lines.filter(line=>line!==null&&line!==undefined&&line!=='').map(line=>plain(line,300)).join('\n').slice(0,3800),color:COLORS[tone]??COLORS.info,at:Number(at)||0});
   const result=await db.prepare(`INSERT INTO supporter_ops_notices(id,channel,kind,payload_json,status,attempts,created_at,updated_at)
    VALUES(?,?,?,?,'pending',0,?,?) ON CONFLICT(id) DO NOTHING`).bind(id,channel,kind,payload,Number(at)||0,Number(at)||0).run();
+  if(ADMIN_EMAIL_NOTICE_KINDS.has(kind))await sendAdminNotice(env,db,{id,title:`${prefix}${plain(title,180)}`,description:lines.filter(Boolean).map(line=>plain(line,300)).join('\n')});
   return Number(result.meta?.changes||0)>0;
  }catch(error){console.error('Supporter ops notice could not be queued',{kind,errorName:error?.name||'Error'});return false;}
+}
+const validSingleEmail=value=>{const text=String(value||'').trim();return /^[^\s,@<>]+@[^\s,@<>]+\.[^\s,@<>]+$/.test(text)?text:'';};
+async function sendAdminNotice(env,db,{id,title,description}){
+ const to=validSingleEmail(env.CONTACT_TO_EMAIL),from=validSingleEmail(env.NOTICE_FROM_EMAIL);if(!to||!from||!env.NOTICE_EMAIL)return false;
+ const invoiceId=`ops:${id}`,kind='admin_notice',now=Math.floor(Date.now()/1000);
+ await db.prepare(`INSERT INTO supporter_billing_notifications(invoice_id,kind,status,updated_at) VALUES(?,?,'pending',?) ON CONFLICT DO NOTHING`).bind(invoiceId,kind,now).run();
+ const notice=await db.prepare('SELECT status,attempts,last_error,updated_at FROM supporter_billing_notifications WHERE invoice_id=? AND kind=?').bind(invoiceId,kind).first();if(notice?.status==='sent'||Number(notice?.attempts)>=5)return notice?.status==='sent';
+ const claim=await db.prepare(`UPDATE supporter_billing_notifications SET status='sending',attempts=attempts+1,last_error=NULL,updated_at=? WHERE invoice_id=? AND kind=? AND (status IN ('pending','failed') OR (status='sending' AND updated_at<=?))`).bind(now,invoiceId,kind,now-300).run();if(!claim.meta?.changes)return false;
+ const subject=`【重要・管理者向け】DPI-Bot 有料プラン：${title}`;
+ const text=['管理者向けの通知です。利用者には送られません。','',description,'','対応手順:','1. Stripe のダッシュボードで内容を確認してください。','2. 必要に応じて支払いと有料プランの状態を確認してください。','3. 対応内容を運営内で記録してください。','','Discord の「支払い」チャンネルにも同じ通知があります。','','-- DPI-Bot 運営通知'].join('\n');
+ try{await env.NOTICE_EMAIL.send({to,from:{email:from,name:'DPI-Bot'},subject,text,headers:{'Auto-Submitted':'auto-generated','Content-Language':'ja','X-DPI-Mail-Type':'supporter-admin-notice'}});}
+ catch(error){const first=String(notice?.last_error||'').match(/^(\d+):/)?.[1]||String(now);await db.prepare(`UPDATE supporter_billing_notifications SET status='failed',last_error=?,updated_at=? WHERE invoice_id=? AND kind=?`).bind(`${first}:${String(error?.name||'Error').slice(0,50)}`,now,invoiceId,kind).run();console.error('Supporter admin email failed',{kind,errorName:error?.name||'Error'});return false;}
+ try{await db.prepare(`UPDATE supporter_billing_notifications SET status='sent',sent_at=?,updated_at=? WHERE invoice_id=? AND kind=?`).bind(now,now,invoiceId,kind).run();}catch(error){console.error('Supporter admin email was sent but not recorded',{kind,errorName:error?.name||'Error'});}return true;
+}
+export async function retryAdminNotices(env,db,limit=25,now=Math.floor(Date.now()/1000)){
+ if(!validSingleEmail(env.CONTACT_TO_EMAIL)||!validSingleEmail(env.NOTICE_FROM_EMAIL)||!env.NOTICE_EMAIL)return 0;
+ const rows=await db.prepare(`SELECT n.invoice_id,n.last_error,n.updated_at,o.id,o.payload_json FROM supporter_billing_notifications n JOIN supporter_ops_notices o ON n.invoice_id=('ops:'||o.id) WHERE n.kind='admin_notice' AND n.status='failed' AND n.attempts<5 AND n.updated_at>=? ORDER BY n.updated_at LIMIT ?`).bind(now-3*86400,limit).all();let sent=0;
+ for(const row of rows.results||[]){const first=Number(String(row.last_error||'').match(/^(\d+):/)?.[1]||row.updated_at||0);if(!first||now-first>3*86400)continue;try{const payload=JSON.parse(row.payload_json);if(await sendAdminNotice(env,db,{id:row.id,title:payload.title,description:payload.description}))sent+=1;}catch(error){console.error('Supporter admin email retry failed',{errorName:error?.name||'Error'});}}
+ return sent;
 }
 function webhookUrl(env,channel){
  const value=String(env[CHANNELS[channel]]||'').trim();

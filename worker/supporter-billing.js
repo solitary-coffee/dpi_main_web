@@ -2,7 +2,7 @@ import { refreshSupporterSnapshotSafely } from './supporter-snapshot.js';
 import { getCustomPlan,customLocked,customPublic,enrichCustomSubscriptions,syncCustomWithStripe } from './supporter-custom.js';
 import { currentCustomChange,getCustomChange,commitCustomChange } from './supporter-custom-change.js';
 import { PLAN_FEATURES } from '../site/supporter/plan-features.js';
-import { flushNotices, jstDate, memberLabel, noticeCounts, queueMembershipNotice, queueNotice, suspendedCustomers, yen } from './supporter-ops-notice.js';
+import { flushNotices, jstDate, memberLabel, noticeCounts, queueMembershipNotice, queueNotice, retryAdminNotices, suspendedCustomers, yen } from './supporter-ops-notice.js';
 import { reconcileSupporterRolesSafely } from './supporter-roles.js';
 
 // 決済のモード。SUPPORTER_BILLING_MODE は 'test' と 'live' だけを受け付け、キーの種類（sk/rk_test_・sk/rk_live_）と
@@ -28,7 +28,8 @@ const json = (data,status=200)=>Response.json(data,{status,headers:{'Cache-Contr
 const fail=(message,status=400)=>{throw Object.assign(new Error(message),{status});};
 const clean=value=>String(value??'').trim();
 const invoiceSubscriptionId=invoice=>typeof invoice?.subscription==='string'?invoice.subscription:typeof invoice?.parent?.subscription_details?.subscription==='string'?invoice.parent.subscription_details.subscription:'';
-const safeInvoiceUrl=value=>{try{const url=new URL(clean(value));return url.protocol==='https:'&&['invoice.stripe.com','pay.stripe.com'].includes(url.hostname)?url.href:'';}catch{return '';}};
+const STRIPE_DOCUMENT_HOSTS=new Set(['invoice.stripe.com','pay.stripe.com','files.stripe.com']);
+const safeInvoiceUrl=value=>{try{const url=new URL(clean(value));return url.protocol==='https:'&&STRIPE_DOCUMENT_HOSTS.has(url.hostname)?url.href:'';}catch{return '';}};
 const stripeId=value=>typeof value==='string'?value:value?.id||'';
 async function idempotencyKey(prefix,value){
  const bytes=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(String(value??'')));
@@ -347,9 +348,7 @@ async function revokeCreditTopup(env,db,object,reason){
  await db.batch(statements);
  return {uid:topup.discord_user_id,removed:remove,status:topupStatus};
 }
-function stripeInvoiceUrl(value){
- try{const url=new URL(String(value||''));return url.protocol==='https:'&&['invoice.stripe.com','pay.stripe.com'].includes(url.hostname)?url.href:null;}catch{return null;}
-}
+const stripeInvoiceUrl=value=>safeInvoiceUrl(value)||null;
 // 契約の都度払い（初回・カスタムの差額）の支払い済み Checkout。請求書は無いが、領収書と返金状態は決済から取れる。
 async function planCheckoutPayments(env,customer){
  const result=await stripe(env,`checkout/sessions?customer=${encodeURIComponent(customer)}&limit=20&expand[]=data.payment_intent.latest_charge`);
@@ -388,10 +387,16 @@ async function dunningState(db,customer){
   ORDER BY CASE WHEN status='suspended' AND invoice_id LIKE 'hold:dispute:%' THEN 0 WHEN status='suspended' THEN 1 ELSE 2 END,initial_failed_at DESC LIMIT 1`).bind(customer).first();
  return {reason:String(row?.invoice_id||'').startsWith(DISPUTE_PREFIX)?'dispute':'payment',usageSuspended:row?.status==='suspended',status:row?.status||null,retryAt:unix(row?.retry_at),suspendAt:unix(row?.suspend_at)};
 }
-function billingMailContent(kind,invoice,retryAt,suspendAt){
+const mailDate=value=>new Intl.DateTimeFormat('ja-JP',{dateStyle:'long',timeStyle:'medium',timeZone:'Asia/Tokyo'}).format(new Date(Number(value)*1000));
+function supporterMailSignature(env){
+ return ['----------------------------------------','DPI-Bot（Disaster prevention information provision BOT）','運営: 孤独のコーヒー','公式サイト: https://dpi-bot.com/','契約・支払い方法の管理: https://dpi-bot.com/site/supporter/','お問い合わせ: https://dpi-bot.com/site/supp/index.html',
+  ...(clean(env.NOTICE_REPLY_TO_EMAIL)?[`メール: ${clean(env.NOTICE_REPLY_TO_EMAIL)}`]:[]),'公式サポートサーバー: https://discord.gg/qFuZcGUb4K','利用規約: https://dpi-bot.com/terms/terms.html','特定商取引法に基づく表記: https://dpi-bot.com/terms/Specified.html','プライバシーポリシー: https://dpi-bot.com/terms/policy.html',
+  '※このメールは有料プランのお支払い・契約に関する重要なお知らせのため、配信停止の設定にかかわらずお送りしています。','※お心当たりがない場合は、お手数ですが上記のお問い合わせ先へご連絡ください。','----------------------------------------'].join('\n');
+}
+function billingMailContent(env,kind,invoice,retryAt,suspendAt,sentAt){
  const amount=new Intl.NumberFormat('ja-JP',{style:'currency',currency:clean(invoice.currency||'jpy').toUpperCase(),maximumFractionDigits:0}).format(Number(invoice.amount_paid||invoice.amount_due||invoice.total||0));
  const date=value=>value?new Intl.DateTimeFormat('ja-JP',{dateStyle:'long',timeStyle:'short',timeZone:'Asia/Tokyo'}).format(new Date(Number(value)*1000)):'—';
- const number=clean(invoice.number)||clean(invoice.id);const url=safeInvoiceUrl(invoice.hosted_invoice_url);
+ const number=clean(invoice.number)||clean(invoice.id);
  const definitions={
   payment_succeeded:['【DPI-Bot】お支払い完了のお知らせ',[`DPI-Bot有料プランのお支払いが完了しました。`,`請求額: ${amount}`,`請求書: ${number}`]],
   retry_succeeded:['【DPI-Bot】再決済完了のお知らせ',[`月末の再決済が完了しました。引き続き有料プランをご利用いただけます。`,`請求額: ${amount}`,`請求書: ${number}`]],
@@ -403,9 +408,35 @@ function billingMailContent(kind,invoice,retryAt,suspendAt){
   credit_plan_payment_succeeded:['【DPI-Bot】クレジット払いによるプラン申込み完了のお知らせ',[`チャージ済みクレジットによる有料プランのお申込みが完了しました。`,`使用クレジット: ${Number(invoice.amount_paid||0).toLocaleString('ja-JP')}クレジット`,`次回更新日: ${date(invoice.next_renewal_at)}`,'今回の申込みではカード情報を入力していません。次回請求時にクレジットが不足する場合は、契約管理画面から支払方法を登録してください。']],
   credit_expired:['【DPI-Bot】クレジット有効期限切れのお知らせ',[`購入クレジットの有効期限が終了しました。`,`失効クレジット: ${Number(invoice.amount_due||0).toLocaleString('ja-JP')}クレジット`,`失効日時: ${date(invoice.expires_at)}`,'有効期限を過ぎた未使用分は利用規約に基づき失効し、原則として払戻しまたは再発行を行いません。']],
  };
- const [subject,lines]=definitions[kind];if(url)lines.push(`請求書・支払方法の確認: ${url}`);
- lines.push('','----------------------------------------','DPI-Bot 運営','公式サイト: https://dpi-bot.com/','公式サポートサーバー: https://discord.gg/qFuZcGUb4K');
+ const [subject,body]=definitions[kind];const links=[];
+ if(safeInvoiceUrl(invoice.hosted_invoice_url))links.push(`請求書（画面）: ${safeInvoiceUrl(invoice.hosted_invoice_url)}`);
+ if(safeInvoiceUrl(invoice.invoice_pdf))links.push(`請求書（PDF）: ${safeInvoiceUrl(invoice.invoice_pdf)}`);
+ if(safeInvoiceUrl(invoice.receipt_url))links.push(`領収書: ${safeInvoiceUrl(invoice.receipt_url)}`);
+ const management='お支払い・請求書の確認: https://dpi-bot.com/site/supporter/';
+ if(['payment_failed','final_failed'].includes(kind))body.push(management);
+ if(links.length)body.push(...links);else if((invoice.link_lookup_failed&&!body.includes(management))||kind==='credit_plan_payment_succeeded')body.push(kind==='credit_plan_payment_succeeded'?'お支払いの内容は契約・支払い方法の管理から確認できます':management);
+ const lines=['DPI-Bot 有料プランをご利用いただき、ありがとうございます。','',...body,'',`通知番号: ${clean(invoice.id)}`,`送信日時（日本時間）: ${mailDate(sentAt)}`,'',supporterMailSignature(env)];
  return {subject,text:lines.join('\n')};
+}
+async function billingLinkGet(env,path,deadline){
+ const remaining=deadline-Date.now();if(remaining<=0)throw new Error('billing link timeout');
+ const response=await fetch(`https://api.stripe.com/v1/${path}`,{headers:{Authorization:`Bearer ${env.STRIPE_SECRET_KEY}`,'Stripe-Version':'2026-09-30.endive'},signal:AbortSignal.timeout(Math.max(1,remaining))});
+ if(!response.ok)throw new Error(`billing link lookup ${response.status}`);return response.json();
+}
+async function enrichBillingLinks(env,kind,source){
+ const invoice={...source},id=clean(source.id);let gets=0,failed=false;const deadline=Date.now()+8000;
+ const get=async path=>{if(gets>=2)throw new Error('billing link lookup limit');gets+=1;return billingLinkGet(env,path,deadline);};
+ try{
+  if(id.startsWith('in_')){
+   const paid=['payment_succeeded','retry_succeeded'].includes(kind);let detail=source;
+   if(!safeInvoiceUrl(source.hosted_invoice_url)||!safeInvoiceUrl(source.invoice_pdf)||paid)detail=await get(`invoices/${encodeURIComponent(id)}?expand[]=payments.data.payment.payment_intent`);
+   invoice.hosted_invoice_url=safeInvoiceUrl(source.hosted_invoice_url)||safeInvoiceUrl(detail.hosted_invoice_url);invoice.invoice_pdf=safeInvoiceUrl(source.invoice_pdf)||safeInvoiceUrl(detail.invoice_pdf);
+   if(paid){const payment=(detail.payments?.data||[]).find(item=>item?.payment?.payment_intent)?.payment?.payment_intent;let intent=typeof payment==='object'?payment:null;const intentId=stripeId(payment);if(intentId&&!safeInvoiceUrl(intent?.latest_charge?.receipt_url))intent=await get(`payment_intents/${encodeURIComponent(intentId)}?expand[]=latest_charge`);invoice.receipt_url=safeInvoiceUrl(intent?.latest_charge?.receipt_url);}
+  }else if(id.startsWith('cs_')&&['payment_succeeded','credit_topup_succeeded'].includes(kind)){
+   const session=await get(`checkout/sessions/${encodeURIComponent(id)}?expand[]=payment_intent.latest_charge`);let intent=session.payment_intent;const intentId=stripeId(intent);if(intentId&&!safeInvoiceUrl(intent?.latest_charge?.receipt_url))intent=await get(`payment_intents/${encodeURIComponent(intentId)}?expand[]=latest_charge`);invoice.receipt_url=safeInvoiceUrl(intent?.latest_charge?.receipt_url);
+  }
+ }catch(error){failed=true;console.error('Supporter billing links are unavailable',{invoiceId:id,kind,errorName:error?.name||'Error'});}
+ invoice.link_lookup_failed=failed;return invoice;
 }
 export async function sendBillingNotification(env,db,kind,invoice,retryAt=null,suspendAt=null){
  const customer=typeof invoice.customer==='string'?invoice.customer:invoice.customer?.id;if(!customer)return;
@@ -417,7 +448,8 @@ export async function sendBillingNotification(env,db,kind,invoice,retryAt=null,s
  const claim=await db.prepare(`UPDATE supporter_billing_notifications SET status='sending',attempts=attempts+1,last_error=NULL,updated_at=?
   WHERE invoice_id=? AND kind=? AND (status IN ('pending','failed') OR (status='sending' AND updated_at<=?))`).bind(now,invoiceId,kind,now-300).run();
  if(!claim.meta?.changes)return;
- const content=billingMailContent(kind,invoice,retryAt,suspendAt);
+ const linked=await enrichBillingLinks(env,kind,invoice);
+ const content=billingMailContent(env,kind,linked,retryAt,suspendAt,now);
  try{
   await env.NOTICE_EMAIL.send({to:account.billing_email,from:{email:clean(env.NOTICE_FROM_EMAIL),name:'DPI-Bot'},subject:content.subject,text:content.text,...(clean(env.NOTICE_REPLY_TO_EMAIL)?{replyTo:clean(env.NOTICE_REPLY_TO_EMAIL)}:{}),headers:{'Auto-Submitted':'auto-generated','Content-Language':'ja','X-DPI-Mail-Type':`supporter-${kind}`}});
  }catch(error){
@@ -436,7 +468,7 @@ async function sendBillingNotificationSafely(env,db,kind,invoice,retryAt=null,su
   console.error('Supporter billing email failed',{invoiceId:clean(invoice?.id),kind,errorName:error?.name||'Error'});
  }
 }
-function disciplinaryMailContent(kind,details){
+function disciplinaryMailContent(env,kind,details,sentAt){
  const reason=clean(details.reason)||'管理上の措置';
  const credits=Math.max(0,Number(details.confiscatedCredits)||0).toLocaleString('ja-JP');
  const canceled=Math.max(0,Number(details.canceledSubscriptions)||0).toLocaleString('ja-JP');
@@ -457,8 +489,7 @@ function disciplinaryMailContent(kind,details){
   ]],
  };
  const [subject,lines]=definitions[kind]||[];if(!subject)fail('通知メール種別を確認できません。',500);
- lines.push('','----------------------------------------','DPI-Bot 運営','公式サイト: https://dpi-bot.com/','公式サポートサーバー: https://discord.gg/qFuZcGUb4K');
- return{subject,text:lines.join('\n')};
+ return{subject,text:['DPI-Bot 有料プランの利用者の方へ、大切なお知らせです。','',...lines,'',`通知番号: discipline:${clean(details.requestId)}`,`送信日時（日本時間）: ${mailDate(sentAt)}`,'',supporterMailSignature(env)].join('\n')};
 }
 export async function sendSupporterDisciplinaryNotification(env,db,kind,details){
  const requestId=clean(details.requestId),uid=clean(details.uid),email=clean(details.email);
@@ -469,7 +500,7 @@ export async function sendSupporterDisciplinaryNotification(env,db,kind,details)
  const claim=await db.prepare(`UPDATE supporter_billing_notifications SET status='sending',attempts=attempts+1,last_error=NULL,updated_at=?
   WHERE invoice_id=? AND kind=? AND (status IN ('pending','failed') OR (status='sending' AND updated_at<=?))`).bind(now,noticeId,kind,now-300).run();
  if(!claim.meta?.changes)return notice?.status==='sent';
- const content=disciplinaryMailContent(kind,details);
+ const content=disciplinaryMailContent(env,kind,details,now);
  try{
   await env.NOTICE_EMAIL.send({to:email,from:{email:clean(env.NOTICE_FROM_EMAIL),name:'DPI-Bot'},subject:content.subject,text:content.text,...(clean(env.NOTICE_REPLY_TO_EMAIL)?{replyTo:clean(env.NOTICE_REPLY_TO_EMAIL)}:{}),headers:{'Auto-Submitted':'auto-generated','Content-Language':'ja','X-DPI-Mail-Type':`supporter-${kind}`}});
   await db.prepare(`UPDATE supporter_billing_notifications SET status='sent',sent_at=?,updated_at=? WHERE invoice_id=? AND kind=?`).bind(now,now,noticeId,kind).run();
@@ -1608,7 +1639,7 @@ async function queueEventNotices(env,db,event){
    const row=await db.prepare('SELECT kind,outcome,customer_id,amount FROM supporter_payment_alerts WHERE event_id=?').bind(event.id).first();
    const member=row?.customer_id?await memberLabel(db,row.customer_id):null;
    if(!member)return;
-   const label={refunded:'返金',disputed:'支払異議',dispute_closed:'支払異議の終了',fraud_warning:'不正の警告'}[alert];
+   const label={refunded:'返金',disputed:'支払異議の申立て',dispute_closed:'支払異議の終了',fraud_warning:'不正の警告'}[alert];
    await queueNotice(env,db,{id:`${event.id}:${alert}`,channel:'billing',kind:alert,title:label,tone:alert==='refunded'?'quiet':'bad',at,lines:[`利用者: ${member.text}`,row.amount?`金額: ${yen(row.amount)}`:'',row.outcome?`状態: ${row.outcome}`:'']});
    return;
   }
@@ -1943,6 +1974,7 @@ async function runBillingScheduleTasks(env,db,nowMs){
    if(restored)await sendBillingNotification(env,db,row.kind,restored.invoice,restored.retryAt,restored.suspendAt);
   }catch(error){console.error('Supporter billing email retry failed',{invoiceId:row.invoice_id,kind:row.kind,errorName:error?.name||'Error'});}
  }
+ try{await retryAdminNotices(env,db,25,now);}catch(error){console.error('Supporter admin email retry failed',{errorName:error?.name||'Error'});}
  const disciplinaryNotices=await db.prepare(`SELECT d.request_id,d.discord_user_id,d.action,d.reason,d.canceled_subscriptions,d.confiscated_credits,a.billing_email
   FROM supporter_disciplinary_actions d JOIN supporter_accounts a ON a.discord_user_id=d.discord_user_id
   WHERE d.status='completed' AND d.email_status IN ('pending','failed') ORDER BY d.updated_at LIMIT 25`).all();
