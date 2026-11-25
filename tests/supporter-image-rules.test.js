@@ -213,7 +213,7 @@ test('comparison table lists the image delivery rows with the plan split (custom
  const [html,css]=await Promise.all(['plans.html','plans.css'].map(file=>readFile(new URL('../site/supporter/'+file,import.meta.url),'utf8')));
  assert.doesNotMatch(html,/準備中/);
  assert.match(html,/選んだ地域が発表の対象に含まれるときだけ配信します/);
- const row=(kind,label)=>{const body=html.match(new RegExp(`<th scope="rowgroup"[^>]*>${kind}</th>[\\s\\S]*?</tbody>`))?.[0]||'';return body.match(new RegExp(`<th scope="row">${label}[^<]*</th>((?:<td>[^<]*</td>){4})`))?.[1].match(/<td>([^<]*)<\/td>/g).map(cell=>cell.replace(/<\/?td>/g,''));};
+ const row=(kind,label)=>{const body=html.match(new RegExp(`<th scope="rowgroup"[^>]*>${kind}(?:<a[^>]*>※</a>)?</th>[\\s\\S]*?</tbody>`))?.[0]||'';return body.match(new RegExp(`<th scope="row">${label}[^<]*(?:<a[^>]*>※</a>)?</th>((?:<td>[^<]*</td>){4})`))?.[1].match(/<td>([^<]*)<\/td>/g).map(cell=>cell.replace(/<\/?td>/g,''));};
  const C='契約による';
  for(const [kind,label,expected] of [
   ['緊急地震速報（警報）の図','全国',['○','○','○','○']],['緊急地震速報（警報）の図','地方',['—','○','○',C]],
@@ -235,7 +235,7 @@ test('comparison table lists the image delivery rows with the plan split (custom
  for(const body of html.match(/<tbody>\s*<tr><th scope="rowgroup"[\s\S]*?<\/tbody>/g))
   assert.equal(Number(body.match(/rowspan="(\d+)"/)[1]),(body.match(/<tr>/g)||[]).length,body.slice(0,120));
  // Every row of the custom column is decided by the contract (price and add-ons excepted).
- const rows=[...html.matchAll(/<th scope="row">([^<]*)<\/th>((?:<td>[^<]*<\/td>){4})/g)];
+ const rows=[...html.matchAll(/<th scope="row">([^<]*)(?:<a[^>]*>※<\/a>)?<\/th>((?:<td>[^<]*<\/td>){4})/g)];
  assert.ok(rows.length>30);
  const cell=text=>text.match(/<td>([^<]*)<\/td>/g).map(value=>value.replace(/<\/?td>/g,''));
  assert.deepEqual(cell(rows.find(([,label])=>label==='月額（税込）')[2]),['300円','800円','1,280円','個別']);
@@ -245,8 +245,8 @@ test('comparison table lists the image delivery rows with the plan split (custom
   assert.equal(cell(values)[3],cell(values)[0]==='○'?'○':C,label);
  }
  // 緊急地震速報は予報と警報を分け、予報に警報限定条件や市区町村を出さない
- const forecast=html.match(/<th scope="rowgroup"[^>]*>緊急地震速報（予報）<\/th>[\s\S]*?<\/tbody>/)[0];
- const warning=html.match(/<th scope="rowgroup"[^>]*>緊急地震速報（警報）<\/th>[\s\S]*?<\/tbody>/)[0];
+ const forecast=html.match(/<th scope="rowgroup"[^>]*>緊急地震速報（予報）(?:<a[^>]*>※<\/a>)?<\/th>[\s\S]*?<\/tbody>/)[0];
+ const warning=html.match(/<th scope="rowgroup"[^>]*>緊急地震速報（警報）(?:<a[^>]*>※<\/a>)?<\/th>[\s\S]*?<\/tbody>/)[0];
  assert.doesNotMatch(forecast,/警報の対象地方の条件|市区町村/);
  assert.doesNotMatch(warning,/市区町村/);
  assert.doesNotMatch(html,/予報・警報の選択/);
