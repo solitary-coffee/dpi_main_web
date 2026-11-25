@@ -45,6 +45,8 @@
 .delivery-category>p{margin:0 16px 16px;color:var(--muted);font-size:.88rem}
 .comparison-notices{margin-top:28px;padding:18px 22px 24px;border:1px solid var(--line);border-radius:8px;background:var(--panel)}
 .comparison-notices h2{margin-top:3px}
+.comparison-notices h3{margin:18px 0 6px;color:#8ec9ff;font-size:1.02rem}.comparison-notices ul{margin:0 0 4px;padding-left:1.4em}.comparison-notices li{margin:7px 0;color:var(--text);line-height:1.7;overflow-wrap:anywhere}
+.comparison-notices .comparison-main-link{margin-top:16px}
 .comparison-notices p{color:var(--muted);margin:12px 0;overflow-wrap:anywhere}
 @media(max-width:900px){.delivery-grid{grid-template-columns:1fr}}
 @media(max-width:768px){

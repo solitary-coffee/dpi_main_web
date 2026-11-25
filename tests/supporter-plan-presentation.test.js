@@ -40,6 +40,9 @@ test('prefecture and Hokkaido shinko-kyoku-equivalent detail share one row',asyn
  assert.match(html,/<th scope="row">都道府県<\/th>/);
  assert.doesNotMatch(html,/<th scope="row">北海道内の地方区分<\/th>/);
  assert.match(html,/行政上の振興局区分との完全一致を保証するものではありません/);
+ // 選択前の案内は、実際の料金・停止・解約・地域の仕様と一致する
+ const notes=html.slice(html.indexOf('id="comparison-notes-heading"'),html.indexOf('dpi-public-footer:start'));
+ for(const text of ['毎月26日','2か月分','月末に1回再請求','翌月1日0時に配信を停止','停止から1か月で自動的に解約','チャンネル3件・サーバー2件・ルール3件','次回26日から反映し、返金はありません','一覧の下から順に削除','緊急地震速報は都道府県まで','ウェブフックの管理','二次利用申請','/terms/Specified.html'])assert.ok(notes.includes(text),text);
 });
 
 test('radar rates and rainfall conditions reflect current selectable Worker values',async()=>{
@@ -84,4 +87,25 @@ test('new add-on presentation and weather list reflect the revised contract',asy
  assert.match(weather,/<li>台風情報<\/li>/);
  assert.match(weather,/<li>気象解説情報（潮位）<\/li>/);
  assert.ok((weather.match(/<li>/g)||[]).length>=19);
+});
+
+test('規約・ポリシー・特商法は、番号ごとに段落が分かれる（1行にまとまって表示されない）',async()=>{
+ for(const file of ['terms/terms.md','terms/policy.md','terms/spec.md']){
+  const lines=(await read(file)).replace(/\r\n/g,'\n').split('\n');
+  lines.forEach((line,index)=>{
+   if(!/^(?:\d+[.．]|・\d{4}年)/.test(line)||index===0)return;
+   const before=lines[index-1];
+   assert.ok(!before.trim()||before.startsWith('#'),`${file}:${index+1} ${line.slice(0,20)}`);
+  });
+ }
+});
+
+test('カスタムは Basic の機能を必ず含み、未払いでも停止までは機能を保つ',async()=>{
+ const {planFeatures,PLAN_FEATURE_NAMES}=await import('../site/supporter/plan-features.js');
+ const custom=status=>planFeatures([{status,recognizedPlan:true,planId:'custom',managedCustom:true,customFeatures:['weatherMap']}]);
+ for(const status of ['active','trialing','past_due','unpaid','paused']){
+  assert.equal(custom(status).weatherMap,true,status);
+  for(const name of PLAN_FEATURE_NAMES.supporter)assert.equal(custom(status)[name],true,`${status} ${name}`);
+ }
+ assert.equal(custom('canceled').eewMap,false);
 });

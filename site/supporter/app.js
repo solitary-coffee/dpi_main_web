@@ -1,4 +1,4 @@
-import { planFeatures, imageTypeAllowed, PLAN_FEATURES } from './plan-features.js';
+import { planFeatures, imageTypeAllowed } from './plan-features.js';
 import { PREVIEW_BASE, attachPreview } from './preview-lightbox.js';
 
 let session;
@@ -715,27 +715,8 @@ function imageRuleFields(article,rule){
  previewImages(box,rulePreviews(rule));
 }
 
-// One line above the rules: which image deliveries this plan has and which plan adds the rest.
-function updateImageRulesNote(){
- const note=$('image-rules-note');
- if(!note)return;
- if(options?.imageRulesEnabled!==true){note.classList.add('hidden');return;}
- const types=options.imageRuleTypes||IMAGE_TYPES;
- const available=types.filter(([id])=>imageTypeAllowed(entitlements,id)).map(([,text])=>text);
- const isProOnly=id=>!imageTypeAllowed(PLAN_FEATURES.plus,id);
- const missing=types.filter(([id])=>!imageTypeAllowed(entitlements,id)&&!isProOnly(id)).map(([,text])=>text);
- const proOnly=types.filter(([id])=>!imageTypeAllowed(entitlements,id)&&isProOnly(id)).map(([,text])=>text);
- note.textContent=(available.length?`画像配信：${available.join('・')}を利用できます。`:'')
-  +(missing.length?`${missing.join('・')}はPlus以上で使えます。`:'')
-  +(proOnly.length?`${proOnly.join('・')}はProで使えます。`:'')
-  +(entitlements.tsunamiMapNational&&!entitlements.tsunamiMap?'津波は全国の地図だけを利用できます（地方・表・津波観測の表はPlus以上）。':'')
-  +'画像配信ルールでは追加条件・OR条件は使用しません。';
- note.classList.remove('hidden');
-}
-
 function render() {
  $('rules').replaceChildren();
- if(options)updateImageRulesNote();
  if(!hasConfigurableContract)return;
  rules.forEach((rule, index) => {
   const article = document.createElement('article');
@@ -835,7 +816,6 @@ async function load() {
  }
  $('user').textContent = session.user.username;
  options = await api('/api/supporter/options');
- updateImageRulesNote();
  try{const data=await api('/api/supporter/areas');areaCatalogue={municipalities:data.municipalities||[],districts:data.districts||[]};areaCatalogueFailed=false;}
  catch(error){areaCatalogue={municipalities:[],districts:[]};areaCatalogueFailed=true;status(error.message);}
  const {account,billingEnabled,intakePaused} = await api('/api/supporter/account');

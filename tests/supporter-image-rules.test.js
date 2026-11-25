@@ -39,7 +39,9 @@ test('plan features are defined once and attached to the plan catalogue',()=>{
  assert.equal(planFeatures([{...active('pro'),status:'canceled'}]).imageDelivery,false);
  assert.equal(planFeatures([{...active('pro'),recognizedPlan:false}]).imageDelivery,false);
  assert.equal(planFeatures([{...active('plus'),status:'past_due'}]).rainfallThreshold,true);
- assert.equal(planFeatures([custom({status:'past_due'})]).imageDelivery,false);
+ // 未払いでも、翌月1日0時の停止までは標準プランと同じく機能を保つ
+ assert.equal(planFeatures([custom({status:'past_due'})]).imageDelivery,true);
+ assert.equal(planFeatures([custom({status:'canceled'})]).imageDelivery,false);
  assert.equal(hasFeature(planFeatures([active('plus')]),'hiresRadarThreshold'),false);
  assert.equal(imageTier([active('supporter')]),'supporter');
  assert.equal(imageTier([]),'');
@@ -214,16 +216,19 @@ test('comparison table lists the image delivery rows with the plan split (custom
  const row=(kind,label)=>{const body=html.match(new RegExp(`<th scope="rowgroup"[^>]*>${kind}</th>[\\s\\S]*?</tbody>`))?.[0]||'';return body.match(new RegExp(`<th scope="row">${label}[^<]*</th>((?:<td>[^<]*</td>){4})`))?.[1].match(/<td>([^<]*)<\/td>/g).map(cell=>cell.replace(/<\/?td>/g,''));};
  const C='契約による';
  for(const [kind,label,expected] of [
-  ['緊急地震速報（警報）の図','全国',['○','○','○',C]],['緊急地震速報（警報）の図','地方',['—','○','○',C]],
+  ['緊急地震速報（警報）の図','全国',['○','○','○','○']],['緊急地震速報（警報）の図','地方',['—','○','○',C]],
   ['気象警報・注意報の地図','全国・地方',['—','○','○',C]],['気象警報・注意報の地図','都道府県・市区町村',['—','—','○',C]],
   ['気象警報・注意報の表','全国',['—','○','○',C]],['気象警報・注意報の表','地方',['—','—','○',C]],['気象警報・注意報の表','発表のたびに配信',['—','—','○',C]],
   ['気象警報・注意報の時系列予想','地方',['—','—','○',C]],['気象警報・注意報の時系列予想','発表のたびに配信',['—','—','○',C]],
   ['雨雲レーダー（高解像度版）','配信頻度の選択',['—','○','○',C]],['雨雲レーダー（高解像度版）','1時間先までの予想',['—','—','○',C]],['雨雲レーダー（高解像度版）','配信頻度の自由な指定',['—','—','○',C]],
-  ['雨雲レーダー（簡略版）','地方',['○','○','○',C]],['雨雲レーダー（簡略版）','配信頻度・降雨検知',['○','○','○',C]],['雨雲レーダー（簡略版）','降水量のしきい値',['—','○','○',C]],
+  ['雨雲レーダー（簡略版）','地方',['○','○','○','○']],['雨雲レーダー（簡略版）','配信頻度・降雨検知',['○','○','○','○']],['雨雲レーダー（簡略版）','降水量のしきい値',['—','○','○',C]],
   ['雨雲レーダー（高解像度版）','全国・地方',['—','○','○',C]],['雨雲レーダー（高解像度版）','降水量のしきい値',['—','—','○',C]],
-  ['津波','地図（全国）',['○','○','○',C]],['津波','地図（地方）',['—','○','○',C]],['津波','表（満潮時刻を含む）',['—','○','○',C]],
+  ['津波','地図（全国）',['○','○','○','○']],['津波','地図（地方）',['—','○','○',C]],['津波','表（満潮時刻を含む）',['—','○','○',C]],
   ['津波','津波観測の表',['—','○','○',C]],['津波','発表地域の拡大図',['—','—','○',C]],
-  ['配信条件','AND・OR',['—','—','○',C]],['対象地域','都道府県',['—','○','○',C]],['対象地域','市区町村',['—','—','○',C]],
+  ['組み合わせ・配信先','AND・OR',['—','—','○',C]],['組み合わせ・配信先','1つのルールから複数チャンネル',['—','—','○',C]],
+  ['地震情報','情報の種類',['○','○','○','○']],['地震情報','全国・地方',['○','○','○','○']],['地震情報','震度・マグニチュード',['○','○','○','○']],['地震情報','都道府県',['—','○','○',C]],['地震情報','市区町村',['—','—','○',C]],['地震情報','市区町村の本文だけ',['—','—','○',C]],
+  ['緊急地震速報','予報・警報',['○','○','○','○']],['緊急地震速報','全国・地方',['○','○','○','○']],['緊急地震速報','最終報',['○','○','○','○']],['緊急地震速報','都道府県',['—','○','○',C]],
+  ['気象情報','警戒レベル',['○','○','○','○']],['気象情報','都道府県',['—','○','○',C]],['気象情報','市区町村',['—','—','○',C]],
  ])assert.deepEqual(row(kind,label),expected,`${kind} ${label}`);
  // 種類の見出し（rowspan）と、その行数が合っている
  for(const body of html.match(/<tbody>\s*<tr><th scope="rowgroup"[\s\S]*?<\/tbody>/g))
@@ -233,7 +238,13 @@ test('comparison table lists the image delivery rows with the plan split (custom
  assert.ok(rows.length>30);
  const cell=text=>text.match(/<td>([^<]*)<\/td>/g).map(value=>value.replace(/<\/?td>/g,''));
  assert.deepEqual(cell(rows.find(([,label])=>label==='月額（税込）')[2]),['300円','800円','1,280円','個別']);
- for(const [,label,values] of rows)if(!label.startsWith('月額')&&!label.startsWith('追加'))assert.equal(cell(values)[3],C,label);
+ // カスタムは、Basic で使えるものは○（必ず含む）、それ以外は契約による。
+ for(const [,label,values] of rows){
+  if(['月額（税込）','サーバー','チャンネル','ルール'].includes(label)||label.startsWith('追加'))continue;
+  assert.equal(cell(values)[3],cell(values)[0]==='○'?'○':C,label);
+ }
+ // 緊急地震速報は市区町村を指定できない
+ assert.doesNotMatch(html.match(/<th scope="rowgroup"[^>]*>緊急地震速報<\/th>[\s\S]*?<\/tbody>/)[0],/市区町村/);
  assert.equal(cell(rows.find(([,label])=>label.startsWith('追加'))[2])[3],'個別');
 });
 
@@ -243,7 +254,7 @@ test('dashboard offers image types only when the server enables them',async()=>{
  assert.match(app,/function imageRuleFields\(article,rule\)/);
  for(const key of ['linearRainband','includeTables','enlargedArea','municipalityDetail','minSeverity','hiresRadarThresholds','weatherMapProducts'])assert.ok(app.includes(key),key);
  assert.match(app,/Pro以上/);
- assert.match(html,/id="image-rules-note" class="rules-lock hidden"/);
+ assert.doesNotMatch(html,/image-rules-note|画像配信ルールでは追加条件/);
 });
 
 test('flag off keeps an unchanged stored image rule but refuses new or edited ones',()=>{

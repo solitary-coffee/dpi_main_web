@@ -3,7 +3,7 @@
 // Every feature (text-rule options and each image option) is set per contract in
 // features_json (sorted names from site/supporter/plan-features.js, migrations/0032).
 // The legacy boolean columns are kept in sync for older readers and the price estimate.
-import {FEATURE_NAMES,featureLabel,legacyCustomFeatureNames,missingFeatureDependency,sortFeatureNames} from '../site/supporter/plan-features.js';
+import {FEATURE_NAMES,featureLabel,legacyCustomFeatureNames,missingFeatureDependency,sortFeatureNames,withBasicFeatures} from '../site/supporter/plan-features.js';
 export const CUSTOM_LOCKED_STATUSES=new Set(['offered','active']);
 const ACTIVE=new Set(['active','trialing']); // past_due/unpaid never grant new custom access
 // 提供中のカスタムは標準プランと同じく、未払い・一時停止でも翌月1日0時（supporter_dunning の停止）までは配信する。
@@ -25,7 +25,7 @@ export function estimateCustomMonthly(input){
 function customFeatureInput(input){
  if(input.features!==undefined&&input.features!==null){
   if(!Array.isArray(input.features)||input.features.some(name=>!FEATURE_NAMES.includes(name)))message('カスタムプランの機能の指定を確認してください。');
-  return sortFeatureNames(input.features);
+  return withBasicFeatures(input.features);
  }
  if(input.contentExtraction===true&&input.municipalityBranching!==true)message('配信抽出には市区町村分岐を有効にしてください。');
  return legacyCustomFeatureNames({complexConditions:input.complexConditions===true,municipalityBranching:input.municipalityBranching===true,

@@ -151,10 +151,11 @@ test('snapshot: Basic sends only the national maps; downgrades narrow, never wid
  assert.deepEqual(off.rules.map(rule=>rule.type),['tsunami-map']);
 });
 
-test('custom: every feature is set per contract',async()=>{
+test('custom: includes every Basic feature, the rest is set per contract',async()=>{
  const only=custom(['eewMap','warningTableTimeseries','complexConditions']);
  const features=planFeatures([only]);
- assert.deepEqual(featureList(features),['complexConditions','eewMap','warningTableTimeseries']);
+ assert.deepEqual(featureList(features),['complexConditions','eewMap','tsunamiMapNational','warningTableTimeseries']);
+ assert.deepEqual(featureList(planFeatures([custom([])])),[...PLAN_FEATURE_NAMES.supporter].sort());
  assert.equal(imageTypeAllowed(features,'warning-table'),false);
  assert.equal(imageTypeAllowed(features,'warning-timeseries'),true);
  assert.equal(imageTypeAllowed(features,'hires-radar'),false);
@@ -164,7 +165,7 @@ test('custom: every feature is set per contract',async()=>{
  assert.throws(()=>save([{...eew,regions:['tohoku']}],limits),/Plus以上/);
  const snapshot=await build(only);
  assert.deepEqual(snapshot.rules.map(rule=>[rule.type,rule.tier]),[['eew-map','custom']]);
- assert.deepEqual(snapshot.rules[0].features,['complexConditions','eewMap','warningTableTimeseries']);
+ assert.deepEqual(snapshot.rules[0].features,['complexConditions','eewMap','tsunamiMapNational','warningTableTimeseries']);
  // Legacy custom summaries (no customFeatures) keep matching Pro for images.
  assert.equal(planFeatures([{...only,customFeatures:undefined}]).hiresRadarThreshold,true);
 });
@@ -172,12 +173,12 @@ test('custom: every feature is set per contract',async()=>{
 test('custom contract: normalize, legacy columns and dependency checks',()=>{
  const input={name:'協定',channels:3,servers:1,rules:5,monthlyYen:500,secondaryReuse:false};
  const plan=normalizeCustomPlan({...input,features:['strictMunicipality','municipalityScope','prefectureScope','eewMap']});
- assert.deepEqual(plan.features,['eewMap','municipalityScope','prefectureScope','strictMunicipality']);
+ assert.deepEqual(plan.features,['eewMap','municipalityScope','prefectureScope','strictMunicipality','tsunamiMapNational']);
  assert.deepEqual([plan.municipalityBranching,plan.contentExtraction,plan.complexConditions,plan.multiDestination],[true,true,false,false]);
  assert.throws(()=>normalizeCustomPlan({...input,features:['strictMunicipality']}),/市区町村/);
  assert.throws(()=>normalizeCustomPlan({...input,features:['hiresRadarThreshold']}),/雨雲レーダー/);
  assert.throws(()=>normalizeCustomPlan({...input,features:['unknownFeature']}),/機能/);
- assert.deepEqual(normalizeCustomPlan({...input,features:[]}).features,[]);
+ assert.deepEqual(normalizeCustomPlan({...input,features:[]}).features,[...PLAN_FEATURE_NAMES.supporter].sort());
  // Older callers / pending changes without features: legacy booleans.
  assert.deepEqual(normalizeCustomPlan({...input,complexConditions:true}).features,legacyCustomFeatureNames({complexConditions:true}));
  const row={id:'c1',name:'協定',status:'active',revision:2,channel_limit:3,server_limit:1,rule_limit:5,complex_conditions:0,municipality_branching:1,content_extraction:0,multi_destination:1,secondary_reuse:0,estimated_yen:800,confirmed_yen:900,stripe_subscription_id:'sub_1'};

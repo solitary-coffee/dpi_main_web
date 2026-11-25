@@ -54,8 +54,9 @@ test('the admin screen retains frequent operations and expands custom settings o
  assert.ok(html.indexOf('id="compensation-title"')<html.indexOf('id="custom-title"'));
  // Every feature is set per custom contract (grouped checkboxes built from plan-features.js) with presets.
  assert.match(html,/id="custom-feature-groups"/);
- for(const preset of ['pro','plus','supporter','none'])assert.match(html,new RegExp('data-preset="'+preset+'"'));
- for(const text of ['Proと同じ','Plusと同じ','Basicと同じ','すべてオフ'])assert.ok(html.includes(text),text);
+ for(const preset of ['pro','plus','supporter'])assert.match(html,new RegExp('data-preset="'+preset+'"'));
+ for(const text of ['Proと同じ','Plusと同じ','Basicと同じ'])assert.ok(html.includes(text),text);
+ assert.doesNotMatch(html,/すべてオフ/); // Basic の機能は必ず含むため、すべてオフは無い
  assert.match(html,/id="custom-reuse" type="checkbox"/);
  assert.match(js,/openCustomForAccount/);
  assert.match(js,/from '\.\/plan-features\.js'/);
