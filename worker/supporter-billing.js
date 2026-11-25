@@ -12,6 +12,16 @@ export function billingMode(env){
  return key.startsWith(`sk_${mode}_`)||key.startsWith(`rk_${mode}_`)?mode:'';
 }
 const expectedLivemode=env=>billingMode(env)==='live';
+// テスト用（STRIPE_*）と本番用（STRIPE_LIVE_*）の両方を登録しておき、SUPPORTER_BILLING_MODE だけで切り替える。
+// 本番用が欠けているときにテスト用を使うことは無い（決済は無効になる）。Worker の入口（index.js）で1回だけ解決する。
+export const STRIPE_SETTINGS=Object.freeze(['STRIPE_SECRET_KEY','STRIPE_WEBHOOK_SECRET','STRIPE_PRICE_SUPPORTER','STRIPE_PRICE_PLUS','STRIPE_PRICE_PRO','STRIPE_PRICE_ADDON','STRIPE_PORTAL_CONFIG']);
+export const liveSettingName=name=>name.replace(/^STRIPE_/,'STRIPE_LIVE_');
+export function resolveBillingEnv(env){
+ if(env?.SUPPORTER_BILLING_MODE!=='live')return env;
+ const resolved={...env};
+ for(const name of STRIPE_SETTINGS)resolved[name]=String(env[liveSettingName(name)]||'');
+ return resolved;
+}
 const json = (data,status=200)=>Response.json(data,{status,headers:{'Cache-Control':'no-store'}});
 const fail=(message,status=400)=>{throw Object.assign(new Error(message),{status});};
 const clean=value=>String(value??'').trim();
@@ -492,6 +502,8 @@ async function recordInvoiceFailed(env,db,invoice){
  if(!customer||!invoiceId||!subscriptionId||invoice.billing_reason!=='subscription_cycle')return;
  const now=Math.floor(Date.now()/1000),schedule=dunningSchedule(Number(invoice.created)||now);
  const existing=await db.prepare('SELECT status,retry_attempted_at FROM supporter_dunning WHERE invoice_id=?').bind(invoiceId).first();
+ // 当サイトの契約者ではない顧客（同じ Stripe アカウントの別の請求）には関わらない。
+ if(!await db.prepare('SELECT discord_user_id FROM supporter_billing WHERE customer_id=?').bind(customer).first())return;
  // 支払い済み・終了した請求書への遅れた失敗通知では状態を戻さない。停止中の手動支払いの失敗で配信を再開させない。
  if(['paid','closed','suspended'].includes(existing?.status))return;
  const current=await stripe(env,`invoices/${encodeURIComponent(invoiceId)}`,{auto_advance:'false'},`dpi-disable-auto-retry-${invoiceId}`);
@@ -1096,6 +1108,36 @@ export async function billingAction(request,env,db,uid,input={}){
  if(checkout.status!=='open')return json({message:'決済結果を確認中です。契約状態を更新してください。'},409);
  if(saved['metadata[dpi_plan]']!==params['metadata[dpi_plan]']||saved['metadata[dpi_channel_packs]']!==params['metadata[dpi_channel_packs]']||saved['metadata[dpi_server_packs]']!==params['metadata[dpi_server_packs]']||String(saved['metadata[dpi_rule_packs]']||0)!==params['metadata[dpi_rule_packs]'])return json({message:'別の条件で決済画面を作成済みです。期限切れ後に変更できます（最大1時間）。'},409);
  return json({url:checkout.url,mode:billingMode(env)});
+}
+// 途中で止まった申込みの復旧。Stripe の状態を確かめ、支払い済みなら契約を作り、未払いの支払い画面は失効させてから記録を消す。
+export async function recoverCheckoutState(env,db,uid){
+ if(!billingReady(env))fail('決済設定が完了していません。',503);
+ const row=await db.prepare('SELECT * FROM supporter_billing WHERE discord_user_id=?').bind(uid).first();
+ if(!row||(!row.checkout_key&&!row.checkout_id&&!row.checkout_params))return {changed:0,message:'途中の申込みはありませんでした。'};
+ const clear=async()=>Number((await db.prepare(`UPDATE supporter_billing SET checkout_key=NULL,checkout_id=NULL,checkout_params=NULL WHERE discord_user_id=?
+  AND COALESCE(checkout_key,'')=COALESCE(?,'') AND COALESCE(checkout_id,'')=COALESCE(?,'')`).bind(uid,row.checkout_key,row.checkout_id).run()).meta?.changes||0);
+ if(!row.checkout_id){
+  let expires=0;try{expires=Number(JSON.parse(row.checkout_params||'{}').expires_at)||0;}catch{/* 壊れた記録は消してよい */}
+  if(expires>Date.now()/1000)fail('支払い画面を作成中の可能性があります。1時間ほど待ってからお試しください。',409);
+  return {changed:await clear(),message:'作成されなかった申込みの記録を消しました。'};
+ }
+ let session;
+ try{session=await stripe(env,`checkout/sessions/${encodeURIComponent(row.checkout_id)}`);}
+ catch(error){
+  if(error?.stripeStatus!==404)throw error;
+  return {changed:await clear(),message:'Stripeに存在しない申込みの記録を消しました。'};
+ }
+ if(stripeId(session.customer)!==row.customer_id)fail('申込みの記録とStripeの顧客が一致しません。',409);
+ if(session.status==='open'){
+  await stripe(env,`checkout/sessions/${encodeURIComponent(row.checkout_id)}/expire`,{});
+  return {changed:await clear(),message:'未払いの支払い画面を失効させ、申込みの記録を消しました。'};
+ }
+ if(session.status==='complete'&&session.payment_status!=='paid')fail('支払いの確認待ちです。確認が終わるまでお待ちください。',409);
+ if(session.status==='complete'){
+  const result=await reconcilePaidCheckoutSubscription(env,row.customer_id,uid,db);
+  return {changed:await clear(),message:result.recovered?'支払い済みの申込みから契約を作成しました。':'申込みは反映済みでした。記録を消しました。'};
+ }
+ return {changed:await clear(),message:'失効した申込みの記録を消しました。'};
 }
 async function customCancellationPortal(env,customer,plan){
  const subscriptionId=clean(plan?.stripe_subscription_id);

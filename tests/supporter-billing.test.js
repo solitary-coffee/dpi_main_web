@@ -272,8 +272,7 @@ test('admin billing operations require confirmation, reason, same-origin and aud
  assert.match(worker,/input\.confirmDiscordUserId !== uid/);
  assert.match(worker,/writeSupporterAudit/);
  for(const action of ['change_subscription','grant_credit','remove_credit','confiscate_credit','disciplinary_cancel','ban_account','unban_account','create_payment_link','refund_latest','cancel_at_period_end','cancel_immediately','reset_checkout_state'])assert.match(html,new RegExp(`value="${action}"`));
- assert.match(worker,/input\.action === 'reset_checkout_state'[\s\S]*SUPPORTER_BILLING_MODE !== 'test'/);
- assert.match(worker,/SET checkout_key=NULL, checkout_id=NULL, checkout_params=NULL/);
+ assert.match(worker,/input\.action === 'reset_checkout_state'[\s\S]*recoverCheckoutState\(env,db,uid\)/);
  assert.match(script,/Stripe Customerと契約情報は保持されます/);
  assert.match(script,/crypto\.randomUUID\(\)/);
  assert.match(script,/openDetails/);

@@ -6,7 +6,7 @@ import { customChangeQuote,currentCustomChange,customChangePublic,stageCustomCha
 import { refreshSupporterSnapshotSafely } from './supporter-snapshot.js';
 import { PREFECTURES, loadSupporterAreaCatalogue, geographicEntitlements, normalizeGeographicRule } from './supporter-geo.js';
 import { planFeatures } from '../site/supporter/plan-features.js';
-import { billingMode, createPreviewCheckout, releaseDisputeHolds, previewCheckoutResult } from './supporter-billing.js';
+import { billingMode, createPreviewCheckout, recoverCheckoutState, releaseDisputeHolds, previewCheckoutResult } from './supporter-billing.js';
 import { basicCredentialsValid, reviewAccessConfigured, reviewChallenge, reviewCookie, reviewCookieValid } from './supporter-review.js';
 import { imageRulesEnabled, imageRulesV2Enabled, isImageRuleType, isImageRuleV2Type, imageRuleOptions, savedTsunamiOutputs, savedRadarContents, savedRadarMinutes, radarIntervalText, HIRES_RADAR_CONTENTS, TSUNAMI_MAP_OUTPUTS, WARNING_TABLE_KINDS, WARNING_TABLE_DELIVER_ON, normalizeImageRuleFields, loadEarthquakeMunicipalities, IMAGE_RULE_TYPE_OPTIONS, HIRES_RADAR_CONDITIONS, WEATHER_MAP_PRODUCTS, WEATHER_MAP_SEVERITIES, EARTHQUAKE_MAP_PRODUCTS, EARTHQUAKE_MAP_INTENSITIES } from './supporter-image-rules.js';
 
@@ -1047,15 +1047,11 @@ export async function handleSupporterRequest(request, env, ctx) {
      return response({success:true,message:released?'支払異議による利用停止を解除しました。':'支払異議による利用停止はありませんでした。',auditRecorded});
     }
     if (input.action === 'reset_checkout_state') {
-     if (env.SUPPORTER_BILLING_MODE !== 'test') return response({message:'この操作はStripeテスト環境でのみ利用できます。'},403);
      const reason = clean(input.reason);
      if (reason.length < 5 || reason.length > 500) return response({message:'操作理由を5〜500文字で入力してください。'},400);
-     const result = await db.prepare(`UPDATE supporter_billing
-      SET checkout_key=NULL, checkout_id=NULL, checkout_params=NULL
-      WHERE discord_user_id=?
-       AND (checkout_key IS NOT NULL OR checkout_id IS NOT NULL OR checkout_params IS NOT NULL)`).bind(uid).run();
-     const auditRecorded = await writeSupporterAudit(db,admin.email,input.action,uid,{reason,requestId:clean(input.requestId),changed:Number(result.meta?.changes||0)});
-     return response({success:true,message:result.meta?.changes?'決済途中データをDBから削除しました。Stripe Customerと契約情報は保持されています。':'削除対象の決済途中データはありませんでした。',auditRecorded,creditRecorded:true});
+     const result = await recoverCheckoutState(env,db,uid);
+     const auditRecorded = await writeSupporterAudit(db,admin.email,input.action,uid,{reason,requestId:clean(input.requestId),changed:result.changed});
+     return response({success:true,message:result.message,auditRecorded,creditRecorded:true});
     }
     if (!account.customer_id && ['grant_credit','create_payment_link'].includes(input.action)) {
      if (!account.billing_email) return response({message:'先にユーザーの申込メールアドレスを登録してください。'},409);
