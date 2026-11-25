@@ -367,11 +367,11 @@ test('停止から2か月後の1日0時に自動解約し、未払いの請求�
  insertDunning(store.raw, 'in_1', 'suspended', {retry_attempted_at: 1, suspended_at: SUSPEND + 5});
  const open = {livemode: false, id: 'in_1', status: 'open', customer: CUSTOMER, subscription: 'sub_x', amount_due: 300, currency: 'jpy'};
  const calls = stripeMock(t, {'GET subscriptions': {data: [subscription({status: 'past_due', pause_collection: {behavior: 'void'}, metadata: {dpi_service_pause: 'dunning'}})]}, 'GET invoices/in_1': open, 'GET subscriptions/sub_x': subscription({status: 'past_due'}),
-  'DELETE subscriptions/sub_x': {livemode: false, status: 'canceled'}, 'POST invoices/in_1/void': {livemode: false, status: 'void'}});
+  'DELETE subscriptions/sub_x': {livemode: false, status: 'canceled'}, 'POST subscriptions/sub_x': {livemode: false}, 'POST invoices/in_1/void': {livemode: false, status: 'void'}});
  assert.equal((await runSupporterBillingSchedule(env, jst('2027-01-31T12:00:00') * 1000)).autoCanceled, 0);
  assert.equal(calls.some(call => call.method === 'DELETE'), false);
  assert.equal((await runSupporterBillingSchedule(env, jst('2027-02-01T00:00:00') * 1000)).autoCanceled, 1);
- assert.deepEqual(calls.filter(call => call.method === 'DELETE' || call.path.endsWith('/void')).map(call => call.path), ['subscriptions/sub_x', 'invoices/in_1/void']);
+ assert.deepEqual(calls.filter(call => call.method === 'DELETE' || call.path.endsWith('/void')).map(call => call.path), ['invoices/in_1/void', 'subscriptions/sub_x']);
  assert.equal(store.dunning('in_1').status, 'closed');
 });
 
@@ -403,4 +403,36 @@ test('受付人数の上限に達したら、新しい申込みと未契約者�
  for (const limit of ['', '0', '2', 'x']) assert.equal((await act('topup', {SUPPORTER_SUBSCRIBER_LIMIT: limit})).status, 200, limit);
  own = [subscription()];
  assert.equal((await act('topup')).status, 200);
+});
+
+test('自動解約は請求書の取り消しを先に行い、取り消せなければ解約しない。途中で落ちても次回に続ける', async t => {
+ const store = await database(t); if (!store) return;
+ const env = envFor(store.db), at = jst('2027-02-01T00:00:00');
+ insertDunning(store.raw, 'in_1', 'suspended', {retry_attempted_at: 1, suspended_at: SUSPEND});
+ let status = 'open', metadata = {}, voidResult = {httpStatus: 400, body: {error: {message: 'already paid'}}}, deleteResult = {httpStatus: 500, body: {error: {message: 'down'}}};
+ const calls = stripeMock(t, {'GET subscriptions': {data: [subscription({status: 'past_due', pause_collection: {behavior: 'void'}, metadata: {dpi_service_pause: 'dunning'}})]},
+  'GET invoices/in_1': () => ({livemode: false, id: 'in_1', status, customer: CUSTOMER, subscription: 'sub_x'}), 'GET subscriptions/sub_x': () => subscription({status: 'past_due', metadata}),
+  'POST subscriptions/sub_x': params => { if (params['metadata[dpi_auto_cancel]']) metadata = {dpi_auto_cancel: params['metadata[dpi_auto_cancel]']}; return {livemode: false}; },
+  'POST invoices/in_1/void': () => { if (!voidResult.httpStatus) status = 'void'; return voidResult; }, 'DELETE subscriptions/sub_x': () => deleteResult});
+ const run = async hours => (await runSupporterBillingSchedule(env, (at + hours * 3600) * 1000)).autoCanceled;
+ assert.equal(await run(0), 0);
+ assert.equal(calls.some(call => call.method === 'DELETE'), false, '取り消せない（直前に支払われた）なら解約しない');
+ voidResult = {livemode: false, status: 'void'};
+ assert.equal(await run(12), 0);
+ assert.equal(store.dunning('in_1').status, 'suspended', '解約に失敗した間も停止のまま');
+ deleteResult = {livemode: false, status: 'canceled'};
+ assert.equal(await run(24), 1);
+ assert.equal(store.dunning('in_1').status, 'closed');
+});
+
+test('管理者が請求を取り消したときは、2か月を過ぎていても解約せず再開する', async t => {
+ const store = await database(t); if (!store) return;
+ const env = envFor(store.db);
+ insertDunning(store.raw, 'in_1', 'suspended', {retry_attempted_at: 1, suspended_at: SUSPEND});
+ const calls = stripeMock(t, {'GET subscriptions': {data: [subscription({pause_collection: {behavior: 'void'}, metadata: {dpi_service_pause: 'dunning'}})]}, 'GET subscriptions/sub_x': subscription({metadata: {dpi_service_pause: 'dunning'}}),
+  'GET invoices/in_1': {livemode: false, id: 'in_1', status: 'void', customer: CUSTOMER, subscription: 'sub_x'}, 'POST subscriptions/sub_x': {livemode: false}});
+ assert.equal((await runSupporterBillingSchedule(env, jst('2027-02-01T00:00:00') * 1000)).autoCanceled, 0);
+ assert.equal(store.dunning('in_1').status, 'closed');
+ assert.equal(calls.some(call => call.method === 'DELETE'), false);
+ assert.equal(calls.find(call => call.path === 'subscriptions/sub_x' && call.method === 'POST').params.pause_collection, '');
 });

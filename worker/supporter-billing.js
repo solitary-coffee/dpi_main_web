@@ -1606,7 +1606,12 @@ async function syncServicePauses(env,db,grouped){
   if(!summary.subscriptionId)continue;
   const pause=stopped.has(summary.subscriptionId)&&!summary.pauseCollection,resume=!stopped.has(summary.subscriptionId)&&summary.servicePause;
   if(!pause&&!resume)continue;
-  try{await stripe(env,`subscriptions/${encodeURIComponent(summary.subscriptionId)}`,pauseParams(pause));}
+  try{
+   // 一覧を取った後に支払い・再停止の Webhook が届いていないか、直前の状態で確かめる。
+   const still=await db.prepare(`SELECT invoice_id FROM supporter_dunning WHERE subscription_id=? AND status='suspended' AND invoice_id NOT LIKE 'hold:%' LIMIT 1`).bind(summary.subscriptionId).first();
+   if(!!still!==pause)continue;
+   await stripe(env,`subscriptions/${encodeURIComponent(summary.subscriptionId)}`,pauseParams(pause));
+  }
   catch(error){console.error('Supporter service pause update failed',{subscriptionId:summary.subscriptionId,pause,errorName:error?.name||'Error',stripeStatus:Number(error?.stripeStatus)||null});}
  }
 }
@@ -1627,16 +1632,27 @@ async function cancelLongUnpaid(env,db,now){
   if(now<autoCancelAt(row.suspend_at))continue;
   try{
    const invoice=await stripe(env,`invoices/${encodeURIComponent(row.invoice_id)}`);
-   if(!['open','uncollectible'].includes(invoice.status)||stripeId(invoice.customer)!==row.customer_id||invoiceSubscriptionId(invoice)!==row.subscription_id)continue;
+   if(!['open','uncollectible','void'].includes(invoice.status)||stripeId(invoice.customer)!==row.customer_id||invoiceSubscriptionId(invoice)!==row.subscription_id)continue;
    const subscription=await stripe(env,`subscriptions/${encodeURIComponent(row.subscription_id)}`);
    if(stripeId(subscription.customer)!==row.customer_id)continue;
-   if(!['canceled','incomplete_expired'].includes(subscription.status)){
-    const attached=scheduleId(subscription);
-    if(attached)await stripe(env,`subscription_schedules/${encodeURIComponent(attached)}/release`,{},`dpi-auto-cancel-release-${attached}`);
-    await stripe(env,`subscriptions/${encodeURIComponent(row.subscription_id)}`,{invoice_now:'false',prorate:'false'},`dpi-auto-cancel-${row.subscription_id}`,'DELETE');
+   const ended=['canceled','incomplete_expired'].includes(subscription.status),marked=subscription.metadata?.dpi_auto_cancel===row.invoice_id;
+   if(invoice.status==='void'&&!ended&&!marked){
+    // 管理者が請求を取り消したもの。自動解約の途中ではないので、停止を解いて契約を続ける。
+    await db.prepare(`UPDATE supporter_dunning SET status='closed',updated_at=? WHERE invoice_id=? AND status='suspended'`).bind(now,row.invoice_id).run();
+    await resumeServicePause(env,db,row.customer_id);continue;
    }
-   try{await stripe(env,`invoices/${encodeURIComponent(row.invoice_id)}/void`,{},`dpi-auto-cancel-void-${row.invoice_id}`);}
-   catch(error){console.error('Supporter unpaid invoice could not be voided after automatic cancellation',{invoiceId:row.invoice_id,errorName:error?.name||'Error',stripeStatus:Number(error?.stripeStatus)||null});}
+   // 先に請求書を取り消す。直前に支払われていれば取り消しが失敗するので、支払った人を解約しない。
+   // 取り消した後に処理が落ちても、契約に付けた印から次回に解約を続ける。
+   if(invoice.status!=='void'){
+    if(!ended&&!marked)await stripe(env,`subscriptions/${encodeURIComponent(row.subscription_id)}`,{'metadata[dpi_auto_cancel]':row.invoice_id});
+    const voided=await stripe(env,`invoices/${encodeURIComponent(row.invoice_id)}/void`,{});
+    if(voided.status!=='void')continue;
+   }
+   if(!ended){
+    const attached=scheduleId(subscription);
+    if(attached)await stripe(env,`subscription_schedules/${encodeURIComponent(attached)}/release`,{});
+    await stripe(env,`subscriptions/${encodeURIComponent(row.subscription_id)}`,{invoice_now:'false',prorate:'false'},null,'DELETE');
+   }
    await db.prepare(`UPDATE supporter_dunning SET status='closed',updated_at=? WHERE invoice_id=? AND status='suspended'`).bind(now,row.invoice_id).run();
    canceled+=1;
    try{await sendBillingNotification(env,db,'auto_canceled',invoice);}catch(error){console.error('Supporter automatic cancellation email failed',{invoiceId:row.invoice_id,errorName:error?.name||'Error'});}
@@ -1645,16 +1661,19 @@ async function cancelLongUnpaid(env,db,now){
  return canceled;
 }
 // 停止中の請求書を Stripe と照合する（支払い完了の Webhook を取りこぼしても再開できるように）。
-async function reconcileSuspendedInvoices(env,db,customer=null,limit=50){
- const query=`SELECT invoice_id FROM supporter_dunning WHERE status='suspended' AND invoice_id NOT LIKE 'hold:%'`;
+async function reconcileSuspendedInvoices(env,db,customer=null,limit=50,nowSeconds=Math.floor(Date.now()/1000)){
+ const query=`SELECT invoice_id,suspend_at FROM supporter_dunning WHERE status='suspended' AND invoice_id NOT LIKE 'hold:%'`;
  const rows=customer?await db.prepare(`${query} AND customer_id=? ORDER BY updated_at LIMIT ?`).bind(customer,limit).all()
   :await db.prepare(`${query} ORDER BY updated_at LIMIT ?`).bind(limit).all();
  let resumed=0;
  for(const row of rows.results||[]){
-  const now=Math.floor(Date.now()/1000);
+  const now=nowSeconds;
   try{
    const invoice=await stripe(env,`invoices/${encodeURIComponent(row.invoice_id)}`);
-   if(invoice.status==='void'){await db.prepare(`UPDATE supporter_dunning SET status='closed',updated_at=? WHERE invoice_id=? AND status='suspended'`).bind(now,row.invoice_id).run();resumed+=1;await resumeServicePause(env,db,clean(stripeId(invoice.customer)));}
+   if(invoice.status==='void'){
+    // 自動解約の時刻を過ぎたものは、解約の続きか管理者の取り消しかを cancelLongUnpaid で確かめる。
+    if(now>=autoCancelAt(row.suspend_at))continue;
+    await db.prepare(`UPDATE supporter_dunning SET status='closed',updated_at=? WHERE invoice_id=? AND status='suspended'`).bind(now,row.invoice_id).run();resumed+=1;await resumeServicePause(env,db,clean(stripeId(invoice.customer)));}
    else if(invoice.status==='paid'){
     resumed+=1;
     try{await recordInvoicePaid(env,db,invoice);}catch(error){console.error('Supporter payment success email failed',{invoiceId:row.invoice_id,errorName:error?.name||'Error'});}
@@ -1703,7 +1722,7 @@ async function runBillingScheduleTasks(env,db,nowMs){
   try{await sendBillingNotification(env,db,'final_failed',{id:row.invoice_id,customer:row.customer_id,subscription:row.subscription_id,amount_due:row.amount_due,currency:row.currency},row.retry_at,row.suspend_at);}
   catch(error){console.error('Supporter suspension email failed',{invoiceId:row.invoice_id,errorName:error?.name||'Error'});}
  }
- await reconcileSuspendedInvoices(env,db);
+ await reconcileSuspendedInvoices(env,db,null,50,now);
  if(grouped)await syncServicePauses(env,db,grouped);
  const autoCanceled=await cancelLongUnpaid(env,db,now);
  const failedNotices=await db.prepare(`SELECT n.invoice_id,n.kind,d.customer_id,d.subscription_id,d.amount_due,d.currency,d.retry_at,d.suspend_at
