@@ -10,6 +10,7 @@ import { planFeatures } from '../site/supporter/plan-features.js';
 import { billingMode, recoverCheckoutState, releaseDisputeHolds } from './supporter-billing.js';
 import { basicCredentialsValid, reviewAccessConfigured, reviewChallenge, reviewCookie, reviewCookieValid } from './supporter-review.js';
 import { imageRulesEnabled, imageRulesV2Enabled, isImageRuleType, isImageRuleV2Type, imageRuleOptions, savedTsunamiOutputs, savedRadarContents, savedRadarMinutes, radarIntervalText, HIRES_RADAR_CONTENTS, TSUNAMI_MAP_OUTPUTS, WARNING_TABLE_KINDS, WARNING_TABLE_DELIVER_ON, normalizeImageRuleFields, loadEarthquakeMunicipalities, IMAGE_RULE_TYPE_OPTIONS, HIRES_RADAR_CONDITIONS, WEATHER_MAP_PRODUCTS, WEATHER_MAP_SEVERITIES, EARTHQUAKE_MAP_PRODUCTS, EARTHQUAKE_MAP_INTENSITIES } from './supporter-image-rules.js';
+import { supporterAdminPayments } from './supporter-admin-payments.js';
 
 const response = (data, status = 200) => Response.json(data, {status, headers: {'Cache-Control':'no-store'}});
 const refreshSupporterAccessSafely = (env, db, reason, discordUserId) => Promise.all([
@@ -1079,6 +1080,12 @@ export async function handleSupporterRequest(request, env, ctx) {
     return response({success:true,...result,auditRecorded,creditRecorded});
    }
    if (request.method !== 'GET') return response({message:'Method not allowed'},405);
+   if (path === '/site/supporter-admin/api/payments') {
+    const rawLimit = new URL(request.url).searchParams.get('limit');
+    const parsedLimit = rawLimit === null ? NaN : Number(rawLimit);
+    const limit = Number.isInteger(parsedLimit) ? Math.min(500,Math.max(1,parsedLimit)) : 200;
+    return response(await supporterAdminPayments(db,env,limit));
+   }
    if (path === '/site/supporter-admin/api/accounts') {
     const [rows,billingRows] = await Promise.all([db.prepare(`SELECT a.discord_user_id, a.billing_email, a.registered_at, a.updated_at,
      a.revision, a.settings_json, a.account_status, a.status_reason, a.status_updated_at, a.status_updated_by, b.customer_id,

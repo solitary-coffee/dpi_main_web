@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+ <meta charset="UTF-8">
+ <meta name="viewport" content="width=device-width, initial-scale=1.0">
+ <meta name="robots" content="noindex,nofollow">
+ <title>支払いの詳細・実行結果 | DPI-Bot</title>
+ <link rel="icon" href="../../img/dpi.png" type="image/png">
+ <link rel="stylesheet" href="../admin-shell.css">
+ <link rel="stylesheet" href="style.css">
+ <link rel="stylesheet" href="payments.css">
+</head>
+<body class="admin-shell">
+ <button id="menu-toggle-btn" type="button" aria-label="メニューを開く"><span></span><span></span><span></span></button>
+ <div class="overlay"></div>
+ <div class="page-container">
+  <nav class="sidebar" aria-label="管理メニュー">
+   <div class="sidebar-header"><h2>管理メニュー</h2></div>
+   <ul>
+          <li><a href="/index.html">トップページ</a></li>
+          <li><a href="/site/status/index.html">お知らせ</a></li>
+          <li><a href="/site/info/index.html">配信内容</a></li>
+          <li><a href="/site/about/index.html">コマンド</a></li>
+          <li><a href="/site/dever/index.html">開発者紹介</a></li>
+          <li class="menu-spacer" aria-hidden="true" style="height:10px"></li>
+          <li><a href="/site/mail/index.html">メール配信</a></li>
+          <li><a href="/site/survey/">利用者アンケート</a></li>
+          <li><a href="/site/reuse/">二次利用申請</a></li>
+          <li class="menu-spacer" aria-hidden="true" style="height:10px"></li>
+          <li><a href="/site/invi/index.html">BOTを招待</a></li>
+          <li><a href="/terms/index.html">利用規約等</a></li>
+          <li><a href="/site/supp/index.html">お問い合わせ</a></li>
+      </ul>
+  </nav>
+  <main class="main-content">
+   <header class="topbar"><div><p class="eyebrow">PAYMENT OPERATIONS</p><h1>支払いの詳細・実行結果</h1><p>決済と関連処理の記録を読み取り専用で確認します。</p></div><div class="admin-bar"><a class="stats-link" href="./">管理画面に戻る</a><a class="stats-link" href="stats.html">契約・クレジット統計を見る</a><button id="refresh-payments" type="button">再読み込み</button></div></header>
+   <div id="payments-status" class="status info" role="status" aria-live="polite">読み込み中…</div>
+   <section class="admin-section" aria-labelledby="payments-summary-title">
+    <div class="section-heading"><div><p class="eyebrow">OVERVIEW</p><h2 id="payments-summary-title">決済状況</h2></div><div class="payment-meta"><strong id="payment-mode">決済モード: —</strong><span id="payment-generated">取得時刻: —</span></div></div>
+    <div id="payment-summary" class="metric-grid"></div>
+   </section>
+   <section class="admin-section" aria-labelledby="payment-search-title">
+    <h2 id="payment-search-title">記録を絞り込む</h2>
+    <label class="search-label">名前・Discord IDで絞り込み<input id="payment-search" type="search" autocomplete="off" placeholder="名前 / Discord ID"></label>
+   </section>
+   <div id="payment-sections" class="payment-sections">
+    <details open><summary>定期処理の実行結果（26日の請求・再請求・1日の停止）</summary><div id="payment-runs" class="payment-list"></div></details>
+    <details open><summary>支払いの失敗・停止</summary><label class="filter-check"><input id="failures-open-only" type="checkbox">未解決だけ表示</label><div id="payment-failures" class="payment-list"></div></details>
+    <details><summary>返金・支払異議・不正の警告</summary><div id="payment-alerts-detail" class="payment-list"></div></details>
+    <details><summary>メールの送信結果</summary><label class="filter-check"><input id="mails-failed-only" type="checkbox">失敗だけ表示</label><div id="payment-mails" class="payment-list"></div></details>
+    <details><summary>クレジットチャージ</summary><label class="filter-check"><input id="topups-pending-only" type="checkbox">入金待ちだけ表示</label><div id="payment-topups" class="payment-list"></div></details>
+    <details><summary>公式サーバーのロール</summary><label class="filter-check"><input id="roles-failed-only" type="checkbox">失敗だけ表示</label><div id="payment-roles" class="payment-list"></div></details>
+    <details><summary>運営通知の履歴</summary><div id="payment-notices" class="payment-list"></div></details>
+   </div>
+  </main>
+ </div>
+ <script src="../../script.js"></script>
+ <script type="module" src="payments.js"></script>
+</body>
+</html>

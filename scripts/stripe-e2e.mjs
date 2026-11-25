@@ -250,7 +250,8 @@ test('申込み・更新: 初回 → 26日の更新 → 明細と配信', async 
  await world.advance(renewal(schedule.anchor)); await world.settle();
  await world.advance(schedule.anchor + 12 * 3600); await world.cron(schedule.anchor + 12 * 3600);
  assert.deepEqual(world.kinds(), ['join', 'renewal_start', 'renewal_result']);
- assert.match(world.notices()[1].description, /対象: 1件（合計 500円）/); assert.match(world.notices()[2].description, /成功: 1件（500円）/);
+  assert.match(world.notices()[1].description, /対象: 1件（合計 500円）/); assert.match(world.notices()[2].description, /成功: 1件（請求額 500円）/);
+  assert.doesNotMatch(world.notices().find(row => row.kind === 'renewal_result').description, new RegExp(world.uid));
  const invoices = (await stripe('GET', `invoices?customer=${world.customer}&limit=10`)).data;
  const paid = invoices.find(item => item.status === 'paid' && item.amount_paid === choice.monthly);
  assert.ok(paid, `更新の請求が支払われていない: ${JSON.stringify(invoices.map(item => [item.status, item.amount_due]))}`);
@@ -289,6 +290,11 @@ test('未払い: 失敗 → 月末の再決済 → 翌月1日0時に停止 → �
  const invoiceId = world.dunning()[0].invoice_id;
  assert.equal((await stripe('GET', `invoices/${invoiceId}`)).auto_advance, false, 'Stripe の自動再試行が止まっていない');
  assert.equal(await world.rules(), 1);
+ // 12時の結果の通知に、Stripe から取った失敗理由が入り、利用者の名前・ID は入らない
+ await world.cron(schedule.anchor + 12 * 3600);
+ const outcome = world.notices().find(row => row.kind === 'renewal_result').description;
+ assert.match(outcome, /失敗: 1件（300円）/); assert.match(outcome, /【失敗理由】\n(?:カード会社による拒否|残高不足|その他) 1件/); assert.match(outcome, /Basic: 成功 0件 \/ 失敗 1件/);
+ assert.doesNotMatch(outcome, new RegExp(`${world.uid}|in_|cus_|sub_`));
  await world.advance(times.retry); await world.cron(times.retry); await world.settle();
  assert.equal(world.dunning().find(row => row.invoice_id === invoiceId).status, 'suspend_scheduled');
  assert.equal(await world.rules(), 1, '1日0時より前に止まっている');
@@ -296,7 +302,7 @@ test('未払い: 失敗 → 月末の再決済 → 翌月1日0時に停止 → �
  assert.equal(world.dunning().find(row => row.invoice_id === invoiceId).status, 'suspended');
  assert.deepEqual(world.kinds().filter(kind => kind !== 'join'), ['retry_start', 'retry_result', 'month_start']);
  assert.match(world.notices().find(row => row.kind === 'retry_result').description, /失敗: 1件（300円）/);
- assert.match(world.notices().find(row => row.kind === 'month_start').description, /今回停止したもの: 1件\n停止中のアカウント: 1件/);
+  assert.match(world.notices().find(row => row.kind === 'month_start').description, /今回停止: 1件\n停止中の合計: 1件/);
  assert.equal(await world.rules(), 0);
  assert.equal((await world.sub()).pause_collection?.behavior, 'void', '停止中の請求が止まっていない');
  const before = (await stripe('GET', `invoices?customer=${world.customer}&limit=20`)).data.length;
@@ -474,6 +480,8 @@ test('支払い画面: クレジットチャージ', async () => {
  await payInBrowser(started.body.url); await world.settle(6000);
  assert.equal(await billing.customerCredits(world.env, world.customer), 500);
  assert.equal((await world.act('status')).body.creditDetails.purchasedBalance, 500);
+ // 実際の支払い画面の領収書のリンクが、チャージ完了のメールに入る
+ assert.ok(world.mailTexts.some(text => /クレジットチャージが完了しました/.test(text) && /領収書: https:\/\/pay\.stripe\.com\//.test(text)), `チャージの領収書リンクが無い: ${world.mailTexts.join('|').slice(0, 300)}`);
 }, {browser: true});
 
 test('復旧: 支払い画面を開いたままの申込みは失効させてから消す', async () => {
@@ -902,7 +910,6 @@ test('事例: 銀行振込は入金を確認してから付与する', async () 
  await topup.send('checkout.session.async_payment_succeeded', {payment_status: 'paid'}); await topup.send('checkout.session.async_payment_succeeded', {payment_status: 'paid'});
  assert.equal(await billing.customerCredits(world.env, world.customer), 700, '付与が 1 回でない'); assert.equal(topup.row().status, 'credited');
  assert.equal(world.mails.filter(subject => subject.includes('チャージ完了')).length, 1);
- assert.ok(world.mailTexts.some(text => /領収書: https:\/\/pay\.stripe\.com\//.test(text)), 'クレジットチャージの領収書リンクが無い');
  assert.ok(!world.kinds().some(kind => kind.startsWith('topup')), 'チャージの Discord 通知が作られた');
  if (billing.billingSchedule(Date.now()).initialMonths * 300 <= 700) {
   const signed = await world.act('checkout', {...choice, useCredits: true, requestId: randomUUID()}); assert.equal(signed.status, 200, JSON.stringify(signed.body)); await world.settle();

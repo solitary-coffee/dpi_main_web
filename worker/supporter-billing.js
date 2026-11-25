@@ -1502,12 +1502,13 @@ async function recordPaymentAlert(env,db,event){
  const kind=PAYMENT_ALERT_KINDS[event.type];if(!kind)return;
  const object=event.data?.object||{};
  const chargeId=clean(kind==='refunded'?object.id:stripeId(object.charge));
- let customer=clean(stripeId(object.customer)),paymentIntent=clean(stripeId(object.payment_intent));
- if(!customer&&chargeId){const charge=await stripe(env,`charges/${encodeURIComponent(chargeId)}`);customer=clean(stripeId(charge.customer));paymentIntent=paymentIntent||clean(stripeId(charge.payment_intent));}
+ let charge=kind==='refunded'?object:null,customer=clean(stripeId(object.customer)),paymentIntent=clean(stripeId(object.payment_intent));
+ if(!customer&&chargeId){charge=await stripe(env,`charges/${encodeURIComponent(chargeId)}`);customer=clean(stripeId(charge.customer));paymentIntent=paymentIntent||clean(stripeId(charge.payment_intent));}
  const owner=customer?await db.prepare('SELECT discord_user_id FROM supporter_billing WHERE customer_id=?').bind(customer).first():null;
- const amount=Number(kind==='refunded'?object.amount_refunded:object.amount)||0;
+ const amount=Number(kind==='refunded'?object.amount_refunded:object.amount||charge?.amount)||0;
  await db.prepare(`INSERT INTO supporter_payment_alerts(event_id,kind,outcome,payment_intent_id,customer_id,discord_user_id,amount,created_at)
   VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(event_id) DO NOTHING`).bind(event.id,kind,clean(object.status).slice(0,40),paymentIntent,customer,clean(owner?.discord_user_id),amount,Number(event.created)||Math.floor(Date.now()/1000)).run();
+ return{kind,object,charge,paymentIntent,customer};
 }
 // 契約管理画面（Stripe）でのカード変更は顧客の既定カードに入る。契約にはカードを固定しているため、
 // 同じカードへそろえないと、毎月の更新と月末の再決済が古いカードのままになる。
@@ -1591,7 +1592,7 @@ export async function billingWebhook(request,env,ctx){
   }
   if(event.type==='checkout.session.async_payment_failed'&&checkoutMetadata(session).dpi_checkout_kind==='credit_topup')await sendBillingNotificationSafely(env,db,'credit_topup_failed',{id:sessionId,customer:session.customer,amount_due:Number(session.amount_total||0),currency:session.currency||'jpy'});
  }
- await recordPaymentAlert(env,db,event);
+ const paymentAlert=await recordPaymentAlert(env,db,event);
  if(event.type.startsWith('charge.dispute.'))await syncDisputeHold(env,db,event.data?.object);
  if(event.type==='customer.updated'){await syncCustomerEmail(db,event.data?.object);await syncDefaultPaymentMethod(env,db,event);}
  if(['customer.subscription.created','customer.subscription.updated'].includes(event.type)){
@@ -1625,7 +1626,7 @@ export async function billingWebhook(request,env,ctx){
   const subscriptionId=clean(event.data?.object?.id);
   if(subscriptionId)await db.prepare(`UPDATE supporter_dunning SET status='closed',updated_at=? WHERE subscription_id=? AND status IN ('retry_scheduled','retrying','suspend_scheduled','suspended')`).bind(Math.floor(Date.now()/1000),subscriptionId).run();
  }
- await queueEventNotices(env,db,event);
+ await queueEventNotices(env,db,event,paymentAlert);
  // Events invalidate a cache only; status always comes from Stripe, never from stale event payloads.
  await db.batch([db.prepare('INSERT INTO supporter_stripe_events(id,received_at) VALUES(?,?) ON CONFLICT DO NOTHING').bind(event.id,Date.now()),db.prepare('UPDATE supporter_billing SET dirty=1 WHERE customer_id=?').bind(eventCustomerId(event))]);
  const snapshotTask=refreshSupporterSnapshotSafely(env,db,subscriptionSummariesByCustomer,`stripe_${event.type}`);
@@ -1635,7 +1636,12 @@ export async function billingWebhook(request,env,ctx){
  return json({received:true});
 }
 // 運営向けの通知（Discord）。失敗しても Webhook の処理は止めない。
-async function queueEventNotices(env,db,event){
+const ALERT_TARGET_LABELS=Object.freeze({credit_topup:'クレジットチャージ',custom_subscription_initial:'カスタム',custom_change:'カスタム',initial_subscription:'プラン料金'});
+const alertTarget=(object,charge)=>ALERT_TARGET_LABELS[clean(object?.metadata?.dpi_checkout_kind||charge?.metadata?.dpi_checkout_kind)]||'プラン料金';
+const disputeReason=value=>({bank_cannot_process:'カード会社で処理できない',check_returned:'小切手の返却',credit_not_processed:'返金が反映されていない',customer_initiated:'利用者による申立て',debit_not_authorized:'引き落としの承認がない',duplicate:'重複請求',fraudulent:'不正利用',general:'理由未特定',incorrect_account_details:'口座情報が違う',insufficient_funds:'残高不足',product_not_received:'商品・サービスが届かない',product_unacceptable:'商品・サービスに問題がある',subscription_canceled:'解約後の請求',unrecognized:'心当たりのない請求'})[clean(value)]||'その他';
+const fraudType=value=>({card_never_received:'カード未着',fraudulent_card_application:'不正なカード申込み',made_with_counterfeit_card:'偽造カード',made_with_lost_card:'紛失カード',made_with_stolen_card:'盗難カード',misc:'その他',unauthorized_use_of_card:'カードの不正使用'})[clean(value)]||'その他';
+const alertDate=seconds=>{if(!Number(seconds))return'';const d=new Date((Number(seconds)+32400)*1000);return`${d.getUTCFullYear()}年${d.getUTCMonth()+1}月${d.getUTCDate()}日 ${String(d.getUTCHours()).padStart(2,'0')}:${String(d.getUTCMinutes()).padStart(2,'0')}（日本時間）`;};
+async function queueEventNotices(env,db,event,paymentAlert=null){
  try{
   const object=event.data?.object||{},at=Number(event.created)||Math.floor(Date.now()/1000);
   if(event.type.startsWith('customer.subscription.')){
@@ -1650,16 +1656,55 @@ async function queueEventNotices(env,db,event){
   }
   const alert=PAYMENT_ALERT_KINDS[event.type];
   if(alert){
-   const row=await db.prepare('SELECT kind,outcome,customer_id,amount FROM supporter_payment_alerts WHERE event_id=?').bind(event.id).first();
+    const row=await db.prepare('SELECT kind,outcome,payment_intent_id,customer_id,amount FROM supporter_payment_alerts WHERE event_id=?').bind(event.id).first();
    const member=row?.customer_id?await memberLabel(db,row.customer_id):null;
    if(!member)return;
-   const label={refunded:'返金',disputed:'支払異議の申立て',dispute_closed:'支払異議の終了',fraud_warning:'不正の警告'}[alert];
-   await queueNotice(env,db,{id:`${event.id}:${alert}`,channel:'billing',kind:alert,title:label,tone:alert==='refunded'?'quiet':'bad',at,lines:[`利用者: ${member.text}`,row.amount?`金額: ${yen(row.amount)}`:'',row.outcome?`状態: ${row.outcome}`:'']});
+    const label={refunded:'返金',disputed:'支払異議の申立て',dispute_closed:'支払異議の終了',fraud_warning:'不正の警告'}[alert],charge=paymentAlert?.charge,lines=[`利用者: ${member.text}`],target=alertTarget(object,charge);
+    if(alert==='refunded'){
+     const refunds=object.refunds?.data||[],latest=[...refunds].sort((a,b)=>Number(b.created)-Number(a.created))[0],refundAmount=Number(latest?.amount)||Number(object.amount_refunded)||0,original=Number(object.amount)||0,cumulative=Number(object.amount_refunded)||refundAmount;
+     lines.push('【返金】',`区分: ${original>0&&cumulative>=original?'全額返金':'一部返金'}`,refundAmount?`返金額: ${yen(refundAmount)}`:'',original?`元の支払額: ${yen(original)}`:'',cumulative?`累計返金額: ${yen(cumulative)}`:'',`対象: ${target}`,'【契約への影響】');
+     if(target==='クレジットチャージ'){
+      const credit=await db.prepare(`SELECT credit_delta FROM supporter_credit_events WHERE id LIKE ? AND reason='credit_refunded' ORDER BY created_at DESC LIMIT 1`).bind(`refunded:${clean(object.id)}:%`).first();
+      if(Number(credit?.credit_delta)<0)lines.push(`クレジットを取り消した額: ${yen(-Number(credit.credit_delta))}`);
+     }else lines.push('契約は続きます');
+    }else if(alert==='disputed'){
+     const held=await db.prepare(`SELECT status FROM supporter_dunning WHERE invoice_id=?`).bind(`${DISPUTE_PREFIX}${clean(object.id)}`).first();
+     lines.push('【申立て】',`理由: ${disputeReason(object.reason)}`,Number(row.amount)?`金額: ${yen(row.amount)}`:'',object.evidence_details?.due_by?`回答期限: ${alertDate(object.evidence_details.due_by)}`:'',`対象: ${target}`,'【配信】',`状態: ${held?.status==='suspended'?'申立てで停止した':'停止していない'}`,'【次にすること】','Stripe のダッシュボードで期限までに証拠を提出してください',object.evidence_details?.due_by?'期限を過ぎると異議に負けます':'','管理画面: https://dpi-bot.com/site/supporter-admin/');
+    }else if(alert==='dispute_closed'){
+     const result=({won:'勝ち',lost:'負け',warning_closed:'照会の終了',prevented:'申立ての取りやめ'})[clean(row.outcome)]||'その他',held=await db.prepare(`SELECT status FROM supporter_dunning WHERE invoice_id=?`).bind(`${DISPUTE_PREFIX}${clean(object.id)}`).first();
+     lines.push('【結果】',`結果: ${result}`,'【配信】',`状態: ${held?.status==='suspended'?'止めたまま':'再開した'}`,result==='負け'?'【次にすること】':'',result==='負け'?'管理画面で停止を解除できます':'',result==='負け'?'管理画面: https://dpi-bot.com/site/supporter-admin/':'');
+    }else{
+     lines.push('【警告】',`種類: ${fraudType(object.fraud_type)}`,`対応できるか: ${object.actionable===true?'はい':object.actionable===false?'いいえ':'不明'}`,Number(row.amount)?`金額: ${yen(row.amount)}`:'',`対象: ${target}`,'【次にすること】',object.actionable===false?'Stripe では対応できません':'Stripe のダッシュボードで内容を確認し、必要に応じて返金を検討してください','管理画面: https://dpi-bot.com/site/supporter-admin/');
+    }
+    await queueNotice(env,db,{id:`${event.id}:${alert}`,channel:'billing',kind:alert,title:label,tone:alert==='refunded'?'quiet':'bad',at,lines});
    return;
   }
  }catch(error){console.error('Supporter event notice failed',{type:event?.type,errorName:error?.name||'Error'});}
 }
 // 26日の請求の開始と結果。対象は当サイトの契約だけ。
+const planKey=summary=>summary?.customId?'カスタム':summary?.planId==='supporter'?'Basic':summary?.planId==='plus'?'Plus':summary?.planId==='pro'?'Pro':'カスタム';
+const emptyPlans=()=>Object.fromEntries(['Basic','Plus','Pro','カスタム'].map(key=>[key,{count:0,amount:0,success:0,failed:0}]));
+const addPlan=(plans,summary,field='count',amount=0)=>{const item=plans[planKey(summary)];item[field]+=1;item.amount+=Number(amount)||0;};
+const planLines=(plans,mode='amount')=>['【プラン別】',...Object.entries(plans).map(([name,value])=>mode==='result'?`${name}: 成功 ${value.success}件 / 失敗 ${value.failed}件`:`${name}: ${value.count}件（${yen(value.amount)}）`)];
+const percent=(success,total)=>total?`${(success*100/total).toFixed(1)}%`:'—';
+export const paymentFailureCategory=value=>({insufficient_funds:'残高不足',card_expired:'カードの期限切れ',expired_card:'カードの期限切れ',card_declined:'カード会社による拒否',do_not_honor:'カード会社による拒否',generic_decline:'カード会社による拒否',authentication_required:'本人確認が必要',payment_intent_authentication_failure:'本人確認が必要',payment_method_missing:'支払い方法が無い',payment_method_unexpected_state:'支払い方法が無い'})[clean(value)]||'その他';
+async function renewalFailureReasons(env,invoices){
+ // 失敗分だけ・最大20件・全体で10秒まで。取れなくても集計の通知は送る。
+ const counts={},deadline=Date.now()+10000;
+ for(const invoice of invoices.slice(0,20)){
+  const left=deadline-Date.now();if(left<=0)break;
+  let timer;
+  try{
+   const timeout=new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error('timeout')),left);});
+   const detail=await Promise.race([stripe(env,`invoices/${encodeURIComponent(invoice.id)}?expand[]=payments.data.payment.payment_intent`),timeout]);
+   const error=(detail?.payments?.data||[]).map(item=>item?.payment?.payment_intent).find(intent=>intent?.last_payment_error)?.last_payment_error;
+   if(!error)continue;
+   const category=paymentFailureCategory(error.decline_code||error.code);counts[category]=(counts[category]||0)+1;
+  }catch{/* 理由が取れなくても通知は送る */}
+  finally{clearTimeout(timer);}
+ }
+ return Object.entries(counts).map(([name,count])=>`${name} ${count}件`).join('、');
+}
 async function queueRenewalNotices(env,db,now){
  try{
   const day=jstDate(now);
@@ -1667,46 +1712,51 @@ async function queueRenewalNotices(env,db,now){
   const rows=await db.prepare('SELECT customer_id FROM supporter_billing WHERE customer_id IS NOT NULL').all();
   const customers=new Set((rows.results||[]).map(row=>row.customer_id).filter(Boolean));
   if(day.hour<6){
-   let count=0,amount=0,stopped=0;
+    let count=0,amount=0,stopped=0,canceled=0,addons=0;const plans=emptyPlans();
    for(const summary of [...(await subscriptionSummariesByCustomer(env,[...customers])).values()].flat()){
     // 0時ちょうどは、Stripe が新しい期間へ切り替える前後のどちらもあり得る。
     const due=[summary.nextRenewalAt,summary.currentPeriodStart].some(time=>Math.abs(Number(time||0)-day.start)<=3600);
     if(!due||Number(summary.startedAt||0)>=day.start)continue;
     if(summary.servicePause){stopped+=1;continue;}
-    if(summary.cancelAtPeriodEnd)continue;
+     if(summary.cancelAtPeriodEnd){canceled+=1;continue;}
     const next=summary.scheduledChange;
-    count+=1;amount+=Number(next?.monthly??summary.amount)||0;
+     const dueAmount=Number(next?.monthly??summary.amount)||0;count+=1;amount+=dueAmount;addPlan(plans,next||summary,'count',dueAmount);if(Number((next||summary).channelPacks)+Number((next||summary).serverPacks)+Number((next||summary).rulePacks)>0)addons+=1;
    }
    await queueNotice(env,db,{id:`renewal-start:${day.key}`,channel:'billing',kind:'renewal_start',title:`${day.month}月26日の請求を開始`,tone:'info',at:now,
-    lines:[`対象: ${count}件（合計 ${yen(amount)}）`,`停止中のため請求しない契約: ${stopped}件`,'結果は12時ごろにお知らせします。']});
+     lines:['【対象】',`対象: ${count}件（合計 ${yen(amount)}）`,...planLines(plans),`追加オプションがある契約: ${addons}件`,`停止中で請求しない契約: ${stopped}件`,`解約予約中で請求しない契約: ${canceled}件`,'【次の予定】','結果: 26日 12時ごろ',`月末の再請求: ${day.month}月${day.lastDay}日 12時`]});
    return;
   }
   if(day.hour<11)return;
-  const result={paid:0,paidAmount:0,credit:0,failed:0,failedAmount:0,voided:0,other:0};
+   const result={paid:0,paidAmount:0,credit:0,partialCredit:0,partialCreditAmount:0,failed:0,failedAmount:0,voided:0,voidedAmount:0,other:0,otherAmount:0},failedInvoices=[],plans=emptyPlans();
+   let bySubscription=new Map();
+   try{bySubscription=new Map([...(await subscriptionSummariesByCustomer(env,[...customers])).values()].flat().map(item=>[item.subscriptionId,item]));}
+   catch(error){console.error('Supporter renewal plan breakdown failed',{errorName:error?.name||'Error'});}
   await stripeListAll(env,`invoices?created%5Bgte%5D=${day.start-60}&limit=100`,invoice=>{
    if(!customers.has(stripeId(invoice.customer))||invoice.billing_reason!=='subscription_cycle'||Number(invoice.created)<day.start-60)return;
-   if(invoice.status==='paid'){if(Number(invoice.amount_paid)>0){result.paid+=1;result.paidAmount+=Number(invoice.amount_paid);}else result.credit+=1;}
-   else if(invoice.status==='void')result.voided+=1;
-   else if(['open','uncollectible'].includes(invoice.status)&&Number(invoice.attempt_count)>0){result.failed+=1;result.failedAmount+=Number(invoice.amount_remaining||0);}
-   else result.other+=1;
+    const paid=Number(invoice.amount_paid)||0,total=Number(invoice.total||invoice.amount_due)||paid,credit=Math.max(0,total-paid),summary=bySubscription.get(invoiceSubscriptionId(invoice));
+    if(invoice.status==='paid'){if(paid>0){result.paid+=1;result.paidAmount+=paid;if(credit>0){result.partialCredit+=1;result.partialCreditAmount+=credit;}}else result.credit+=1;if(summary)addPlan(plans,summary,'success');}
+    else if(invoice.status==='void'){result.voided+=1;result.voidedAmount+=total;}
+    else if(['open','uncollectible'].includes(invoice.status)&&Number(invoice.attempt_count)>0){result.failed+=1;result.failedAmount+=Number(invoice.amount_remaining||0);failedInvoices.push(invoice);if(summary)addPlan(plans,summary,'failed');}
+    else{result.other+=1;result.otherAmount+=Number(invoice.amount_remaining||total);}
   });
+   const reasons=await renewalFailureReasons(env,failedInvoices),successful=result.paid+result.credit,target=successful+result.failed+result.voided+result.other;
   await queueNotice(env,db,{id:`renewal-result:${day.key}`,channel:'billing',kind:'renewal_result',title:`${day.month}月26日の請求結果`,tone:result.failed?'warn':'good',at:now,
-   lines:[`成功: ${result.paid}件（${yen(result.paidAmount)}）`,`クレジットで全額支払い: ${result.credit}件`,`失敗: ${result.failed}件（${yen(result.failedAmount)}）`,`停止中のため取り消し: ${result.voided}件`,`確認中: ${result.other}件`,result.failed?`失敗した分は、${day.month}月${day.lastDay}日 12時に再請求します。`:'']});
+    lines:['【結果】',`成功: ${result.paid}件（請求額 ${yen(result.paidAmount+result.partialCreditAmount)}）`,`クレジットで全額: ${result.credit}件`,`クレジットを一部使用: ${result.partialCredit}件（使用額 ${yen(result.partialCreditAmount)}）`,`失敗: ${result.failed}件（${yen(result.failedAmount)}）`,`取り消し: ${result.voided}件（${yen(result.voidedAmount)}）`,`確認中: ${result.other}件（${yen(result.otherAmount)}）`,`成功率: ${percent(successful,target)}`,...(bySubscription.size?planLines(plans,'result'):[]),'【入金】',`カード等の入金合計: ${yen(result.paidAmount)}`,reasons?'【失敗理由】':'',reasons,...(result.failed?['【次の予定】',`失敗した分の再請求: ${day.month}月${day.lastDay}日 12時`,'再請求でも支払いを確認できないものの停止: 翌月1日 0時']:[])]});
  }catch(error){console.error('Supporter renewal notice failed',{errorName:error?.name||'Error'});}
 }
 // 1日0時の停止・自動解約と、前月の加入・変更・解約の集計。
-async function queueStopNotices(env,db,now,{suspended,autoCanceled}){
+async function queueStopNotices(env,db,now,{suspended,autoCanceled,voidedAmount=0,resumed=0,grouped=null}){
  try{
   const day=jstDate(now);
-  const total=await suspendedCustomers(db);
+   const total=await suspendedCustomers(db),plans=emptyPlans();
+   for(const summary of grouped?[...grouped.values()].flat():[])if(['active','trialing','past_due','unpaid','paused'].includes(summary.status))addPlan(plans,summary);
   if(day.day===1&&day.hour<6){
    const last=jstDate(day.start-86400),from=Math.floor(Date.UTC(last.year,last.month-1,1)/1000)-32400;
-   const counts=await noticeCounts(db,'membership',from,day.start);
+    const counts=await noticeCounts(db,'membership',from,day.start),alerts=await noticeCounts(db,'billing',from,day.start);
    await queueNotice(env,db,{id:`month-start:${day.monthKey}`,channel:'billing',kind:'month_start',title:`${day.month}月1日の停止・解約の結果`,tone:suspended||autoCanceled?'warn':'good',at:now,
-    lines:[`今回停止したもの: ${suspended}件`,`停止中のアカウント: ${total}件`,`支払いを確認できず自動解約: ${autoCanceled}件`,
-     `${last.month}月の集計: 加入 ${counts.join||0}件、変更 ${counts.change||0}件、解約の予約 ${counts.leave_reserved||0}件、解約 ${counts.leave||0}件`]});
+     lines:['【結果】',`今回停止: ${suspended}件`,`停止中の合計: ${total}件`,`自動解約: ${autoCanceled}件`,`取り消した請求の合計額: ${yen(voidedAmount)}`,`再開: ${resumed}件`,'【契約中】',...Object.entries(plans).map(([name,value])=>`${name}: ${value.count}件`),'【前月の集計】',`加入: ${counts.join||0}件`,`変更: ${counts.change||0}件`,`解約予約: ${counts.leave_reserved||0}件`,`解約: ${counts.leave||0}件`,`返金: ${alerts.refunded||0}件`,`支払異議: ${alerts.disputed||0}件`,`不正の警告: ${alerts.fraud_warning||0}件`,'【次の予定】',`次の請求日: ${day.month}月26日`]});
   }else if(suspended||autoCanceled)
-   await queueNotice(env,db,{id:`stop:${day.key}:${day.hour}`,channel:'billing',kind:'stop',title:'停止・自動解約',tone:'warn',at:now,lines:[`今回停止したもの: ${suspended}件`,`停止中のアカウント: ${total}件`,`自動解約: ${autoCanceled}件`]});
+    await queueNotice(env,db,{id:`stop:${day.key}:${day.hour}`,channel:'billing',kind:'stop',title:'停止・自動解約',tone:'warn',at:now,lines:['【結果】',`今回停止: ${suspended}件`,`停止中の合計: ${total}件`,`自動解約: ${autoCanceled}件`,`取り消した請求の合計額: ${yen(voidedAmount)}`,`再開: ${resumed}件`,'【契約中】',...Object.entries(plans).map(([name,value])=>`${name}: ${value.count}件`),'【次の予定】',`次の請求日: ${day.month===12?1:day.month+1}月26日`]});
  }catch(error){console.error('Supporter stop notice failed',{errorName:error?.name||'Error'});}
 }
 async function publishScheduledSnapshot(env,db,reason){
@@ -1865,7 +1915,7 @@ async function resumeServicePause(env,db,customer){
 async function cancelLongUnpaid(env,db,now){
  const rows=await db.prepare(`SELECT * FROM supporter_dunning WHERE status='suspended' AND invoice_id NOT LIKE 'hold:%' AND subscription_id IS NOT NULL
   AND suspended_at<=? ORDER BY suspended_at LIMIT 50`).bind(now-27*86400).all();
- let canceled=0;
+ let canceled=0,voidedAmount=0;
  for(const row of rows.results||[]){
   if(now<autoCancelAt(row.suspend_at))continue;
   try{
@@ -1881,10 +1931,10 @@ async function cancelLongUnpaid(env,db,now){
    }
    // 先に請求書を取り消す。直前に支払われていれば取り消しが失敗するので、支払った人を解約しない。
    // 取り消した後に処理が落ちても、契約に付けた印から次回に解約を続ける。
-   if(invoice.status!=='void'){
+    if(invoice.status!=='void'){
     if(!ended&&!marked)await stripe(env,`subscriptions/${encodeURIComponent(row.subscription_id)}`,{'metadata[dpi_auto_cancel]':row.invoice_id});
     const voided=await stripe(env,`invoices/${encodeURIComponent(row.invoice_id)}/void`,{});
-    if(voided.status!=='void')continue;
+     if(voided.status!=='void')continue;voidedAmount+=Number(voided.amount_remaining||voided.amount_due||row.amount_due)||0;
    }
    if(!ended){
     const attached=scheduleId(subscription);
@@ -1896,7 +1946,7 @@ async function cancelLongUnpaid(env,db,now){
    try{await sendBillingNotification(env,db,'auto_canceled',invoice);}catch(error){console.error('Supporter automatic cancellation email failed',{invoiceId:row.invoice_id,errorName:error?.name||'Error'});}
   }catch(error){console.error('Supporter automatic cancellation failed',{invoiceId:row.invoice_id,errorName:error?.name||'Error',stripeStatus:Number(error?.stripeStatus)||null});}
  }
- return canceled;
+ return{count:canceled,voidedAmount};
 }
 // 停止中の請求書を Stripe と照合する（支払い完了の Webhook を取りこぼしても再開できるように）。
 async function reconcileSuspendedInvoices(env,db,customer=null,limit=50,nowSeconds=Math.floor(Date.now()/1000)){
@@ -1932,8 +1982,8 @@ async function runBillingScheduleTasks(env,db,nowMs){
  await queueRenewalNotices(env,db,now);
  const runDay=jstDate(now),retryRun=(due.results||[]).length>0||(runDay.day===runDay.lastDay&&runDay.hour>=12);
  if(retryRun){
-  await queueNotice(env,db,{id:`retry-start:${runDay.key}:${runDay.hour}`,channel:'billing',kind:'retry_start',title:'再請求を開始',tone:'info',at:now,
-   lines:[`対象: ${(due.results||[]).length}件（合計 ${yen((due.results||[]).reduce((sum,row)=>sum+(Number(row.amount_due)||0),0))}）`]});
+   await queueNotice(env,db,{id:`retry-start:${runDay.key}:${runDay.hour}`,channel:'billing',kind:'retry_start',title:'再請求を開始',tone:'info',at:now,
+    lines:['【対象】',`対象: ${(due.results||[]).length}件（合計 ${yen((due.results||[]).reduce((sum,row)=>sum+(Number(row.amount_due)||0),0))}）`,'【次の予定】','支払いを確認できないものは翌月1日 0時に停止します']});
   await flushNotices(env,db);
  }
  let paidAmount=0,failedAmount=0,postponed=0;
@@ -1960,10 +2010,14 @@ async function runBillingScheduleTasks(env,db,nowMs){
   await db.prepare(`UPDATE supporter_dunning SET status='suspend_scheduled',updated_at=? WHERE invoice_id=? AND status='retrying'`).bind(now,row.invoice_id).run();failed+=1;failedAmount+=Number(row.amount_due)||0;
   try{await sendBillingNotification(env,db,'final_failed',fallback,row.retry_at,row.suspend_at);}catch(error){console.error('Supporter final payment failure email failed',{invoiceId:row.invoice_id,errorName:error?.name||'Error'});}
  }
- if(retryRun)await queueNotice(env,db,{id:`retry-result:${runDay.key}:${runDay.hour}`,channel:'billing',kind:'retry_result',title:'再請求の結果',tone:failed||postponed?'warn':'good',at:now,
-  lines:[`成功: ${paid}件（${yen(paidAmount)}）`,`失敗: ${failed}件（${yen(failedAmount)}）`,postponed?`Stripeの障害などで保留: ${postponed}件（次回もう一度確認します）`:'',failed||postponed?(runDay.day===1?'支払いを確認できないものは停止します。':'支払いを確認できないものは、翌月1日 0時に停止します。'):'']});
  let grouped=null;
  try{grouped=await syncServiceHolds(env,db,now);}catch(error){console.error('Supporter service hold check failed',{errorName:error?.name||'Error',stripeStatus:Number(error?.stripeStatus)||null});}
+ if(retryRun){
+  const summaries=new Map(grouped?[...grouped.values()].flat().map(item=>[item.subscriptionId,item]):[]),retryPlans=Object.fromEntries(['Basic','Plus','Pro','カスタム'].map(name=>[name,0]));
+  for(const row of due.results||[]){const summary=summaries.get(row.subscription_id);if(summary)retryPlans[planKey(summary)]+=1;}
+  await queueNotice(env,db,{id:`retry-result:${runDay.key}:${runDay.hour}`,channel:'billing',kind:'retry_result',title:'再請求の結果',tone:failed||postponed?'warn':'good',at:now,
+   lines:['【結果】',`対象: ${(due.results||[]).length}件（${yen((due.results||[]).reduce((sum,row)=>sum+Number(row.amount_due||0),0))}）`,`成功: ${paid}件（${yen(paidAmount)}）`,`失敗: ${failed}件（${yen(failedAmount)}）`,`保留: ${postponed}件`,`成功率: ${percent(paid,paid+failed+postponed)}`,grouped?'【プラン別】':'',...(grouped?Object.entries(retryPlans).map(([name,count])=>`${name}: ${count}件`):[]),...(failed||postponed?['【次の予定】',...(postponed?['保留: Stripe の障害などのため、次回もう一度確認します']:[]),runDay.day===1?'支払いを確認できないものは停止します':'支払いを確認できないものは、翌月1日 0時に停止します']:[])]});
+ }
  // 翌月1日0時を過ぎても支払いを確認できないものは、再決済の結果を待たずに必ず停止する。
  const unfinished=await db.prepare(`SELECT * FROM supporter_dunning WHERE status='retry_scheduled' AND suspend_at<=? ORDER BY suspend_at LIMIT 100`).bind(now).all();
  const stopped=await db.prepare(`UPDATE supporter_dunning SET status='suspended',suspended_at=?,updated_at=? WHERE status IN ('suspend_scheduled','retry_scheduled') AND suspend_at<=?`).bind(now,now,now).run();
@@ -1972,11 +2026,11 @@ async function runBillingScheduleTasks(env,db,nowMs){
   try{await sendBillingNotification(env,db,'final_failed',{id:row.invoice_id,customer:row.customer_id,subscription:row.subscription_id,amount_due:row.amount_due,currency:row.currency},row.retry_at,row.suspend_at);}
   catch(error){console.error('Supporter suspension email failed',{invoiceId:row.invoice_id,errorName:error?.name||'Error'});}
  }
- await reconcileSuspendedInvoices(env,db,null,50,now);
+ const resumed=await reconcileSuspendedInvoices(env,db,null,50,now);
  await reconcileDisputeHolds(env,db);
  if(grouped)await syncServicePauses(env,db,grouped);
- const autoCanceled=await cancelLongUnpaid(env,db,now);
- await queueStopNotices(env,db,now,{suspended,autoCanceled});
+ const canceled=await cancelLongUnpaid(env,db,now);
+ await queueStopNotices(env,db,now,{suspended,autoCanceled:canceled.count,voidedAmount:canceled.voidedAmount,resumed,grouped});
  const failedNotices=await db.prepare(`SELECT invoice_id,kind,attempts,last_error,updated_at FROM supporter_billing_notifications
   WHERE status='failed' AND attempts<5 AND updated_at>=? AND kind IN ('payment_succeeded','payment_failed','retry_succeeded','final_failed','auto_canceled','credit_topup_succeeded','credit_topup_failed','credit_plan_payment_succeeded','credit_expired')
   ORDER BY updated_at LIMIT 25`).bind(now-3*86400).all();
@@ -1998,7 +2052,7 @@ async function runBillingScheduleTasks(env,db,nowMs){
  }
  const expiredCredits=await expirePurchasedCredits(env,db);
  await recoverCustomPriceChanges(env,db);
- return {retried,paid,failed,suspended,autoCanceled,expiredCredits};
+ return {retried,paid,failed,suspended,autoCanceled:canceled.count,expiredCredits};
 }
 
 async function restoreFailedBillingNotice(env,db,row){
