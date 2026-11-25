@@ -250,14 +250,14 @@ test('paid plans stay separate from secondary-use applications and private in na
  assert.match(billingUi,/事前チャージして申し込む/);
  assert.match(billingUi,/残高・履歴を再読み込み/);
  assert.match(billingUi,/creditTopupRecovery/);
- assert.match(billingUi,/クレジットが.*不足しています/);
+ assert.match(billingUi,/残高が.*不足しています/);
  assert.match(billingUi,/selectedInitialCharge/);
  assert.match(billingUi,/email:billingEmail\.value[\s\S]*useCredits:true/);
  assert.match(billingUi,/残高だけで申し込めます/);
  assert.match(billingUi,/payment\.state==='credits'\?\{useCredits:true\}/);
  assert.match(billingUi,/payment\.state==='split'\?\{applyCredits:true,expectedCreditApplied:payment\.creditApplied\}/);
- assert.match(billingUi,/クレジット＋登録済みのお支払い方法/);
- assert.match(billingUi,/クレジットを使って変更を確定/);
+ assert.match(billingUi,/事前チャージの残高＋登録済みのカード/);
+ assert.match(billingUi,/残高を使って変更を確定/);
  assert.match(billingUi,/変更内容と料金を確認[\s\S]*preview-update/);
 });
 test('admin billing operations require confirmation, reason, same-origin and audit logging',async()=>{
@@ -388,7 +388,7 @@ test('処分メールは理由・解除件数・没収額を通知し同じ処�
  const details={requestId:'123e4567-e89b-42d3-a456-426614174306',uid:'637850681666961408',email:'user@example.jp',reason:'規約違反に伴う契約解除処分',canceledSubscriptions:2,confiscatedCredits:1250};
  assert.equal(await sendSupporterDisciplinaryNotification(env,db,'disciplinary_cancel',details),true);
  assert.equal(await sendSupporterDisciplinaryNotification(env,db,'disciplinary_cancel',details),true);
- assert.equal(sent,1);assert.match(messages[0].text,/解除した契約: 2件/);assert.match(messages[0].text,/没収クレジット: 1,250クレジット/);assert.match(messages[0].text,/再度お支払いいただくことで/);
+ assert.equal(sent,1);assert.match(messages[0].text,/解除した契約: 2件/);assert.match(messages[0].text,/没収した残高: 1,250円/);assert.match(messages[0].text,/再度お支払いいただくことで/);
 });
 test('管理者クレジット集計はStripe総残高と有償ロットを分離して1000万円基準を返す',async()=>{
  const now=Math.floor(Date.now()/1000);
@@ -565,7 +565,7 @@ test('option-only additions apply credits to the next 26th invoice after user co
   const blocked=await billingAction(new Request('https://dpi-bot.com/api/supporter/billing/update'),env,db,'123',{plan:'supporter',channelPacks:1,serverPacks:0,rulePacks:1,prorationDate:preview.prorationDate,expectedCreditApplied:400,useCredits:false,requestId});
   assert.equal(blocked.status,409);assert.equal(calls.some(call=>call.path==='/v1/subscriptions/sub_options'),false);calls.length=0;
   const response=await billingAction(new Request('https://dpi-bot.com/api/supporter/billing/update'),env,db,'123',{plan:'supporter',channelPacks:1,serverPacks:0,rulePacks:1,prorationDate:preview.prorationDate,expectedCreditApplied:400,useCredits:true,requestId});
-  assert.equal(response.status,200);const result=await response.json();assert.match(result.message,/26日の請求書確定時に消費/);assert.deepEqual(result.creditApplication,{immediate:0,nextInvoice:400,nextInvoiceDue:300});
+  assert.equal(response.status,200);const result=await response.json();assert.match(result.message,/26日の請求書確定時に使われます/);assert.deepEqual(result.creditApplication,{immediate:0,nextInvoice:400,nextInvoiceDue:300});
   const optionUpdate=calls.find(call=>call.path==='/v1/subscriptions/sub_options'&&call.method==='POST');assert.equal(optionUpdate.params.get('proration_behavior'),'none');assert.equal(optionUpdate.params.get('items[0][price]'),'price_addon');assert.equal(optionUpdate.params.get('items[0][quantity]'),'2');assert.equal(optionUpdate.params.get('metadata[dpi_rule_packs]'),'1');
  }finally{globalThis.fetch=originalFetch;}
 });
@@ -635,7 +635,7 @@ test('paid plan configuration contains test catalog IDs and consent storage',asy
  assert.match(migration,/legal_consent_version/);assert.match(migration,/legal_consent_at/);
  assert.match(creditMigration,/supporter_credit_topups/);assert.match(creditMigration,/supporter_credit_lots/);assert.match(creditMigration,/expires_at/);
  assert.match(billingSource,/dpi_legal_consent_version/);
- assert.match(billingSource,/dpi_checkout_kind.*credit_topup/);assert.match(uiSource,/チャージ手続きへ/);assert.match(uiSource,/付与日（入金の確認日）から1年間/);
+ assert.match(billingSource,/dpi_checkout_kind.*credit_topup/);assert.match(uiSource,/チャージ手続きへ/);assert.match(uiSource,/反映した日（入金の確認日）から1年間/);
  assert.match(terms,/第 10 条（有料通知プラン）/);assert.match(terms,/故意または重大な過失/);
  assert.match(terms,/利用者の都合による取消し、払戻しまたは現金への交換には原則として応じません/);
  assert.match(specified,/購入済みクレジットの払戻し.*原則として応じません/);
@@ -657,7 +657,7 @@ test('補償クレジットは対象・理由・有効期限を保存し利用�
  assert.match(supporterSource,/ORDER BY discord_user_id,CASE WHEN expires_at IS NULL THEN 1 ELSE 0 END,expires_at,id/);
  assert.match(billingSource,/supporter_credit_campaign_recipients/);assert.match(billingSource,/source_id LIKE 'compensation:%'/);assert.match(billingSource,/reason:clean\(row\.reason\)/);
  for(const text of ['全登録者','特定ユーザー','特定プランの契約者','利用者に表示する理由','有効期限'])assert.match(adminHtml,new RegExp(text));
- assert.match(adminSource,/credit-campaigns/);assert.match(adminSource,/compensationRequestId=crypto\.randomUUID/);assert.match(adminSource,/配布処理を再開/);assert.match(userSource,/補償 .*クレジット/);assert.match(userSource,/理由:/);
+ assert.match(adminSource,/credit-campaigns/);assert.match(adminSource,/compensationRequestId=crypto\.randomUUID/);assert.match(adminSource,/配布処理を再開/);assert.match(userSource,/補償 .*円分/);assert.match(userSource,/理由:/);
  assert.doesNotMatch(`${userHtml}\n${userSource}`,/先行提供|Stripeテスト環境|月・予定|実際の請求は発生しません/);
 });
 test('billing dunning sends success and failure mail and blocks access after month-end failure',async()=>{
@@ -666,7 +666,7 @@ test('billing dunning sends success and failure mail and blocks access after mon
  ]);
  assert.match(billingSource,/invoice\.payment_failed/);assert.match(billingSource,/invoice\.paid/);assert.match(billingSource,/auto_advance:'false'/);assert.match(billingSource,/月末再決済/);assert.match(billingSource,/payment_succeeded/);assert.match(billingSource,/status='suspended'/);
  assert.match(billingSource,/credit_topup_succeeded/);assert.match(billingSource,/credit_topup_failed/);assert.match(billingSource,/credit_expired/);
- assert.match(billingSource,/クレジットチャージ完了のお知らせ/);assert.match(billingSource,/クレジット有効期限切れのお知らせ/);
+ assert.match(billingSource,/事前チャージ完了のお知らせ/);assert.match(billingSource,/事前チャージの有効期限切れのお知らせ/);
  assert.match(supporterSource,/supporter_dunning[\s\S]*status='suspended'/);assert.match(uiSource,/usageSuspended/);
  assert.match(migration,/CREATE TABLE IF NOT EXISTS supporter_dunning/);assert.match(migration,/supporter_billing_notifications/);
  assert.deepEqual(JSON.parse(configText).triggers.crons,['0 3 * * *','0 15 * * *']);assert.match(indexSource,/runSupporterBillingSchedule/);
@@ -683,7 +683,7 @@ test('supporter rule creation is resilient to WebKit input and channel errors',a
  assert.match(source,/billing-preview-dialog/);
  assert.match(source,/expectedCreditApplied/);
  assert.match(source,/credit-consent/);
- assert.match(source,/のクレジットを使用します。残額は今回/);
+ assert.match(source,/残高から.*を使用します。残りのお支払いは今回/);
  assert.match(source,/次回26日のお支払い見込み/);
  assert.doesNotMatch(source,/window\.confirm\('契約内容を更新/);
  assert.match(source,/rules\.push\(normalizeRule[\s\S]+render\(\);[\s\S]+await loadChannels/);

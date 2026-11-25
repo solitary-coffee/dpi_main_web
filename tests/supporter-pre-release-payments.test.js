@@ -26,9 +26,9 @@ test('規約と画面は正式リリース前の補填例外および入金後�
  ]);
  assert.match(terms, /5\.第7項の期間を除き/);
  assert.match(terms, /7\.正式リリースまでの間[\s\S]*当方の故意または重大な過失[\s\S]*二重請求[\s\S]*法令上返金もしくは賠償/);
- assert.match(terms, /10\.銀行振込またはコンビニ払い[\s\S]*入金を確認した後にクレジットを付与/);
- for(const text of ['クレジットチャージでのみ選択','支払期限はStripeの画面','振込手数料は利用者の負担','入金額に過不足','付与した日（入金の確認日）から1年間'])assert.match(spec,new RegExp(text));
- assert.match(app, /銀行振込・コンビニ払いは、入金の確認後にクレジットを付与します（確認まで利用できません）。/);
+ assert.match(terms, /10\.PayPay、銀行振込およびコンビニ払い[\s\S]*入金を確認した後にクレジットを付与/);
+ for(const text of ['事前チャージに利用でき','支払期限はStripeの画面','振込手数料は利用者の負担','入金額に過不足','反映した日（入金の確認日）から1年間'])assert.match(spec,new RegExp(text));
+ assert.match(app, /銀行振込・コンビニ払いは、入金の確認後に残高へ反映します（確認まで利用できません）。/);
  assert.match(app, /pending:'入金・決済の確認待ち'/);
  assert.match(app, /hasPendingTopup[\s\S]*status==='pending'/);
 });

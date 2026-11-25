@@ -10,7 +10,7 @@ for (const page of pages) {
   for (const brand of ['Visa', 'Mastercard', 'American Express', 'JCB', 'Diners Club', 'Discover']) assert.ok(section.includes(brand), brand);
   assert.match(section, /<h3>クレジットカード支払い式<\/h3>[\s\S]*そのまますぐに申し込めます/);
   assert.match(section, /<h3>事前チャージ式<\/h3>[\s\S]*カードが無くても使えます[\s\S]*PayPay・コンビニ払い・銀行振込・クレジットカード/);
-  assert.match(section, /PayPay・コンビニ払い・銀行振込は、プランを直接支払うことはできません。いったんチャージしてから/);
+  assert.match(section, /PayPay・コンビニ払い・銀行振込は、先にチャージしていただき、その残高からお支払いいただきます（お申込みの前にひと手間かかります）。/);
   assert.match(section, /① 事前チャージの残高[\s\S]*② クレジットカード/);
   assert.match(section, /残高で全額を支払えた場合、カードには請求しません。/);
   assert.doesNotMatch(section, /<table|×/);

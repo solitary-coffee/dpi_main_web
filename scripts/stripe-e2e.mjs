@@ -481,7 +481,7 @@ test('支払い画面: クレジットチャージ', async () => {
  assert.equal(await billing.customerCredits(world.env, world.customer), 500);
  assert.equal((await world.act('status')).body.creditDetails.purchasedBalance, 500);
  // 実際の支払い画面の領収書のリンクが、チャージ完了のメールに入る
- assert.ok(world.mailTexts.some(text => /クレジットチャージが完了しました/.test(text) && /領収書: https:\/\/pay\.stripe\.com\//.test(text)), `チャージの領収書リンクが無い: ${world.mailTexts.join('|').slice(0, 300)}`);
+ assert.ok(world.mailTexts.some(text => /事前チャージが完了しました/.test(text) && /領収書: https:\/\/pay\.stripe\.com\//.test(text)), `チャージの領収書リンクが無い: ${world.mailTexts.join('|').slice(0, 300)}`);
 }, {browser: true});
 
 test('復旧: 支払い画面を開いたままの申込みは失効させてから消す', async () => {
@@ -955,7 +955,7 @@ test('カードなし: クレジットだけで申込み → 変更 → 26日の
  const before = (await only.invoices()).length, choice = {plan: 'pro', channelPacks: 0, serverPacks: 0, rulePacks: 0};
  const preview = await world.act('preview-update', choice); assert.equal(preview.status, 200); assert.equal(preview.body.paymentMethodRegistered, false); assert.ok(preview.body.creditShortage > 0);
  const refused = await world.act('update', {...choice, requestId: randomUUID(), prorationDate: preview.body.prorationDate, expectedCreditApplied: preview.body.creditApplied, useCredits: true});
- assert.equal(refused.status, 409); assert.match(refused.body.message, /クレジットが.+円不足/);
+ assert.equal(refused.status, 409); assert.match(refused.body.message, /残高が.+円不足/);
  assert.equal((await only.invoices()).length, before, '断ったのに請求が作られた'); assert.equal(await only.credits(), 100); assert.ok(!(await world.sub()).pending_update);
  // ダウングレードの予約は残高に関係なくできる
  assert.equal((await reserveIn(world)('supporter')).status, 200);

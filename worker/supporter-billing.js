@@ -100,7 +100,7 @@ export function normalizeCreditTopupAmount(value){
 }
 export function creditExpiresAt(purchasedAt){
  const date=new Date(Number(purchasedAt)*1000);
- if(!Number.isFinite(date.getTime()))fail('クレジット購入日時を確認できませんでした。',400);
+ if(!Number.isFinite(date.getTime()))fail('事前チャージの日時を確認できませんでした。',400);
  const year=date.getUTCFullYear()+1,month=date.getUTCMonth(),day=date.getUTCDate();
  const lastDay=new Date(Date.UTC(year,month+1,0)).getUTCDate();
  date.setUTCFullYear(year,month,Math.min(day,lastDay));
@@ -143,12 +143,12 @@ export async function payInvoiceWithCredits(env,db,customer,uid,invoiceId){
  if(!Number.isSafeInteger(amount)||amount<1)fail('請求額を確認できません。',409);
  if(net>0&&net<amount){
   await stripe(env,`customers/${encodeURIComponent(customer)}/balance_transactions`,{amount:String(-net),currency:'jpy',description:`DPI-Bot invoice credit reversal: ${invoiceId}`,'metadata[dpi_user]':uid,'metadata[dpi_credit_action]':'invoice_payment','metadata[dpi_credit_invoice]':invoiceId},`dpi-credit-invoice-reverse-${invoiceId}-${n}`);
-  fail('クレジットの充当状態を復旧しました。もう一度お試しください。',503);
+  fail('残高の充当状態を復旧しました。もう一度お試しください。',503);
  }
  let transaction=debit;
  if(net<amount){
   const credits=await customerCredits(env,customer);
-  if(credits<amount)fail(`クレジットが${(amount-credits).toLocaleString('ja-JP')}円不足しています。`,409);
+  if(credits<amount)fail(`残高が${(amount-credits).toLocaleString('ja-JP')}円不足しています。`,409);
   transaction=await stripe(env,`customers/${encodeURIComponent(customer)}/balance_transactions`,{amount:String(amount),currency:'jpy',description:`DPI-Bot invoice credit payment: ${invoiceId}`,'metadata[dpi_user]':uid,'metadata[dpi_credit_action]':'invoice_payment','metadata[dpi_credit_invoice]':invoiceId},`dpi-credit-invoice-${invoiceId}-${n}`);
  }
  let paid;
@@ -482,13 +482,13 @@ function billingMailContent(env,kind,invoice,retryAt,suspendAt,sentAt){
  const definitions={
   payment_succeeded:['【DPI-Bot】お支払い完了のお知らせ',[`DPI-Bot有料プランのお支払いが完了しました。`,...(Number(invoice.credit_applied)>0?[`事前チャージの残高から: ${Number(invoice.credit_applied).toLocaleString('ja-JP')}円`,`カードなどへの請求額: ${amount}`]:[`請求額: ${amount}`]),`請求書: ${number}`]],
   retry_succeeded:['【DPI-Bot】再決済完了のお知らせ',[`月末の再決済が完了しました。引き続き有料プランをご利用いただけます。`,`請求額: ${amount}`,`請求書: ${number}`]],
-  payment_failed:['【DPI-Bot】お支払い失敗と月末再決済のお知らせ',[`26日のお支払いを完了できませんでした。`,`月末再決済日時: ${date(retryAt)}`,`請求額: ${amount}`,`請求書: ${number}`,'月末までに契約管理画面から支払方法をご確認ください。','請求額以上のクレジットをチャージすると、契約・支払い方法の管理画面の操作、または月末の再決済でクレジットから支払えます（一部だけの充当はできません）。']],
-  final_failed:['【DPI-Bot】月末再決済失敗・利用停止のお知らせ',[`月末の再決済を完了できませんでした。`,`利用停止日時: ${date(suspendAt)}`,`請求額: ${amount}`,`請求書: ${number}`,'翌月以降、有料プランの通知設定は支払い完了まで利用停止となります。未払いの請求が複数ある場合は、すべてのお支払いを確認してから再開します。','停止中は新しい月額料金を請求しません。停止から1か月間お支払いを確認できない場合は、契約を自動的に解約し、未払いの請求を取り消します。','請求額以上のクレジットをチャージすると、契約・支払い方法の管理画面の操作、または月末の再決済でクレジットから支払えます（一部だけの充当はできません）。']],
+  payment_failed:['【DPI-Bot】お支払い失敗と月末再決済のお知らせ',[`26日のお支払いを完了できませんでした。`,`月末再決済日時: ${date(retryAt)}`,`請求額: ${amount}`,`請求書: ${number}`,'月末までに契約管理画面から支払方法をご確認ください。','請求額以上の残高をチャージすると、契約・支払い方法の管理の画面の操作、または月末の再決済で、残高から支払えます（一部だけの支払いはできません）。']],
+  final_failed:['【DPI-Bot】月末再決済失敗・利用停止のお知らせ',[`月末の再決済を完了できませんでした。`,`利用停止日時: ${date(suspendAt)}`,`請求額: ${amount}`,`請求書: ${number}`,'翌月以降、有料プランの通知設定は支払い完了まで利用停止となります。未払いの請求が複数ある場合は、すべてのお支払いを確認してから再開します。','停止中は新しい月額料金を請求しません。停止から1か月間お支払いを確認できない場合は、契約を自動的に解約し、未払いの請求を取り消します。','請求額以上の残高をチャージすると、契約・支払い方法の管理の画面の操作で残高から支払えます（一部だけの支払いはできません）。']],
   auto_canceled:['【DPI-Bot】有料プラン自動解約のお知らせ',['利用停止から1か月間お支払いを確認できなかったため、有料プランの契約を自動的に解約しました。',`取り消した請求: ${amount}`,'今回の未払いの請求を新たにお支払いいただく必要はありません。再度ご利用になる場合は、改めてお申込みください。']],
-  credit_topup_succeeded:['【DPI-Bot】クレジットチャージ完了のお知らせ',[`クレジットチャージが完了しました。`,`購入額: ${amount}`,`付与クレジット: ${Number(invoice.amount_paid||0).toLocaleString('ja-JP')}クレジット`,`有効期限: ${date(invoice.expires_at)}`,'購入クレジットは、有料プラン・プラン変更・追加オプションの支払いに利用できます。']],
-  credit_topup_failed:['【DPI-Bot】クレジットチャージ失敗のお知らせ',[`クレジットチャージを完了できませんでした。`,`決済予定額: ${amount}`,'クレジットは付与されていません。支払方法を確認し、必要な場合は改めてチャージしてください。']],
-  credit_plan_payment_succeeded:['【DPI-Bot】クレジット払いによるプラン申込み完了のお知らせ',[`チャージ済みクレジットによる有料プランのお申込みが完了しました。`,`使用クレジット: ${Number(invoice.amount_paid||0).toLocaleString('ja-JP')}クレジット`,`次回更新日: ${date(invoice.next_renewal_at)}`,'今回の申込みではカード情報を入力していません。次回請求時にクレジットが不足する場合は、契約管理画面から支払方法を登録してください。']],
-  credit_expired:['【DPI-Bot】クレジット有効期限切れのお知らせ',[`購入クレジットの有効期限が終了しました。`,`失効クレジット: ${Number(invoice.amount_due||0).toLocaleString('ja-JP')}クレジット`,`失効日時: ${date(invoice.expires_at)}`,'有効期限を過ぎた未使用分は利用規約に基づき失効し、原則として払戻しまたは再発行を行いません。']],
+  credit_topup_succeeded:['【DPI-Bot】事前チャージ完了のお知らせ',[`事前チャージが完了しました。`,`チャージ額: ${Number(invoice.amount_paid||0).toLocaleString('ja-JP')}円`,`有効期限: ${date(invoice.expires_at)}`,'チャージした残高は、プランの申込み・変更・追加オプション・毎月の更新のお支払いに、カードより先に使われます。']],
+  credit_topup_failed:['【DPI-Bot】事前チャージ失敗のお知らせ',[`事前チャージを完了できませんでした。`,`決済予定額: ${amount}`,'残高は増えていません。支払方法を確認し、必要な場合は改めてチャージしてください。']],
+  credit_plan_payment_succeeded:['【DPI-Bot】残高によるプラン申込み完了のお知らせ',[`事前チャージの残高による有料プランのお申込みが完了しました。`,`使った残高: ${Number(invoice.amount_paid||0).toLocaleString('ja-JP')}円`,`次回更新日: ${date(invoice.next_renewal_at)}`,'今回、カードへの請求はありません。次回26日の更新に残高が足りない場合は、それまでにチャージするか、カードを登録してください。']],
+  credit_expired:['【DPI-Bot】事前チャージの有効期限切れのお知らせ',[`チャージした残高の有効期限が終了しました。`,`失効した残高: ${Number(invoice.amount_due||0).toLocaleString('ja-JP')}円`,`失効日時: ${date(invoice.expires_at)}`,'有効期限を過ぎた未使用分は利用規約に基づき失効し、原則として払戻しまたは再発行を行いません。']],
  };
  const [subject,body]=definitions[kind];const links=[];
  if(safeInvoiceUrl(invoice.hosted_invoice_url))links.push(`請求書（画面）: ${safeInvoiceUrl(invoice.hosted_invoice_url)}`);
@@ -557,13 +557,13 @@ function disciplinaryMailContent(env,kind,details,sentAt){
  const definitions={
   disciplinary_cancel:['【DPI-Bot】有料プラン契約解除のお知らせ',[
    '管理上の措置として、有料プランの契約を即時解除しました。',
-   `解除した契約: ${canceled}件`,`没収クレジット: ${credits}クレジット`,`理由: ${reason}`,
+   `解除した契約: ${canceled}件`,`没収した残高: ${credits}円`,`理由: ${reason}`,
    '返金は行われません。再度お支払いいただくことで、有料プランへお申込みいただけます。',
   ]],
   ban_account:['【DPI-Bot】有料プランアカウント停止のお知らせ',[
    '管理上の措置として、有料プランアカウントを停止しました。',
-   `解除した契約: ${canceled}件`,`没収クレジット: ${credits}クレジット`,`理由: ${reason}`,
-   '返金は行われません。アカウント停止中は、すべての有料プランへの申込み、クレジットチャージ、契約変更および通知設定を利用できません。',
+   `解除した契約: ${canceled}件`,`没収した残高: ${credits}円`,`理由: ${reason}`,
+   '返金は行われません。アカウント停止中は、すべての有料プランへの申込み、事前チャージ、契約変更および通知設定を利用できません。',
   ]],
   unban_account:['【DPI-Bot】有料プランアカウント停止解除のお知らせ',[
    '有料プランアカウントの停止を解除しました。',`理由: ${reason}`,
@@ -882,17 +882,17 @@ export async function provisionCreditFundedSignup(env,db,uid,customer,choice,inp
  if(!legalConsentVersion)fail('申込み同意を確認できません。画面を再読み込みしてください。',400);
  let schedule=billingSchedule(),amount=choice.monthly*schedule.initialMonths;const now=Math.floor(Date.now()/1000);
  let attempt=await db.prepare('SELECT * FROM supporter_credit_signups WHERE request_id=?').bind(requestedId).first();
- if(attempt&&!sameCreditSignup(attempt,customer,choice,legalConsentVersion))fail('別の条件でクレジット申込みを処理済みです。',409);
+ if(attempt&&!sameCreditSignup(attempt,customer,choice,legalConsentVersion))fail('別の条件で残高による申込みを処理済みです。',409);
  if(attempt){amount=Number(attempt.amount);schedule={...schedule,anchor:Number(attempt.billing_anchor),initialMonths:Math.max(1,Math.round(amount/choice.monthly)),lateMonth:amount>choice.monthly};}
  if(attempt?.status==='provisioned'){
   const list=await subscriptions(env,customer),subscription=creditSignupSubscription(list,attempt.request_id)||list.find(item=>item.id===attempt.subscription_id);
   if(subscription)return {subscription,amount,balanceAfter:await customerCredits(env,customer),requestId:attempt.request_id,recovered:true};
  }
- if(['failed','refunded'].includes(attempt?.status))fail('前回のクレジット申込みは完了しませんでした。残高を確認して、もう一度お申し込みください。',409);
+ if(['failed','refunded'].includes(attempt?.status))fail('前回の残高による申込みは完了しませんでした。残高を確認して、もう一度お申し込みください。',409);
  if(!attempt){
   const active=await db.prepare(`SELECT * FROM supporter_credit_signups WHERE discord_user_id=? AND status IN ('pending','debited') ORDER BY created_at DESC LIMIT 1`).bind(uid).first();
   if(active){
-   if(!sameCreditSignup(active,customer,choice,legalConsentVersion))fail('別のクレジット申込みを処理中です。少し待って契約情報を再読み込みしてください。',409);
+   if(!sameCreditSignup(active,customer,choice,legalConsentVersion))fail('残高による別の申込みを処理中です。少し待って契約情報を再読み込みしてください。',409);
    attempt=active;amount=Number(active.amount);schedule={...schedule,anchor:Number(active.billing_anchor),initialMonths:Math.max(1,Math.round(amount/choice.monthly)),lateMonth:amount>choice.monthly};
   }else{
    try{
@@ -919,7 +919,7 @@ export async function provisionCreditFundedSignup(env,db,uid,customer,choice,inp
  const alreadyDebited=attempt.status==='debited'&&!!attempt.balance_transaction_id;
  if(!alreadyDebited){
   const credits=await customerCredits(env,customer);
-  if(credits<amount){await db.prepare(`UPDATE supporter_credit_signups SET status='failed',updated_at=? WHERE request_id=? AND status='pending'`).bind(now,attempt.request_id).run();fail(`クレジット残高が不足しています。申込みには${amount.toLocaleString('ja-JP')}クレジット必要です。`,409);}
+  if(credits<amount){await db.prepare(`UPDATE supporter_credit_signups SET status='failed',updated_at=? WHERE request_id=? AND status='pending'`).bind(now,attempt.request_id).run();fail(`事前チャージの残高が不足しています。申込みには${amount.toLocaleString('ja-JP')}円必要です。`,409);}
  }
  let transaction=null;
  try{
@@ -937,7 +937,7 @@ export async function provisionCreditFundedSignup(env,db,uid,customer,choice,inp
   await db.prepare(`UPDATE supporter_credit_signups SET balance_transaction_id=?,status='debited',updated_at=? WHERE request_id=? AND status IN ('pending','debited')`).bind(transaction.id,now,attempt.request_id).run();
   const params=creditSignupSubscriptionParams(env,customer,uid,choice,schedule,legalConsentVersion,attempt.request_id);
   const subscription=await stripe(env,'subscriptions',params,`dpi-credit-signup-subscription-${attempt.request_id}`);
-  if(!['active','trialing'].includes(subscription?.status))fail('クレジット払いによる契約を有効化できませんでした。',409);
+  if(!['active','trialing'].includes(subscription?.status))fail('残高による契約を有効化できませんでした。',409);
   await completeCreditSignup(db,attempt,subscription,transaction,amount,balanceAfter,now);
   try{await sendBillingNotification(env,db,'credit_plan_payment_succeeded',{id:`credit-signup:${attempt.request_id}`,customer,amount_paid:amount,currency:'jpy',next_renewal_at:schedule.anchor});}
   catch(error){console.error('Credit signup email failed',{requestId:attempt.request_id,errorName:error?.name||'Error'});}
@@ -1168,7 +1168,7 @@ export async function billingAction(request,env,db,uid,input={}){
   const amount=normalizeCreditTopupAmount(input.amount);
   const requestId=clean(input.requestId),legalConsentVersion=clean(input.legalConsentVersion);
   if(!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestId))return json({message:'チャージ情報が正しくありません。再読み込みしてください。'},400);
-  if(!legalConsentVersion)return json({message:'クレジット購入条件への同意を確認できません。'},400);
+  if(!legalConsentVersion)return json({message:'事前チャージの条件への同意を確認できません。'},400);
   const now=Math.floor(Date.now()/1000);
   const previous=await db.prepare('SELECT * FROM supporter_credit_topups WHERE request_id=?').bind(requestId).first();
   if(previous&&(previous.discord_user_id!==uid||previous.customer_id!==row.customer_id||Number(previous.amount)!==amount))return json({message:'別の条件でチャージリンクを作成済みです。'},409);
@@ -1182,7 +1182,7 @@ export async function billingAction(request,env,db,uid,input={}){
     mode:'payment',customer:row.customer_id,client_reference_id:uid,
     'line_items[0][price_data][currency]':'jpy',
     'line_items[0][price_data][unit_amount]':String(amount),
-    'line_items[0][price_data][product_data][name]':`DPI-Bot クレジット ${amount.toLocaleString('ja-JP')}ポイント`,
+    'line_items[0][price_data][product_data][name]':`DPI-Bot 事前チャージ ${amount.toLocaleString('ja-JP')}円分`,
     'line_items[0][quantity]':'1',
     'metadata[dpi_checkout_kind]':'credit_topup','metadata[dpi_user]':uid,
     'metadata[dpi_credit_amount]':String(amount),'metadata[dpi_topup_request_id]':requestId,
@@ -1208,7 +1208,7 @@ export async function billingAction(request,env,db,uid,input={}){
   if(total!==expectedTotal)return json({message:'金額が変わりました。もう一度確認してください。'},409);
   const available=await customerCredits(env,row.customer_id);
   const needed=unpaidCreditNeeded(items);
-  if(available<needed)return json({message:`クレジットが${(needed-available).toLocaleString('ja-JP')}円不足しています。`},409);
+  if(available<needed)return json({message:`残高が${(needed-available).toLocaleString('ja-JP')}円不足しています。`},409);
   let paidCount=0,paidTotal=0,lastError=null;
   for(const item of items){
    try{const result=await payInvoiceWithCredits(env,db,row.customer_id,uid,item.invoice.id);paidCount+=1;paidTotal+=result.amount;}
@@ -1216,7 +1216,7 @@ export async function billingAction(request,env,db,uid,input={}){
   }
   const [subscriptionsResult,credits,dunning]=await Promise.all([customerSubscriptionSummaries(env,row.customer_id),customerCredits(env,row.customer_id),dunningState(db,row.customer_id)]);
   const creditDetails=await purchasedCreditStatus(db,uid,credits);
-  return json({message:lastError?`${paidCount}件を支払いました。残りの支払いは完了していません。`:`${paidCount}件の未払いをクレジットで支払いました。`,paidCount,total,paidTotal,credits,subscriptions:subscriptionsResult,dunning,creditDetails,complete:!lastError});
+  return json({message:lastError?`${paidCount}件を支払いました。残りの支払いは完了していません。`:`${paidCount}件の未払いを残高から支払いました。`,paidCount,total,paidTotal,credits,subscriptions:subscriptionsResult,dunning,creditDetails,complete:!lastError});
  }
  const choice=selection(input);
  const recovery=await reconcilePaidCheckoutSubscription(env,row.customer_id,uid,db);
@@ -1237,15 +1237,15 @@ export async function billingAction(request,env,db,uid,input={}){
   if(!current)return json({message:'更新できる契約がありません。先にプランを申し込んでください。'},409);
   if(cancelScheduled(current))return json({message:CANCEL_SCHEDULED_MESSAGE},409);
   const preview=await previewSubscriptionUpdate(env,row.customer_id,current,choice,prorationDate);
-  if(preview.creditShortage>0)return json({message:`クレジットが${preview.creditShortage.toLocaleString('ja-JP')}円不足しています。チャージしてから、もう一度お試しください。`},409);
+  if(preview.creditShortage>0)return json({message:`残高が${preview.creditShortage.toLocaleString('ja-JP')}円不足しています。チャージしてから、もう一度お試しください。`},409);
   const expectedCreditApplied=Number(input.expectedCreditApplied||0);
-  if(!Number.isInteger(expectedCreditApplied)||expectedCreditApplied!==preview.creditApplied)return json({message:'利用可能クレジットが変更されました。料金をもう一度確認してください。'},409);
-  if(preview.creditApplied>0&&input.useCredits!==true)return json({message:'クレジット利用と差額支払いへの確認が必要です。料金をもう一度確認してください。'},409);
+  if(!Number.isInteger(expectedCreditApplied)||expectedCreditApplied!==preview.creditApplied)return json({message:'利用可能な残高が変更されました。料金をもう一度確認してください。'},409);
+  if(preview.creditApplied>0&&input.useCredits!==true)return json({message:'残高の利用と差額の支払いへの確認が必要です。料金をもう一度確認してください。'},409);
   let updateResult=null;
   if(preview.changeTiming==='next_period')await scheduleSubscriptionChange(env,current,choice,`dpi-user-update-${uid}-${requestId}`,{'dpi_updated_by':'user'});
   else updateResult=await updateSubscription(env,current,choice,`dpi-user-update-${uid}-${requestId}`,{'metadata[dpi_updated_by]':'user'},prorationDate);
   const baseMessage=preview.changeTiming==='next_period'?'ダウングレードを予約しました。返金は行わず、次回26日から新しい内容を適用します。':updateResult?.paymentPending?`基本プランの変更は支払い確認待ちです。契約管理から支払い方法をご確認ください。${updateResult.optionsDeferred?'追加オプションは支払い完了後に改めて変更してください。':''}`:'プランと追加オプションを更新しました。基本プランの差額だけを日割りし、追加オプションは次回26日から反映します。';
-  const creditMessage=preview.nextInvoiceCreditApplied>0?' 次回分のクレジットは26日の請求書確定時に消費されます。':'';
+  const creditMessage=preview.nextInvoiceCreditApplied>0?' 次回分の残高は26日の請求書確定時に使われます。':'';
   const scheduleMessage=updateResult?.releasedSchedule?' 以前予約したダウングレードは取り消しました。':'';
   return json({message:`${baseMessage}${scheduleMessage}${creditMessage}`,paymentPending:updateResult?.paymentPending===true,optionsDeferred:updateResult?.optionsDeferred===true,releasedScheduledChange:updateResult?.releasedSchedule===true,billingDay:26,subscriptions:await customerSubscriptionSummaries(env,row.customer_id),credits:await customerCredits(env,row.customer_id),creditApplication:{immediate:preview.immediateCreditApplied,nextInvoice:preview.nextInvoiceCreditApplied,nextInvoiceDue:preview.nextInvoiceDue},deliveryEnabled:false});
  }
@@ -1262,7 +1262,7 @@ export async function billingAction(request,env,db,uid,input={}){
   const [summaries,credits]=await Promise.all([customerSubscriptionSummaries(env,row.customer_id),customerCredits(env,row.customer_id)]);
   const creditDetails=await purchasedCreditStatus(db,uid,credits);
   await reconcileSupporterRolesSafely(env,db,subscriptionSummariesByCustomer,{discordUserId:uid});
-  return json({message:`${result.amount.toLocaleString('ja-JP')}クレジットでお申し込みが完了しました。カード情報の入力は不要でした。`,paidWithCredits:true,creditApplied:result.amount,balanceAfter:result.balanceAfter,billingDay:26,subscriptions:summaries,credits,creditDetails,deliveryEnabled:false});
+  return json({message:`${result.amount.toLocaleString('ja-JP')}円の残高でお申し込みが完了しました。カード情報の入力は不要でした。`,paidWithCredits:true,creditApplied:result.amount,balanceAfter:result.balanceAfter,billingDay:26,subscriptions:summaries,credits,creditDetails,deliveryEnabled:false});
  }
  row=await recoverStaleCheckoutAttempt(db,uid,row);
  const initialTotal=choice.monthly*schedule.initialMonths;
@@ -1284,7 +1284,7 @@ export async function billingAction(request,env,db,uid,input={}){
  params[`line_items[${line}][price_data][currency]`]='jpy';
  params[`line_items[${line}][price_data][unit_amount]`]=String(initialTotal-creditApplied);
  if(creditApplied>0){params['metadata[dpi_credit_applied]']=String(creditApplied);params['metadata[dpi_initial_total]']=String(initialTotal);}
- params[`line_items[${line}][price_data][product_data][name]`]=`${PLAN_CATALOG[choice.plan].name} ${schedule.lateMonth?'初回利用料（当月分・翌月分の2か月分）':'初回利用料（当月分）'}${creditApplied>0?`（総額${initialTotal.toLocaleString('ja-JP')}円のうち事前チャージ${creditApplied.toLocaleString('ja-JP')}円を使用）`:''}`;
+ params[`line_items[${line}][price_data][product_data][name]`]=`${PLAN_CATALOG[choice.plan].name} ${schedule.lateMonth?'初回利用料（当月分・翌月分の2か月分）':'初回利用料（当月分）'}${creditApplied>0?`（総額${initialTotal.toLocaleString('ja-JP')}円のうち事前チャージの残高から${creditApplied.toLocaleString('ja-JP')}円を使用）`:''}`;
  params[`line_items[${line}][quantity]`]='1';
  await db.prepare('UPDATE supporter_billing SET checkout_key=?,checkout_params=? WHERE discord_user_id=? AND checkout_key IS NULL').bind(crypto.randomUUID(),JSON.stringify(params),uid).run();
  row=await db.prepare('SELECT * FROM supporter_billing WHERE discord_user_id=?').bind(uid).first();
@@ -1416,7 +1416,7 @@ async function previewSubscriptionUpdate(env,customer,current,choice,requestedPr
   creditGenerated:changeTiming==='next_period'?0:Math.max(0,-planProration),
   optionChange:{currentChannelPacks:currentSummary.channelPacks,nextChannelPacks:choice.channelPacks,currentServerPacks:currentSummary.serverPacks,nextServerPacks:choice.serverPacks,currentRulePacks:currentSummary.rulePacks,nextRulePacks:choice.rulePacks,prorated:false,effectiveAt:currentSummary.nextRenewalAt},
   nextRenewalAt:currentSummary.nextRenewalAt,
-  notice:changeTiming==='next_period'?'変更は次回26日から適用され、返金はありません。利用するクレジットは次回の請求に反映します。':'基本プランの差額は日割りで精算します。追加オプションは日割りせず、次回26日分から反映します。利用するクレジットは今回の差額、次回の請求の順に充当します。',
+  notice:changeTiming==='next_period'?'変更は次回26日から適用され、返金はありません。利用する残高は次回の請求に反映します。':'基本プランの差額は日割りで精算します。追加オプションは日割りせず、次回26日分から反映します。利用する残高は今回の差額、次回の請求の順に充当します。',
  };
 }
 function phaseItems(params,index,items){
