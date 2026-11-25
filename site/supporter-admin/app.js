@@ -1,4 +1,4 @@
-import { FEATURE_DEFINITIONS, FEATURE_SECTIONS, PLAN_FEATURE_NAMES, missingFeatureDependency, featureLabel } from '../supporter/plan-features.js';
+import { FEATURE_DEFINITIONS, FEATURE_SECTIONS, PLAN_FEATURE_NAMES, missingFeatureDependency, featureLabel } from './plan-features.js';
 
 let accounts = [];
 let selectedAccount = null;

@@ -58,7 +58,7 @@ test('the admin screen retains frequent operations and expands custom settings o
  for(const text of ['Proと同じ','Plusと同じ','Basicと同じ','すべてオフ'])assert.ok(html.includes(text),text);
  assert.match(html,/id="custom-reuse" type="checkbox"/);
  assert.match(js,/openCustomForAccount/);
- assert.match(js,/from '\.\.\/supporter\/plan-features\.js'/);
+ assert.match(js,/from '\.\/plan-features\.js'/);
  assert.match(js,/syncFeatureDependencies/);
  assert.match(js,/features:selectedFeatures\(\)/);
  assert.match(js,/customRequestId=''/);
