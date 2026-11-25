@@ -12,6 +12,8 @@ const encoder = new TextEncoder();
 const clean = value => String(value ?? '').trim();
 
 export function reviewAccessConfigured(env) {
+ // SUPPORTER_REVIEW_ENABLED=false の間は、パスワードを登録したままでも審査用の入口を出さない（一律 404）。
+ if (clean(env.SUPPORTER_REVIEW_ENABLED).toLowerCase() === 'false') return false;
  return clean(env.SUPPORTER_REVIEW_USER).length > 0 && clean(env.SUPPORTER_REVIEW_PASSWORD).length >= 12;
 }
 

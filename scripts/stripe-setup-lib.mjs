@@ -126,6 +126,18 @@ export async function readConfigValue(name) {
 export function wrangler(args, options = {}) {
  return spawnSync('npx', [...WRANGLER, ...args], {cwd: ROOT, encoding: 'utf8', shell: process.platform === 'win32', maxBuffer: 64 * 1024 * 1024, ...options});
 }
+// 本番サイトの決済モード・受付停止など。非公開（404）の間は、配備元である origin/main の設定から読む。
+export async function siteState() {
+ const response = await fetch(`${ORIGIN}/api/supporter/plans`, {headers: {Accept: 'application/json', 'Cache-Control': 'no-store'}, signal: AbortSignal.timeout(20000)});
+ if (response.ok) return {...await response.json(), published: true};
+ if (response.status !== 404) return null;
+ const run = args => spawnSync('git', args, {cwd: ROOT, encoding: 'utf8'});
+ if (run(['fetch', '-q', 'origin', 'main']).status !== 0) return null;
+ const file = run(['show', 'origin/main:wrangler.jsonc']);
+ if (file.status !== 0) return null;
+ const value = name => file.stdout.match(new RegExp(`"${name}"\\s*:\\s*"([^"]*)"`))?.[1] ?? '';
+ return {published: false, mode: value('SUPPORTER_BILLING_MODE'), intakePaused: value('SUPPORTER_INTAKE_PAUSED') === 'true', previewOpen: value('SUPPORTER_PREVIEW_OPEN') === 'true'};
+}
 export function putSecret(name, value) {
  const result = wrangler(['secret', 'put', name], {input: value});
  if (result.status !== 0) throw new Error(`${name} の登録に失敗しました: ${(result.stderr || result.stdout || '').trim().slice(-300)}`);

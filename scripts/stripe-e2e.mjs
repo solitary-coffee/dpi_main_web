@@ -16,7 +16,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { closeBrowser, payInBrowser } from './e2e-checkout.mjs';
 import { e2eKey } from './e2e-key.mjs';
-import { EVENTS, PRICES, ROOT, ensurePortal, ensurePrices, findWebhooks, stripeClient } from './stripe-setup-lib.mjs';
+import { EVENTS, PRICES, ROOT, ensurePortal, ensurePrices, findWebhooks, siteState, stripeClient } from './stripe-setup-lib.mjs';
 import * as billing from '../worker/supporter-billing.js';
 import { buildSupporterSnapshot } from '../worker/supporter-snapshot.js';
 import { stageCustomChange } from '../worker/supporter-custom-change.js';
@@ -578,8 +578,8 @@ async function main() {
  const endpoints = (await findWebhooks(stripe)).filter(item => item.status === 'enabled');
  if (endpoints.length && !args.includes('--shared')) throw new Error('このサンドボックスには本番サイトの Webhook 送信先があります。--shared を付けると、試験の間だけ送信先を止めて実行します（本番サイトが受付停止・テストモードのときだけ）。');
  if (endpoints.length) {
-  const state = await (await fetch('https://dpi-bot.com/api/supporter/plans', {signal: AbortSignal.timeout(20000)})).json();
-  if (state.mode === 'live' ? false : state.intakePaused !== true) throw new Error('本番サイトがテストモードで受付中のため、送信先を止められません。');
+  const state = await siteState();
+  if (!state || (state.mode !== 'live' && state.intakePaused !== true)) throw new Error('本番サイトがテストモードで受付中のため、送信先を止められません。');
   for (const endpoint of endpoints) await stripe('POST', `webhook_endpoints/${endpoint.id}`, {disabled: 'true'});
   console.log(`試験の間、Webhook 送信先 ${endpoints.length} 件を止めます。`);
   stopped.push(...endpoints.map(item => item.id));

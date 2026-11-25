@@ -77,3 +77,20 @@ test('テスト公開中はパスワードなしで画面を返し、検索避�
  assert.equal(response.status, 200);
  assert.equal(response.headers.get('X-Robots-Tag'), 'noindex, nofollow, noarchive');
 });
+
+test('非公開の間は、審査用の入口を出さず一律404にする（パスワードは登録したまま）', async () => {
+ const { handleSupporterRequest } = await import('../worker/supporter.js');
+ const env = {SUPPORTER_REVIEW_USER: 'review', SUPPORTER_REVIEW_PASSWORD: 'x'.repeat(16), SUPPORTER_PREVIEW_OPEN: 'false', SUPPORTER_PUBLIC_ENABLED: 'false', REUSE_DB: {}, ASSETS: {fetch: async () => new Response('secret page')}};
+ const status = async (path, extra = {}, init = {}) => (await handleSupporterRequest(new Request(`https://dpi-bot.com${path}`, init), {...env, ...extra})).status;
+ assert.equal(await status('/site/supporter/'), 401);
+ for (const path of ['/site/supporter/', '/site/supporter/plans.html', '/site/supporter/app.js', '/api/supporter/plans', '/api/supporter/preview-checkout/result']) assert.equal(await status(path, {SUPPORTER_REVIEW_ENABLED: 'false'}), 404, path);
+ assert.equal(await status('/api/supporter/preview-checkout', {SUPPORTER_REVIEW_ENABLED: 'false'}, {method: 'POST', body: '{}'}), 404);
+ const basic = {headers: {Authorization: `Basic ${btoa(`review:${'x'.repeat(16)}`)}`}};
+ assert.equal(await status('/site/supporter/', {SUPPORTER_REVIEW_ENABLED: 'false'}, basic), 404);
+});
+test('公開設定: 有料プランは非公開で、公開ページから案内しない', async () => {
+ const { readFile } = await import('node:fs/promises');
+ const config = JSON.parse(await readFile(new URL('../wrangler.jsonc', import.meta.url), 'utf8'));
+ assert.deepEqual([config.vars.SUPPORTER_PREVIEW_OPEN, config.vars.SUPPORTER_PUBLIC_ENABLED, config.vars.SUPPORTER_REVIEW_ENABLED], ['false', 'false', 'false']);
+ assert.doesNotMatch(await readFile(new URL('../site/dever/index.html', import.meta.url), 'utf8'), /site\/supporter\//);
+});
