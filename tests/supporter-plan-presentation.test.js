@@ -84,7 +84,10 @@ test('comparison detail references resolve and list the Worker choices',async()=
  const detailIds=[...html.matchAll(/<details\b[^>]*\sid="([^"]+)"[^>]*>/g)].map(match=>match[1]);
  assert.equal(new Set(detailIds).size,detailIds.length,'details id must be unique');
  const references=[...html.matchAll(/<a class="detail-ref" href="#([^"]+)"/g)].map(match=>match[1]);
- assert.ok(references.length>0);
+ // ※は、選べる内容を見たい所だけ（すべての行には付けない）
+ assert.equal(references.length,13);
+ assert.deepEqual([...html.matchAll(/<th scope="row">([^<]*)<a class="detail-ref"/g)].map(match=>match[1]),['情報の種類の選択','情報の種類の選択']);
+ assert.equal((html.match(/href="#text-area-detail"/g)||[]).length,4);
  for(const target of references)assert.ok(documentIds.includes(target),target);
  const detail=id=>html.match(new RegExp(`<details\\b[^>]*\\sid="${id}"[^>]*>[\\s\\S]*?</details>`))?.[0]||'';
  const earthquake=detail('text-earthquake-detail');
