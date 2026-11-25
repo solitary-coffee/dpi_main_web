@@ -18,6 +18,8 @@ const TOPICS = Object.freeze({
     bot_issue: 'BOTの不具合',
     bug_report: 'Webサイトのバグ報告',
     buy_report: '支援について',
+    paid_plan: '有料プランに関するお問い合わせ',
+    custom_plan: 'カスタムプランに関するご相談',
     other: 'その他のお問い合わせ',
 });
 
@@ -811,6 +813,7 @@ function jsonResponse(body, status = 200, extraHeaders = {}) {
 }
 
 export const __test = Object.freeze({
+    topics: TOPICS,
     prepareAttachments,
     sanitizeJpeg,
     sanitizePlainText,

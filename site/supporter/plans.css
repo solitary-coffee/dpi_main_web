@@ -60,10 +60,12 @@
  .comparison-table-simple{min-width:640px}
  .comparison-table-grouped{min-width:0;table-layout:fixed}
  .comparison-table-grouped th,.comparison-table-grouped td{padding:10px 6px;overflow-wrap:anywhere}
- .comparison-table-grouped thead th:first-child{width:24%}
- .comparison-table-grouped thead th:nth-child(n+3){width:13.5%;padding:10px 2px;font-size:.78rem;white-space:nowrap}
+ .comparison-table-grouped thead th:first-child{width:21%}
+ .comparison-table-grouped thead th:nth-child(n+3){width:12%;padding:10px 1px;font-size:.72rem;white-space:nowrap}
+ .comparison-table-grouped thead th:last-child{width:15%}
+ .comparison-table-grouped tbody td{padding:10px 2px;white-space:normal}
+ .comparison-table-grouped tbody td:last-child{font-size:.72rem;line-height:1.4}
  .comparison-table-grouped tbody th,.comparison-table-grouped tbody .comparison-kind{min-width:0}
- .comparison-table-grouped thead th:last-child,.comparison-table-grouped tbody td:last-child{display:none}
  .comparison-notices{padding:16px}
  .comparison-main-link{width:100%}
 }

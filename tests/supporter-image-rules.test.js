@@ -210,7 +210,7 @@ test('admin details describe image rule settings',()=>{
 });
 
 test('comparison table lists the image delivery rows with the plan split (custom: per contract)',async()=>{
- const html=await readFile(new URL('../site/supporter/plans.html',import.meta.url),'utf8');
+ const [html,css]=await Promise.all(['plans.html','plans.css'].map(file=>readFile(new URL('../site/supporter/'+file,import.meta.url),'utf8')));
  assert.doesNotMatch(html,/準備中/);
  assert.match(html,/選んだ地域が発表の対象に含まれるときだけ配信します/);
  const row=(kind,label)=>{const body=html.match(new RegExp(`<th scope="rowgroup"[^>]*>${kind}</th>[\\s\\S]*?</tbody>`))?.[0]||'';return body.match(new RegExp(`<th scope="row">${label}[^<]*</th>((?:<td>[^<]*</td>){4})`))?.[1].match(/<td>([^<]*)<\/td>/g).map(cell=>cell.replace(/<\/?td>/g,''));};
@@ -227,7 +227,8 @@ test('comparison table lists the image delivery rows with the plan split (custom
   ['津波','津波観測の表',['—','○','○',C]],['津波','発表地域の拡大図',['—','—','○',C]],
   ['組み合わせ・配信先','AND・OR',['—','—','○',C]],['組み合わせ・配信先','1つのルールから複数チャンネル',['—','—','○',C]],
   ['地震情報','情報の種類',['○','○','○','○']],['地震情報','全国・地方',['○','○','○','○']],['地震情報','震度・マグニチュード',['○','○','○','○']],['地震情報','都道府県',['—','○','○',C]],['地震情報','市区町村',['—','—','○',C]],['地震情報','市区町村の本文だけ',['—','—','○',C]],
-  ['緊急地震速報','予報・警報',['○','○','○','○']],['緊急地震速報','全国・地方',['○','○','○','○']],['緊急地震速報','最終報',['○','○','○','○']],['緊急地震速報','都道府県',['—','○','○',C]],
+  ['緊急地震速報（予報）','全国・地方',['○','○','○','○']],['緊急地震速報（予報）','震度・マグニチュード',['○','○','○','○']],['緊急地震速報（予報）','最終報',['○','○','○','○']],['緊急地震速報（予報）','都道府県',['—','○','○',C]],
+  ['緊急地震速報（警報）','全国・地方',['○','○','○','○']],['緊急地震速報（警報）','警報の対象地方の条件',['○','○','○','○']],['緊急地震速報（警報）','震度・マグニチュード',['○','○','○','○']],['緊急地震速報（警報）','最終報',['○','○','○','○']],['緊急地震速報（警報）','都道府県',['—','○','○',C]],
   ['気象情報','警戒レベル',['○','○','○','○']],['気象情報','都道府県',['—','○','○',C]],['気象情報','市区町村',['—','—','○',C]],
  ])assert.deepEqual(row(kind,label),expected,`${kind} ${label}`);
  // 種類の見出し（rowspan）と、その行数が合っている
@@ -243,8 +244,16 @@ test('comparison table lists the image delivery rows with the plan split (custom
   if(['月額（税込）','サーバー','チャンネル','ルール'].includes(label)||label.startsWith('追加'))continue;
   assert.equal(cell(values)[3],cell(values)[0]==='○'?'○':C,label);
  }
- // 緊急地震速報は市区町村を指定できない
- assert.doesNotMatch(html.match(/<th scope="rowgroup"[^>]*>緊急地震速報<\/th>[\s\S]*?<\/tbody>/)[0],/市区町村/);
+ // 緊急地震速報は予報と警報を分け、予報に警報限定条件や市区町村を出さない
+ const forecast=html.match(/<th scope="rowgroup"[^>]*>緊急地震速報（予報）<\/th>[\s\S]*?<\/tbody>/)[0];
+ const warning=html.match(/<th scope="rowgroup"[^>]*>緊急地震速報（警報）<\/th>[\s\S]*?<\/tbody>/)[0];
+ assert.doesNotMatch(forecast,/警報の対象地方の条件|市区町村/);
+ assert.doesNotMatch(warning,/市区町村/);
+ assert.doesNotMatch(html,/予報・警報の選択/);
+ // スマホでも grouped 表のカスタム列を隠さず、simple 表の指定は変えない
+ assert.doesNotMatch(css,/\.comparison-table-grouped[^\n{}]*(?:thead th:last-child|tbody td:last-child)[^{}]*\{[^}]*display\s*:\s*none/);
+ assert.match(css,/@media\(max-width:768px\)[\s\S]*\.comparison-table-grouped\{min-width:0;table-layout:fixed\}/);
+ assert.match(css,/\.comparison-table-simple\{min-width:640px\}/);
  assert.equal(cell(rows.find(([,label])=>label.startsWith('追加'))[2])[3],'個別');
 });
 

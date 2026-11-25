@@ -1,5 +1,7 @@
 import test, { afterEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import { runInNewContext } from 'node:vm';
 import worker, { __test, handleContactRequest } from '../worker/index.js';
 
 const originalFetch = globalThis.fetch;
@@ -106,6 +108,54 @@ test('CONTACT_TO_EMAILが未設定なら送信処理を開始せず拒否する'
     assert.equal(body.success, false);
     assert.equal(body.code, 'service_not_configured');
     assert.equal(recaptchaWasCalled, false);
+});
+
+test('有料・カスタムプランの種類を正しい日本語名で受け付け、未知の値は拒否する', async () => {
+    for (const [topic, label] of [
+        ['paid_plan', '有料プランに関するお問い合わせ'],
+        ['custom_plan', 'カスタムプランに関するご相談'],
+    ]) {
+        const sentMessages = [];
+        mockSuccessfulRecaptcha();
+        const response = await handleContactRequest(createFormRequest({ topic }), createEnvironment(sentMessages));
+        assert.equal(response.status, 200, topic);
+        assert.equal(sentMessages.length, 1, topic);
+        assert.match(sentMessages[0].subject, new RegExp(label));
+        assert.match(sentMessages[0].text, new RegExp(`概要: ${label}`));
+    }
+
+    let recaptchaWasCalled = false;
+    globalThis.fetch = async () => { recaptchaWasCalled = true; return Response.json({ success: true }); };
+    const response = await handleContactRequest(createFormRequest({ topic: 'unknown_plan' }), createEnvironment());
+    assert.equal(response.status, 400);
+    assert.equal((await response.json()).code, 'invalid_topic');
+    assert.equal(recaptchaWasCalled, false);
+});
+
+test('問い合わせ選択肢はWorkerのTOPICSに含まれ、URLの既知の値だけを初期選択する', async () => {
+    const html = await readFile(new URL('../site/supp/index.html', import.meta.url), 'utf8');
+    const options = [...html.matchAll(/<option value="([^"]*)">([^<]*)<\/option>/g)]
+        .filter(([, value]) => value)
+        .map(([, value, label]) => [value, label]);
+    for (const [value] of options) assert.ok(Object.hasOwn(__test.topics, value), value);
+    for (const value of ['paid_plan', 'custom_plan']) assert.equal(Object.fromEntries(options)[value], __test.topics[value]);
+    // 支援の案内は意図して隠している（選択肢に出さない）
+    assert.ok(!options.some(([value]) => value === 'buy_report'));
+    assert.deepEqual(options.slice(-3).map(([value]) => value), ['paid_plan', 'custom_plan', 'other']);
+
+    const script = await readFile(new URL('../site/supp/script.js', import.meta.url), 'utf8');
+    const selectTopicFromQuery = runInNewContext(`${script}\nselectTopicFromQuery;`, {
+        window: {},
+        document: { addEventListener() {} },
+        URLSearchParams,
+    });
+    const select = { options: options.map(([value]) => ({ value })), value: '' };
+    selectTopicFromQuery(select, '?type=custom_plan');
+    assert.equal(select.value, 'custom_plan');
+    select.value = '';
+    selectTopicFromQuery(select, '?type=%3Cimg%20src%3Dx%20onerror%3Dalert(1)%3E');
+    assert.equal(select.value, '');
+    assert.doesNotMatch(script, /innerHTML/);
 });
 
 test('スクリプト文字列を実行せず、プレーンテキストのメールとして送る', async () => {

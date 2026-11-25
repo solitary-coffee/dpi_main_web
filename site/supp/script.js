@@ -85,8 +85,10 @@ function setupContactForm() {
     const startedAt = document.getElementById('form-started-at');
     const fileInput = document.getElementById('attachments');
     const submitButton = document.getElementById('submit-btn');
+    const topicSelect = document.getElementById('topic');
 
     startedAt.value = String(Date.now());
+    selectTopicFromQuery(topicSelect, window.location.search);
     fileInput.addEventListener('change', updateAttachmentSelection);
     form.addEventListener('submit', submitContactForm);
 
@@ -98,6 +100,13 @@ function setupContactForm() {
         document.getElementById('recaptcha-loading').textContent = 'reCAPTCHAの読み込みに失敗しました。';
         submitButton.disabled = true;
     });
+}
+
+function selectTopicFromQuery(topicSelect, search) {
+    const requestedTopic = new URLSearchParams(search).get('type');
+    if (requestedTopic && Array.from(topicSelect.options).some((option) => option.value === requestedTopic)) {
+        topicSelect.value = requestedTopic;
+    }
 }
 
 async function loadRecaptchaConfig() {
