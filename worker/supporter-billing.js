@@ -388,8 +388,22 @@ async function dunningState(db,customer){
  return {reason:String(row?.invoice_id||'').startsWith(DISPUTE_PREFIX)?'dispute':'payment',usageSuspended:row?.status==='suspended',status:row?.status||null,retryAt:unix(row?.retry_at),suspendAt:unix(row?.suspend_at)};
 }
 const mailDate=value=>new Intl.DateTimeFormat('ja-JP',{dateStyle:'long',timeStyle:'medium',timeZone:'Asia/Tokyo'}).format(new Date(Number(value)*1000));
+// 本文（テキスト）から HTML 版を作る。「名前: URL」の行は、名前をクリックすると開けるリンクにする。リンクにするのは当方と Stripe の URL だけ。
+const MAIL_LINK_HOSTS=new Set(['dpi-bot.com','discord.gg',...STRIPE_DOCUMENT_HOSTS]);
+const escapeHtml=value=>String(value).replace(/[&<>"']/g,character=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[character]));
+function mailLink(line){
+ const link=line.match(/^([^:：]{1,60}): (https:\/\/\S+)$/);
+ if(link){try{const url=new URL(link[2]);if(url.protocol==='https:'&&MAIL_LINK_HOSTS.has(url.hostname)&&!url.username&&!url.port)return `<a href="${escapeHtml(url.href)}" style="color:#1d5fbf;text-decoration:underline">${escapeHtml(link[1])}</a>`;}catch{}}
+ const mail=line.match(/^メール: ([A-Za-z0-9._+-]+@[A-Za-z0-9.-]+)$/);
+ if(mail)return `<a href="mailto:${escapeHtml(mail[1])}" style="color:#1d5fbf;text-decoration:underline">メールで問い合わせる</a>`;
+ return escapeHtml(line);
+}
+export function mailHtml(text){
+ const body=String(text).split('\n').map(line=>/^-{10,}$/.test(line)?'<hr style="border:0;border-top:1px solid #c9d1dc;margin:14px 0">':line?`<div style="margin:3px 0">${mailLink(line)}</div>`:'<div style="height:10px"></div>').join('');
+ return `<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body style="margin:0;padding:16px;background:#f3f5f8"><div style="max-width:620px;margin:0 auto;padding:20px;background:#ffffff;border:1px solid #d9dfe7;border-radius:8px;color:#1f2733;font-family:'Hiragino Sans','Yu Gothic',Meiryo,sans-serif;font-size:15px;line-height:1.7;overflow-wrap:anywhere">${body}</div></body></html>`;
+}
 function supporterMailSignature(env){
- return ['----------------------------------------','DPI-Bot（Disaster prevention information provision BOT）','運営: 孤独のコーヒー','公式サイト: https://dpi-bot.com/','契約・支払い方法の管理: https://dpi-bot.com/site/supporter/','お問い合わせ: https://dpi-bot.com/site/supp/index.html',
+ return ['----------------------------------------','DPI-Bot','公式サイト: https://dpi-bot.com/','契約・支払い方法の管理: https://dpi-bot.com/site/supporter/','お問い合わせ: https://dpi-bot.com/site/supp/index.html',
   ...(clean(env.NOTICE_REPLY_TO_EMAIL)?[`メール: ${clean(env.NOTICE_REPLY_TO_EMAIL)}`]:[]),'公式サポートサーバー: https://discord.gg/qFuZcGUb4K','利用規約: https://dpi-bot.com/terms/terms.html','特定商取引法に基づく表記: https://dpi-bot.com/terms/Specified.html','プライバシーポリシー: https://dpi-bot.com/terms/policy.html',
   '※このメールは有料プランのお支払い・契約に関する重要なお知らせのため、配信停止の設定にかかわらずお送りしています。','※お心当たりがない場合は、お手数ですが上記のお問い合わせ先へご連絡ください。','----------------------------------------'].join('\n');
 }
@@ -451,7 +465,7 @@ export async function sendBillingNotification(env,db,kind,invoice,retryAt=null,s
  const linked=await enrichBillingLinks(env,kind,invoice);
  const content=billingMailContent(env,kind,linked,retryAt,suspendAt,now);
  try{
-  await env.NOTICE_EMAIL.send({to:account.billing_email,from:{email:clean(env.NOTICE_FROM_EMAIL),name:'DPI-Bot'},subject:content.subject,text:content.text,...(clean(env.NOTICE_REPLY_TO_EMAIL)?{replyTo:clean(env.NOTICE_REPLY_TO_EMAIL)}:{}),headers:{'Auto-Submitted':'auto-generated','Content-Language':'ja','X-DPI-Mail-Type':`supporter-${kind}`}});
+  await env.NOTICE_EMAIL.send({to:account.billing_email,from:{email:clean(env.NOTICE_FROM_EMAIL),name:'DPI-Bot'},subject:content.subject,text:content.text,html:mailHtml(content.text),...(clean(env.NOTICE_REPLY_TO_EMAIL)?{replyTo:clean(env.NOTICE_REPLY_TO_EMAIL)}:{}),headers:{'Auto-Submitted':'auto-generated','Content-Language':'ja','X-DPI-Mail-Type':`supporter-${kind}`}});
  }catch(error){
   const firstFailed=String(notice?.last_error||'').match(/^(\d+):/)?.[1]||String(now);
   await db.prepare(`UPDATE supporter_billing_notifications SET status='failed',last_error=?,updated_at=? WHERE invoice_id=? AND kind=?`).bind(`${firstFailed}:${clean(error?.code||error?.name||'unknown')}`.slice(0,80),now,invoiceId,kind).run();
@@ -502,7 +516,7 @@ export async function sendSupporterDisciplinaryNotification(env,db,kind,details)
  if(!claim.meta?.changes)return notice?.status==='sent';
  const content=disciplinaryMailContent(env,kind,details,now);
  try{
-  await env.NOTICE_EMAIL.send({to:email,from:{email:clean(env.NOTICE_FROM_EMAIL),name:'DPI-Bot'},subject:content.subject,text:content.text,...(clean(env.NOTICE_REPLY_TO_EMAIL)?{replyTo:clean(env.NOTICE_REPLY_TO_EMAIL)}:{}),headers:{'Auto-Submitted':'auto-generated','Content-Language':'ja','X-DPI-Mail-Type':`supporter-${kind}`}});
+  await env.NOTICE_EMAIL.send({to:email,from:{email:clean(env.NOTICE_FROM_EMAIL),name:'DPI-Bot'},subject:content.subject,text:content.text,html:mailHtml(content.text),...(clean(env.NOTICE_REPLY_TO_EMAIL)?{replyTo:clean(env.NOTICE_REPLY_TO_EMAIL)}:{}),headers:{'Auto-Submitted':'auto-generated','Content-Language':'ja','X-DPI-Mail-Type':`supporter-${kind}`}});
   await db.prepare(`UPDATE supporter_billing_notifications SET status='sent',sent_at=?,updated_at=? WHERE invoice_id=? AND kind=?`).bind(now,now,noticeId,kind).run();
   return true;
  }catch(error){await db.prepare(`UPDATE supporter_billing_notifications SET status='failed',last_error=?,updated_at=? WHERE invoice_id=? AND kind=?`).bind(clean(error?.code||error?.name||'unknown').slice(0,80),now,noticeId,kind).run();throw error;}

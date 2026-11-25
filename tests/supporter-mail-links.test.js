@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {sendBillingNotification} from '../worker/supporter-billing.js';
+import {mailHtml,sendBillingNotification} from '../worker/supporter-billing.js';
 import {queueNotice,retryAdminNotices} from '../worker/supporter-ops-notice.js';
 
 function noticeDb(email='user@example.com'){
@@ -27,7 +27,7 @@ test('有料プランメールは共通署名、通知番号、JST日時と許�
  let mail;const db=noticeDb(),original=globalThis.fetch;
  globalThis.fetch=async url=>{const path=new URL(url).pathname;return Response.json(path.includes('/invoices/')?{hosted_invoice_url:'https://invoice.stripe.com/i/full',invoice_pdf:'https://files.stripe.com/invoice.pdf',payments:{data:[{payment:{payment_intent:'pi_ok'}}]}}:{latest_charge:{receipt_url:'https://pay.stripe.com/receipts/full'}});};
  try{await sendBillingNotification(env(async value=>{mail=value;}),db,'payment_succeeded',{id:'in_ok',customer:'cus_x',amount_paid:300,currency:'jpy',hosted_invoice_url:'http://invoice.stripe.com/bad',invoice_pdf:'https://evil.example/x'});}finally{globalThis.fetch=original;}
- for(const text of ['DPI-Bot 有料プランをご利用いただき、ありがとうございます。','DPI-Bot（Disaster prevention information provision BOT）','運営: 孤独のコーヒー','公式サイト: https://dpi-bot.com/','契約・支払い方法の管理: https://dpi-bot.com/site/supporter/','お問い合わせ: https://dpi-bot.com/site/supp/index.html','メール: reply@dpi-bot.com','公式サポートサーバー: https://discord.gg/qFuZcGUb4K','利用規約: https://dpi-bot.com/terms/terms.html','特定商取引法に基づく表記: https://dpi-bot.com/terms/Specified.html','プライバシーポリシー: https://dpi-bot.com/terms/policy.html','配信停止の設定にかかわらず','お心当たりがない場合','通知番号: in_ok','送信日時（日本時間）','請求書（画面）: https://invoice.stripe.com/i/full','請求書（PDF）: https://files.stripe.com/invoice.pdf','領収書: https://pay.stripe.com/receipts/full'])assert.match(mail.text,new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
+ for(const text of ['DPI-Bot 有料プランをご利用いただき、ありがとうございます。','公式サイト: https://dpi-bot.com/','契約・支払い方法の管理: https://dpi-bot.com/site/supporter/','お問い合わせ: https://dpi-bot.com/site/supp/index.html','メール: reply@dpi-bot.com','公式サポートサーバー: https://discord.gg/qFuZcGUb4K','利用規約: https://dpi-bot.com/terms/terms.html','特定商取引法に基づく表記: https://dpi-bot.com/terms/Specified.html','プライバシーポリシー: https://dpi-bot.com/terms/policy.html','配信停止の設定にかかわらず','お心当たりがない場合','通知番号: in_ok','送信日時（日本時間）','請求書（画面）: https://invoice.stripe.com/i/full','請求書（PDF）: https://files.stripe.com/invoice.pdf','領収書: https://pay.stripe.com/receipts/full'])assert.match(mail.text,new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
  assert.doesNotMatch(mail.text,/http:\/\/invoice|evil\.example/);
 });
 
@@ -49,4 +49,16 @@ test('管理者メールは異議と不正だけを一度送り、設定不正�
  await queueNotice(adminEnv,db,{id:'evt3:refunded',channel:'billing',kind:'refunded',title:'返金'});assert.equal(sent,3);
  for(const bad of ['', 'a@example.com,b@example.com','not-an-email']){await queueNotice({...adminEnv,CONTACT_TO_EMAIL:bad},noticeDb(),{id:`bad:${bad}`,channel:'billing',kind:'disputed',title:'支払異議の申立て'});}
  assert.equal(sent,3);
+});
+
+test('HTML版は文字のクリックで開けるリンクにし、当方とStripe以外のURLや記号は文字のまま出す',async()=>{
+ let mail;const original=globalThis.fetch;globalThis.fetch=async()=>Response.json({hosted_invoice_url:'https://invoice.stripe.com/i/a?b=1&c=2',invoice_pdf:'https://pay.stripe.com/invoice/a/pdf?s=ap'});
+ try{await sendBillingNotification(env(async value=>{mail=value;}),noticeDb(),'payment_succeeded',{id:'in_html',customer:'cus_x',amount_paid:300,currency:'jpy'});}finally{globalThis.fetch=original;}
+ for(const [label,url] of [['公式サイト','https://dpi-bot.com/'],['契約・支払い方法の管理','https://dpi-bot.com/site/supporter/'],['お問い合わせ','https://dpi-bot.com/site/supp/index.html'],['公式サポートサーバー','https://discord.gg/qFuZcGUb4K'],['利用規約','https://dpi-bot.com/terms/terms.html'],['特定商取引法に基づく表記','https://dpi-bot.com/terms/Specified.html'],['プライバシーポリシー','https://dpi-bot.com/terms/policy.html'],['請求書（画面）','https://invoice.stripe.com/i/a?b=1&amp;c=2'],['請求書（PDF）','https://pay.stripe.com/invoice/a/pdf?s=ap']])
+  assert.ok(mail.html.includes(`<a href="${url}"`)&&mail.html.includes(`>${label}</a>`),label);
+ assert.match(mail.html,/href="mailto:reply@dpi-bot\.com"/);
+ assert.doesNotMatch(mail.text+mail.html,/孤独のコーヒー|Disaster prevention/);
+ assert.match(mail.text,/公式サイト: https:\/\/dpi-bot\.com\//,'HTMLを表示できない環境向けのテキストにURLが無い');
+ const unsafe=mailHtml('理由: https://evil.example/x\n理由: https://dpi-bot.com.evil.example/\n理由: https://user@dpi-bot.com/\n<script>alert(1)</script>\n"x" & y\n理由: javascript:alert(1)');
+ assert.doesNotMatch(unsafe,/<a |<script/);assert.match(unsafe,/&lt;script&gt;/);assert.match(unsafe,/&quot;x&quot; &amp; y/);
 });

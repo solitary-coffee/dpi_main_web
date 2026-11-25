@@ -37,7 +37,7 @@ let currentClock = '', currentCustomer = '';
 // --notify: 同じ種類（題名）は 1 回だけ送る。日付などの数字の違いは同じ種類とみなす。
 const delivered = {mail: new Map(), admin: new Map(), discord: new Map()};
 // 試験のメールは、件名と本文の先頭で「誰に届くものか」を示す。
-const testMail = (audience, subject, note, text, headers) => ({headers, subject: `【通し試験｜${audience}】${subject}`,
+const testMail = (audience, subject, note, text, headers, html) => ({headers, ...(html ? {html: html.replace(/(<body[^>]*>)/, `$1<p style="max-width:620px;margin:0 auto 12px;padding:10px 14px;background:#fff3d6;border:1px solid #e0b24a;border-radius:8px;font-size:14px"><strong>【${audience}】</strong>${note}<br>これは有料プランの通し試験です。実際の請求・契約・処分ではありません。</p>`)} : {}), subject: `【通し試験｜${audience}】${subject}`,
  text: `━━━━━━━━━━━━━━━━━━━━
 【${audience}】${note}
 これは有料プランの通し試験です。実際の請求・契約・処分ではありません。
@@ -121,8 +121,8 @@ class World {
   world.env = {SUPPORTER_BILLING_MODE: 'test', STRIPE_SECRET_KEY: KEY, STRIPE_WEBHOOK_SECRET: 'whsec_e2e', ...seedIds, STRIPE_PORTAL_CONFIG: portalId, SUPPORTER_PUBLIC_ORIGIN: 'https://dpi-bot.com',
    SUPPORTER_PUBLIC_ENABLED: 'true', REUSE_DB: world.db, NOTICE_FROM_EMAIL: 'notice@dpi-bot.com', CONTACT_TO_EMAIL: 'admin@example.com', NOTICE_EMAIL: {send: async mail => {
     const admin = mail.to === world.env.CONTACT_TO_EMAIL;
-    if (admin) world.adminMails.push(mail.subject); else { world.mails.push(mail.subject); world.mailTexts.push(mail.text); }
-    if (notify) await sendOnce(admin ? 'admin' : 'mail', kindOf(mail.subject), '/__mail', testMail(admin ? '管理者向け' : 'ユーザー向け', mail.subject, admin ? '運営担当者に届く重要通知です。利用者には送られません。' : '有料プランの利用者に届くメールです。', mail.text, mail.headers));
+    if (admin) world.adminMails.push(mail.subject); else { world.mails.push(mail.subject); world.mailTexts.push(mail.text); assert.match(mail.html, />公式サイト<\/a>/); }
+    if (notify) await sendOnce(admin ? 'admin' : 'mail', kindOf(mail.subject), '/__mail', testMail(admin ? '管理者向け' : 'ユーザー向け', mail.subject, admin ? '運営担当者に届く重要通知です。利用者には送られません。' : '有料プランの利用者に届くメールです。', mail.text, mail.headers, mail.html));
    }},
    ...(notify ? {BILLING_NOTICE_WEBHOOK: `https://discord.com/api/webhooks/111111111111111111/${'billing'.padEnd(30, '_')}`, MEMBERSHIP_NOTICE_WEBHOOK: `https://discord.com/api/webhooks/222222222222222222/${'membership'.padEnd(30, '_')}`} : {})};
   const params = {name: `e2e ${world.uid}`, email: `e2e-${world.uid}@example.com`, 'metadata[dpi_user]': world.uid};
