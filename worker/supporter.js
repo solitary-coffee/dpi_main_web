@@ -4,6 +4,7 @@ import { adminBillingAction, adminDisciplinaryBillingAction, billingAction, bill
 import { getCustomPlan,customLocked,customPublic,normalizeCustomPlan,enrichCustomSubscriptions } from './supporter-custom.js';
 import { customChangeQuote,currentCustomChange,customChangePublic,stageCustomChange } from './supporter-custom-change.js';
 import { refreshSupporterSnapshotSafely } from './supporter-snapshot.js';
+import { reconcileSupporterRolesSafely } from './supporter-roles.js';
 import { PREFECTURES, loadSupporterAreaCatalogue, geographicEntitlements, normalizeGeographicRule } from './supporter-geo.js';
 import { planFeatures } from '../site/supporter/plan-features.js';
 import { billingMode, recoverCheckoutState, releaseDisputeHolds } from './supporter-billing.js';
@@ -11,6 +12,10 @@ import { basicCredentialsValid, reviewAccessConfigured, reviewChallenge, reviewC
 import { imageRulesEnabled, imageRulesV2Enabled, isImageRuleType, isImageRuleV2Type, imageRuleOptions, savedTsunamiOutputs, savedRadarContents, savedRadarMinutes, radarIntervalText, HIRES_RADAR_CONTENTS, TSUNAMI_MAP_OUTPUTS, WARNING_TABLE_KINDS, WARNING_TABLE_DELIVER_ON, normalizeImageRuleFields, loadEarthquakeMunicipalities, IMAGE_RULE_TYPE_OPTIONS, HIRES_RADAR_CONDITIONS, WEATHER_MAP_PRODUCTS, WEATHER_MAP_SEVERITIES, EARTHQUAKE_MAP_PRODUCTS, EARTHQUAKE_MAP_INTENSITIES } from './supporter-image-rules.js';
 
 const response = (data, status = 200) => Response.json(data, {status, headers: {'Cache-Control':'no-store'}});
+const refreshSupporterAccessSafely = (env, db, reason, discordUserId) => Promise.all([
+ refreshSupporterSnapshotSafely(env,db,subscriptionSummariesByCustomer,reason),
+ reconcileSupporterRolesSafely(env,db,subscriptionSummariesByCustomer,{discordUserId}),
+]);
 const notFound = () => new Response('Not Found', {
  status: 404,
  headers: {
@@ -890,7 +895,7 @@ export async function handleSupporterRequest(request, env, ctx) {
        paid:result?.applied===true,checkoutId:session?.id||null,
       });
       if(result?.applied){
-       const snapshotTask=refreshSupporterSnapshotSafely(env,db,subscriptionSummariesByCustomer,'custom_price_changed');
+       const snapshotTask=refreshSupporterAccessSafely(env,db,'custom_price_changed',uid);
        if(ctx?.waitUntil)ctx.waitUntil(snapshotTask);else await snapshotTask;
       }
       return response({success:true,customPlan:customPublic(fresh),pendingChange:customChangePublic(change),
@@ -975,7 +980,7 @@ export async function handleSupporterRequest(request, env, ctx) {
      current=await getCustomPlan(db,uid);
     }else return response({message:'カスタムプラン操作を確認してください。'},400);
     await writeSupporterAudit(db,admin.email,`custom_${input.action}`,uid,{reason,requestId,revision:current.revision,status:current.status,estimated:current.estimated_yen,confirmed:current.confirmed_yen});
-    const task=refreshSupporterSnapshotSafely(env,db,subscriptionSummariesByCustomer,'custom_plan_changed');
+    const task=refreshSupporterAccessSafely(env,db,'custom_plan_changed',uid);
     if(ctx?.waitUntil)ctx.waitUntil(task);else await task;
     return response({success:true,customPlan:customPublic(current),message:input.action==='cancel'?'カスタムプランを停止しました。':'カスタムプランを保存しました。'});
    }
@@ -1030,7 +1035,7 @@ export async function handleSupporterRequest(request, env, ctx) {
        .bind(canceled,confiscated,accountStatus,completedAt,completedAt,requestId).run();
       const auditRecorded=await writeSupporterAudit(db,admin.email,action,uid,{reason,requestId,canceledSubscriptions:canceled,confiscatedCredits:confiscated,accountStatus,refund:false});
       const emailStatus=await sendDisciplinaryEmail(env,db,account,input,{canceledSubscriptions:canceled,confiscatedCredits:confiscated});
-      const snapshotTask=refreshSupporterSnapshotSafely(env,db,subscriptionSummariesByCustomer,'disciplinary_action');
+      const snapshotTask=refreshSupporterAccessSafely(env,db,'disciplinary_action',uid);
       if(ctx?.waitUntil)ctx.waitUntil(snapshotTask);else await snapshotTask;
       return response({success:true,message:disciplinaryResultMessage(action,canceled,confiscated),canceledSubscriptions:canceled,confiscatedCredits:confiscated,accountStatus,emailStatus,auditRecorded,creditRecorded,idempotent:false});
      }catch(error){
@@ -1043,7 +1048,7 @@ export async function handleSupporterRequest(request, env, ctx) {
      if (reason.length < 5 || reason.length > 500) return response({message:'操作理由を5〜500文字で入力してください。'},400);
      const released = account.customer_id ? await releaseDisputeHolds(env,db,account.customer_id) : 0;
      const auditRecorded = await writeSupporterAudit(db,admin.email,input.action,uid,{reason,requestId:clean(input.requestId),released});
-     if (released) { const task=refreshSupporterSnapshotSafely(env,db,subscriptionSummariesByCustomer,'dispute_released'); if(ctx?.waitUntil)ctx.waitUntil(task);else await task; }
+     if (released) { const task=refreshSupporterAccessSafely(env,db,'dispute_released',uid); if(ctx?.waitUntil)ctx.waitUntil(task);else await task; }
      return response({success:true,message:released?'支払異議による利用停止を解除しました。':'支払異議による利用停止はありませんでした。',auditRecorded});
     }
     if (input.action === 'reset_checkout_state') {

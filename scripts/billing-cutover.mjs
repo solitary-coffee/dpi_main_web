@@ -18,7 +18,7 @@ const DB = 'REUSE_DB';
 // 子 → 親の順（外部キー）。
 export const PURGE_TABLES = ['supporter_custom_plan_changes', 'supporter_custom_plans', 'supporter_credit_campaign_recipients', 'supporter_credit_campaigns',
  'supporter_credit_events', 'supporter_credit_grants', 'supporter_credit_lots', 'supporter_credit_signups', 'supporter_credit_topups', 'supporter_dunning',
- 'supporter_billing_notifications', 'supporter_payment_alerts', 'supporter_ops_notices', 'supporter_disciplinary_actions', 'supporter_stripe_events', 'supporter_billing', 'supporter_accounts'];
+ 'supporter_billing_notifications', 'supporter_payment_alerts', 'supporter_ops_notices', 'supporter_disciplinary_actions', 'supporter_discord_roles', 'supporter_stripe_events', 'supporter_billing', 'supporter_accounts'];
 export const purgeSql = () => `${PURGE_TABLES.map(name => `DELETE FROM ${name};`).join('\n')}\n`;
 export const STAGES = {
  invite: {SUPPORTER_INTAKE_PAUSED: 'false', SUPPORTER_PREVIEW_OPEN: 'false', SUPPORTER_PUBLIC_ENABLED: 'false'},

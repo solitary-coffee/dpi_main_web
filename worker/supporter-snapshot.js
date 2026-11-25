@@ -3,7 +3,7 @@ import { enrichCustomGroup } from './supporter-custom.js';
 import { billingReady } from './supporter-billing.js';
 import { planFeatures, hasFeature, imageTier } from '../site/supporter/plan-features.js';
 import { IMAGE_RULE_TYPES, isImageRuleType, isImageRuleV2Type, deliveredImageType, imageRulesEnabled, imageRulesV2Enabled, imageRuleSnapshotFields } from './supporter-image-rules.js';
-const ACTIVE_SUBSCRIPTION_STATUSES = new Set(['active', 'trialing', 'past_due', 'unpaid', 'paused']);
+export const ACTIVE_SUBSCRIPTION_STATUSES = new Set(['active', 'trialing', 'past_due', 'unpaid', 'paused']);
 const ALLOWED_RULE_TYPES = new Set(['earthquake', 'eew', 'weather', 'rain-radar', ...IMAGE_RULE_TYPES]);
 const SNAPSHOT_TTL_SECONDS = 30 * 60 * 60;
 const MAX_RULES = 10_000;
@@ -62,18 +62,8 @@ async function digestPrefix(value) {
 
 export async function buildSupporterSnapshot(db, env, loadSubscriptions, nowMs = Date.now()) {
     // 停止時刻（翌月1日0時）を過ぎた未払いは、停止の定期処理が遅れても含めない。整数だけを埋め込む。
-    const nowSeconds = Math.max(0, Math.floor(Number(nowMs) / 1000)) || 0;
-    const rows = await db.prepare(`SELECT a.discord_user_id,a.settings_json,a.revision,a.registered_at,b.customer_id
-        FROM supporter_accounts a
-        JOIN supporter_billing b ON b.discord_user_id=a.discord_user_id
-        WHERE a.account_status='active' AND b.customer_id IS NOT NULL
-          AND NOT EXISTS (
-            SELECT 1 FROM supporter_dunning d
-            WHERE d.customer_id=b.customer_id AND (d.status='suspended'
-              OR (d.status IN ('suspend_scheduled','retry_scheduled') AND d.suspend_at<=${nowSeconds}))
-          )
-        ORDER BY a.discord_user_id`).all();
-    const accounts = (rows.results || []).filter(row => snapshotUserAllowed(env, row));
+    const rows = await supporterEntitlementRows(db, nowMs);
+    const accounts = (rows || []).filter(row => snapshotUserAllowed(env, row));
     const customerIds = [...new Set(accounts.map(row => clean(row.customer_id)).filter(Boolean))];
     const grouped = await enrichCustomGroup(db,accounts,await loadSubscriptions(env, customerIds));
     const rules = [];
@@ -82,7 +72,7 @@ export async function buildSupporterSnapshot(db, env, loadSubscriptions, nowMs =
     const imagesV2Enabled = imagesEnabled && imageRulesV2Enabled(env);
     for (const row of accounts) {
         const subscriptions = grouped.get(row.customer_id) || [];
-        const entitled = subscriptions.some(item => item?.recognizedPlan !== false && ACTIVE_SUBSCRIPTION_STATUSES.has(item?.status));
+        const entitled = subscriptions.some(isActiveSupporterSubscription);
         if (!entitled) continue;
         const geographicAccess = geographicEntitlements(subscriptions);
         const features = planFeatures(subscriptions);
@@ -142,6 +132,23 @@ export async function buildSupporterSnapshot(db, env, loadSubscriptions, nowMs =
         },
         rules,
     };
+}
+
+export const isActiveSupporterSubscription = item => item?.recognizedPlan !== false && ACTIVE_SUBSCRIPTION_STATUSES.has(item?.status);
+
+export async function supporterEntitlementRows(db, nowMs = Date.now()) {
+    const nowSeconds = Math.max(0, Math.floor(Number(nowMs) / 1000)) || 0;
+    const rows = await db.prepare(`SELECT a.discord_user_id,a.settings_json,a.revision,a.registered_at,b.customer_id
+        FROM supporter_accounts a
+        JOIN supporter_billing b ON b.discord_user_id=a.discord_user_id
+        WHERE a.account_status='active' AND b.customer_id IS NOT NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM supporter_dunning d
+            WHERE d.customer_id=b.customer_id AND (d.status='suspended'
+              OR (d.status IN ('suspend_scheduled','retry_scheduled') AND d.suspend_at<=${nowSeconds}))
+          )
+        ORDER BY a.discord_user_id`).all();
+    return rows.results || [];
 }
 
 async function readBoundedJson(response) {
