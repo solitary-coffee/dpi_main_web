@@ -394,7 +394,7 @@ test('受付人数の上限に達したら、新しい申込みと未契約者�
  const env = {...envFor(store.db), SUPPORTER_SUBSCRIBER_LIMIT: '1'};
  let own = [];
  stripeMock(t, {'GET subscriptions': () => ({data: own.length ? own : []}), 'GET checkout/sessions': {data: []}, 'POST customers/cus_x': {livemode: false, id: CUSTOMER},
-  'POST checkout/sessions': {livemode: false, id: 'cs_test_1', status: 'open', url: 'https://checkout.stripe.com/c/pay/x'}});
+  'POST checkout/sessions': () => ({livemode: false, id: `cs_test_${crypto.randomUUID()}`, status: 'open', url: 'https://checkout.stripe.com/c/pay/x'})});
  const act = (action, extra = {}) => billingAction(new Request(`https://dpi-bot.com/api/supporter/billing/${action}`), {...env, ...extra}, store.db, UID, {plan: 'plus', amount: 500, requestId: crypto.randomUUID(), legalConsentVersion: 'v'});
  const original = globalThis.fetch;
  // 一覧（全顧客）は別の契約者 1 人、本人の一覧は own
