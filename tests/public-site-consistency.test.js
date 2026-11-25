@@ -22,6 +22,7 @@ const excluded = new Set([
     'site/reuse-admin/index.html',
     'site/supporter-admin/index.html',
     'site/supporter-admin/stats.html',
+    'site/supporter-admin/payments.html',
     'site/cdn-admin/index.html',
     'site/patlite-admin/index.html',
 ]);
@@ -34,6 +35,7 @@ const expectedMenu = [
     ['/site/mail/index.html', 'メール配信'],
     ['/site/survey/', '利用者アンケート'],
     ['/site/reuse/', '二次利用申請'],
+    ['/site/supporter/plans.html', '有料プラン'],
     ['/site/invi/index.html', 'BOTを招待'],
     ['/terms/index.html', '利用規約等'],
     ['/site/supp/index.html', 'お問い合わせ'],
@@ -63,7 +65,7 @@ test('公開ページの左メニューは同じ項目と順序を使用する',
         assert.deepEqual(links, expectedMenu, relativePath);
         checked += 1;
     }
-    assert.equal(checked, 64);
+    assert.equal(checked, 63);
 });
 
 test('配信一覧と申請用カタログの状態が一致する', async () => {

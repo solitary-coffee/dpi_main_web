@@ -29,9 +29,9 @@ test('ログイン不要の支払いを作る入口は無い（公開設定に�
  }
 });
 
-test('公開設定: 非公開・本番決済で、許可リストの利用者は受付中', async () => {
+test('公開設定: 一般公開・本番決済で受付中', async () => {
  const {vars} = JSON.parse(await read('../wrangler.jsonc'));
- assert.deepEqual([vars.SUPPORTER_BILLING_MODE, vars.SUPPORTER_PUBLIC_ENABLED, vars.SUPPORTER_PREVIEW_OPEN, vars.SUPPORTER_INTAKE_PAUSED], ['live', 'false', 'false', 'false']);
+ assert.deepEqual([vars.SUPPORTER_BILLING_MODE, vars.SUPPORTER_PUBLIC_ENABLED, vars.SUPPORTER_PREVIEW_OPEN, vars.SUPPORTER_INTAKE_PAUSED], ['live', 'true', 'false', 'false']);
 });
 
 test('以前のテスト支払いの完了通知が遅れて届いても、何にも反映しない', async () => {

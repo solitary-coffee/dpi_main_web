@@ -215,7 +215,7 @@ test('admin rule details expose subscriber, server, channel names and readable c
  assert.deepEqual(account.rules[0].channels,[{id:'22222222222222222',name:'地震速報'},{id:'33333333333333333',name:''}]);
  assert.deepEqual(account.rules[0].details.map(item=>item.value),['緊急地震速報','緊急地震速報（警報）','関東甲信地方','いずれかを満たす（OR）','送信する（初期値）','震度5弱以上','上昇時のみ','対象警報地方のみ','マグニチュード：M6.5以上']);
 });
-test('paid plans stay separate from secondary-use applications and private in navigation',async()=>{
+test('paid plans stay separate from secondary-use applications and are linked in navigation',async()=>{
  const [reuseHtml,reuseScript,basicHtml,billingSource,billingUi]=await Promise.all([
   readFile(new URL('../site/reuse/index.html',import.meta.url),'utf8'),
   readFile(new URL('../site/reuse/script.js',import.meta.url),'utf8'),
@@ -227,7 +227,7 @@ test('paid plans stay separate from secondary-use applications and private in na
  assert.doesNotMatch(reuseScript,/api\/supporter/);
  assert.match(basicHtml,/Basic/);
  assert.doesNotMatch(basicHtml,/service-dashboard/);
- assert.doesNotMatch(basicHtml,/<nav[\s\S]*?<a href="\/site\/supporter\//);
+ assert.match(basicHtml,/<nav[\s\S]*?<a href="\/site\/supporter\/plans\.html"/);
  // 支払い方法の指定はダッシュボードに任せる（コードで列挙しない）。除外（プランでの PayPay）だけは許す。
  assert.doesNotMatch(billingSource,/(?<!excluded_)payment_method_types/);
  assert.match(billingSource,/payment_intent_data\[setup_future_usage\].*off_session/);
