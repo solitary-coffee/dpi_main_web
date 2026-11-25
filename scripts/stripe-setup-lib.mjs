@@ -37,12 +37,18 @@ export const PORTAL_PARAMS = {
 export function stripeClient(key) {
  return async (method, apiPath, params, extraHeaders = {}) => {
   const body = params ? new URLSearchParams(params) : undefined;
-  const response = await fetch(`https://api.stripe.com/v1/${apiPath}`, {
-   method, body, signal: AbortSignal.timeout(60000),
-   headers: {Authorization: `Bearer ${key}`, 'Stripe-Version': STRIPE_VERSION, ...extraHeaders,
-    ...(body ? {'Content-Type': 'application/x-www-form-urlencoded'} : {})},
-  });
-  const data = await response.json().catch(() => ({}));
+  let response, data;
+  // 混雑・一時的なロック（429）は、処理されていないことが分かっているので少し待ってやり直す。
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+   response = await fetch(`https://api.stripe.com/v1/${apiPath}`, {
+    method, body, signal: AbortSignal.timeout(60000),
+    headers: {Authorization: `Bearer ${key}`, 'Stripe-Version': STRIPE_VERSION, ...extraHeaders,
+     ...(body ? {'Content-Type': 'application/x-www-form-urlencoded'} : {})},
+   });
+   data = await response.json().catch(() => ({}));
+   if (response.status !== 429) break;
+   await new Promise(resolve => setTimeout(resolve, 1500 * (attempt + 1)));
+  }
   if (!response.ok) throw Object.assign(new Error(`Stripe API（${method} ${apiPath.split('?')[0]}）でエラー: ${data?.error?.message || `HTTP ${response.status}`}`), {status: response.status, code: data?.error?.code});
   return data;
  };

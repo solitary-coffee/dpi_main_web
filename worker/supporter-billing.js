@@ -2,6 +2,7 @@ import { refreshSupporterSnapshotSafely } from './supporter-snapshot.js';
 import { getCustomPlan,customLocked,customPublic,enrichCustomSubscriptions,syncCustomWithStripe } from './supporter-custom.js';
 import { currentCustomChange,getCustomChange,commitCustomChange } from './supporter-custom-change.js';
 import { PLAN_FEATURES } from '../site/supporter/plan-features.js';
+import { flushNotices, jstDate, memberLabel, noticeCounts, queueMembershipNotice, queueNotice, suspendedCustomers, yen } from './supporter-ops-notice.js';
 
 // 決済のモード。SUPPORTER_BILLING_MODE は 'test' と 'live' だけを受け付け、キーの種類（sk/rk_test_・sk/rk_live_）と
 // 一致しないときは決済を無効にする。Stripe の応答・Webhook の livemode も、このモードと一致するものだけを扱う。
@@ -494,7 +495,11 @@ async function recordInvoicePaid(env,db,invoice){
  if(previous?.status==='suspended')await db.prepare(`UPDATE supporter_dunning SET status='suspended',suspended_at=?,updated_at=?
   WHERE customer_id=? AND invoice_id<>? AND status IN ('retry_scheduled','retrying','suspend_scheduled')`).bind(now,now,customer,invoiceId).run();
  await db.prepare(`UPDATE supporter_dunning SET status='paid',paid_at=?,suspended_at=NULL,updated_at=? WHERE invoice_id=?`).bind(now,now,invoiceId).run();
- if(previous?.status==='suspended')await resumeServicePause(env,db,customer);
+ if(previous?.status==='suspended'){
+  await resumeServicePause(env,db,customer);
+  try{await releaseServiceHolds(env,db,await customerSubscriptionSummaries(env,customer));}
+  catch(error){console.error('Supporter hold release failed; the billing schedule retries it',{errorName:error?.name||'Error'});}
+ }
  await sendBillingNotification(env,db,previous?'retry_succeeded':'payment_succeeded',invoice,previous?.retry_at,previous?.suspend_at);
 }
 async function recordInvoiceFailed(env,db,invoice){
@@ -964,7 +969,7 @@ export async function billingAction(request,env,db,uid,input={}){
   const resumed=await reconcileSuspendedInvoices(env,db,row.customer_id,5);
   const [summaries,invoices,credits,dunning]=await Promise.all([customerSubscriptionSummaries(env,row.customer_id),customerInvoices(env,row.customer_id),customerCredits(env,row.customer_id),dunningState(db,row.customer_id)]);
   const creditDetails=await purchasedCreditStatus(db,uid,credits);
-  await releaseServiceHolds(db,summaries);
+  await releaseServiceHolds(env,db,summaries);
   const syncedCustom=await syncCustomWithStripe(db,uid,row.customer_id,summaries);
   const effective=enrichCustomSubscriptions(summaries,syncedCustom);
   const pendingCustomChange=await currentCustomChange(db,uid);
@@ -1544,10 +1549,10 @@ export async function billingWebhook(request,env,ctx){
   // 支払い不能・一時停止は、定期処理を待たずに翌月1日0時の停止を予約する（月末の定期処理の後に起きても1か月ずれない）。
   if(holder&&subscription?.id&&(['unpaid','paused'].includes(subscription.status)||subscription.pause_collection)&&await db.prepare('SELECT discord_user_id FROM supporter_billing WHERE customer_id=?').bind(holder).first()){
    const current=(await customerSubscriptionSummaries(env,holder)).find(item=>item.subscriptionId===subscription.id);
-   if(current&&serviceHeld(current))await openServiceHold(db,holder,current,Number(event.created)||Math.floor(Date.now()/1000));
+   if(current&&serviceHeld(current))await openServiceHold(env,db,holder,current,Number(event.created)||Math.floor(Date.now()/1000));
   }
   if(holder&&subscription?.id&&await db.prepare(`SELECT invoice_id FROM supporter_dunning WHERE invoice_id=? AND status IN ('suspend_scheduled','suspended')`).bind(`${HOLD_PREFIX}${subscription.id}`).first())
-   await releaseServiceHolds(db,await customerSubscriptionSummaries(env,holder));
+   await releaseServiceHolds(env,db,await customerSubscriptionSummaries(env,holder));
   if(summary.customId){
    const uid=clean(subscription?.metadata?.dpi_user);
    if(/^\d{17,20}$/.test(uid)){
@@ -1567,11 +1572,94 @@ export async function billingWebhook(request,env,ctx){
   const subscriptionId=clean(event.data?.object?.id);
   if(subscriptionId)await db.prepare(`UPDATE supporter_dunning SET status='closed',updated_at=? WHERE subscription_id=? AND status IN ('retry_scheduled','retrying','suspend_scheduled','suspended')`).bind(Math.floor(Date.now()/1000),subscriptionId).run();
  }
+ await queueEventNotices(env,db,event);
  // Events invalidate a cache only; status always comes from Stripe, never from stale event payloads.
  await db.batch([db.prepare('INSERT INTO supporter_stripe_events(id,received_at) VALUES(?,?) ON CONFLICT DO NOTHING').bind(event.id,Date.now()),db.prepare('UPDATE supporter_billing SET dirty=1 WHERE customer_id=?').bind(eventCustomerId(event))]);
  const snapshotTask=refreshSupporterSnapshotSafely(env,db,subscriptionSummariesByCustomer,`stripe_${event.type}`);
- if(ctx?.waitUntil)ctx.waitUntil(snapshotTask);else await snapshotTask;
+ const noticeTask=flushNotices(env,db);
+ if(ctx?.waitUntil){ctx.waitUntil(snapshotTask);ctx.waitUntil(noticeTask);}else{await snapshotTask;await noticeTask;}
  return json({received:true});
+}
+// 運営向けの通知（Discord）。失敗しても Webhook の処理は止めない。
+async function queueEventNotices(env,db,event){
+ try{
+  const object=event.data?.object||{},at=Number(event.created)||Math.floor(Date.now()/1000);
+  if(event.type.startsWith('customer.subscription.')){
+   const summary=subscriptionSummary(object,env);
+   const custom=summary.customId?await db.prepare('SELECT name FROM supporter_custom_plans WHERE id=?').bind(summary.customId).first():null;
+   let scheduled=null;
+   if(event.type==='customer.subscription.updated'&&Object.hasOwn(event.data?.previous_attributes||{},'schedule')&&object.schedule){
+    try{scheduled=(await summaryWithSchedule(env,object)).scheduledChange;}catch{/* 予約の内容が取れないときは通知しない */}
+   }
+   await queueMembershipNotice(env,db,event,{summarize:subscription=>subscriptionSummary(subscription,env),cancelScheduled,customName:custom?.name||'',scheduled});
+   return;
+  }
+  const alert=PAYMENT_ALERT_KINDS[event.type];
+  if(alert){
+   const row=await db.prepare('SELECT kind,outcome,customer_id,amount FROM supporter_payment_alerts WHERE event_id=?').bind(event.id).first();
+   const member=row?.customer_id?await memberLabel(db,row.customer_id):null;
+   if(!member)return;
+   const label={refunded:'返金',disputed:'支払異議',dispute_closed:'支払異議の終了',fraud_warning:'不正の警告'}[alert];
+   await queueNotice(env,db,{id:`${event.id}:${alert}`,channel:'billing',kind:alert,title:label,tone:alert==='refunded'?'quiet':'bad',at,lines:[`利用者: ${member.text}`,row.amount?`金額: ${yen(row.amount)}`:'',row.outcome?`状態: ${row.outcome}`:'']});
+   return;
+  }
+  if(['checkout.session.completed','checkout.session.async_payment_succeeded','checkout.session.async_payment_failed'].includes(event.type)&&checkoutMetadata(object).dpi_checkout_kind==='credit_topup'){
+   const failed=event.type==='checkout.session.async_payment_failed';
+   if(!failed&&object.payment_status!=='paid')return;
+   const member=await memberLabel(db,clean(stripeId(object.customer)));
+   if(member)await queueNotice(env,db,{id:`topup:${object.id}:${failed?'failed':'paid'}`,channel:'billing',kind:failed?'topup_failed':'topup',title:failed?'クレジットチャージ失敗':'クレジットチャージ完了',tone:failed?'warn':'good',at,lines:[`利用者: ${member.text}`,`金額: ${yen(object.amount_total)}`]});
+  }
+ }catch(error){console.error('Supporter event notice failed',{type:event?.type,errorName:error?.name||'Error'});}
+}
+// 26日の請求の開始と結果。対象は当サイトの契約だけ。
+async function queueRenewalNotices(env,db,now){
+ try{
+  const day=jstDate(now);
+  if(day.day!==26)return;
+  const rows=await db.prepare('SELECT customer_id FROM supporter_billing WHERE customer_id IS NOT NULL').all();
+  const customers=new Set((rows.results||[]).map(row=>row.customer_id).filter(Boolean));
+  if(day.hour<6){
+   let count=0,amount=0,stopped=0;
+   for(const summary of [...(await subscriptionSummariesByCustomer(env,[...customers])).values()].flat()){
+    // 0時ちょうどは、Stripe が新しい期間へ切り替える前後のどちらもあり得る。
+    const due=[summary.nextRenewalAt,summary.currentPeriodStart].some(time=>Math.abs(Number(time||0)-day.start)<=3600);
+    if(!due||Number(summary.startedAt||0)>=day.start)continue;
+    if(summary.servicePause){stopped+=1;continue;}
+    if(summary.cancelAtPeriodEnd)continue;
+    const next=summary.scheduledChange;
+    count+=1;amount+=Number(next?.monthly??summary.amount)||0;
+   }
+   await queueNotice(env,db,{id:`renewal-start:${day.key}`,channel:'billing',kind:'renewal_start',title:`${day.month}月26日の請求を開始`,tone:'info',at:now,
+    lines:[`対象: ${count}件（合計 ${yen(amount)}）`,`停止中のため請求しない契約: ${stopped}件`,'結果は12時ごろにお知らせします。']});
+   return;
+  }
+  if(day.hour<11)return;
+  const result={paid:0,paidAmount:0,credit:0,failed:0,failedAmount:0,voided:0,other:0};
+  await stripeListAll(env,`invoices?created%5Bgte%5D=${day.start-60}&limit=100`,invoice=>{
+   if(!customers.has(stripeId(invoice.customer))||invoice.billing_reason!=='subscription_cycle'||Number(invoice.created)<day.start-60)return;
+   if(invoice.status==='paid'){if(Number(invoice.amount_paid)>0){result.paid+=1;result.paidAmount+=Number(invoice.amount_paid);}else result.credit+=1;}
+   else if(invoice.status==='void')result.voided+=1;
+   else if(['open','uncollectible'].includes(invoice.status)&&Number(invoice.attempt_count)>0){result.failed+=1;result.failedAmount+=Number(invoice.amount_remaining||0);}
+   else result.other+=1;
+  });
+  await queueNotice(env,db,{id:`renewal-result:${day.key}`,channel:'billing',kind:'renewal_result',title:`${day.month}月26日の請求結果`,tone:result.failed?'warn':'good',at:now,
+   lines:[`成功: ${result.paid}件（${yen(result.paidAmount)}）`,`クレジットで全額支払い: ${result.credit}件`,`失敗: ${result.failed}件（${yen(result.failedAmount)}）`,`停止中のため取り消し: ${result.voided}件`,`確認中: ${result.other}件`,result.failed?`失敗した分は、${day.month}月${day.lastDay}日 12時に再請求します。`:'']});
+ }catch(error){console.error('Supporter renewal notice failed',{errorName:error?.name||'Error'});}
+}
+// 1日0時の停止・自動解約と、前月の加入・変更・解約の集計。
+async function queueStopNotices(env,db,now,{suspended,autoCanceled}){
+ try{
+  const day=jstDate(now);
+  const total=await suspendedCustomers(db);
+  if(day.day===1&&day.hour<6){
+   const last=jstDate(day.start-86400),from=Math.floor(Date.UTC(last.year,last.month-1,1)/1000)-32400;
+   const counts=await noticeCounts(db,'membership',from,day.start);
+   await queueNotice(env,db,{id:`month-start:${day.monthKey}`,channel:'billing',kind:'month_start',title:`${day.month}月1日の停止・解約の結果`,tone:suspended||autoCanceled?'warn':'good',at:now,
+    lines:[`今回停止したもの: ${suspended}件`,`停止中のアカウント: ${total}件`,`支払いを確認できず自動解約: ${autoCanceled}件`,
+     `${last.month}月の集計: 加入 ${counts.join||0}件、変更 ${counts.change||0}件、解約の予約 ${counts.leave_reserved||0}件、解約 ${counts.leave||0}件`]});
+  }else if(suspended||autoCanceled)
+   await queueNotice(env,db,{id:`stop:${day.key}:${day.hour}`,channel:'billing',kind:'stop',title:'停止・自動解約',tone:'warn',at:now,lines:[`今回停止したもの: ${suspended}件`,`停止中のアカウント: ${total}件`,`自動解約: ${autoCanceled}件`]});
+ }catch(error){console.error('Supporter stop notice failed',{errorName:error?.name||'Error'});}
 }
 async function publishScheduledSnapshot(env,db,reason){
  try{
@@ -1592,6 +1680,7 @@ export async function runSupporterBillingSchedule(env,nowMs=Date.now()){
  let tasks,taskError=null;
  try{tasks=await runBillingScheduleTasks(env,db,nowMs);}
  catch(error){taskError=error;console.error('Supporter billing schedule task failed',{errorName:error?.name||'Error',status:Number(error?.status)||null,stripeStatus:Number(error?.stripeStatus)||null});}
+ await flushNotices(env,db,50);
  // Republish again so suspensions/recoveries from this run reach delivery promptly.
  await publishScheduledSnapshot(env,db,'billing_schedule');
  if(taskError)throw taskError;
@@ -1604,22 +1693,34 @@ const HOLD_PREFIX='hold:';
 const DISPUTE_PREFIX='hold:dispute:';
 const HOLD_STATUSES=new Set(['past_due','unpaid','paused']);
 // 停止中の請求を止めるために当方が付けた一時停止（servicePause）は、利用者側の一時停止として扱わない。
-export function serviceHeld(summary){return HOLD_STATUSES.has(summary?.status)||(summary?.pauseCollection===true&&summary?.servicePause!==true);}
-async function releaseServiceHolds(db,summaries){
+const userPaused=summary=>summary?.pauseCollection===true&&summary?.servicePause!==true;
+export function serviceHeld(summary){return HOLD_STATUSES.has(summary?.status)||userPaused(summary);}
+// 請求書を払っても、Stripe の契約は次の更新まで past_due のままのことがある。未払いの請求書が残っているかで判断する。
+async function stillHeld(env,summary){
+ if(userPaused(summary)||summary?.status==='paused')return true;
+ if(!HOLD_STATUSES.has(summary?.status))return false;
+ for(const status of ['open','uncollectible'])
+  if((await stripe(env,`invoices?subscription=${encodeURIComponent(summary.subscriptionId)}&status=${status}&limit=1`)).data?.length)return true;
+ return false;
+}
+async function releaseServiceHolds(env,db,summaries){
  const now=Math.floor(Date.now()/1000);let released=0;
  for(const summary of summaries||[]){
-  if(!summary?.subscriptionId||serviceHeld(summary))continue;
+  if(!summary?.subscriptionId)continue;
+  if(!await db.prepare(`SELECT invoice_id FROM supporter_dunning WHERE invoice_id=? AND status IN ('suspend_scheduled','suspended')`).bind(`${HOLD_PREFIX}${summary.subscriptionId}`).first())continue;
+  if(await stillHeld(env,summary))continue;
   const result=await db.prepare(`UPDATE supporter_dunning SET status='closed',updated_at=? WHERE invoice_id=? AND status IN ('suspend_scheduled','suspended')`).bind(now,`${HOLD_PREFIX}${summary.subscriptionId}`).run();
   released+=Number(result.meta?.changes||0);
  }
  return released;
 }
-async function openServiceHold(db,customer,summary,now){
- if(['past_due','unpaid'].includes(summary.status)&&summary.pauseCollection!==true){
+async function openServiceHold(env,db,customer,summary,now){
+ if(['past_due','unpaid'].includes(summary.status)&&!userPaused(summary)){
   const open=await db.prepare(`SELECT invoice_id FROM supporter_dunning WHERE subscription_id=? AND invoice_id NOT LIKE 'hold:%'
    AND status IN ('retry_scheduled','retrying','suspend_scheduled','suspended') LIMIT 1`).bind(summary.subscriptionId).first();
   if(open)return;
  }
+ if(!await stillHeld(env,summary))return;
  const {suspendAt}=dunningSchedule(now);
  await db.prepare(`INSERT INTO supporter_dunning(invoice_id,customer_id,subscription_id,amount_due,currency,status,initial_failed_at,retry_at,suspend_at,updated_at)
   VALUES(?,?,?,0,'jpy','suspend_scheduled',?,?,?,?)
@@ -1633,12 +1734,12 @@ async function syncServiceHolds(env,db,now){
  if(!customers.length)return;
  const grouped=await subscriptionSummariesByCustomer(env,customers);
  const all=[...grouped.values()].flat(),known=new Set(all.map(item=>item.subscriptionId));
- await releaseServiceHolds(db,all);
+ await releaseServiceHolds(env,db,all);
  const open=await db.prepare(`SELECT invoice_id,subscription_id FROM supporter_dunning WHERE invoice_id LIKE 'hold:%' AND invoice_id NOT LIKE 'hold:dispute:%' AND status IN ('suspend_scheduled','suspended')`).all();
  for(const row of open.results||[])if(!known.has(row.subscription_id))
   await db.prepare(`UPDATE supporter_dunning SET status='closed',updated_at=? WHERE invoice_id=?`).bind(now,row.invoice_id).run();
  for(const [customer,summaries] of grouped)for(const summary of summaries)
-  if(summary.subscriptionId&&serviceHeld(summary))await openServiceHold(db,customer,summary,now-3600); // 1日0時に初めて見つけたものは前月中の変化とみなし、すぐ停止する
+  if(summary.subscriptionId&&serviceHeld(summary))await openServiceHold(env,db,customer,summary,now-3600); // 1日0時に初めて見つけたものは前月中の変化とみなし、すぐ停止する
  return grouped;
 }
 // プラン料金への支払異議（チャージバック）の間は配信を止め、取り下げ・勝訴で再開する。負けたときは止めたままにし、管理者が解除する。
@@ -1779,6 +1880,14 @@ async function runBillingScheduleTasks(env,db,nowMs){
   AND (status='retry_scheduled' OR (status='suspended' AND retry_attempted_at IS NULL AND suspended_at<retry_at))
   AND NOT EXISTS (SELECT 1 FROM supporter_dunning x WHERE x.customer_id=supporter_dunning.customer_id AND x.invoice_id LIKE 'hold:dispute:%' AND x.status='suspended')
   ORDER BY retry_at LIMIT 300`).bind(now).all();
+ await queueRenewalNotices(env,db,now);
+ const runDay=jstDate(now),retryRun=(due.results||[]).length>0||(runDay.day===runDay.lastDay&&runDay.hour>=12);
+ if(retryRun){
+  await queueNotice(env,db,{id:`retry-start:${runDay.key}:${runDay.hour}`,channel:'billing',kind:'retry_start',title:'再請求を開始',tone:'info',at:now,
+   lines:[`対象: ${(due.results||[]).length}件（合計 ${yen((due.results||[]).reduce((sum,row)=>sum+(Number(row.amount_due)||0),0))}）`]});
+  await flushNotices(env,db);
+ }
+ let paidAmount=0,failedAmount=0,postponed=0;
  for(const row of due.results||[]){
   const claim=await db.prepare(`UPDATE supporter_dunning SET status=CASE WHEN status='suspended' THEN 'suspended' ELSE 'retrying' END,retry_attempted_at=?,updated_at=?
    WHERE invoice_id=? AND status IN ('retry_scheduled','suspended') AND retry_attempted_at IS NULL`).bind(now,now,row.invoice_id).run();
@@ -1791,17 +1900,19 @@ async function runBillingScheduleTasks(env,db,nowMs){
    if(invoice?.status!=='paid')invoice=await stripe(env,`invoices/${encodeURIComponent(row.invoice_id)}/pay`,{},`dpi-month-end-retry-${row.invoice_id}-${Math.floor(now/3600)}`);
   }catch(error){paymentError=error;console.error('Supporter month-end payment retry failed',{invoiceId:row.invoice_id,errorName:error?.name||'Error',stripeStatus:Number(error?.stripeStatus)||null});}
   if(invoice?.status==='paid'){
-   try{await recordInvoicePaid(env,db,invoice);}catch(error){console.error('Supporter payment success email failed',{invoiceId:row.invoice_id,errorName:error?.name||'Error'});}paid+=1;continue;
+   try{await recordInvoicePaid(env,db,invoice);}catch(error){console.error('Supporter payment success email failed',{invoiceId:row.invoice_id,errorName:error?.name||'Error'});}paid+=1;paidAmount+=Number(invoice.amount_paid||row.amount_due)||0;continue;
   }
   const confirmedPaymentFailure=paymentError&&Number(paymentError.stripeStatus)===402&&!!clean(paymentError.stripeCode);
   if(paymentError&&!confirmedPaymentFailure){
    await db.prepare(`UPDATE supporter_dunning SET status=CASE WHEN status='retrying' THEN 'retry_scheduled' ELSE status END,retry_attempted_at=NULL,updated_at=? WHERE invoice_id=? AND status IN ('retrying','suspended')`).bind(now,row.invoice_id).run();
-   continue;
+   postponed+=1;continue;
   }
   const fallback=invoice||{id:row.invoice_id,customer:row.customer_id,subscription:row.subscription_id,amount_due:row.amount_due,currency:row.currency};
-  await db.prepare(`UPDATE supporter_dunning SET status='suspend_scheduled',updated_at=? WHERE invoice_id=? AND status='retrying'`).bind(now,row.invoice_id).run();failed+=1;
+  await db.prepare(`UPDATE supporter_dunning SET status='suspend_scheduled',updated_at=? WHERE invoice_id=? AND status='retrying'`).bind(now,row.invoice_id).run();failed+=1;failedAmount+=Number(row.amount_due)||0;
   try{await sendBillingNotification(env,db,'final_failed',fallback,row.retry_at,row.suspend_at);}catch(error){console.error('Supporter final payment failure email failed',{invoiceId:row.invoice_id,errorName:error?.name||'Error'});}
  }
+ if(retryRun)await queueNotice(env,db,{id:`retry-result:${runDay.key}:${runDay.hour}`,channel:'billing',kind:'retry_result',title:'再請求の結果',tone:failed||postponed?'warn':'good',at:now,
+  lines:[`成功: ${paid}件（${yen(paidAmount)}）`,`失敗: ${failed}件（${yen(failedAmount)}）`,postponed?`Stripeの障害などで保留: ${postponed}件（次回もう一度確認します）`:'',failed||postponed?(runDay.day===1?'支払いを確認できないものは停止します。':'支払いを確認できないものは、翌月1日 0時に停止します。'):'']});
  let grouped=null;
  try{grouped=await syncServiceHolds(env,db,now);}catch(error){console.error('Supporter service hold check failed',{errorName:error?.name||'Error',stripeStatus:Number(error?.stripeStatus)||null});}
  // 翌月1日0時を過ぎても支払いを確認できないものは、再決済の結果を待たずに必ず停止する。
@@ -1816,6 +1927,7 @@ async function runBillingScheduleTasks(env,db,nowMs){
  await reconcileDisputeHolds(env,db);
  if(grouped)await syncServicePauses(env,db,grouped);
  const autoCanceled=await cancelLongUnpaid(env,db,now);
+ await queueStopNotices(env,db,now,{suspended,autoCanceled});
  const failedNotices=await db.prepare(`SELECT n.invoice_id,n.kind,d.customer_id,d.subscription_id,d.amount_due,d.currency,d.retry_at,d.suspend_at
   FROM supporter_billing_notifications n JOIN supporter_dunning d ON d.invoice_id=n.invoice_id
   WHERE n.status='failed' AND n.kind IN ('retry_succeeded','final_failed') ORDER BY n.updated_at LIMIT 25`).all();
@@ -1923,15 +2035,17 @@ export async function verifiedCustomSubscription(env,customer,uid,offer){
   const checkout=await stripe(env,`checkout/sessions/${encodeURIComponent(initialId)}`);
   const checkoutMeta=checkoutMetadata(checkout);
   const firstMonths=Number(checkoutMeta.dpi_initial_months);
+  const initialRevision=Number(checkoutMeta.dpi_custom_revision),initialMonthly=Number(checkoutMeta.dpi_custom_monthly_yen);
   if(checkout.livemode!==expectedLivemode(env)||checkout.mode!=='payment'
    ||checkout.status!=='complete'||checkout.payment_status!=='paid'
    ||stripeId(checkout.customer)!==customer||checkout.client_reference_id!==uid
    ||checkoutMeta.dpi_checkout_kind!=='custom_subscription_initial'
    ||checkoutMeta.dpi_custom_id!==offer.id
-   ||Number(checkoutMeta.dpi_custom_revision)!==Number(offer.revision)
-   ||Number(checkoutMeta.dpi_custom_monthly_yen)!==Number(offer.confirmed_yen)
-   ||!([1,2].includes(firstMonths))
-   ||Number(checkout.amount_total)!==Number(offer.confirmed_yen)*firstMonths
+   // 最初の26日より前に料金を変更済みなら、初回決済は変更前の条件（古い改訂番号）のまま。初回の条件どうしで確かめる。
+   ||!(initialRevision>=1&&initialRevision<=Number(offer.revision))
+   ||(initialRevision===Number(offer.revision)&&initialMonthly!==Number(offer.confirmed_yen))
+   ||!(initialMonthly>=100)||!([1,2].includes(firstMonths))
+   ||Number(checkout.amount_total)!==initialMonthly*firstMonths
    ||checkout.currency!=='jpy')
    fail('カスタム初回Checkoutの支払完了・契約情報を確認できません。',409);
  }
@@ -1986,7 +2100,7 @@ export async function applyCustomStripePrice(env,customer,uid,offer,change){
   ||Number(change.old_revision)!==Number(offer.revision))
   fail('Stripe契約の料金・改訂番号が変更されています。自動変更を停止しました。',409);
  const metadata={
-  proration_behavior:'none',billing_cycle_anchor:'unchanged',
+  proration_behavior:'none', // 請求日は指定しなければ変わらない（今の Stripe API では 'unchanged' を受け付けない）
   payment_behavior:'error_if_incomplete',
   'metadata[dpi_custom_revision]':String(change.next_revision),
   'metadata[dpi_updated_by]':'admin',

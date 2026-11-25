@@ -168,7 +168,7 @@ for (const [label, state] of [['unpaid', {status: 'unpaid'}], ['paused', {status
   const store = await database(t); if (!store) return;
   const env = envFor(store.db);
   let current = subscription(state);
-  stripeMock(t, {'GET subscriptions': () => ({data: [current]})});
+  stripeMock(t, {'GET subscriptions': () => ({data: [current]}), 'GET invoices': () => ({data: current.status === 'unpaid' ? [{id: 'in_open'}] : []})});
   await runSupporterBillingSchedule(env, jst('2026-11-27T12:00:00') * 1000);
   assert.equal(store.dunning('hold:sub_x').suspend_at, SUSPEND);
   assert.equal(await delivered(env, store.db), 1);
@@ -492,4 +492,25 @@ test('異議の間は、月末の再決済を行わない', async t => {
  const calls = stripeMock(t, {'GET subscriptions': {data: [subscription({status: 'past_due'})]}, 'GET disputes/dp_1': {livemode: false, id: 'dp_1', status: 'under_review', charge: 'ch_1'}, 'GET charges/ch_1': {livemode: false, id: 'ch_1', customer: CUSTOMER}, 'POST subscriptions/sub_x': {livemode: false}});
  await runSupporterBillingSchedule(env, jst('2026-11-30T12:00:00') * 1000);
  assert.equal(calls.some(call => call.path.endsWith('/pay')), false);
+});
+
+test('払い終えた後も契約が past_due のままのときは、止めたままにしない（通し試験で見つかった不具合）', async t => {
+ const store = await database(t); if (!store) return;
+ const env = envFor(store.db);
+ insertDunning(store.raw, 'in_1', 'suspended', {retry_attempted_at: 1, suspended_at: SUSPEND});
+ let unpaid = [{id: 'in_1'}];
+ const current = subscription({status: 'past_due', pause_collection: {behavior: 'void'}, metadata: {dpi_service_pause: 'dunning'}});
+ stripeMock(t, {'GET subscriptions': {data: [current]}, 'GET invoices': () => ({data: unpaid}), 'GET invoices/in_1': {livemode: false, id: 'in_1', status: 'open', customer: CUSTOMER, subscription: 'sub_x'}, 'POST subscriptions/sub_x': {livemode: false}});
+ // 停止中の通知・定期処理で、二重の停止（hold）を付けない
+ await webhook(env, 'customer.subscription.updated', current);
+ await runSupporterBillingSchedule(env, (SUSPEND + 43200) * 1000);
+ assert.equal(store.dunning('hold:sub_x'), undefined);
+ // 以前の版が付けた hold が残っていても、支払いで解ける
+ insertDunning(store.raw, 'hold:sub_x', 'suspended', {suspended_at: SUSPEND});
+ unpaid = [];
+ await webhook(env, 'invoice.paid', {id: 'in_1', customer: CUSTOMER, subscription: 'sub_x'});
+ assert.equal(store.dunning('hold:sub_x').status, 'closed');
+ assert.equal(await delivered(env, store.db), 1);
+ await runSupporterBillingSchedule(env, (SUSPEND + 86400) * 1000);
+ assert.equal(await delivered(env, store.db), 1, '未払いが無いのに定期処理で止め直さない');
 });

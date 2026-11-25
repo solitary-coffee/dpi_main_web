@@ -78,7 +78,7 @@ function stubStripe(t,state){
    if(method==='POST'){
     if(state.failNext){state.failNext=false;return Response.json({error:{message:'temporary error'}},{status:502});}
     assert.equal(params.get('proration_behavior'),'none');
-    assert.equal(params.get('billing_cycle_anchor'),'unchanged');
+    assert.equal(params.has('billing_cycle_anchor'),false);
     assert.equal(params.get('payment_behavior'),'error_if_incomplete');
     if(params.has('items[0][price_data][unit_amount]')){
      assert.equal(params.get('items[0][price_data][recurring][interval]'),'month');

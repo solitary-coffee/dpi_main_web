@@ -18,7 +18,7 @@ const DB = 'REUSE_DB';
 // 子 → 親の順（外部キー）。
 export const PURGE_TABLES = ['supporter_custom_plan_changes', 'supporter_custom_plans', 'supporter_credit_campaign_recipients', 'supporter_credit_campaigns',
  'supporter_credit_events', 'supporter_credit_grants', 'supporter_credit_lots', 'supporter_credit_signups', 'supporter_credit_topups', 'supporter_dunning',
- 'supporter_billing_notifications', 'supporter_payment_alerts', 'supporter_disciplinary_actions', 'supporter_stripe_events', 'supporter_billing', 'supporter_accounts'];
+ 'supporter_billing_notifications', 'supporter_payment_alerts', 'supporter_ops_notices', 'supporter_disciplinary_actions', 'supporter_stripe_events', 'supporter_billing', 'supporter_accounts'];
 export const purgeSql = () => `${PURGE_TABLES.map(name => `DELETE FROM ${name};`).join('\n')}\n`;
 export const STAGES = {
  invite: {SUPPORTER_INTAKE_PAUSED: 'false', SUPPORTER_PREVIEW_OPEN: 'false', SUPPORTER_PUBLIC_ENABLED: 'false'},
@@ -55,7 +55,7 @@ async function inspect() {
  const migrations = wrangler(['d1', 'migrations', 'list', DB, '--remote']);
  add(migrations.status === 0 && /No migrations to apply/.test(migrations.stdout), 'D1 の未適用の移行が無い');
  // 受信済みイベントの番号だけの表は、テスト支払いでも増えるので点検から除く。
- const table = counts(), total = Object.entries(table).reduce((sum, [name, n]) => sum + (name === 'supporter_stripe_events' ? 0 : n), 0);
+ const table = counts(), total = Object.entries(table).reduce((sum, [name, n]) => sum + (['supporter_stripe_events', 'supporter_ops_notices'].includes(name) ? 0 : n), 0);
  add(total === 0, '有料プランの表が空（デバッグ分を削除済み）', total ? Object.entries(table).filter(([, n]) => n).map(([name, n]) => `${name} ${n}`).join('、') : '');
  const report = JSON.parse(await readFile(path.join(process.env.LOCALAPPDATA || tmpdir(), 'dpi-bot', 'stripe-e2e-report.json'), 'utf8').catch(() => 'null'));
  add(report?.failed === 0 && report?.passed > 0 && report?.skipped === 0, '通し試験に合格している', report ? `${report.finishedAt} 合格 ${report.passed}・失敗 ${report.failed}・未実施 ${report.skipped}` : '記録がありません');
