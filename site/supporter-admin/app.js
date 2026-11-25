@@ -143,7 +143,7 @@ async function loadAccounts() {
  } catch (error) { setStatus(error.message,'error'); }
 }
 
-const PAYMENT_ALERT_LABELS={refunded:'返金',disputed:'支払異議',dispute_closed:'支払異議の終了',fraud_warning:'不正の警告'};
+const PAYMENT_ALERT_LABELS={refund_needed:'返金の対応が必要',refunded:'返金',disputed:'支払異議',dispute_closed:'支払異議の終了',fraud_warning:'不正の警告'};
 function renderPaymentAlerts(alerts){
  const list=$('payment-alerts');
  list.replaceChildren();
@@ -179,7 +179,7 @@ function updateCompensationFields(){
 function compensationTargetLabel(campaign){
  if(campaign.targetType==='all')return '全登録者';
  if(campaign.targetType==='user')return `Discord ID ${campaign.targetValue}`;
- return `${{supporter:'BASIC',plus:'Plus',pro:'Pro'}[campaign.targetValue]||campaign.targetValue} 契約者`;
+ return `${{supporter:'Basic',plus:'Plus',pro:'Pro'}[campaign.targetValue]||campaign.targetValue} 契約者`;
 }
 
 function campaignStatusLabel(status){return {pending:'配布待ち',processing:'配布中',completed:'完了',partial:'一部失敗',failed:'失敗'}[status]||status;}
@@ -207,7 +207,7 @@ async function submitCompensation(event){
  const targetValue=type==='user'?$('compensation-user').value.trim():type==='plan'?$('compensation-plan').value:'';
  const expiryMs=new Date($('compensation-expiry').value).getTime();
  if(!Number.isFinite(expiryMs)){$('compensation-result').textContent='有効期限を確認してください。';return;}
- const targetLabel=type==='all'?'全登録者':type==='user'?`Discord ID ${targetValue}`:`${{supporter:'BASIC',plus:'Plus',pro:'Pro'}[targetValue]}契約者`;
+ const targetLabel=type==='all'?'全登録者':type==='user'?`Discord ID ${targetValue}`:`${{supporter:'Basic',plus:'Plus',pro:'Pro'}[targetValue]}契約者`;
  if(!window.confirm(`${targetLabel}へ1人あたり${amount.toLocaleString('ja-JP')}クレジットを配布します。理由と有効期限は利用者に表示されます。続行しますか？`))return;
  const button=$('compensation-submit');button.disabled=true;$('compensation-result').textContent='配布対象を確定しています…';
  try{

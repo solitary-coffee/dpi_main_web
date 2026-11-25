@@ -49,7 +49,7 @@ export function dunningSchedule(timestamp=Math.floor(Date.now()/1000)){
 }
 function integrationIdentifier(prefix){const bytes=crypto.getRandomValues(new Uint8Array(8));return `${prefix}${[...bytes].map(value=>String.fromCharCode(97+value%26)).join('')}`;}
 export const PLAN_CATALOG=Object.freeze({
- supporter:Object.freeze({id:'supporter',name:'BASIC',yen:300,channels:2,servers:1,rules:5,complexConditions:false,multiDestination:false,priceEnv:'STRIPE_PRICE_SUPPORTER',features:PLAN_FEATURES.supporter}),
+ supporter:Object.freeze({id:'supporter',name:'Basic',yen:300,channels:2,servers:1,rules:5,complexConditions:false,multiDestination:false,priceEnv:'STRIPE_PRICE_SUPPORTER',features:PLAN_FEATURES.supporter}),
  plus:Object.freeze({id:'plus',name:'Plus',yen:800,channels:10,servers:3,rules:15,complexConditions:false,multiDestination:false,priceEnv:'STRIPE_PRICE_PLUS',features:PLAN_FEATURES.plus}),
  pro:Object.freeze({id:'pro',name:'Pro',yen:1280,channels:20,servers:5,rules:30,complexConditions:true,multiDestination:true,priceEnv:'STRIPE_PRICE_PRO',features:PLAN_FEATURES.pro}),
 });
@@ -708,12 +708,36 @@ async function checkoutDiscipline(db,uid,session){
 export async function rejectDisciplinedCheckout(env,db,session){
  const metadata=checkoutMetadata(session),uid=clean(metadata.dpi_user||session?.client_reference_id);
  if(!await checkoutDiscipline(db,uid,session))return false;
- const sessionId=clean(session?.id),paymentIntent=clean(stripeId(session?.payment_intent)),now=Math.floor(Date.now()/1000);
- if(session?.payment_status==='paid'&&paymentIntent)await stripe(env,'refunds',{payment_intent:paymentIntent,reason:'requested_by_customer','metadata[dpi_user]':uid,'metadata[dpi_reason]':'disciplinary_checkout_rejection'},`dpi-discipline-checkout-refund-${sessionId}`);
+ const sessionId=clean(session?.id),paymentIntent=clean(stripeId(session?.payment_intent)),now=Math.floor(Date.now()/1000),amount=Math.max(0,Number(session?.amount_total)||0);
  await db.batch([
   db.prepare('UPDATE supporter_billing SET checkout_key=NULL,checkout_id=NULL,checkout_params=NULL,dirty=1 WHERE checkout_id=?').bind(sessionId),
   db.prepare(`UPDATE supporter_credit_topups SET status='failed',updated_at=? WHERE checkout_session_id=? AND status='pending'`).bind(now,sessionId),
  ]);
+ if(session?.payment_status==='paid'&&paymentIntent){
+  const operationId=await idempotencyKey('refund-needed:',sessionId),existing=await db.prepare('SELECT kind,outcome FROM supporter_payment_alerts WHERE event_id=?').bind(operationId).first();
+  if(existing&&!['processing','retry'].includes(existing.outcome))return true;
+  await db.prepare(`INSERT INTO supporter_payment_alerts(event_id,kind,outcome,discord_user_id,amount,created_at)
+   VALUES(?,'disciplinary_refund','processing',?,?,?) ON CONFLICT(event_id) DO UPDATE SET outcome='processing' WHERE outcome IN ('processing','retry')`).bind(operationId,uid,amount,now).run();
+  const account=await db.prepare('SELECT billing_email FROM supporter_accounts WHERE discord_user_id=?').bind(uid).first();
+  const email=clean(session?.customer_details?.email||session?.customer_email||account?.billing_email);
+  const base={payment_intent:paymentIntent,reason:'requested_by_customer','metadata[dpi_user]':uid,'metadata[dpi_reason]':'disciplinary_checkout_rejection'};
+  const refund=async withEmail=>stripe(env,'refunds',withEmail?{...base,instructions_email:email}:base,`dpi-discipline-checkout-refund-${sessionId}${withEmail?'-email':''}`);
+  let result;
+  try{result=await refund(false);}
+  catch(first){
+   let error=first;
+   // 銀行振込・コンビニ払いの返金は、返金先を集めるメールの宛先が要ることがある（400）。宛先を付けて1回だけやり直す。
+   if(error?.stripeStatus===400&&error?.stripeCode!=='charge_already_refunded'&&email){try{result=await refund(true);}catch(retryError){error=retryError;}}
+   if(!result&&error?.stripeCode==='charge_already_refunded')result={status:'succeeded'};
+   if(!result){
+    if(![400,402,403,404].includes(Number(error?.stripeStatus))){await db.prepare(`UPDATE supporter_payment_alerts SET outcome='retry' WHERE event_id=?`).bind(operationId).run();throw error;}
+    await queueNotice(env,db,{id:operationId,channel:'billing',kind:'refund_needed',title:'返金の対応が必要',tone:'bad',at:now,lines:[`金額: ${yen(amount)}`,'BAN中に届いた入金の返金が自動でできませんでした。管理画面で該当者を確認し、Stripeで返金してください']});
+    await db.prepare(`UPDATE supporter_payment_alerts SET kind='refund_needed',outcome='manual' WHERE event_id=?`).bind(operationId).run();
+    return true;
+   }
+  }
+  await db.prepare(`UPDATE supporter_payment_alerts SET outcome=? WHERE event_id=?`).bind(clean(result?.status)||'succeeded',operationId).run();
+ }
  return true;
 }
 export async function expireSupporterPendingCheckouts(env,db,uid,requestId){
@@ -980,7 +1004,7 @@ const CANCEL_SCHEDULED_MESSAGE='解約を予約中のため、プランを変更
 function cancelScheduled(subscription){return subscription?.cancel_at_period_end===true||Number(subscription?.cancel_at)>0;}
 export function subscriptionSummary(subscription,env={}){
  const labels=new Map([
-  [env.STRIPE_PRICE_SUPPORTER,'BASIC'],
+  [env.STRIPE_PRICE_SUPPORTER,'Basic'],
   [env.STRIPE_PRICE_PLUS,'Plus'],
   [env.STRIPE_PRICE_PRO,'Pro'],
   [env.STRIPE_PRICE_ADDON,'追加オプション'],

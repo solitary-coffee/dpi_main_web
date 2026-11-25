@@ -1068,16 +1068,18 @@ export async function handleSupporterRequest(request, env, ctx) {
     }
     const result = await adminBillingAction(env,account.customer_id,uid,input);
     let creditRecorded = true;
+    let creditDuplicate = false;
     if (result.creditEvent) {
      try {
-      await db.prepare(`INSERT INTO supporter_credit_events
+       const recorded=await db.prepare(`INSERT INTO supporter_credit_events
        (id,discord_user_id,credit_delta,balance_after,stripe_transaction_id,reason,actor,created_at)
-       VALUES(?,?,?,?,?,?,?,?)`).bind(clean(input.requestId),uid,result.creditEvent.delta,result.creditEvent.balanceAfter,result.creditEvent.stripeTransactionId,clean(input.reason),admin.email,new Date().toISOString()).run();
-      await recordAdminCreditLot(db,uid,input.action,clean(input.requestId),Math.abs(Number(result.creditEvent.delta)||0));
+        VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING`).bind(clean(input.requestId),uid,result.creditEvent.delta,result.creditEvent.balanceAfter,result.creditEvent.stripeTransactionId,clean(input.reason),admin.email,new Date().toISOString()).run();
+       creditDuplicate=!Number(recorded.meta?.changes||0);
+       if(!creditDuplicate)await recordAdminCreditLot(db,uid,input.action,clean(input.requestId),Math.abs(Number(result.creditEvent.delta)||0));
      } catch (error) { console.error('Paid plan credit event write failed',{errorName:error?.name||'Error'}); creditRecorded = false; }
     }
     const auditRecorded = await writeSupporterAudit(db,admin.email,input.action,uid,{reason:clean(input.reason),amount:Number(input.amount)||null,plan:clean(input.plan)||null,channelPacks:Number.isInteger(Number(input.channelPacks??input.packs))?Number(input.channelPacks??input.packs):null,serverPacks:Number.isInteger(Number(input.serverPacks))?Number(input.serverPacks):null,rulePacks:Number.isInteger(Number(input.rulePacks))?Number(input.rulePacks):null,requestId:clean(input.requestId),resultMessage:result.message});
-    return response({success:true,...result,auditRecorded,creditRecorded});
+    return response({success:true,...result,auditRecorded,creditRecorded,creditDuplicate});
    }
    if (request.method !== 'GET') return response({message:'Method not allowed'},405);
    if (path === '/site/supporter-admin/api/payments') {
@@ -1124,7 +1126,7 @@ export async function handleSupporterRequest(request, env, ctx) {
     try{const result=await db.prepare('SELECT * FROM supporter_credit_campaigns ORDER BY created_at DESC LIMIT 20').all();creditCampaigns=(result.results||[]).map(compensationCampaignView);}
     catch(error){console.error('Paid plan credit campaigns failed',{errorName:error?.name||'Error'});}
     let paymentAlerts=[];
-    try{const result=await db.prepare('SELECT event_id,kind,outcome,discord_user_id,amount,created_at FROM supporter_payment_alerts ORDER BY created_at DESC LIMIT 30').all();
+    try{const result=await db.prepare(`SELECT event_id,kind,outcome,discord_user_id,amount,created_at FROM supporter_payment_alerts WHERE kind<>'disciplinary_refund' ORDER BY created_at DESC LIMIT 30`).all();
      paymentAlerts=(result.results||[]).map(row=>({id:clean(row.event_id),kind:clean(row.kind),outcome:clean(row.outcome),discordUserId:clean(row.discord_user_id),amount:Number(row.amount)||0,createdAt:Number(row.created_at)||null}));}
     catch(error){console.error('Paid plan payment alerts failed',{errorName:error?.name||'Error'});}
     return response({billingMode:billingMode(env),paymentAlerts,billingEnabled:stripeEnabled,accounts,creditSummary,creditSummaryError,creditCampaigns});

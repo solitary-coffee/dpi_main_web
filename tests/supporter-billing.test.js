@@ -181,14 +181,14 @@ test('subscription summary includes plan, dates, amount and item details',()=>{
   {quantity:1,current_period_start:1700000000,current_period_end:1702592000,price:{id:'price_supporter',unit_amount:300,currency:'jpy'}},
   {quantity:2,current_period_start:1700000000,current_period_end:1702592000,price:{id:'price_addon',unit_amount:200,currency:'jpy'}},
  ]}},env);
- assert.equal(result.plan,'BASIC');
+ assert.equal(result.plan,'Basic');
  assert.equal(result.startedAt,1700000000);
  assert.equal(result.currentPeriodStart,1700000000);
  assert.equal(result.nextRenewalAt,1702592000);
  assert.equal(result.amount,700);
  assert.equal(result.channels,5);
  assert.equal(result.servers,3);
- assert.deepEqual(result.items.map(item=>[item.label,item.quantity,item.subtotal]),[['BASIC',1,300],['追加オプション',2,400]]);
+ assert.deepEqual(result.items.map(item=>[item.label,item.quantity,item.subtotal]),[['Basic',1,300],['追加オプション',2,400]]);
 });
 
 test('未知のStripe価格は契約枠として扱わずルールを破壊しない',()=>{
@@ -223,9 +223,9 @@ test('paid plans stay separate from secondary-use applications and private in na
   readFile(new URL('../worker/supporter-billing.js',import.meta.url),'utf8'),
   readFile(new URL('../site/supporter/app.js',import.meta.url),'utf8'),
  ]);
- assert.doesNotMatch(reuseHtml,/basic-dashboard-card|BASIC/);
+ assert.doesNotMatch(reuseHtml,/basic-dashboard-card|Basic/);
  assert.doesNotMatch(reuseScript,/api\/supporter/);
- assert.match(basicHtml,/BASIC/);
+ assert.match(basicHtml,/Basic/);
  assert.doesNotMatch(basicHtml,/service-dashboard/);
  assert.doesNotMatch(basicHtml,/<nav[\s\S]*?<a href="\/site\/supporter\//);
  // 支払い方法の指定はダッシュボードに任せる（コードで列挙しない）。除外（プランでの PayPay）だけは許す。

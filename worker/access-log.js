@@ -11,6 +11,7 @@ const MAX_EVENT_BYTES = 32 * 1024;
 const MAX_BATCH_SIZE = 100;
 const MAX_FIELD = 2048;
 const DEFAULT_RETENTION_DAYS = 30;
+const STATIC_ASSET_PATH = /\.(?:avif|bmp|css|gif|ico|jpe?g|js|map|png|svg|webp|woff2?|ttf|otf|eot|webmanifest)$/iu;
 
 export async function withAccessLog(request, env, ctx, site, handler) {
     const startedAt = Date.now();
@@ -40,6 +41,8 @@ export async function handleAccessLogRequest(request, env) {
 
 async function recordAccessEvent(request, response, env, site, startedAt) {
     try {
+        if (isSuccessfulStaticAsset(request, response)) return;
+        if (!await accessLogAllowed(request, env)) return;
         const event = buildEvent(request, response, site, startedAt);
         const database = accessDatabase(env);
         if (database) {
@@ -61,6 +64,24 @@ async function recordAccessEvent(request, response, env, site, startedAt) {
         });
     } catch (error) {
         console.error('Access log delivery failed', { errorName: error?.name || 'Error' });
+    }
+}
+
+function isSuccessfulStaticAsset(request, response) {
+    const status = response?.status || 500;
+    if (!((status >= 200 && status < 300) || status === 304)) return false;
+    return STATIC_ASSET_PATH.test(new URL(request.url).pathname);
+}
+
+async function accessLogAllowed(request, env) {
+    const limiter = env.ACCESS_LOG_RATE_LIMITER;
+    if (!limiter?.limit) return true;
+    try {
+        const ip = request.headers.get('cf-connecting-ip') || 'unknown';
+        const result = await limiter.limit({ key: ip });
+        return result?.success !== false;
+    } catch {
+        return true;
     }
 }
 
@@ -284,4 +305,12 @@ function json(payload, status = 200, extraHeaders = {}) {
     return new Response(JSON.stringify(payload), { status, headers: { ...JSON_HEADERS, ...extraHeaders } });
 }
 
-export const __test = { buildEvent, sanitizeEvent, safeReferer, encodeCursor, decodeCursor };
+export const __test = {
+    accessLogAllowed,
+    buildEvent,
+    decodeCursor,
+    encodeCursor,
+    isSuccessfulStaticAsset,
+    safeReferer,
+    sanitizeEvent,
+};

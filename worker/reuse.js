@@ -136,6 +136,13 @@ function reuseConfig(env) {
 }
 
 async function startDiscordOAuth(request, env) {
+    if (!await oauthStartAllowed(request, env)) {
+        return jsonResponse(
+            { success: false, message: 'アクセスが集中しています。1分後にお試しください。', code: 'rate_limited' },
+            429,
+            { 'Retry-After': '60' },
+        );
+    }
     assertPublicConfigured(env);
     await ensureDatabase(env);
 
@@ -143,13 +150,16 @@ async function startDiscordOAuth(request, env) {
     const returnTo = safeOAuthReturnPath(new URL(request.url).searchParams.get('return_to'));
     const stateHash = await sha256(state);
     const now = Date.now();
-    await env.REUSE_DB.batch([
+    const statements = [
         env.REUSE_DB.prepare(
             'INSERT INTO reuse_oauth_states (state_hash, created_at, expires_at) VALUES (?, ?, ?)',
         ).bind(stateHash, now, now + OAUTH_STATE_SECONDS * 1_000),
-        env.REUSE_DB.prepare('DELETE FROM reuse_oauth_states WHERE expires_at < ?').bind(now),
         env.REUSE_DB.prepare('DELETE FROM reuse_sessions WHERE expires_at < ?').bind(now),
-    ]);
+    ];
+    if (Math.random() < 0.05) {
+        statements.push(env.REUSE_DB.prepare('DELETE FROM reuse_oauth_states WHERE expires_at < ?').bind(now));
+    }
+    await env.REUSE_DB.batch(statements);
 
     const authorizeUrl = new URL(DISCORD_AUTHORIZE);
     authorizeUrl.searchParams.set('client_id', clean(env.DISCORD_CLIENT_ID));
@@ -170,6 +180,18 @@ async function startDiscordOAuth(request, env) {
         status: 302,
         headers,
     });
+}
+
+async function oauthStartAllowed(request, env) {
+    const limiter = env.OAUTH_START_RATE_LIMITER;
+    if (!limiter?.limit) return true;
+    try {
+        const ip = request.headers.get('cf-connecting-ip') || 'unknown';
+        const result = await limiter.limit({ key: ip });
+        return result?.success !== false;
+    } catch {
+        return true;
+    }
 }
 
 async function completeDiscordOAuth(request, env) {
@@ -1399,6 +1421,7 @@ export const __test = Object.freeze({
     validateChannelMappings,
     validateEditableApplicationInput,
     isApplicationEditable,
+    oauthStartAllowed,
     reuseEmailSignature,
     safeOAuthReturnPath,
 });
