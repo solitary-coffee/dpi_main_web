@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
 import { readdir, readFile } from 'node:fs/promises';
-import { billingWebhook, runSupporterBillingSchedule } from '../worker/supporter-billing.js';
+import { billingWebhook, paymentFailureCategory, runSupporterBillingSchedule } from '../worker/supporter-billing.js';
 import { flushNotices, jstDate, queueNotice } from '../worker/supporter-ops-notice.js';
 
 const UID = '123456789012345678', CUSTOMER = 'cus_x';
@@ -96,8 +96,9 @@ test('26日: 0時に請求の開始、12時に結果（成功・クレジット�
  await runSupporterBillingSchedule(env, (start + 12 * 3600) * 1000);
  const billing = posts.filter(post => post.channel === 'billing');
  assert.deepEqual(billing.map(post => post.embed.title), ['12月26日の請求を開始', '12月26日の請求結果']);
- assert.match(billing[0].embed.description, /対象: 1件（合計 300円）\n停止中のため請求しない契約: 1件/);
- assert.match(billing[1].embed.description, /成功: 2件（1,100円）\nクレジットで全額支払い: 1件\n失敗: 1件（300円）\n停止中のため取り消し: 1件\n確認中: 1件\n失敗した分は、12月31日 12時に再請求します。/);
+ assert.match(billing[0].embed.description, /対象: 1件（合計 300円）[\s\S]*Basic: 1件（300円）[\s\S]*停止中で請求しない契約: 1件[\s\S]*解約予約中で請求しない契約: 1件/);
+ assert.match(billing[1].embed.description, /成功: 2件（請求額 1,100円）\nクレジットで全額: 1件[\s\S]*失敗: 1件（300円）[\s\S]*取り消し: 1件[\s\S]*確認中: 1件[\s\S]*成功率: 50.0%[\s\S]*カード等の入金合計: 1,100円[\s\S]*再請求: 12月31日 12時/);
+ for(const post of billing)assert.doesNotMatch(post.embed.description,/テスト利用者|123456789012345678|secret@example\.jp|cus_|sub_|in_|4242/);
 });
 
 test('月末: 再請求の開始と結果。翌月1日: 停止・自動解約・前月の集計', async t => {
@@ -115,21 +116,41 @@ test('月末: 再請求の開始と結果。翌月1日: 停止・自動解約・
  const billing = posts.filter(post => post.channel === 'billing').map(post => post.embed);
  assert.deepEqual(billing.map(embed => embed.title), ['再請求を開始', '再請求の結果', '再請求を開始', '再請求の結果', '1月1日の停止・解約の結果']);
  assert.match(billing[0].description, /対象: 3件（合計 900円）/);
- assert.match(billing[1].description, /成功: 1件（300円）\n失敗: 1件（300円）\nStripeの障害などで保留: 1件/);
- assert.match(billing[4].description, /今回停止したもの: 2件\n停止中のアカウント: 1件\n支払いを確認できず自動解約: 0件\n12月の集計: 加入 1件、変更 0件、解約の予約 0件、解約 0件/);
+ assert.match(billing[1].description, /成功: 1件（300円）\n失敗: 1件（300円）\n保留: 1件\n成功率: 33.3%/);
+ assert.match(billing[4].description, /今回停止: 2件\n停止中の合計: 1件\n自動解約: 0件[\s\S]*再開: 0件[\s\S]*加入: 1件[\s\S]*返金: 0件[\s\S]*次の請求日: 1月26日/);
 });
 
 test('返金・支払異議を支払いチャンネルへ送り、チャージは送らない', async t => {
  const store = await database(t); if (!store) return;
- const env = envFor(store.db);
- const posts = mock(t, {stripe: {'GET subscriptions': {data: [subscription()]}, 'GET charges/ch_x': {livemode: true, id: 'ch_x', customer: CUSTOMER, payment_intent: 'pi_x'}, 'GET disputes/dp_x': {livemode: true, id: 'dp_x', status: 'needs_response', charge: 'ch_x', amount: 300}, 'POST subscriptions/sub_x': {livemode: true},
+ const adminMails=[],env = envFor(store.db,{CONTACT_TO_EMAIL:'admin@example.jp',NOTICE_EMAIL:{async send(message){adminMails.push(message);}}});
+ const posts = mock(t, {stripe: {'GET subscriptions': {data: [subscription()]}, 'GET charges/ch_x': {livemode: true, id: 'ch_x', customer: CUSTOMER, payment_intent: 'pi_x', amount:300, metadata:{dpi_checkout_kind:'initial_subscription'}}, 'GET disputes/dp_x': {livemode: true, id: 'dp_x', status: 'needs_response', reason:'fraudulent', charge: 'ch_x', amount: 300, evidence_details:{due_by:jst('2026-12-20T10:30:00')}}, 'POST subscriptions/sub_x': {livemode: true},
   'GET customers/cus_x': {livemode: true, balance: -500}, 'POST customers/cus_x/balance_transactions': {livemode: true, id: 'cbtxn', ending_balance: -500}}});
- await webhook(env, 'charge.refunded', {id: 'ch_x', customer: CUSTOMER, payment_intent: 'pi_x', amount_refunded: 300});
- await webhook(env, 'charge.dispute.created', {id: 'dp_x', charge: 'ch_x', status: 'needs_response', amount: 300});
+ await webhook(env, 'charge.refunded', {id: 'ch_x', customer: CUSTOMER, payment_intent: 'pi_x', amount:500, amount_refunded: 300, refunds:{data:[{amount:300,created:2}]},metadata:{dpi_checkout_kind:'initial_subscription'}});
+ await webhook(env, 'charge.dispute.created', {id: 'dp_x', charge: 'ch_x', status: 'needs_response', reason:'fraudulent', amount: 300, evidence_details:{due_by:jst('2026-12-20T10:30:00')}});
  const request = '00000000-0000-4000-8000-000000000001';
  const session = {id: 'cs_live_x', mode: 'payment', status: 'complete', payment_status: 'paid', customer: CUSTOMER, client_reference_id: UID, payment_intent: 'pi_top', amount_total: 500, currency: 'jpy', metadata: {dpi_checkout_kind: 'credit_topup', dpi_user: UID, dpi_credit_amount: '500', dpi_topup_request_id: request}};
  await webhook(env, 'checkout.session.completed', session); await webhook(env, 'checkout.session.completed', session);
  assert.deepEqual(posts.map(post => [post.channel, post.embed.title]), [['billing', '返金'], ['billing', '支払異議の申立て']]);
+ assert.match(posts[0].embed.description,/区分: 一部返金[\s\S]*返金額: 300円[\s\S]*元の支払額: 500円[\s\S]*累計返金額: 300円[\s\S]*対象: プラン料金[\s\S]*契約は続きます/);
+ assert.match(posts[1].embed.description,/理由: 不正利用[\s\S]*回答期限: 2026年12月20日 10:30（日本時間）[\s\S]*対象: プラン料金[\s\S]*申立てで停止した[\s\S]*Stripe のダッシュボードで期限までに証拠を提出してください/);
+ const operations=adminMails.filter(mail=>mail.headers?.['X-DPI-Mail-Type']==='supporter-admin-notice');assert.equal(operations.length,1);assert.match(operations[0].text,/理由: 不正利用[\s\S]*回答期限:/);
+});
+
+test('失敗理由を日本語の6分類へまとめる',()=>{
+ assert.deepEqual(['insufficient_funds','expired_card','card_declined','authentication_required','payment_method_missing','unknown'].map(paymentFailureCategory),['残高不足','カードの期限切れ','カード会社による拒否','本人確認が必要','支払い方法が無い','その他']);
+});
+
+test('請求結果が0件でも成功率を—で送り、失敗理由の追加取得は最大20件・失敗しても送る',async t=>{
+ const store=await database(t);if(!store)return;const start=jst('2026-12-26T12:00:00'),invoices=Array.from({length:21},(_,index)=>({id:`in_fail_${index}`,customer:CUSTOMER,subscription:'sub_x',billing_reason:'subscription_cycle',created:start-12*3600,status:'open',attempt_count:1,amount_remaining:300,total:300}));let intents=0;
+ const env=envFor(store.db),posts=mock(t,{stripe:{'GET subscriptions':{data:[subscription()]},'GET invoices':{data:invoices},...Object.fromEntries(invoices.map((invoice,index)=>[`GET invoices/in_fail_${index}`,()=>{intents+=1;return index===0?{httpStatus:500,body:{error:{code:'api_error'}}}:{livemode:true,payments:{data:[{payment:{payment_intent:{last_payment_error:{decline_code:'insufficient_funds'}}}}]}};}]))}});
+ await runSupporterBillingSchedule(env,start*1000);assert.equal(intents,20);const result=posts.find(post=>post.embed.title.includes('請求結果'));assert.ok(result);assert.match(result.embed.description,/失敗: 21件[\s\S]*残高不足 19件/);
+ const emptyStore=await database(t);if(!emptyStore)return;const emptyPosts=mock(t,{stripe:{'GET subscriptions':{data:[]},'GET invoices':{data:[]}}});await runSupporterBillingSchedule(envFor(emptyStore.db),start*1000);assert.match(emptyPosts.find(post=>post.embed.title.includes('請求結果')).embed.description,/成功率: —/);
+});
+
+test('通知本文は無害化し、Discord の上限内に収める',async t=>{
+ const store=await database(t);if(!store)return;const posts=mock(t),env=envFor(store.db);
+ await queueNotice(env,store.db,{id:'long',channel:'billing',kind:'x',title:'長文',lines:Array.from({length:30},()=>`@everyone ${'あ'.repeat(300)}`)});await flushNotices(env,store.db);
+ assert.ok(posts[0].embed.description.length<=3800);assert.doesNotMatch(posts[0].embed.description,/@everyone/);assert.deepEqual(posts[0].body.allowed_mentions,{parse:[]});
 });
 
 test('Discord の障害は処理を止めず後で送り直し、消えた宛先には送り続けない。未設定なら送らない', async t => {
