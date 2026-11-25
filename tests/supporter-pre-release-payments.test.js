@@ -16,7 +16,7 @@ test('正式リリース前の案内はJSなしでも両画面と支払い欄に
   assert.match(html, /当方の故意または重大な過失/);
  }
  assert.match(index, /id="billing"[\s\S]*?class="pre-release-notice"[\s\S]*?原則として補填はありません[\s\S]*?\/terms\/terms\.html/);
- assert.equal((app.match(/className='(?:credit-consent|legal-consent) pre-release-notice'/g)||[]).length, 3);
+ assert.equal((app.match(/className='(?:credit-consent|legal-consent) pre-release-notice'/g)||[]).length, 2);
  assert.match(style, /\.pre-release-notice\{[^}]*max-width:100%[^}]*overflow-wrap:anywhere/);
 });
 

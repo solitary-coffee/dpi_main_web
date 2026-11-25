@@ -72,7 +72,6 @@ test('signup migration and both UIs expose the new rule pack',async()=>{
  const [migration,user,admin,comparison]=await Promise.all([read('migrations/0027_supporter_rule_packs.sql'),read('site/supporter/app.js'),read('site/supporter-admin/index.html'),read('site/supporter/plans.html')]);
  assert.match(migration,/ADD COLUMN rule_packs INTEGER NOT NULL DEFAULT 0/);
  assert.match(user,/RULE_PACK_OPTIONS/);
- assert.match(user,/topupRulePacks/);
  assert.match(user,/rulePacks:Number\(rulePacks.value\)/);
  assert.match(admin,/id="change-rule-packs"/);
  assert.match(comparison,/今後も随時追加予定/);

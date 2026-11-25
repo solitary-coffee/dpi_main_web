@@ -13,7 +13,7 @@ test('申込みは残高を優先し、カード最低額50円を守る',()=>{
 
 test('申込みUIは自動決定の表示と送信値を持ち、支払い方法ラジオを持たない',async()=>{
  const app=await readFile(new URL('../site/supporter/app.js',import.meta.url),'utf8');
- for(const text of ['カードで申し込む','事前チャージの残高から','カードへの請求','支払い後の残高','残高を使って申し込む','カードを使わない場合は、あと','残高で申し込む（カード請求なし）','applyCredits:true','expectedCreditApplied:payment.creditApplied'])assert.ok(app.includes(text),text);
+ for(const text of ['クレジットカードで申し込む','事前チャージの残高から','カードへの請求','支払い後の残高','残高を使って申し込む','カードを使わない場合は、あと','残高で申し込む（カード請求なし）','applyCredits:true','expectedCreditApplied:payment.creditApplied'])assert.ok(app.includes(text),text);
  assert.doesNotMatch(app,/signup-payment-method|type='radio'/u);
  assert.doesNotMatch(app,/innerHTML/u);
 });

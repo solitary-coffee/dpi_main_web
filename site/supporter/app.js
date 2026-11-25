@@ -829,7 +829,6 @@ async function load() {
  billingEmail.value=savedBillingEmail;
  topupEmail.value=savedBillingEmail;
  updateCheckoutAvailability();
- updateTopupSignupAvailability();
  if(!billingAvailable)billingActionStatus.textContent=accountSuspended?'有料プランアカウントがBANされているため、申込み・チャージ・契約変更は利用できません。':'決済設定が完了していないため、現在は申し込みできません。';
  $('add').disabled = $('save').disabled = true;
  if (account) {
@@ -869,7 +868,6 @@ function applyAccountEnforcement(state={}){
  panel.textContent=accountSuspended?`有料プランアカウントは管理者によりBANされています。${state.reason?` 理由: ${state.reason}`:''} BAN解除まで、プラン申込み、クレジットチャージ、契約変更および通知設定は利用できません。`:'';
  if(accountSuspended)setRuleAccess(false);
  if(typeof updateCheckoutAvailability==='function')updateCheckoutAvailability();
- if(typeof updateTopupSignupAvailability==='function')updateTopupSignupAvailability();
  if(topupButton)topupButton.disabled=!billingAvailable;
 }
 
@@ -910,16 +908,11 @@ const billing = $('billing');
 billing.replaceChildren();
 const title = document.createElement('h2');
 title.textContent = 'お支払い・契約情報';
-const modeGuide=document.createElement('div');modeGuide.className='billing-mode-guide';
-const modeSwitch=document.createElement('div');modeSwitch.className='billing-mode-switch';modeSwitch.setAttribute('role','group');modeSwitch.setAttribute('aria-label','クレジット操作の切り替え');
-const topupModeButton=document.createElement('button');topupModeButton.type='button';topupModeButton.textContent='事前チャージ式';topupModeButton.className='billing-mode-button';topupModeButton.dataset.mode='topup';
-const paymentModeButton=document.createElement('button');paymentModeButton.type='button';paymentModeButton.textContent='クレジットカード支払い式';paymentModeButton.className='billing-mode-button';paymentModeButton.dataset.mode='payment';
-modeSwitch.append(topupModeButton,paymentModeButton);modeGuide.append(modeSwitch);
 const application = document.createElement('div');
-application.className = 'billing-application billing-mode-panel';
+application.className = 'billing-application';
 application.id='credit-payment-panel';
 const applicationTitle = document.createElement('h3');
-applicationTitle.textContent = 'プラン・オプション';
+applicationTitle.textContent = 'プランの申込み・変更';
 const emailLabel = document.createElement('label');
 emailLabel.className = 'billing-email-label';
 const emailCaption = document.createElement('span');
@@ -942,8 +935,9 @@ contract.textContent = '契約情報を読み込んでいます…';
 const credit = document.createElement('p');
 credit.className = 'credit-balance';
 credit.textContent = '利用可能クレジット: 0クレジット（0円）';
-const creditPanel=document.createElement('div');creditPanel.className='credit-panel billing-mode-panel';creditPanel.id='credit-topup-panel';
-const creditTitle=document.createElement('h3');creditTitle.textContent='クレジットをチャージ';
+const creditPanel=document.createElement('section');creditPanel.className='credit-panel';creditPanel.id='credit-topup-panel';creditPanel.tabIndex=-1;
+const creditTitle=document.createElement('h3');creditTitle.textContent='事前チャージ';
+const creditLead=document.createElement('p');creditLead.className='credit-lead';creditLead.textContent='カードを使わずに申し込む場合や、PayPay・コンビニ払い・銀行振込を使う場合は、先にここでチャージしてください。チャージした残高は、申込み・変更・毎月の更新で先に使われます。';
 const topupReloadButton=document.createElement('button');topupReloadButton.type='button';topupReloadButton.className='secondary-btn credit-reload-button';topupReloadButton.textContent='残高・履歴を再読み込み';
 const topupReloadStatus=document.createElement('p');topupReloadStatus.className='billing-action-status';topupReloadStatus.setAttribute('role','status');topupReloadStatus.setAttribute('aria-live','polite');
 const topupReloadActions=document.createElement('div');topupReloadActions.className='credit-reload-actions';topupReloadActions.append(topupReloadButton,topupReloadStatus);
@@ -969,37 +963,10 @@ const topupButton=document.createElement('button');topupButton.type='button';top
 topupButton.disabled=true;
 const topupStatus=document.createElement('p');topupStatus.className='billing-action-status';topupStatus.setAttribute('role','status');topupStatus.setAttribute('aria-live','polite');
 topupControls.append(topupEmailLabel,topupEmailHelp,topupLabel,topupPresets,topupPaymentHelp,creditConsent,topupButton,topupStatus);
-const topupSignup=document.createElement('div');topupSignup.className='credit-signup-panel';
-const topupSignupTitle=document.createElement('h4');topupSignupTitle.textContent='クレジットでプランを申し込む';
-const topupPlan=document.createElement('select');topupPlan.setAttribute('aria-label','クレジットで申し込むプラン');selectOptions(topupPlan,PLAN_OPTIONS,'supporter');
-const topupChannelPacks=document.createElement('select');topupChannelPacks.setAttribute('aria-label','クレジット申込みの追加チャンネル');selectOptions(topupChannelPacks,CHANNEL_PACK_OPTIONS,0);
-const topupServerPacks=document.createElement('select');topupServerPacks.setAttribute('aria-label','クレジット申込みの追加サーバー');selectOptions(topupServerPacks,SERVER_PACK_OPTIONS,0);
-const topupRulePacks=document.createElement('select');topupRulePacks.setAttribute('aria-label','クレジット申込みの追加ルール');selectOptions(topupRulePacks,RULE_PACK_OPTIONS,0);
-const topupSignupOptions=document.createElement('div');topupSignupOptions.className='billing-options';
-for(const [labelText,input] of [['プラン',topupPlan],['チャンネル追加',topupChannelPacks],['サーバー追加',topupServerPacks],['ルール追加',topupRulePacks]]){const label=document.createElement('label');const span=document.createElement('span');span.textContent=labelText;label.append(span,input);topupSignupOptions.append(label);}
-const topupSignupPreview=document.createElement('p');topupSignupPreview.className='price-preview';
-const topupSignupWarning=document.createElement('p');topupSignupWarning.className='credit-balance-warning';topupSignupWarning.id='credit-signup-balance-warning';topupSignupWarning.setAttribute('role','alert');
-// 正式リリース前の案内（正式リリース時に外す）
-const topupSignupConsent=document.createElement('label');topupSignupConsent.className='legal-consent pre-release-notice';
-const topupSignupConsentInput=document.createElement('input');topupSignupConsentInput.type='checkbox';topupSignupConsentInput.required=true;
-const topupSignupConsentText=document.createElement('span');topupSignupConsentText.append('正式リリース前の提供であり、不具合や配信停止が起こる場合があります。原則として補填はありません。申込み内容を確認し、');
-for(const [label,href] of [['利用規約','/terms/terms.html'],['プライバシーポリシー','/terms/policy.html'],['特定商取引法に基づく表記','/terms/Specified.html']]){const link=document.createElement('a');link.textContent=label;link.href=href;link.target='_blank';link.rel='noopener noreferrer';topupSignupConsentText.append(link,label==='特定商取引法に基づく表記'?'に同意します。':'、');}
-topupSignupConsent.append(topupSignupConsentInput,topupSignupConsentText);
-const topupSignupButton=document.createElement('button');topupSignupButton.type='button';topupSignupButton.className='primary-btn';topupSignupButton.textContent='クレジットでこのプランを申し込む';topupSignupButton.setAttribute('aria-describedby',topupSignupWarning.id);
-const topupSignupStatus=document.createElement('p');topupSignupStatus.className='billing-action-status';topupSignupStatus.setAttribute('role','status');topupSignupStatus.setAttribute('aria-live','polite');
-topupSignup.append(topupSignupTitle,topupSignupOptions,topupSignupPreview,topupSignupWarning,topupSignupConsent,topupSignupButton,topupSignupStatus);
 const creditHistoryTitle=document.createElement('h4');creditHistoryTitle.textContent='クレジット履歴';
 const creditHistory=document.createElement('div');creditHistory.className='credit-history';creditHistory.textContent='クレジット履歴はありません。';
-creditPanel.append(creditTitle,topupReloadActions,creditExpiry,topupControls,topupSignup,creditHistoryTitle,creditHistory);
-const setBillingMode=mode=>{
- const selected=mode==='topup'?'topup':'payment';
- creditPanel.hidden=selected!=='topup';application.hidden=selected!=='payment';
- topupModeButton.classList.toggle('is-active',selected==='topup');paymentModeButton.classList.toggle('is-active',selected==='payment');
- topupModeButton.setAttribute('aria-pressed',String(selected==='topup'));paymentModeButton.setAttribute('aria-pressed',String(selected==='payment'));
-};
-topupModeButton.onclick=()=>setBillingMode('topup');paymentModeButton.onclick=()=>setBillingMode('payment');
-billing.append(title,credit,modeGuide,application,creditPanel);
-setBillingMode(new URLSearchParams(location.search).has('credit')?'topup':'payment');
+creditPanel.append(creditTitle,creditLead,topupReloadActions,creditExpiry,topupControls,creditHistoryTitle,creditHistory);
+billing.append(title,credit,contract,application,creditPanel);
 const invoiceTitle=document.createElement('h3');invoiceTitle.className='invoice-title';invoiceTitle.textContent='支払い明細';
 const invoiceHistory=document.createElement('div');invoiceHistory.className='invoice-history';invoiceHistory.textContent='契約後に請求明細を確認できます。';
 const plan = document.createElement('select');
@@ -1018,9 +985,9 @@ const pricePreview=document.createElement('p');pricePreview.className='price-pre
 const checkoutSummary=document.createElement('dl');checkoutSummary.className='checkout-summary';
 const creditPaymentDetails=document.createElement('div');creditPaymentDetails.className='credit-payment-details';creditPaymentDetails.setAttribute('role','status');creditPaymentDetails.setAttribute('aria-live','polite');
 const creditPaymentHelp=document.createElement('p');
-const creditShortageAction=document.createElement('button');creditShortageAction.type='button';creditShortageAction.className='secondary-btn';creditShortageAction.textContent='残高だけで申し込むためにチャージ';
-creditPaymentDetails.append(creditPaymentHelp,creditShortageAction);
-const updatePricePreview=()=>{const base={supporter:300,plus:800,pro:1280}[plan.value]||300;const monthly=base+200*(Number(channelPacks.value)+Number(serverPacks.value)+Number(rulePacks.value));const jstDay=Number(new Intl.DateTimeFormat('en-US',{day:'numeric',timeZone:'Asia/Tokyo'}).format(new Date()));const initial=monthly*(jstDay>=26?2:1);const payment=creditFirstPayment(initial,availableCredits,creditBalanceLoaded);pricePreview.textContent=`月額 ${monthly.toLocaleString('ja-JP')}円／新規申込時 ${initial.toLocaleString('ja-JP')}円（${jstDay>=26?'当月分＋翌月分':'当月分'}）`;checkoutSummary.replaceChildren();const rows=[['申込みプラン',{supporter:'BASIC',plus:'Plus',pro:'Pro'}[plan.value]],['初回支払額',`${initial.toLocaleString('ja-JP')}円`]];if(payment.state==='checking')rows.push(['クレジット残高','確認中']);if(payment.state==='split'||payment.state==='credits')rows.push(['事前チャージの残高から',`${payment.creditApplied.toLocaleString('ja-JP')}円`],['カードへの請求',payment.cardCharge?`${payment.cardCharge.toLocaleString('ja-JP')}円`:'ありません'],['支払い後の残高',`${payment.remainingCredits.toLocaleString('ja-JP')}円`]);rows.push(['次回26日に必要な額',`${monthly.toLocaleString('ja-JP')}円`],['提供開始','決済確認後'],['解約','契約管理画面から手続きし、期間末で終了。支払済み料金の返金なし']);for(const [term,value] of rows){const dt=document.createElement('dt');dt.textContent=term;const dd=document.createElement('dd');dd.textContent=value;checkoutSummary.append(dt,dd);}creditPaymentDetails.hidden=payment.state==='card';creditShortageAction.hidden=payment.state!=='split';creditPaymentHelp.textContent=payment.state==='checking'?'クレジット残高を確認しています。':payment.state==='credits'?'残高だけで申し込めます（カードへの請求はありません）。':payment.state==='split'?`カードを使わない場合は、あと${payment.topupNeeded.toLocaleString('ja-JP')}円チャージすると残高だけで申し込めます（チャージは500円から）。`:'';creditShortageAction.onclick=()=>{topupAmount.value=String(Math.max(500,payment.topupNeeded));setBillingMode('topup');topupAmount.focus();};updateCheckoutAvailability();};
+creditPaymentDetails.append(creditPaymentHelp);
+const focusTopup=amount=>{topupAmount.value=String(Math.max(500,Number(amount)||500));creditPanel.scrollIntoView({behavior:'smooth',block:'start'});topupAmount.focus({preventScroll:true});};
+const updatePricePreview=()=>{const base={supporter:300,plus:800,pro:1280}[plan.value]||300;const monthly=base+200*(Number(channelPacks.value)+Number(serverPacks.value)+Number(rulePacks.value));const jstDay=Number(new Intl.DateTimeFormat('en-US',{day:'numeric',timeZone:'Asia/Tokyo'}).format(new Date()));const initial=monthly*(jstDay>=26?2:1);const payment=creditFirstPayment(initial,availableCredits,creditBalanceLoaded);pricePreview.textContent=`月額 ${monthly.toLocaleString('ja-JP')}円／新規申込時 ${initial.toLocaleString('ja-JP')}円（${jstDay>=26?'当月分＋翌月分':'当月分'}）`;checkoutSummary.replaceChildren();const rows=[['申込みプラン',{supporter:'BASIC',plus:'Plus',pro:'Pro'}[plan.value]],['初回支払額',`${initial.toLocaleString('ja-JP')}円`]];if(payment.state==='checking')rows.push(['クレジット残高','確認中']);if(payment.state==='split'||payment.state==='credits')rows.push(['事前チャージの残高から',`${payment.creditApplied.toLocaleString('ja-JP')}円`],['カードへの請求',payment.cardCharge?`${payment.cardCharge.toLocaleString('ja-JP')}円`:'ありません'],['支払い後の残高',`${payment.remainingCredits.toLocaleString('ja-JP')}円`]);rows.push(['次回26日に必要な額',`${monthly.toLocaleString('ja-JP')}円`],['提供開始','決済確認後'],['解約','契約管理画面から手続きし、期間末で終了。支払済み料金の返金なし']);for(const [term,value] of rows){const dt=document.createElement('dt');dt.textContent=term;const dd=document.createElement('dd');dd.textContent=value;checkoutSummary.append(dt,dd);}creditPaymentDetails.hidden=payment.state==='card';creditPaymentHelp.textContent=payment.state==='checking'?'クレジット残高を確認しています。':payment.state==='credits'?'残高だけで申し込めます（カードへの請求はありません）。':payment.state==='split'?`カードを使わない場合は、あと${payment.topupNeeded.toLocaleString('ja-JP')}円チャージすると残高だけで申し込めます（チャージは500円から）。`:'';updateCheckoutAvailability();};
 for(const input of [plan,channelPacks,serverPacks,rulePacks])input.addEventListener('change',updatePricePreview);
 updatePricePreview();application.append(optionGrid,pricePreview,checkoutSummary,creditPaymentDetails);
 
@@ -1030,38 +997,28 @@ const selectedInitialCharge=(selectedPlan,selectedChannelPacks,selectedServerPac
  const jstDay=Number(new Intl.DateTimeFormat('en-US',{day:'numeric',timeZone:'Asia/Tokyo'}).format(new Date()));
  return {monthly,initial:monthly*(jstDay>=26?2:1),lateMonth:jstDay>=26};
 };
-function updateTopupSignupAvailability(){
- if(!topupSignupButton)return;
- const price=selectedInitialCharge(topupPlan.value,topupChannelPacks.value,topupServerPacks.value,topupRulePacks.value);
- if(hasExistingContract){
-  topupSignupTitle.textContent='残クレジットでプラン・オプションを変更';
-  topupSignupPreview.textContent=`変更後の月額 ${price.monthly.toLocaleString('ja-JP')}円`;
-  topupSignupWarning.classList.remove('is-shortage');
-  topupSignupWarning.classList.add('is-sufficient');
-  topupSignupWarning.textContent=`現在の残高は${availableCredits.toLocaleString('ja-JP')}クレジットです。アップグレード差額と次回26日の請求に利用できます。`;
-  topupSignupConsent.hidden=true;
-  topupSignupButton.disabled=!billingAvailable||customPlanLocked;
-  topupSignupButton.title='';
-  topupSignupButton.textContent='プラン・オプションの料金を確認';
-  return;
+const PENDING_PLAN_KEY='dpi-supporter-pending-plan';
+let pendingPlanAfterTopup=null;
+const readPendingPlan=()=>{
+ try{
+  const value=JSON.parse(sessionStorage.getItem(PENDING_PLAN_KEY)||'null');
+  const age=value&&Number.isFinite(value.savedAt)?Date.now()-value.savedAt:-1;
+  const valid=value&&age>=0&&age<=30*60*1000
+   &&PLAN_OPTIONS.some(([id])=>id===value.plan)
+   &&CHANNEL_PACK_OPTIONS.some(([id])=>Number(id)===value.channelPacks)
+   &&SERVER_PACK_OPTIONS.some(([id])=>Number(id)===value.serverPacks)
+   &&RULE_PACK_OPTIONS.some(([id])=>Number(id)===value.rulePacks)
+   &&typeof value.email==='string'&&value.email.length<=254&&/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.email);
+  if(!valid){sessionStorage.removeItem(PENDING_PLAN_KEY);return null;}
+  return value;
+ }catch{sessionStorage.removeItem(PENDING_PLAN_KEY);return null;}
+};
+if(new URLSearchParams(location.search).get('credit')==='completed'){
+ pendingPlanAfterTopup=readPendingPlan();
+ if(pendingPlanAfterTopup){
+  plan.value=pendingPlanAfterTopup.plan;channelPacks.value=String(pendingPlanAfterTopup.channelPacks);serverPacks.value=String(pendingPlanAfterTopup.serverPacks);rulePacks.value=String(pendingPlanAfterTopup.rulePacks);billingEmail.value=pendingPlanAfterTopup.email;topupEmail.value=pendingPlanAfterTopup.email;updatePricePreview();
  }
- topupSignupTitle.textContent='クレジットでプランを申し込む';
- topupSignupConsent.hidden=false;
- const shortage=Math.max(0,price.initial-availableCredits);
- topupSignupPreview.textContent=`月額 ${price.monthly.toLocaleString('ja-JP')}円／申込時 ${price.initial.toLocaleString('ja-JP')}クレジット（${price.lateMonth?'当月分＋翌月分':'当月分'}）`;
- topupSignupWarning.classList.toggle('is-shortage',shortage>0);
- topupSignupWarning.classList.toggle('is-sufficient',shortage===0);
- topupSignupWarning.textContent=shortage>0
-  ?`クレジットが${shortage.toLocaleString('ja-JP')}不足しています。先に不足分以上をチャージしてください。現在の残高は${availableCredits.toLocaleString('ja-JP')}クレジットです。`
-  :`申込みに必要な残高があります。支払い後は${(availableCredits-price.initial).toLocaleString('ja-JP')}クレジット残ります。`;
- topupSignupButton.disabled=!billingAvailable||customPlanLocked||hasExistingContract||shortage>0||!topupSignupConsentInput.checked;
- topupSignupButton.title=hasExistingContract?'既に契約済みです。プラン変更をご利用ください。':shortage>0?'クレジット残高が不足しています。':'';
- topupSignupButton.textContent=hasExistingContract?'契約中':shortage>0?'クレジットが不足しています':'クレジットでこのプランを申し込む';
 }
-for(const input of [topupPlan,topupChannelPacks,topupServerPacks,topupRulePacks])input.addEventListener('change',updateTopupSignupAvailability);
-topupSignupConsentInput.addEventListener('change',updateTopupSignupAvailability);
-updateTopupSignupAvailability();
-
 // 正式リリース前の案内（正式リリース時に外す）
 const legalConsentLabel=document.createElement('label');legalConsentLabel.className='legal-consent pre-release-notice';
 const legalConsent=document.createElement('input');legalConsent.type='checkbox';legalConsent.id='legal-consent';legalConsent.required=true;
@@ -1097,30 +1054,6 @@ topupReloadButton.onclick=async()=>{
  finally{topupReloadButton.disabled=false;topupReloadButton.textContent=original;}
 };
 
-topupSignupButton.onclick=async()=>{
- topupSignupStatus.textContent='';
- const selection={plan:topupPlan.value,channelPacks:Number(topupChannelPacks.value),serverPacks:Number(topupServerPacks.value),rulePacks:Number(topupRulePacks.value)};
- if(hasExistingContract){
-  topupSignupButton.disabled=true;const original=topupSignupButton.textContent;topupSignupButton.textContent='料金を計算中…';
-  try{
-   const result=await api('/api/supporter/billing/preview-update','POST',selection);
-   showBillingPreview(result,selection);
-  }catch(error){topupSignupStatus.textContent=error.message;status(error.message);}
-  finally{topupSignupButton.textContent=original;updateTopupSignupAvailability();}
-  return;
- }
- if(!topupEmail.reportValidity()||!topupSignupConsentInput.reportValidity())return;
- const price=selectedInitialCharge(topupPlan.value,topupChannelPacks.value,topupServerPacks.value,topupRulePacks.value);
- if(availableCredits<price.initial){updateTopupSignupAvailability();topupSignupStatus.textContent=`クレジットが ${(price.initial-availableCredits).toLocaleString('ja-JP')} 不足しています。先にチャージしてください。`;return;}
- topupSignupButton.disabled=true;const original=topupSignupButton.textContent;topupSignupButton.textContent='申込み処理中…';
- try{
-  const result=await api('/api/supporter/billing/checkout','POST',{...selection,email:topupEmail.value,legalConsent:true,useCredits:true,requestId:crypto.randomUUID()});
-  if(result.url)location.href=stripeDestination(result.url);
-  else{renderCreditDetails(result.creditDetails||{balance:Number(result.credits||0)});renderContracts(result.subscriptions||[],result.dunning,result.customPlan,result.customCheckoutUrl,result.customChange,result.customChangeCheckoutUrl,result.unpaid);renderInvoices(result.invoices||[]);status(result.message||'クレジットでプランを申し込みました。');topupSignupStatus.textContent=result.message||'申込みが完了しました。';}
- }catch(error){topupSignupStatus.textContent=error.message;status(error.message);}
- finally{topupSignupButton.textContent=original;updateTopupSignupAvailability();}
-};
-
 const dateText = seconds => seconds ? new Intl.DateTimeFormat('ja-JP',{dateStyle:'medium',timeStyle:'short',timeZone:'Asia/Tokyo'}).format(new Date(seconds * 1000)) : '—';
 const moneyText = (amount,currency) => new Intl.NumberFormat('ja-JP',{style:'currency',currency:(currency || 'jpy').toUpperCase(),maximumFractionDigits:0}).format(amount || 0);
 const STATUS_LABELS = {active:'有効',trialing:'有効（次回請求待ち）',past_due:'支払い遅延',unpaid:'未払い',paused:'一時停止',incomplete:'手続き未完了',paid:'支払い済み',refunded:'返金済み',open:'支払い待ち',draft:'作成中',void:'無効'};
@@ -1135,7 +1068,11 @@ function renderCreditDetails(details={}){
   ?`購入クレジット残高 ${purchased.toLocaleString('ja-JP')}ポイント／有効期限付きクレジットの最も近い期限: ${dateText(details.nextExpiry)}`
   :'購入クレジットの有効期限は、付与日（入金の確認日）から1年間です。';
  updatePricePreview();
- updateTopupSignupAvailability();
+ if(pendingPlanAfterTopup){
+  const required=selectedInitialCharge(plan.value,channelPacks.value,serverPacks.value,rulePacks.value).initial;
+  billingActionStatus.textContent=availableCredits>=required?'残高が足りました。「残高で申し込む」を押すと申し込みが完了します。':'入金の確認後に、残高で申し込めます。';
+  sessionStorage.removeItem(PENDING_PLAN_KEY);pendingPlanAfterTopup=null;
+ }
  creditHistory.replaceChildren();
  const rows=Array.isArray(details.topups)?details.topups:[];
  const compensations=Array.isArray(details.compensations)?details.compensations:[];
@@ -1255,7 +1192,6 @@ function renderContracts(subscriptions,dunning={},customPlan=null,customCheckout
 
  hasExistingContract=subscriptions.length>0;
  updateCheckoutAvailability();
- updateTopupSignupAvailability();
  if(Number(unpaid.count)>0)renderUnpaid(unpaid);
  if (!subscriptions.length) {
   if(!customPlanLocked&&Number(unpaid.count)<=0)contract.textContent = '現在の契約はありません。';
@@ -1269,14 +1205,13 @@ function renderContracts(subscriptions,dunning={},customPlan=null,customCheckout
  if(dunning?.usageSuspended){const warning=document.createElement('p');warning.className='billing-suspension';warning.textContent=dunning.reason==='dispute'?'お支払いへの異議申立てを確認中のため、有料プランの通知設定は利用停止中です。停止中は新しい月額料金を請求しません。お問い合わせください。':'お支払いを確認できなかったため、有料プランの通知設定は利用停止中です。未払いの請求書をすべてお支払いいただくと再開します。停止中は新しい月額料金を請求しません。停止から1か月間お支払いを確認できない場合は、自動的に解約します。';contract.append(warning);}
  if(current){
   plan.value=current.planId||'supporter';channelPacks.value=String(current.channelPacks||0);serverPacks.value=String(current.serverPacks||0);rulePacks.value=String(current.rulePacks||0);
-  topupPlan.value=current.planId||'supporter';topupChannelPacks.value=String(current.channelPacks||0);topupServerPacks.value=String(current.serverPacks||0);topupRulePacks.value=String(current.rulePacks||0);
   // Comparison-page CTAs preselect the requested plan without submitting payment.
   const requestedPlan=new URLSearchParams(location.search).get('plan');
   if(PLAN_OPTIONS.some(([id])=>id===requestedPlan)&&!window.__dpiComparisonPlanApplied){
    window.__dpiComparisonPlanApplied=true;
-   plan.value=requestedPlan;topupPlan.value=requestedPlan;
+   plan.value=requestedPlan;
   }
-  updatePricePreview();updateTopupSignupAvailability();
+  updatePricePreview();
  }
  for (const subscription of subscriptions) {
   const card = document.createElement('article');
@@ -1322,7 +1257,7 @@ function renderUnpaid(unpaid={}){
  const message=document.createElement('p');message.textContent=unpaid.payableWithCredits?'チャージ済みクレジットで未払い全額を支払えます。実行すると取り消せません。':`クレジットが${shortage.toLocaleString('ja-JP')}円不足しています。未払いは一部だけ支払えません。`;
  const resultText=document.createElement('p');resultText.className='billing-action-status';resultText.setAttribute('role','status');resultText.setAttribute('aria-live','polite');
  const action=document.createElement('button');action.type='button';action.className=unpaid.payableWithCredits?'primary-btn':'secondary-btn';action.textContent=unpaid.payableWithCredits?'クレジットで支払う':'クレジットをチャージ';
- action.onclick=async()=>{if(!unpaid.payableWithCredits){topupAmount.value=String(Math.max(500,shortage));setBillingMode('topup');topupAmount.focus();return;}if(!confirm(`未払い ${Number(unpaid.count)||0}件、合計 ${total.toLocaleString('ja-JP')}円をクレジットで支払います。よろしいですか？`))return;action.disabled=true;resultText.textContent='支払い処理中…';try{const paid=await api('/api/supporter/billing/pay-unpaid','POST',{requestId:crypto.randomUUID(),expectedTotal:total});renderCreditDetails(paid.creditDetails||{balance:Number(paid.credits||0)});renderContracts(paid.subscriptions||[],paid.dunning,paid.customPlan,paid.customCheckoutUrl,paid.customChange,paid.customChangeCheckoutUrl,paid.unpaid);renderInvoices(paid.invoices||[]);status(paid.message||'未払いをクレジットで支払いました。');}catch(error){resultText.textContent=error.message;status(error.message);action.disabled=false;}};
+ action.onclick=async()=>{if(!unpaid.payableWithCredits){focusTopup(shortage);return;}if(!confirm(`未払い ${Number(unpaid.count)||0}件、合計 ${total.toLocaleString('ja-JP')}円をクレジットで支払います。よろしいですか？`))return;action.disabled=true;resultText.textContent='支払い処理中…';try{const paid=await api('/api/supporter/billing/pay-unpaid','POST',{requestId:crypto.randomUUID(),expectedTotal:total});renderCreditDetails(paid.creditDetails||{balance:Number(paid.credits||0)});renderContracts(paid.subscriptions||[],paid.dunning,paid.customPlan,paid.customCheckoutUrl,paid.customChange,paid.customChangeCheckoutUrl,paid.unpaid);renderInvoices(paid.invoices||[]);status(paid.message||'未払いをクレジットで支払いました。');}catch(error){resultText.textContent=error.message;status(error.message);action.disabled=false;}};
  panel.append(heading,message,action,resultText);contract.append(panel);
 }
 
@@ -1373,7 +1308,7 @@ function showBillingPreview(result,requested){
  const confirmButton=$('billing-preview-confirm');
  confirmButton.textContent=result.changeTiming==='next_period'?'変更を予約':'変更を確定';
  const creditShortage=Math.max(0,Number(result.creditShortage)||0);
- if(creditShortage>0){const shortageNotice=document.createElement('p');shortageNotice.className='preview-notice';shortageNotice.setAttribute('role','alert');shortageNotice.textContent=`クレジットが${creditShortage.toLocaleString('ja-JP')}円不足しています。`;const chargeButton=document.createElement('button');chargeButton.type='button';chargeButton.className='secondary-btn';chargeButton.textContent='クレジットをチャージ';chargeButton.onclick=()=>{pendingUpdate=null;previewDialog.close();topupAmount.value=String(Math.max(500,creditShortage));setBillingMode('topup');topupAmount.focus();};previewContent.append(shortageNotice,chargeButton);confirmButton.disabled=true;}
+ if(creditShortage>0){const shortageNotice=document.createElement('p');shortageNotice.className='preview-notice';shortageNotice.setAttribute('role','alert');shortageNotice.textContent=`クレジットが${creditShortage.toLocaleString('ja-JP')}円不足しています。`;const chargeButton=document.createElement('button');chargeButton.type='button';chargeButton.className='secondary-btn';chargeButton.textContent='クレジットをチャージ';chargeButton.onclick=()=>{pendingUpdate=null;previewDialog.close();focusTopup(creditShortage);};previewContent.append(shortageNotice,chargeButton);confirmButton.disabled=true;}
  if(result.paymentMethodRegistered===false&&Number(result.nextInvoiceDue||0)>0){const warning=document.createElement('p');warning.className='preview-notice';warning.textContent='カードが登録されていません。次回26日までに必要額をチャージしてください。残高が足りない場合は未払いとなり、月末の再請求でも足りなければ翌月1日0時に停止します。';previewContent.append(warning);}
  if(result.creditApplied>0&&creditShortage===0){
   const creditConsent=document.createElement('label');creditConsent.className='credit-consent';
@@ -1404,14 +1339,31 @@ billingActionStatus.setAttribute('role','status');
 billingActionStatus.setAttribute('aria-live','polite');
 const billingActions=document.createElement('div');
 billingActions.className='billing-actions';
-application.append(billingActions,billingActionStatus);
+const paymentChoiceTitle=document.createElement('h4');paymentChoiceTitle.className='payment-choice-title';paymentChoiceTitle.textContent='お支払い方法を選ぶ';
+const paymentChoices=document.createElement('div');paymentChoices.className='payment-choice-actions';paymentChoices.setAttribute('role','group');paymentChoices.setAttribute('aria-label','申込みのお支払い方法');
+const topupChoiceButton=document.createElement('button');topupChoiceButton.type='button';topupChoiceButton.className='secondary-btn';
+let updateButton;
+topupChoiceButton.onclick=()=>{
+ if(!billingEmail.reportValidity()||!legalConsent.reportValidity())return;
+ const price=selectedInitialCharge(plan.value,channelPacks.value,serverPacks.value,rulePacks.value);
+ const pending={savedAt:Date.now(),plan:plan.value,channelPacks:Number(channelPacks.value),serverPacks:Number(serverPacks.value),rulePacks:Number(rulePacks.value),email:billingEmail.value};
+ try{sessionStorage.setItem(PENDING_PLAN_KEY,JSON.stringify(pending));}catch{billingActionStatus.textContent='申込み内容を一時保存できませんでした。ブラウザの設定をご確認ください。';return;}
+ topupEmail.value=billingEmail.value;focusTopup(Math.max(0,price.initial-availableCredits));
+};
+paymentChoices.append(topupChoiceButton);
+application.append(paymentChoiceTitle,paymentChoices,billingActions,billingActionStatus);
 
 function updateCheckoutAvailability(){
  if(!checkoutButton)return;
  const price=selectedInitialCharge(plan.value,channelPacks.value,serverPacks.value,rulePacks.value);const payment=creditFirstPayment(price.initial,availableCredits,creditBalanceLoaded);
+ checkoutButton.hidden=hasExistingContract;topupChoiceButton.hidden=hasExistingContract||payment.state==='credits';
+ if(updateButton)updateButton.hidden=!hasExistingContract;
+ paymentChoiceTitle.hidden=hasExistingContract;paymentChoiceTitle.textContent=legalConsent.checked?'お支払い方法を選ぶ':'お支払い方法を選ぶ（上の同意にチェックすると押せます）';
  checkoutButton.disabled=!billingAvailable||customPlanLocked||!legalConsent.checked||hasExistingContract||!creditBalanceLoaded;
+ topupChoiceButton.disabled=!billingAvailable||customPlanLocked||!legalConsent.checked||hasExistingContract||!creditBalanceLoaded;
  checkoutButton.title=accountSuspended?'有料プランアカウントがBANされています。':hasExistingContract?'既に契約済みです。プラン変更をご利用ください。':!creditBalanceLoaded?'クレジット残高を確認しています。':'';
- checkoutButton.textContent=hasExistingContract?'契約中':payment.state==='checking'?'確認中':payment.state==='credits'?'残高で申し込む（カード請求なし）':payment.state==='split'?`残高を使って申し込む（カード ${payment.cardCharge.toLocaleString('ja-JP')}円）`:'カードで申し込む';
+ checkoutButton.textContent=payment.state==='checking'?'残高を確認中':payment.state==='credits'?'残高で申し込む（カード請求なし）':payment.state==='split'?`残高を使って申し込む（カード ${payment.cardCharge.toLocaleString('ja-JP')}円）`:'クレジットカードで申し込む';
+ topupChoiceButton.textContent=payment.state==='checking'?'残高を確認中':payment.state==='split'?`事前チャージして申し込む（あと${payment.topupNeeded.toLocaleString('ja-JP')}円）`:'事前チャージして申し込む';
 }
 
 for (const [label,action] of [['このプランで申し込む','checkout'],['プラン・オプションを変更','update'],['支払い方法・解約','portal'],['契約・明細を更新','status']]) {
@@ -1419,7 +1371,8 @@ for (const [label,action] of [['このプランで申し込む','checkout'],['�
  button.textContent = label;
  button.className=action==='checkout'?'primary-btn':'secondary-btn';
  button.type='button';button.dataset.billingAction=action;
- if(action==='checkout'){checkoutButton=button;updateCheckoutAvailability();}
+ if(action==='checkout'){checkoutButton=button;paymentChoices.prepend(button);updateCheckoutAvailability();}
+ else if(action==='update'){updateButton=button;button.textContent='変更内容と料金を確認';paymentChoices.append(button);}
  button.onclick = async () => {
   billingActionStatus.textContent='';
   if(customPlanLocked&&['checkout','update'].includes(action)){billingActionStatus.textContent='カスタムプランの変更は管理者にお問い合わせください。';return;}
@@ -1451,7 +1404,9 @@ for (const [label,action] of [['このプランで申し込む','checkout'],['�
    status(error.message);
   } finally {button.disabled=false;button.textContent=originalLabel;}
  };
- billingActions.append(button);
+ if(!['checkout','update'].includes(action))billingActions.append(button);
 }
-billing.append(contract,invoiceTitle,invoiceHistory);
+billing.append(invoiceTitle,invoiceHistory);
+updateCheckoutAvailability();
+if(new URLSearchParams(location.search).has('credit'))requestAnimationFrame(()=>creditPanel.scrollIntoView({block:'start'}));
 run(load)();
