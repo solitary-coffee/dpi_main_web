@@ -18,10 +18,10 @@ test('2 servers and 3 rules per 200 JPY pack are priced server-side',()=>{
 });
 test('initial paid and credit-funded subscriptions preserve rule pack metadata and addon quantity',()=>{
  const choice=selection({plan:'plus',channelPacks:1,serverPacks:1,rulePacks:2});
- const credit=creditSignupSubscriptionParams(env,'cus_x','99999999999999999',choice,{anchor:1800000000},'v1','req_x');
+ const credit=creditSignupSubscriptionParams(env,'cus_x','99999999999999999',choice,{anchor:1800000000},'v1','req_x',1799000000);
  assert.equal(credit['items[1][quantity]'],'4');
  assert.equal(credit['metadata[dpi_rule_packs]'],'2');
- const paid=paidCheckoutSubscriptionParams(env,{mode:'payment',payment_status:'paid',customer:'cus_x',metadata:{dpi_checkout_kind:'initial_subscription',dpi_plan:'plus',dpi_channel_packs:'1',dpi_server_packs:'1',dpi_rule_packs:'2',dpi_billing_anchor:'1800000000'}},{payment_method:'pm_x'},1700000000);
+ const paid=paidCheckoutSubscriptionParams(env,{mode:'payment',payment_status:'paid',customer:'cus_x',metadata:{dpi_checkout_kind:'initial_subscription',dpi_plan:'plus',dpi_channel_packs:'1',dpi_server_packs:'1',dpi_rule_packs:'2',dpi_billing_anchor:'1800000000'}},{payment_method:'pm_x'},1799000000);
  assert.equal(paid['items[1][quantity]'],'4');
  assert.equal(paid['metadata[dpi_rule_packs]'],'2');
 });

@@ -21,6 +21,8 @@ let hasExistingContract=false;
 let customPlanLocked=false;
 let availableCredits=0;
 let creditBalanceLoaded=false;
+let creditBalanceFailed=false;
+let billingUnavailable=false;
 const channelsByGuild = new Map();
 const PLAN_OPTIONS=[['supporter','Basic 月額300円'],['plus','Plus 月額800円'],['pro','Pro 月額1,280円']];
 const CHANNEL_PACK_OPTIONS=[[0,'チャンネル追加なし'],[1,'＋3チャンネル / 月額＋200円'],[2,'＋6チャンネル / 月額＋400円'],[3,'＋9チャンネル / 月額＋600円'],[4,'＋12チャンネル / 月額＋800円'],[5,'＋15チャンネル / 月額＋1,000円']];
@@ -809,11 +811,24 @@ async function checkIntakePaused() {
  } catch { /* 案内を出せなくても、受付はサーバー側で止まっている。 */ }
 }
 
+// 契約の有無を確かめられないときも、「確認しています…」のままにしない。
+function showPlanBanner(text){const banner=$('current-plan-banner');if(!banner)return;banner.classList.remove('has-active-plan');banner.textContent=text;}
 async function load() {
+ try{await loadAccount();}
+ catch(error){if($('user').textContent==='確認中…')$('user').textContent='確認できませんでした。';failBilling();throw error;}
+}
+function failBilling(){
+ creditBalanceFailed=!creditBalanceLoaded;
+ showPlanBanner('現在の契約プランを確認できませんでした。時間をおいて、画面を再読み込みしてください。');
+ updateCheckoutAvailability();
+}
+async function loadAccount() {
  checkIntakePaused();
  session = await api('/api/reuse/session');
  if (!session.authenticated) {
   $('user').textContent = 'Discordログインが必要です。';
+  showPlanBanner('Discordでログインすると、現在の契約プランを確認できます。');
+  updateCheckoutAvailability();
   return;
  }
  $('user').textContent = session.user.username;
@@ -831,6 +846,10 @@ async function load() {
  updateCheckoutAvailability();
  if(!billingAvailable)billingActionStatus.textContent=accountSuspended?'有料プランアカウントがBANされているため、申込み・チャージ・契約変更は利用できません。':'決済設定が完了していないため、現在は申し込みできません。';
  $('add').disabled = $('save').disabled = true;
+ billingUnavailable=!billingEnabled;
+ if(!billingEnabled){showPlanBanner('現在、契約プランを確認できません。');updateCheckoutAvailability();}
+ // まだ登録していない人は、契約も残高も無い（申込み・チャージのときに登録される）。
+ if(!account&&billingEnabled){renderCreditDetails({balance:0});renderContracts([]);}
  if (account) {
   revision = account.revision;
   rules = savedRules(account);
@@ -855,7 +874,7 @@ async function load() {
     if(creditResult==='canceled')status('事前チャージをキャンセルしました。料金は発生していません。');
     if(billingState.recoveredSubscription)status('支払い済みの申込みから契約を復旧し、有料プランを有効化しました。');
     if(new URLSearchParams(location.search).get('custom')==='change-completed')status('カスタム契約の差額支払いを受け付けました。Stripeの決済確認後に新しい契約へ反映されます。');
-   }catch{contract.textContent='契約情報を自動取得できませんでした。「最新の契約・明細を読み込む」を押してください。';setRuleAccess(false);}
+   }catch{contract.textContent='契約情報を自動取得できませんでした。「契約・明細を更新」を押してください。';setRuleAccess(false);failBilling();}
   }
  }
 }
@@ -987,15 +1006,20 @@ const creditPaymentDetails=document.createElement('div');creditPaymentDetails.cl
 const creditPaymentHelp=document.createElement('p');
 creditPaymentDetails.append(creditPaymentHelp);
 const focusTopup=amount=>{topupAmount.value=String(Math.max(500,Number(amount)||500));creditPanel.scrollIntoView({behavior:'smooth',block:'start'});topupAmount.focus({preventScroll:true});};
-const updatePricePreview=()=>{const base={supporter:300,plus:800,pro:1280}[plan.value]||300;const monthly=base+200*(Number(channelPacks.value)+Number(serverPacks.value)+Number(rulePacks.value));const jstDay=Number(new Intl.DateTimeFormat('en-US',{day:'numeric',timeZone:'Asia/Tokyo'}).format(new Date()));const initial=monthly*(jstDay>=26?2:1);const payment=creditFirstPayment(initial,availableCredits,creditBalanceLoaded);pricePreview.textContent=`月額 ${monthly.toLocaleString('ja-JP')}円／新規申込時 ${initial.toLocaleString('ja-JP')}円（${jstDay>=26?'当月分＋翌月分':'当月分'}）`;checkoutSummary.replaceChildren();const rows=[['申込みプラン',{supporter:'Basic',plus:'Plus',pro:'Pro'}[plan.value]],['初回支払額',`${initial.toLocaleString('ja-JP')}円`]];if(payment.state==='checking')rows.push(['事前チャージの残高','確認中']);if(payment.state==='split'||payment.state==='credits')rows.push(['事前チャージの残高から',`${payment.creditApplied.toLocaleString('ja-JP')}円`],['カードへの請求',payment.cardCharge?`${payment.cardCharge.toLocaleString('ja-JP')}円`:'ありません'],['支払い後の残高',`${payment.remainingCredits.toLocaleString('ja-JP')}円`]);rows.push(['次回26日に必要な額',`${monthly.toLocaleString('ja-JP')}円`],['提供開始','決済確認後'],['解約','契約管理画面から手続きし、期間末で終了。支払済み料金の返金なし']);for(const [term,value] of rows){const dt=document.createElement('dt');dt.textContent=term;const dd=document.createElement('dd');dd.textContent=value;checkoutSummary.append(dt,dd);}creditPaymentDetails.hidden=payment.state==='card';creditPaymentHelp.textContent=payment.state==='checking'?'事前チャージの残高を確認しています。':payment.state==='credits'?'残高だけで申し込めます（カードへの請求はありません）。':payment.state==='split'?`カードを使わない場合は、あと${payment.topupNeeded.toLocaleString('ja-JP')}円チャージすると残高だけで申し込めます（チャージは500円から）。`:'';updateCheckoutAvailability();};
+const updatePricePreview=()=>{const base={supporter:300,plus:800,pro:1280}[plan.value]||300;const monthly=base+200*(Number(channelPacks.value)+Number(serverPacks.value)+Number(rulePacks.value));const terms=initialTerms();const initial=monthly*terms.months;const payment=creditFirstPayment(initial,availableCredits,creditBalanceLoaded);pricePreview.textContent=`月額 ${monthly.toLocaleString('ja-JP')}円／新規申込時 ${initial.toLocaleString('ja-JP')}円（${terms.label}）`;checkoutSummary.replaceChildren();const rows=[['申込みプラン',{supporter:'Basic',plus:'Plus',pro:'Pro'}[plan.value]],['初回支払額',`${initial.toLocaleString('ja-JP')}円`]];if(payment.state==='checking')rows.push(['事前チャージの残高','確認中']);if(payment.state==='split'||payment.state==='credits')rows.push(['事前チャージの残高から',`${payment.creditApplied.toLocaleString('ja-JP')}円`],['カードへの請求',payment.cardCharge?`${payment.cardCharge.toLocaleString('ja-JP')}円`:'ありません'],['支払い後の残高',`${payment.remainingCredits.toLocaleString('ja-JP')}円`]);rows.push([terms.nextLabel,`${monthly.toLocaleString('ja-JP')}円`],['提供開始','決済確認後'],['解約','契約管理画面から手続きし、期間末で終了。支払済み料金の返金なし']);for(const [term,value] of rows){const dt=document.createElement('dt');dt.textContent=term;const dd=document.createElement('dd');dd.textContent=value;checkoutSummary.append(dt,dd);}creditPaymentDetails.hidden=payment.state==='card';creditPaymentHelp.textContent=payment.state==='checking'?'事前チャージの残高を確認しています。':payment.state==='credits'?'残高だけで申し込めます（カードへの請求はありません）。':payment.state==='split'?`カードを使わない場合は、あと${payment.topupNeeded.toLocaleString('ja-JP')}円チャージすると残高だけで申し込めます（チャージは500円から）。`:'';updateCheckoutAvailability();};
 for(const input of [plan,channelPacks,serverPacks,rulePacks])input.addEventListener('change',updatePricePreview);
 updatePricePreview();application.append(optionGrid,pricePreview,checkoutSummary,creditPaymentDetails);
 
+// 2026年11月の申込みだけ、1か月分の支払いで11月と12月を利用できる（worker/supporter-billing.js の NOVEMBER_OFFER と同じ）。
+function initialTerms(now=new Date()){
+ const jst=new Date(now.getTime()+9*60*60*1000),day=jst.getUTCDate(),november=jst.getUTCFullYear()===2026&&jst.getUTCMonth()===10;
+ return november?{months:1,lateMonth:false,november:true,label:'1か月分で11月・12月に利用できます',nextLabel:'次回（12月26日）に必要な額'}:day>=26?{months:2,lateMonth:true,november:false,label:'当月分＋翌月分',nextLabel:'次回26日に必要な額'}:{months:1,lateMonth:false,november:false,label:'当月分',nextLabel:'次回26日に必要な額'};
+}
 const selectedInitialCharge=(selectedPlan,selectedChannelPacks,selectedServerPacks,selectedRulePacks)=>{
  const base={supporter:300,plus:800,pro:1280}[selectedPlan]||300;
  const monthly=base+200*(Number(selectedChannelPacks)+Number(selectedServerPacks)+Number(selectedRulePacks));
- const jstDay=Number(new Intl.DateTimeFormat('en-US',{day:'numeric',timeZone:'Asia/Tokyo'}).format(new Date()));
- return {monthly,initial:monthly*(jstDay>=26?2:1),lateMonth:jstDay>=26};
+ const terms=initialTerms();
+ return {monthly,initial:monthly*terms.months,lateMonth:terms.lateMonth};
 };
 const PENDING_PLAN_KEY='dpi-supporter-pending-plan';
 let pendingPlanAfterTopup=null;
@@ -1062,7 +1086,7 @@ const TOPUP_STATUS_LABELS={pending:'入金・決済の確認待ち',credited:'�
 function renderCreditDetails(details={}){
  const balance=Number(details.balance||0),purchased=Number(details.purchasedBalance||0);
  availableCredits=Math.max(0,balance);
- creditBalanceLoaded=true;
+ creditBalanceLoaded=true;creditBalanceFailed=false;
  credit.textContent=`事前チャージの残高: ${balance.toLocaleString('ja-JP')}円`;
  creditExpiry.textContent=details.nextExpiry
   ?`チャージした残高 ${purchased.toLocaleString('ja-JP')}円／最も近い有効期限: ${dateText(details.nextExpiry)}`
@@ -1361,9 +1385,10 @@ function updateCheckoutAvailability(){
  paymentChoiceTitle.hidden=hasExistingContract;paymentChoiceTitle.textContent=legalConsent.checked?'お支払い方法を選ぶ':'お支払い方法を選ぶ（上の同意にチェックすると押せます）';
  checkoutButton.disabled=!billingAvailable||customPlanLocked||!legalConsent.checked||hasExistingContract||!creditBalanceLoaded;
  topupChoiceButton.disabled=!billingAvailable||customPlanLocked||!legalConsent.checked||hasExistingContract||!creditBalanceLoaded;
+ const checkingText=creditBalanceFailed?'残高を確認できません':session?.authenticated===false?'ログイン後に申し込めます':billingUnavailable?'現在は申し込めません':'残高を確認中';
  checkoutButton.title=accountSuspended?'有料プランアカウントがBANされています。':hasExistingContract?'既に契約済みです。プラン変更をご利用ください。':!creditBalanceLoaded?'事前チャージの残高を確認しています。':'';
- checkoutButton.textContent=payment.state==='checking'?'残高を確認中':payment.state==='credits'?'残高で申し込む（カード請求なし）':payment.state==='split'?`残高を使って申し込む（カード ${payment.cardCharge.toLocaleString('ja-JP')}円）`:'クレジットカードで申し込む';
- topupChoiceButton.textContent=payment.state==='checking'?'残高を確認中':payment.state==='split'?`事前チャージして申し込む（あと${payment.topupNeeded.toLocaleString('ja-JP')}円）`:'事前チャージして申し込む';
+ checkoutButton.textContent=payment.state==='checking'?checkingText:payment.state==='credits'?'残高で申し込む（カード請求なし）':payment.state==='split'?`残高を使って申し込む（カード ${payment.cardCharge.toLocaleString('ja-JP')}円）`:'クレジットカードで申し込む';
+ topupChoiceButton.textContent=payment.state==='checking'?checkingText:payment.state==='split'?`事前チャージして申し込む（あと${payment.topupNeeded.toLocaleString('ja-JP')}円）`:'事前チャージして申し込む';
 }
 
 for (const [label,action] of [['このプランで申し込む','checkout'],['プラン・オプションを変更','update'],['支払い方法・解約','portal'],['契約・明細を更新','status']]) {

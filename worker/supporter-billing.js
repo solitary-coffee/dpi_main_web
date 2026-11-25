@@ -601,6 +601,7 @@ async function recordInvoicePaid(env,db,invoice){
   try{await releaseServiceHolds(env,db,await customerSubscriptionSummaries(env,customer));}
   catch(error){console.error('Supporter hold release failed; the billing schedule retries it',{errorName:error?.name||'Error'});}
  }
+ if(!previous&&Number(invoice.total)===0&&(invoice.lines?.data||[]).some(line=>line?.metadata?.dpi_prepaid_renewal))return;
  await sendBillingNotificationSafely(env,db,previous?'retry_succeeded':'payment_succeeded',invoice,previous?.retry_at,previous?.suspend_at);
 }
 async function recordInvoiceFailed(env,db,invoice){
@@ -662,13 +663,54 @@ export function selection(input){
  if(!definition||!Number.isInteger(channelPacks)||channelPacks<0||channelPacks>5||!Number.isInteger(serverPacks)||serverPacks<0||serverPacks>5||!Number.isInteger(rulePacks)||rulePacks<0||rulePacks>5)fail('プランまたは追加オプション数が不正です。');
  return {plan:input.plan,packs:channelPacks,channelPacks,serverPacks,rulePacks,baseMonthly:definition.yen,monthly:definition.yen+200*(channelPacks+serverPacks+rulePacks),channels:definition.channels+3*channelPacks,servers:definition.servers+2*serverPacks,rules:definition.rules+3*rulePacks,complexConditions:definition.complexConditions,multiDestination:definition.multiDestination};
 }
+// 2026年11月の申込みだけ、1か月分の支払いで11月と12月を利用できる（次回の請求は12月26日）。
+export const NOVEMBER_OFFER=Object.freeze({from:Date.UTC(2026,9,31,15),until:Date.UTC(2026,10,30,15),anchor:Date.UTC(2026,11,25,15)/1000});
 export function billingSchedule(now=Date.now()){
+ if(Number(now)>=NOVEMBER_OFFER.from&&Number(now)<NOVEMBER_OFFER.until)return {billingDay:26,anchor:NOVEMBER_OFFER.anchor,initialMonths:1,lateMonth:false,novemberOffer:true};
  const jst=new Date(Number(now)+9*60*60*1000);
  const day=jst.getUTCDate();
  let year=jst.getUTCFullYear(),month=jst.getUTCMonth();
  if(day>=26){month+=1;if(month>11){month=0;year+=1;}}
  const anchor=Math.floor((Date.UTC(year,month,26,0,0,0)-9*60*60*1000)/1000);
  return {billingDay:26,anchor,initialMonths:day>=26?2:1,lateMonth:day>=26};
+}
+// Stripe は、契約を作る時刻から1か月より先を請求日に指定できない。先になるとき（11月25日の申込み）は1つ前の26日を請求日にして、
+// その回の請求から、支払い済みの月額を差し引く（ensurePrepaidRenewal）。差し引く明細が間に合わない0時の直前は、少し待ってもらう。
+export function subscriptionAnchor(anchor,now=Math.floor(Date.now()/1000)){
+ const date=new Date(now*1000),lastDay=new Date(Date.UTC(date.getUTCFullYear(),date.getUTCMonth()+2,0)).getUTCDate();
+ const natural=Math.floor(Date.UTC(date.getUTCFullYear(),date.getUTCMonth()+1,Math.min(date.getUTCDate(),lastDay),date.getUTCHours(),date.getUTCMinutes(),date.getUTCSeconds())/1000);
+ if(anchor<=natural)return {anchor,prepaid:false};
+ const jst=new Date((anchor+32400)*1000),previous=Math.floor(Date.UTC(jst.getUTCFullYear(),jst.getUTCMonth()-1,26)/1000)-32400;
+ if(previous-now<180||previous>natural)fail('請求日の切り替わり時刻のため、契約を作成できません。0時を過ぎてからもう一度お試しください。',503);
+ return {anchor:previous,prepaid:true,until:anchor};
+}
+// 契約の作成に使う請求日。前払い分があるときは、差し引く額と次回の請求日を契約に記録する。
+function anchorParams(anchor,monthly,now){
+ const plan=subscriptionAnchor(anchor,now);
+ return {billing_cycle_anchor:String(plan.anchor),...(plan.prepaid?{'metadata[dpi_prepaid_renewal]':String(plan.anchor),'metadata[dpi_prepaid_until]':String(plan.until),'metadata[dpi_prepaid_yen]':String(monthly)}:{})};
+}
+// 契約を作った直後と、作成の通知（再送を含む）・契約の確認で呼ぶ。同じ契約では1回だけ（付いているかを確かめてから、冪等キーを付けて作る）。
+// 26日0時に間に合わなかったときは、次の26日の請求から差し引かれる（支払いの合計は変わらない）。
+async function ensurePrepaidRenewal(env,subscription){
+ const meta=subscription?.metadata||{},amount=Number(meta.dpi_prepaid_yen),renewal=Number(meta.dpi_prepaid_renewal),customer=stripeId(subscription?.customer);
+ if(!subscription?.id||!customer||!Number.isSafeInteger(amount)||amount<=0||!Number.isInteger(renewal))return false;
+ let applied=false;
+ await stripeListAll(env,`invoiceitems?customer=${encodeURIComponent(customer)}&limit=100`,item=>{if(item?.metadata?.dpi_prepaid_subscription===subscription.id)applied=true;});
+ if(applied)return true;
+ await stripe(env,'invoiceitems',{customer,subscription:subscription.id,amount:String(-amount),currency:'jpy',description:'お申込み時にお支払い済みの月額',
+  'metadata[dpi_prepaid_renewal]':String(renewal),'metadata[dpi_prepaid_subscription]':subscription.id},`dpi-prepaid-renewal-${subscription.id}`);
+ return true;
+}
+// 差し引く請求が終わるまで（25日の申込みから26日0時30分まで）は、変更・解約で前払い分がずれるため受け付けない。
+export function prepaidRenewalPending(subscription,now=Math.floor(Date.now()/1000)){
+ const renewal=Number(subscription?.metadata?.dpi_prepaid_renewal);
+ return Number.isInteger(renewal)&&renewal>0&&now<renewal+1800;
+}
+export const PREPAID_PENDING_MESSAGE='お申込み内容の確定処理中です。プランの変更・解約・支払い方法の変更は、11月26日0時30分以降に行ってください。';
+async function prepaidPendingFor(env,customer){
+ const now=Math.floor(Date.now()/1000);
+ if(!customer||now*1000>=Date.UTC(2026,10,25,15,30))return false; // 前払い分の差し引きがあるのは2026年11月26日0時の請求だけ
+ return (await subscriptions(env,customer)).some(item=>prepaidRenewalPending(item,now));
 }
 export function staleCheckoutAttempt(row,now=Math.floor(Date.now()/1000)){
  if(!row?.checkout_key)return false;
@@ -770,7 +812,7 @@ export function paidCheckoutSubscriptionParams(env,session,paymentIntent,now=Mat
  const choice=selection({plan:metadata.dpi_plan,channelPacks:Number(metadata.dpi_channel_packs),serverPacks:Number(metadata.dpi_server_packs),rulePacks:Number(metadata.dpi_rule_packs||0)});
  let anchor=Number(metadata.dpi_billing_anchor);
  if(!Number.isInteger(anchor)||anchor<=now+60)anchor=billingSchedule(now*1000).anchor;
- const params={customer,default_payment_method:paymentMethod,collection_method:'charge_automatically',billing_cycle_anchor:String(anchor),proration_behavior:'none','billing_mode[type]':'flexible',
+ const params={customer,default_payment_method:paymentMethod,collection_method:'charge_automatically',...anchorParams(anchor,choice.monthly,now),proration_behavior:'none','billing_mode[type]':'flexible',
   'items[0][price]':planPrice(env,choice.plan),'items[0][quantity]':'1',
   'metadata[dpi_user]':String(metadata.dpi_user||session.client_reference_id||''),'metadata[dpi_plan]':choice.plan,
   'metadata[dpi_legal_consent_version]':String(metadata.dpi_legal_consent_version||''),
@@ -779,8 +821,8 @@ export function paidCheckoutSubscriptionParams(env,session,paymentIntent,now=Mat
  if(optionPacks){params['items[1][price]']=env.STRIPE_PRICE_ADDON;params['items[1][quantity]']=String(optionPacks);}
  return params;
 }
-export function creditSignupSubscriptionParams(env,customer,uid,choice,schedule,legalConsentVersion,requestId){
- const params={customer,collection_method:'charge_automatically',billing_cycle_anchor:String(schedule.anchor),proration_behavior:'none',payment_behavior:'error_if_incomplete','billing_mode[type]':'flexible',
+export function creditSignupSubscriptionParams(env,customer,uid,choice,schedule,legalConsentVersion,requestId,now=Math.floor(Date.now()/1000)){
+ const params={customer,collection_method:'charge_automatically',...anchorParams(schedule.anchor,choice.monthly,now),proration_behavior:'none',payment_behavior:'error_if_incomplete','billing_mode[type]':'flexible',
   'items[0][price]':planPrice(env,choice.plan),'items[0][quantity]':'1',
   'metadata[dpi_user]':String(uid),'metadata[dpi_plan]':choice.plan,
   'metadata[dpi_legal_consent_version]':String(legalConsentVersion),
@@ -838,7 +880,7 @@ export async function provisionPaidCheckoutSubscription(env,session){
  const customer=typeof session.customer==='string'?session.customer:session.customer?.id;
  if(!customer)fail('初回決済の顧客情報を確認できませんでした。',502);
  const all=await allSubscriptions(env,customer),existing=liveSubscriptions(all);
- if(existing.length)return existing[0];
+ if(existing.length){if(session.id&&existing[0].metadata?.dpi_initial_session===session.id)await ensurePrepaidRenewal(env,existing[0]);return existing[0];}
  // 解約済みの契約がこの Checkout 以降に作られていれば、もう使用済み。Webhook の再送や
  // 冪等キー（24時間）切れの後に、解約した人へ新しい月額契約を作らない。
  if(checkoutConsumed(all,session))return null;
@@ -848,7 +890,9 @@ export async function provisionPaidCheckoutSubscription(env,session){
  const params=paidCheckoutSubscriptionParams(env,session,paymentIntent);
  params['metadata[dpi_initial_session]']=String(session.id||'');
  await applyInitialCredit(env,session);
- return await stripe(env,'subscriptions',params,`dpi-initial-subscription-v2-${session.id}`);
+ const created=await stripe(env,'subscriptions',params,`dpi-initial-subscription-v2-${session.id}`);
+ await ensurePrepaidRenewal(env,created);
+ return created;
 }
 function recoverablePaidCheckout(session,customer,uid){
  const metadata=checkoutMetadata(session);
@@ -858,7 +902,12 @@ function recoverablePaidCheckout(session,customer,uid){
 export async function reconcilePaidCheckoutSubscription(env,customer,uid,db=null){
  if(!customer||!uid||!billingReady(env))return {subscription:null,recovered:false,checkoutId:null};
  const all=await allSubscriptions(env,customer),existing=liveSubscriptions(all);
- if(existing.length)return {subscription:existing[0],recovered:false,checkoutId:null};
+ if(existing.length){
+  // 差し引く明細が付いていない契約を、契約の確認のときに回復する（請求の翌々日まで）。
+  const prepaid=existing.find(item=>Number(item.metadata?.dpi_prepaid_renewal)>Math.floor(Date.now()/1000)-2*86400);
+  if(prepaid)try{await ensurePrepaidRenewal(env,prepaid);}catch(error){console.error('Prepaid renewal recovery deferred',{subscriptionId:prepaid.id,errorName:error?.name||'Error'});}
+  return {subscription:existing[0],recovered:false,checkoutId:null};
+ }
  const result=await stripe(env,`checkout/sessions?customer=${encodeURIComponent(customer)}&limit=20`);
  // 既に契約を作った（その後に解約・処分された）Checkout は復旧の対象外。返金判定にも回さない。
  const unconsumed=(result.data||[]).filter(item=>!checkoutConsumed(all,item));
@@ -945,6 +994,8 @@ export async function provisionCreditFundedSignup(env,db,uid,customer,choice,inp
   const credits=await customerCredits(env,customer);
   if(credits<amount){await db.prepare(`UPDATE supporter_credit_signups SET status='failed',updated_at=? WHERE request_id=? AND status='pending'`).bind(now,attempt.request_id).run();fail(`事前チャージの残高が不足しています。申込みには${amount.toLocaleString('ja-JP')}円必要です。`,409);}
  }
+ // 引き落とす前に、契約を作れる時刻かを確かめる。
+ if(!alreadyDebited)subscriptionAnchor(schedule.anchor,now);
  let transaction=null;
  try{
   let balanceAfter;
@@ -962,6 +1013,8 @@ export async function provisionCreditFundedSignup(env,db,uid,customer,choice,inp
   const params=creditSignupSubscriptionParams(env,customer,uid,choice,schedule,legalConsentVersion,attempt.request_id);
   const subscription=await stripe(env,'subscriptions',params,`dpi-credit-signup-subscription-${attempt.request_id}`);
   if(!['active','trialing'].includes(subscription?.status))fail('残高による契約を有効化できませんでした。',409);
+  // 失敗しても契約は有効。契約作成の通知（customer.subscription.created）でもう一度付ける。
+  try{await ensurePrepaidRenewal(env,subscription);}catch(error){console.error('Prepaid renewal deferred',{subscriptionId:subscription.id,errorName:error?.name||'Error'});}
   await completeCreditSignup(db,attempt,subscription,transaction,amount,balanceAfter,now);
   try{await sendBillingNotification(env,db,'credit_plan_payment_succeeded',{id:`credit-signup:${attempt.request_id}`,customer,amount_paid:amount,currency:'jpy',next_renewal_at:schedule.anchor});}
   catch(error){console.error('Credit signup email failed',{requestId:attempt.request_id,errorName:error?.name||'Error'});}
@@ -1015,7 +1068,10 @@ export function subscriptionSummary(subscription,env={}){
   return {price:item.price?.id||'',label:labels.get(item.price?.id)||item.price?.nickname||'契約項目',quantity,unitAmount,subtotal:unitAmount*quantity,currency:(item.price?.currency||'jpy').toLowerCase(),periodStart:unix(item.current_period_start),periodEnd:unix(item.current_period_end)};
  });
  const currentPeriodStart=items.map(item=>item.periodStart).filter(Boolean).sort((a,b)=>a-b)[0]||unix(subscription.current_period_start);
- const nextRenewalAt=items.map(item=>item.periodEnd).filter(Boolean).sort((a,b)=>b-a)[0]||unix(subscription.current_period_end);
+ const periodEnd=items.map(item=>item.periodEnd).filter(Boolean).sort((a,b)=>b-a)[0]||unix(subscription.current_period_end);
+ // 前払い分を差し引く最初の26日は請求が無い。その次の26日を次回の請求日として見せる。
+ const prepaidRenewalAt=Number(subscription.metadata?.dpi_prepaid_renewal)||null;
+ const nextRenewalAt=prepaidRenewalAt&&periodEnd===prepaidRenewalAt?Number(subscription.metadata?.dpi_prepaid_until)||periodEnd:periodEnd;
  const currency=items.find(item=>item.currency)?.currency||'jpy';
  const basePrice=items.find(item=>item.price!==env.STRIPE_PRICE_ADDON)?.price;
  const addonQuantity=items.find(item=>item.price===env.STRIPE_PRICE_ADDON)?.quantity||0;
@@ -1025,7 +1081,7 @@ export function subscriptionSummary(subscription,env={}){
  const planId=basePrice===env.STRIPE_PRICE_PRO?'pro':basePrice===env.STRIPE_PRICE_PLUS?'plus':basePrice===env.STRIPE_PRICE_SUPPORTER?'supporter':'';
  const recognizedPlan=!!planId&&options.valid;
  const choice=recognizedPlan?selection({plan:planId,channelPacks,serverPacks,rulePacks}):{channels:0,servers:0,rules:0,complexConditions:false,multiDestination:false};
- return {subscriptionId:subscription.id||'',customId:clean(metadata.dpi_custom_id),customRevision:Number(metadata.dpi_custom_revision)||0,status:subscription.status||'unknown',cancelAtPeriodEnd:cancelScheduled(subscription),pauseCollection:!!subscription.pause_collection,servicePause:metadata.dpi_service_pause==='dunning',startedAt:unix(subscription.start_date)||unix(subscription.created),currentPeriodStart,nextRenewalAt,amount:items.reduce((sum,item)=>sum+item.subtotal,0),currency,plan:planId?PLAN_CATALOG[planId].name:'確認が必要な契約',planId,recognizedPlan,configurationValid:options.valid,channelPacks,serverPacks,rulePacks,channels:choice.channels,servers:choice.servers,rules:choice.rules,complexConditions:choice.complexConditions,multiDestination:choice.multiDestination,items,scheduledChange:null};
+ return {subscriptionId:subscription.id||'',prepaidRenewalAt,customId:clean(metadata.dpi_custom_id),customRevision:Number(metadata.dpi_custom_revision)||0,status:subscription.status||'unknown',cancelAtPeriodEnd:cancelScheduled(subscription),pauseCollection:!!subscription.pause_collection,servicePause:metadata.dpi_service_pause==='dunning',startedAt:unix(subscription.start_date)||unix(subscription.created),currentPeriodStart,nextRenewalAt,amount:items.reduce((sum,item)=>sum+item.subtotal,0),currency,plan:planId?PLAN_CATALOG[planId].name:'確認が必要な契約',planId,recognizedPlan,configurationValid:options.valid,channelPacks,serverPacks,rulePacks,channels:choice.channels,servers:choice.servers,rules:choice.rules,complexConditions:choice.complexConditions,multiDestination:choice.multiDestination,items,scheduledChange:null};
 }
 export function reconcileRulesForLimits(settingsJson,limits={}){
  let settings;
@@ -1177,6 +1233,7 @@ export async function billingAction(request,env,db,uid,input={}){
   return json({mode:billingMode(env),billingDay:26,subscriptions:effective,customPlan:customPublic(syncedCustom),customCheckoutUrl,customChange:pendingCustomChange?{requestId:pendingCustomChange.request_id,status:pendingCustomChange.status,oldMonthlyYen:Number(pendingCustomChange.old_monthly_yen),nextMonthlyYen:Number(pendingCustomChange.next_monthly_yen),amountDueYen:Number(pendingCustomChange.amount_due_yen)}:null,customChangeCheckoutUrl,invoices,credits,creditDetails,dunning,unpaid:{count:unpaidItems.length,total:unpaidTotal,payableWithCredits:unpaidItems.length>0&&credits>=unpaidCreditNeeded(unpaidItems)},accountEnforcement,rulesAdjustment,recoveredSubscription:recovery.recovered,creditTopupRecovery,deliveryEnabled:false});
  }
  // カスタムプランは解約だけを利用者が行える（Stripe の解約専用画面）。ほかの変更は管理者へ問い合わせ。
+ if(['portal','preview-update','update'].includes(action)&&await prepaidPendingFor(env,row.customer_id))return json({message:PREPAID_PENDING_MESSAGE},409);
  if(customLocked(customPlan)&&action==='portal')return await customCancellationPortal(env,row.customer_id,customPlan);
  if(action==='portal'&&input.existingOnly===true&&!row.customer_id)return json({message:'契約情報がありません。'},409);
  if(customLocked(customPlan)&&['checkout','update','preview-update'].includes(action))return json({message:'カスタムプランの提供中はユーザー側でプラン変更・標準プラン申込みを行えません。契約内容の変更は管理者へお問い合わせください。',customPlan:customPublic(customPlan)},403);
@@ -1308,7 +1365,7 @@ export async function billingAction(request,env,db,uid,input={}){
  params[`line_items[${line}][price_data][currency]`]='jpy';
  params[`line_items[${line}][price_data][unit_amount]`]=String(initialTotal-creditApplied);
  if(creditApplied>0){params['metadata[dpi_credit_applied]']=String(creditApplied);params['metadata[dpi_initial_total]']=String(initialTotal);}
- params[`line_items[${line}][price_data][product_data][name]`]=`${PLAN_CATALOG[choice.plan].name} ${schedule.lateMonth?'初回利用料（当月分・翌月分の2か月分）':'初回利用料（当月分）'}${creditApplied>0?`（総額${initialTotal.toLocaleString('ja-JP')}円のうち事前チャージの残高から${creditApplied.toLocaleString('ja-JP')}円を使用）`:''}`;
+ params[`line_items[${line}][price_data][product_data][name]`]=`${PLAN_CATALOG[choice.plan].name} ${schedule.novemberOffer?'初回利用料（1か月分。11月・12月に利用できます）':schedule.lateMonth?'初回利用料（当月分・翌月分の2か月分）':'初回利用料（当月分）'}${creditApplied>0?`（総額${initialTotal.toLocaleString('ja-JP')}円のうち事前チャージの残高から${creditApplied.toLocaleString('ja-JP')}円を使用）`:''}`;
  params[`line_items[${line}][quantity]`]='1';
  await db.prepare('UPDATE supporter_billing SET checkout_key=?,checkout_params=? WHERE discord_user_id=? AND checkout_key IS NULL').bind(crypto.randomUUID(),JSON.stringify(params),uid).run();
  row=await db.prepare('SELECT * FROM supporter_billing WHERE discord_user_id=?').bind(uid).first();
@@ -1532,6 +1589,7 @@ export async function adminBillingAction(env,customer,uid,input){
  }
  const list=await subscriptions(env,customer);
  const current=activeSubscription(list);
+ if(['cancel_at_period_end','change_subscription'].includes(action)&&current&&prepaidRenewalPending(current))fail(PREPAID_PENDING_MESSAGE,409);
  if(action==='cancel_at_period_end'){
   if(!current)fail('変更できる契約がありません。',409);
   await stripe(env,`subscriptions/${encodeURIComponent(current.id)}`,{cancel_at_period_end:'true','metadata[dpi_admin_reason]':reason},key);
@@ -1765,6 +1823,7 @@ export async function billingWebhook(request,env,ctx){
  if(event.type==='customer.updated'){await syncCustomerEmail(db,event.data?.object);await syncDefaultPaymentMethod(env,db,event);}
  if(['customer.subscription.created','customer.subscription.updated'].includes(event.type)){
   const subscription=event.data?.object;
+  if(event.type==='customer.subscription.created'&&subscription?.metadata?.dpi_prepaid_renewal&&await db.prepare('SELECT discord_user_id FROM supporter_billing WHERE customer_id=?').bind(clean(stripeId(subscription.customer))).first())await ensurePrepaidRenewal(env,subscription);
   const summary=subscriptionSummary(subscription,env);
   // 支払いの回復・一時停止の解除は、Stripe の現在の状態で確かめてから停止を解く。
   const holder=clean(stripeId(subscription?.customer));
@@ -1884,7 +1943,7 @@ async function queueRenewalNotices(env,db,now){
    for(const summary of [...(await subscriptionSummariesByCustomer(env,[...customers])).values()].flat()){
     // 0時ちょうどは、Stripe が新しい期間へ切り替える前後のどちらもあり得る。
     const due=[summary.nextRenewalAt,summary.currentPeriodStart].some(time=>Math.abs(Number(time||0)-day.start)<=3600);
-    if(!due||Number(summary.startedAt||0)>=day.start)continue;
+    if(!due||Number(summary.startedAt||0)>=day.start||summary.prepaidRenewalAt===day.start)continue;
     if(summary.servicePause){stopped+=1;continue;}
      if(summary.cancelAtPeriodEnd){canceled+=1;continue;}
     const next=summary.scheduledChange;
@@ -1901,6 +1960,7 @@ async function queueRenewalNotices(env,db,now){
    catch(error){console.error('Supporter renewal plan breakdown failed',{errorName:error?.name||'Error'});}
   await stripeListAll(env,`invoices?created%5Bgte%5D=${day.start-60}&limit=100`,invoice=>{
    if(!customers.has(stripeId(invoice.customer))||invoice.billing_reason!=='subscription_cycle'||Number(invoice.created)<day.start-60)return;
+    if(Number(invoice.total)===0&&bySubscription.get(invoiceSubscriptionId(invoice))?.prepaidRenewalAt===day.start)return;
     const paid=Number(invoice.amount_paid)||0,total=Number(invoice.total||invoice.amount_due)||paid,credit=Math.max(0,total-paid),summary=bySubscription.get(invoiceSubscriptionId(invoice));
     if(invoice.status==='paid'){if(paid>0){result.paid+=1;result.paidAmount+=paid;if(credit>0){result.partialCredit+=1;result.partialCreditAmount+=credit;}}else result.credit+=1;if(summary)addPlan(plans,summary,'success');}
     else if(invoice.status==='void'){result.voided+=1;result.voidedAmount+=total;}
@@ -2554,7 +2614,7 @@ export async function provisionCustomPaidCheckoutSubscription(env,db,session){
   fail('Stripeの商品情報を作成できませんでした。',502);
  const result=await stripe(env,'subscriptions',{
   customer,default_payment_method:paymentMethod,collection_method:'charge_automatically',
-  billing_cycle_anchor:String(anchor),proration_behavior:'none',
+  ...anchorParams(anchor,monthly,now),proration_behavior:'none',
   payment_behavior:'error_if_incomplete','billing_mode[type]':'flexible',
   'items[0][price_data][currency]':'jpy',
   'items[0][price_data][unit_amount]':String(monthly),
@@ -2569,5 +2629,6 @@ export async function provisionCustomPaidCheckoutSubscription(env,db,session){
   ||result.metadata?.dpi_custom_id!==offer.id
   ||Number(result.items?.data?.[0]?.price?.unit_amount)!==monthly)
   fail('作成後の月額契約を検証できませんでした。',502);
+ await ensurePrepaidRenewal(env,result);
  return result;
 }

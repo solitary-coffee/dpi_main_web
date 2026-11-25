@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
- billingSchedule,customInitialCheckoutParams,createCustomCheckout,
+ subscriptionAnchor,billingSchedule,customInitialCheckoutParams,createCustomCheckout,
  provisionCustomPaidCheckoutSubscription,
 } from '../worker/supporter-billing.js';
 import {readFile} from 'node:fs/promises';
@@ -17,7 +17,7 @@ const env={SUPPORTER_BILLING_MODE:'test',STRIPE_SECRET_KEY:'sk_test_mock',
 const uuid='00000000-0000-4000-8000-000000000001';
 
 test('custom first payment is full month before 26 JST and double charge from 26 onward',()=>{
- const before=Date.parse('2026-11-25T03:00:00Z'),after=Date.parse('2026-11-25T15:00:00Z');
+ const before=Date.parse('2027-03-25T03:00:00Z'),after=Date.parse('2027-03-25T15:00:00Z');
  for(const [when,multiplier] of [[before,1],[after,2]]){
   const p=customInitialCheckoutParams(customer,uid,offer,uuid,when);
   const schedule=billingSchedule(when);
@@ -61,7 +61,7 @@ test('paid custom Checkout creates a 26th-anchored subscription once; unpaid can
   if(path==='/v1/products'&&method==='POST')return Response.json({id:'prod_custom_test',livemode:false});
   if(path==='/v1/subscriptions'&&method==='POST'){
    assert.equal(params.get('proration_behavior'),'none');
-   assert.equal(params.get('billing_cycle_anchor'),session.metadata.dpi_billing_anchor);
+   assert.equal(params.get('billing_cycle_anchor'),String(subscriptionAnchor(Number(session.metadata.dpi_billing_anchor)).anchor));
    assert.equal(params.get('items[0][price_data][unit_amount]'),'1000');
    assert.equal(params.get('items[0][price_data][recurring][interval]'),'month');
    assert.equal(params.get('default_payment_method'),'pm_card_visa');

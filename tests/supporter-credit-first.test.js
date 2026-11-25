@@ -7,7 +7,7 @@ test('申込みで先に使う残高: カードの最低額50円を残し、全�
 });
 
 const env={SUPPORTER_BILLING_MODE:'test',STRIPE_SECRET_KEY:'rk_test_x',STRIPE_WEBHOOK_SECRET:'whsec_x',STRIPE_PRICE_SUPPORTER:'price_basic',STRIPE_PRICE_PLUS:'price_plus',STRIPE_PRICE_PRO:'price_pro',STRIPE_PRICE_ADDON:'price_addon',STRIPE_PORTAL_CONFIG:'bpc_x'};
-const session=(applied='200')=>({id:'cs_first',livemode:false,mode:'payment',status:'complete',payment_status:'paid',customer:'cus_first',payment_intent:'pi_first',amount_total:100,created:10,metadata:{dpi_checkout_kind:'initial_subscription',dpi_user:'123456789012345678',dpi_plan:'supporter',dpi_channel_packs:'0',dpi_server_packs:'0',dpi_rule_packs:'0',dpi_billing_anchor:'4000000000',dpi_credit_applied:applied}});
+const session=(applied='200')=>({id:'cs_first',livemode:false,mode:'payment',status:'complete',payment_status:'paid',customer:'cus_first',payment_intent:'pi_first',amount_total:100,created:10,metadata:{dpi_checkout_kind:'initial_subscription',dpi_user:'123456789012345678',dpi_plan:'supporter',dpi_channel_packs:'0',dpi_server_packs:'0',dpi_rule_packs:'0',dpi_billing_anchor:String(Math.floor(Date.now()/1000)+10*86400),dpi_credit_applied:applied}});
 function stripe(t,{failSubscription=0}={}){
  const state={transactions:[],subscriptions:[],keys:new Map(),balance:-200,failSubscription},original=globalThis.fetch;t.after(()=>{globalThis.fetch=original;});
  globalThis.fetch=async(url,init={})=>{
