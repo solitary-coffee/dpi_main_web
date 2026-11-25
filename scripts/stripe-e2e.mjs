@@ -1,9 +1,10 @@
 // 有料プランの通し試験。本物の Stripe（通し試験専用のサンドボックス・テストモード）と、手元の D1（node:sqlite）で、
-// Worker の処理をそのまま動かす。本番の Worker・D1・Discord・AWS には一切つながらない。
+// Worker の処理をそのまま動かす。本番の Worker・D1・Discord・AWS には一切つながらない（--notify のときだけ、中継を通してメールと Discord 通知を送る）。
 //
 //   node scripts/stripe-e2e.mjs                 … 全部
 //   node scripts/stripe-e2e.mjs 更新 異議       … 名前に含むものだけ
 //   node scripts/stripe-e2e.mjs --shared        … 本番サイトと同じサンドボックスで行う（試験の間だけ Webhook 送信先を止めて、終わったら戻す）
+//   node scripts/stripe-e2e.mjs --notify        … メールと Discord 通知を、種類ごとに 1 回ずつ実際に送る（STRIPE_E2E_PROXY の中継が送る。宛先は中継の中で決まる）
 //   node scripts/stripe-e2e.mjs --browser       … 支払い画面（Stripe Checkout）の実操作も行う（puppeteer-core と Chrome が必要。scripts/e2e-checkout.mjs）
 //
 // キーは scripts/e2e-key.mjs（テストキーだけ）。Webhook は Stripe のイベントを取得し、手元の鍵で署名して渡す。
@@ -25,15 +26,45 @@ const KEY = e2eKey();
 const stripe = stripeClient(KEY);
 const args = process.argv.slice(2);
 const useBrowser = args.includes('--browser');
+const notify = args.includes('--notify');
+if (notify && !process.env.STRIPE_E2E_PROXY) throw new Error('--notify には中継（STRIPE_E2E_PROXY）が必要です。');
 const filters = args.filter(item => !item.startsWith('--'));
 const GUILD = '12345678901234567', CHANNEL = '98765432109876543';
 const DAY = 86400;
 
 // Stripe の全体の一覧には、テストクロックの顧客の契約が出ない。試験中の利用者のテストクロックを指定して、本番と同じ見え方にする。
 let currentClock = '', currentCustomer = '';
+// --notify: 同じ種類（題名）は 1 回だけ送る。日付などの数字の違いは同じ種類とみなす。
+const delivered = {mail: new Map(), admin: new Map(), discord: new Map()};
+// 試験のメールは、件名と本文の先頭で「誰に届くものか」を示す。
+const testMail = (audience, subject, note, text, headers) => ({headers, subject: `【通し試験｜${audience}】${subject}`,
+ text: `━━━━━━━━━━━━━━━━━━━━
+【${audience}】${note}
+これは有料プランの通し試験です。実際の請求・契約・処分ではありません。
+━━━━━━━━━━━━━━━━━━━━
+
+${text}`});
+const kindOf = text => String(text).replace(/\d+/g, '#');
+async function relay(path, body) {
+ const response = await fetch(`${new URL(process.env.STRIPE_E2E_PROXY).origin}${path}`, {method: 'POST', body: JSON.stringify(body), headers: {'x-e2e-token': process.env.STRIPE_E2E_PROXY_TOKEN || '', 'content-type': 'application/json'}, signal: AbortSignal.timeout(60000)});
+ if (!response.ok) throw new Error(`${path} ${response.status} ${(await response.text()).slice(0, 200)}`);
+}
+async function sendOnce(kind, key, path, body) {
+ if (delivered[kind].has(key)) return;
+ delivered[kind].set(key, 'sending');
+ try { await relay(path, body); delivered[kind].set(key, 'sent'); }
+ catch (error) { delivered[kind].set(key, `failed: ${error.message}`); }
+}
 const baseFetch = globalThis.fetch;
 globalThis.fetch = (input, init = {}) => {
  const url = new URL(typeof input === 'string' ? input : input.url ?? input.href);
+ if (notify && url.hostname === 'discord.com' && url.pathname.startsWith('/api/webhooks/')) {
+  const channel = url.pathname.includes('membership') ? 'membership' : 'billing', body = JSON.parse(init.body);
+  const {title, description} = body.embeds[0], label = channel === 'billing' ? '支払い' : '加入・変更・解約', key = `${label}: ${kindOf(title)}`;
+  return sendOnce('discord', key, '/__notice', {channel, body})
+   .then(() => sendOnce('admin', key, '/__mail', testMail('管理者向け', title, `運営の Discord「${label}」チャンネルに届く通知と同じ内容です。利用者には送られません。`, description)))
+   .then(() => new Response(null, {status: 204}));
+ }
  if (currentClock && url.hostname === 'api.stripe.com' && url.pathname === '/v1/subscriptions' && (init.method || 'GET') === 'GET' && !url.searchParams.has('customer')) {
   url.searchParams.set('test_clock', currentClock);
   return baseFetch(url.href, init);
@@ -88,7 +119,11 @@ class World {
   world.uid = String(100000000000000000n + BigInt(RealDate.now()) * 10n + BigInt(userSeq += 1));
   world.mails = [];
   world.env = {SUPPORTER_BILLING_MODE: 'test', STRIPE_SECRET_KEY: KEY, STRIPE_WEBHOOK_SECRET: 'whsec_e2e', ...seedIds, STRIPE_PORTAL_CONFIG: portalId, SUPPORTER_PUBLIC_ORIGIN: 'https://dpi-bot.com',
-   SUPPORTER_PUBLIC_ENABLED: 'true', REUSE_DB: world.db, NOTICE_FROM_EMAIL: 'notice@dpi-bot.com', NOTICE_EMAIL: {send: async mail => { world.mails.push(mail.subject); }}};
+   SUPPORTER_PUBLIC_ENABLED: 'true', REUSE_DB: world.db, NOTICE_FROM_EMAIL: 'notice@dpi-bot.com', NOTICE_EMAIL: {send: async mail => {
+    world.mails.push(mail.subject);
+    if (notify) await sendOnce('mail', kindOf(mail.subject), '/__mail', testMail('ユーザー向け', mail.subject, '有料プランの利用者に届くメールです。', mail.text, mail.headers));
+   }},
+   ...(notify ? {BILLING_NOTICE_WEBHOOK: `https://discord.com/api/webhooks/111111111111111111/${'billing'.padEnd(30, '_')}`, MEMBERSHIP_NOTICE_WEBHOOK: `https://discord.com/api/webhooks/222222222222222222/${'membership'.padEnd(30, '_')}`} : {})};
   const params = {name: `e2e ${world.uid}`, email: `e2e-${world.uid}@example.com`, 'metadata[dpi_user]': world.uid};
   if (clock) {
    const created = await stripe('POST', 'test_helpers/test_clocks', {frozen_time: String(now()), name: `dpi-e2e ${world.uid}`});
@@ -560,6 +595,29 @@ test('管理操作: クレジットの付与・削除・失効、支払いURL、
  assert.equal(await billing.expireSupporterPendingCheckouts(world.env, world.db, world.uid, randomUUID()), 1);
 });
 
+test('通知: ほかの試験に無い種類（チャージ失敗・不正の警告・解約予約の取り消し・月の途中の停止・処分）', async () => {
+ const world = await World.create({clock: false});
+ await world.subscribe('supporter');
+ const send = (type, object, previous) => world.deliver({id: `evt_e2e${randomUUID().replaceAll('-', '')}`, type, livemode: false, created: now(), data: {object, previous_attributes: previous}});
+ const requestId = randomUUID(), at = now();
+ world.raw.prepare(`INSERT INTO supporter_credit_topups(request_id,discord_user_id,customer_id,checkout_session_id,amount,currency,status,created_at,updated_at) VALUES(?,?,?,?,500,'jpy','pending',?,?)`).run(requestId, world.uid, world.customer, `cs_test_fail${requestId}`, at, at);
+ await send('checkout.session.async_payment_failed', {id: `cs_test_fail${requestId}`, mode: 'payment', payment_status: 'unpaid', customer: world.customer, amount_total: 500, currency: 'jpy', metadata: {dpi_checkout_kind: 'credit_topup', dpi_user: world.uid}});
+ const charge = (await stripe('GET', `charges?customer=${world.customer}&limit=1`)).data[0];
+ await send('radar.early_fraud_warning.created', {id: `issfr_${randomUUID()}`, charge: charge.id});
+ const sub = await world.sub();
+ await stripe('POST', `subscriptions/${sub.id}`, {cancel_at_period_end: 'true'}); await world.settle();
+ await stripe('POST', `subscriptions/${sub.id}`, {cancel_at_period_end: 'false'}); await world.settle();
+ for (const kind of ['topup_failed', 'fraud_warning', 'leave_reserved', 'leave_reserved_canceled']) assert.ok(world.kinds().includes(kind), `${kind}: ${world.kinds()}`);
+ // 月の途中の停止（督促の行だけを作る。請求書は無いので Stripe 側は変わらない）
+ world.raw.prepare(`INSERT INTO supporter_dunning(invoice_id,customer_id,subscription_id,amount_due,currency,status,initial_failed_at,retry_at,retry_attempted_at,suspend_at,updated_at) VALUES('in_e2e_stop',?,NULL,300,'jpy','suspend_scheduled',1,1,1,?,1)`).run(world.customer, at - 10);
+ const [year, month] = jstParts(at);
+ await world.cron(jst(year, month + 1, 10, 12));
+ assert.ok(world.kinds().includes('stop'), `stop: ${world.kinds()}`);
+ for (const kind of ['disciplinary_cancel', 'ban_account', 'unban_account'])
+  assert.equal(await billing.sendSupporterDisciplinaryNotification(world.env, world.db, kind, {requestId: randomUUID(), uid: world.uid, email: 'e2e@example.com', reason: '通し試験のお知らせ（実際の処分ではありません）', canceledSubscriptions: 1, confiscatedCredits: 0}), true);
+ assert.ok(world.mails.some(subject => subject.includes('チャージ失敗')), `メール: ${world.mails}`);
+});
+
 test('安全: 署名の誤り・本番のイベント・別の顧客の請求を受け付けない', async () => {
  const world = await World.create({clock: false});
  const body = JSON.stringify({id: 'evt_x', type: 'invoice.paid', livemode: false, data: {object: {}}});
@@ -601,6 +659,12 @@ async function main() {
  for (const id of clocks) await stripe('DELETE', `test_helpers/test_clocks/${id}`).catch(() => {});
  for (const id of plainCustomers) await stripe('DELETE', `customers/${id}`).catch(() => {});
  await closeBrowser();
+ if (notify) {
+  for (const [label, map] of [['メール（ユーザー向け）', delivered.mail], ['メール（管理者向け）', delivered.admin], ['Discord', delivered.discord]]) {
+   logs(`\n${label}: ${[...map.values()].filter(value => value === 'sent').length}／${map.size} 種類を送信`);
+   for (const [key, value] of map) logs(` ${value === 'sent' ? '✔' : '✖'} ${key}${value === 'sent' ? '' : `（${value}）`}`);
+  }
+ }
  const count = kind => results.filter(item => item.result === kind).length;
  const report = {finishedAt: new RealDate().toISOString(), passed: count('passed'), failed: count('failed'), skipped: count('skipped'), filtered: filters.length > 0, results};
  logs(`\n合格 ${report.passed}・失敗 ${report.failed}・未実施 ${report.skipped}`);
