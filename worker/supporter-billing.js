@@ -22,10 +22,10 @@ async function idempotencyKey(prefix,value){
  const bytes=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(String(value??'')));
  return `${prefix}${[...new Uint8Array(bytes)].slice(0,16).map(byte=>byte.toString(16).padStart(2,'0')).join('')}`;
 }
-// 支払い不能の自動解約の時刻: 停止（翌月1日0時）から2か月後の1日0時（日本時間）。
+// 支払い不能の自動解約の時刻: 停止（翌月1日0時）から1か月後の1日0時（日本時間）。
 export function autoCancelAt(suspendAt){
  const jst=new Date((Number(suspendAt)+32400)*1000);
- return Math.floor((Date.UTC(jst.getUTCFullYear(),jst.getUTCMonth()+2,1)-32400000)/1000);
+ return Math.floor((Date.UTC(jst.getUTCFullYear(),jst.getUTCMonth()+1,1)-32400000)/1000);
 }
 export function dunningSchedule(timestamp=Math.floor(Date.now()/1000)){
  const jst=new Date(Number(timestamp)*1000+9*60*60*1000);const year=jst.getUTCFullYear(),month=jst.getUTCMonth();
@@ -397,10 +397,10 @@ export async function customerInvoices(env,customer){
 }
 async function dunningState(db,customer){
  if(!customer)return {usageSuspended:false,status:null,retryAt:null,suspendAt:null};
- const row=await db.prepare(`SELECT status,retry_at,suspend_at FROM supporter_dunning
+ const row=await db.prepare(`SELECT invoice_id,status,retry_at,suspend_at FROM supporter_dunning
   WHERE customer_id=? AND status IN ('retry_scheduled','retrying','suspend_scheduled','suspended')
-  ORDER BY CASE WHEN status='suspended' THEN 0 ELSE 1 END,initial_failed_at DESC LIMIT 1`).bind(customer).first();
- return {usageSuspended:row?.status==='suspended',status:row?.status||null,retryAt:unix(row?.retry_at),suspendAt:unix(row?.suspend_at)};
+  ORDER BY CASE WHEN status='suspended' AND invoice_id LIKE 'hold:dispute:%' THEN 0 WHEN status='suspended' THEN 1 ELSE 2 END,initial_failed_at DESC LIMIT 1`).bind(customer).first();
+ return {reason:String(row?.invoice_id||'').startsWith(DISPUTE_PREFIX)?'dispute':'payment',usageSuspended:row?.status==='suspended',status:row?.status||null,retryAt:unix(row?.retry_at),suspendAt:unix(row?.suspend_at)};
 }
 function billingMailContent(kind,invoice,retryAt,suspendAt){
  const amount=new Intl.NumberFormat('ja-JP',{style:'currency',currency:clean(invoice.currency||'jpy').toUpperCase(),maximumFractionDigits:0}).format(Number(invoice.amount_paid||invoice.amount_due||invoice.total||0));
@@ -410,8 +410,8 @@ function billingMailContent(kind,invoice,retryAt,suspendAt){
   payment_succeeded:['【DPI-Bot】お支払い完了のお知らせ',[`DPI-Bot有料プランのお支払いが完了しました。`,`請求額: ${amount}`,`請求書: ${number}`]],
   retry_succeeded:['【DPI-Bot】再決済完了のお知らせ',[`月末の再決済が完了しました。引き続き有料プランをご利用いただけます。`,`請求額: ${amount}`,`請求書: ${number}`]],
   payment_failed:['【DPI-Bot】お支払い失敗と月末再決済のお知らせ',[`26日のお支払いを完了できませんでした。`,`月末再決済日時: ${date(retryAt)}`,`請求額: ${amount}`,`請求書: ${number}`,'月末までに契約管理画面から支払方法をご確認ください。','この請求は登録済みの支払方法で再決済します。26日以降にチャージしたクレジットは、次回以降の請求から利用されます。']],
-  final_failed:['【DPI-Bot】月末再決済失敗・利用停止のお知らせ',[`月末の再決済を完了できませんでした。`,`利用停止日時: ${date(suspendAt)}`,`請求額: ${amount}`,`請求書: ${number}`,'翌月以降、有料プランの通知設定は支払い完了まで利用停止となります。未払いの請求が複数ある場合は、すべてのお支払いを確認してから再開します。','停止中は新しい月額料金を請求しません。停止から2か月間お支払いを確認できない場合は、契約を自動的に解約し、未払いの請求を取り消します。']],
-  auto_canceled:['【DPI-Bot】有料プラン自動解約のお知らせ',['お支払いを確認できない状態が2か月続いたため、有料プランの契約を自動的に解約しました。',`取り消した請求: ${amount}`,'今回の未払いの請求を新たにお支払いいただく必要はありません。再度ご利用になる場合は、改めてお申込みください。']],
+  final_failed:['【DPI-Bot】月末再決済失敗・利用停止のお知らせ',[`月末の再決済を完了できませんでした。`,`利用停止日時: ${date(suspendAt)}`,`請求額: ${amount}`,`請求書: ${number}`,'翌月以降、有料プランの通知設定は支払い完了まで利用停止となります。未払いの請求が複数ある場合は、すべてのお支払いを確認してから再開します。','停止中は新しい月額料金を請求しません。停止から1か月間お支払いを確認できない場合は、契約を自動的に解約し、未払いの請求を取り消します。']],
+  auto_canceled:['【DPI-Bot】有料プラン自動解約のお知らせ',['利用停止から1か月間お支払いを確認できなかったため、有料プランの契約を自動的に解約しました。',`取り消した請求: ${amount}`,'今回の未払いの請求を新たにお支払いいただく必要はありません。再度ご利用になる場合は、改めてお申込みください。']],
   credit_topup_succeeded:['【DPI-Bot】クレジットチャージ完了のお知らせ',[`クレジットチャージが完了しました。`,`購入額: ${amount}`,`付与クレジット: ${Number(invoice.amount_paid||0).toLocaleString('ja-JP')}クレジット`,`有効期限: ${date(invoice.expires_at)}`,'購入クレジットは、有料プラン・プラン変更・追加オプションの支払いに利用できます。']],
   credit_topup_failed:['【DPI-Bot】クレジットチャージ失敗のお知らせ',[`クレジットチャージを完了できませんでした。`,`決済予定額: ${amount}`,'クレジットは付与されていません。支払方法を確認し、必要な場合は改めてチャージしてください。']],
   credit_plan_payment_succeeded:['【DPI-Bot】クレジット払いによるプラン申込み完了のお知らせ',[`チャージ済みクレジットによる有料プランのお申込みが完了しました。`,`使用クレジット: ${Number(invoice.amount_paid||0).toLocaleString('ja-JP')}クレジット`,`次回更新日: ${date(invoice.next_renewal_at)}`,'今回の申込みではカード情報を入力していません。次回請求時にクレジットが不足する場合は、契約管理画面から支払方法を登録してください。']],
@@ -1434,7 +1434,7 @@ export async function billingWebhook(request,env,ctx){
  if(!await verifySignature(raw,request.headers.get('stripe-signature'),env.STRIPE_WEBHOOK_SECRET))return json({},400);
  let event;try{event=JSON.parse(raw);}catch{return json({},400);}
  if(event.livemode!==expectedLivemode(env)||typeof event.id!=='string')return json({},400);
- const allowed=['checkout.session.completed','checkout.session.async_payment_succeeded','checkout.session.async_payment_failed','checkout.session.expired','customer.updated','customer.subscription.created','customer.subscription.updated','customer.subscription.deleted','invoice.paid','invoice.payment_failed','charge.refunded','charge.dispute.created','charge.dispute.closed','radar.early_fraud_warning.created'];
+ const allowed=['checkout.session.completed','checkout.session.async_payment_succeeded','checkout.session.async_payment_failed','checkout.session.expired','customer.updated','customer.subscription.created','customer.subscription.updated','customer.subscription.deleted','invoice.paid','invoice.payment_failed','charge.refunded','charge.dispute.created','charge.dispute.closed','charge.dispute.funds_withdrawn','radar.early_fraud_warning.created'];
  if(!allowed.includes(event.type))return json({received:true});
  const db=env.REUSE_DB||env.NEWSLETTER_DB;
  const alreadyProcessed=await db.prepare('SELECT id FROM supporter_stripe_events WHERE id=?').bind(event.id).first();
@@ -1492,6 +1492,7 @@ export async function billingWebhook(request,env,ctx){
   if(event.type==='checkout.session.async_payment_failed'&&checkoutMetadata(session).dpi_checkout_kind==='credit_topup')await sendBillingNotification(env,db,'credit_topup_failed',{id:sessionId,customer:session.customer,amount_due:Number(session.amount_total||0),currency:session.currency||'jpy'});
  }
  await recordPaymentAlert(env,db,event);
+ if(event.type.startsWith('charge.dispute.'))await syncDisputeHold(env,db,event.data?.object);
  if(event.type==='customer.updated'){await syncCustomerEmail(db,event.data?.object);await syncDefaultPaymentMethod(env,db,event);}
  if(['customer.subscription.created','customer.subscription.updated'].includes(event.type)){
   const subscription=event.data?.object;
@@ -1558,6 +1559,7 @@ export async function runSupporterBillingSchedule(env,nowMs=Date.now()){
 // 請求書ごとの督促（supporter_dunning）に加えて、請求書に結び付かない状態（unpaid・paused・支払いの一時停止など）を
 // invoice_id='hold:<契約ID>' の行で管理する。どちらも翌月1日0時（日本時間）に停止し、支払い・解除を確認したら再開する。
 const HOLD_PREFIX='hold:';
+const DISPUTE_PREFIX='hold:dispute:';
 const HOLD_STATUSES=new Set(['past_due','unpaid','paused']);
 // 停止中の請求を止めるために当方が付けた一時停止（servicePause）は、利用者側の一時停止として扱わない。
 export function serviceHeld(summary){return HOLD_STATUSES.has(summary?.status)||(summary?.pauseCollection===true&&summary?.servicePause!==true);}
@@ -1590,26 +1592,69 @@ async function syncServiceHolds(env,db,now){
  const grouped=await subscriptionSummariesByCustomer(env,customers);
  const all=[...grouped.values()].flat(),known=new Set(all.map(item=>item.subscriptionId));
  await releaseServiceHolds(db,all);
- const open=await db.prepare(`SELECT invoice_id,subscription_id FROM supporter_dunning WHERE invoice_id LIKE 'hold:%' AND status IN ('suspend_scheduled','suspended')`).all();
+ const open=await db.prepare(`SELECT invoice_id,subscription_id FROM supporter_dunning WHERE invoice_id LIKE 'hold:%' AND invoice_id NOT LIKE 'hold:dispute:%' AND status IN ('suspend_scheduled','suspended')`).all();
  for(const row of open.results||[])if(!known.has(row.subscription_id))
   await db.prepare(`UPDATE supporter_dunning SET status='closed',updated_at=? WHERE invoice_id=?`).bind(now,row.invoice_id).run();
  for(const [customer,summaries] of grouped)for(const summary of summaries)
   if(summary.subscriptionId&&serviceHeld(summary))await openServiceHold(db,customer,summary,now-3600); // 1日0時に初めて見つけたものは前月中の変化とみなし、すぐ停止する
  return grouped;
 }
+// プラン料金への支払異議（チャージバック）の間は配信を止め、取り下げ・勝訴で再開する。負けたときは止めたままにし、管理者が解除する。
+// カード会社からの問い合わせだけの段階（warning_*、お金は動いていない）と、クレジット購入への異議（クレジットを取り消す）は対象外。
+const DISPUTE_CLEARED=new Set(['won','warning_closed','prevented']);
+async function syncDisputeHold(env,db,dispute){
+ const id=clean(dispute?.id);if(!id)return;
+ let current=dispute;
+ // 通知の順序が前後しても、Stripe の現在の状態で決める（権限が無いキーのときだけ通知の内容を使う）。
+ try{current=await stripe(env,`disputes/${encodeURIComponent(id)}`);}
+ catch(error){if(![401,403].includes(error?.stripeStatus))throw error;console.error('Supporter dispute lookup is not permitted',{stripeStatus:error.stripeStatus});}
+ const status=clean(current?.status),now=Math.floor(Date.now()/1000),key=`${DISPUTE_PREFIX}${id}`;
+ if(DISPUTE_CLEARED.has(status)){
+  const row=await db.prepare(`SELECT customer_id FROM supporter_dunning WHERE invoice_id=? AND status='suspended'`).bind(key).first();
+  if(!row)return;
+  await db.prepare(`UPDATE supporter_dunning SET status='closed',updated_at=? WHERE invoice_id=?`).bind(now,key).run();
+  await resumeServicePause(env,db,row.customer_id);return;
+ }
+ if(!status||status.startsWith('warning_'))return;
+ const chargeId=clean(stripeId(current.charge));if(!chargeId)return;
+ const charge=await stripe(env,`charges/${encodeURIComponent(chargeId)}`);
+ const customer=clean(stripeId(charge.customer)),paymentIntent=clean(stripeId(charge.payment_intent));
+ if(!customer||!await db.prepare('SELECT discord_user_id FROM supporter_billing WHERE customer_id=?').bind(customer).first())return;
+ if(paymentIntent&&await db.prepare('SELECT request_id FROM supporter_credit_topups WHERE payment_intent_id=?').bind(paymentIntent).first())return;
+ // 管理者が解除したもの（closed）は、後から届く通知で止め直さない。
+ await db.prepare(`INSERT INTO supporter_dunning(invoice_id,customer_id,subscription_id,amount_due,currency,status,initial_failed_at,retry_at,suspend_at,suspended_at,updated_at)
+  VALUES(?,?,NULL,?,'jpy','suspended',?,?,?,?,?) ON CONFLICT(invoice_id) DO NOTHING`).bind(key,customer,Number(current.amount)||0,now,now,now,now,now).run();
+}
+async function reconcileDisputeHolds(env,db){
+ const rows=await db.prepare(`SELECT invoice_id FROM supporter_dunning WHERE invoice_id LIKE 'hold:dispute:%' AND status='suspended' ORDER BY updated_at LIMIT 50`).all();
+ for(const row of rows.results||[]){
+  try{await syncDisputeHold(env,db,{id:row.invoice_id.slice(DISPUTE_PREFIX.length)});}
+  catch(error){console.error('Supporter dispute check failed',{errorName:error?.name||'Error',stripeStatus:Number(error?.stripeStatus)||null});}
+ }
+}
+export async function releaseDisputeHolds(env,db,customer){
+ const result=await db.prepare(`UPDATE supporter_dunning SET status='closed',updated_at=? WHERE customer_id=? AND invoice_id LIKE 'hold:dispute:%' AND status='suspended'`).bind(Math.floor(Date.now()/1000),customer).run();
+ const released=Number(result.meta?.changes||0);
+ if(released)await resumeServicePause(env,db,customer);
+ return released;
+}
+const customerDisputed=async(db,customer)=>!!await db.prepare(`SELECT invoice_id FROM supporter_dunning WHERE customer_id=? AND invoice_id LIKE 'hold:dispute:%' AND status='suspended' LIMIT 1`).bind(customer).first();
 // 停止中は新しい月額料金を請求しない。停止前の請求書は残り、支払いを確認したら請求も再開する。
 const pauseParams=on=>on?{'pause_collection[behavior]':'void','metadata[dpi_service_pause]':'dunning'}:{pause_collection:'','metadata[dpi_service_pause]':''};
 async function syncServicePauses(env,db,grouped){
  const rows=await db.prepare(`SELECT DISTINCT subscription_id FROM supporter_dunning WHERE status='suspended' AND invoice_id NOT LIKE 'hold:%' AND subscription_id IS NOT NULL`).all();
  const stopped=new Set((rows.results||[]).map(row=>row.subscription_id));
- for(const summary of [...grouped.values()].flat()){
+ const disputes=await db.prepare(`SELECT DISTINCT customer_id FROM supporter_dunning WHERE status='suspended' AND invoice_id LIKE 'hold:dispute:%'`).all();
+ const disputed=new Set((disputes.results||[]).map(row=>row.customer_id));
+ for(const [customer,summaries] of grouped)for(const summary of summaries){
   if(!summary.subscriptionId)continue;
-  const pause=stopped.has(summary.subscriptionId)&&!summary.pauseCollection,resume=!stopped.has(summary.subscriptionId)&&summary.servicePause;
+  const stop=stopped.has(summary.subscriptionId)||disputed.has(customer);
+  const pause=stop&&!summary.pauseCollection,resume=!stop&&summary.servicePause;
   if(!pause&&!resume)continue;
   try{
    // 一覧を取った後に支払い・再停止の Webhook が届いていないか、直前の状態で確かめる。
    const still=await db.prepare(`SELECT invoice_id FROM supporter_dunning WHERE subscription_id=? AND status='suspended' AND invoice_id NOT LIKE 'hold:%' LIMIT 1`).bind(summary.subscriptionId).first();
-   if(!!still!==pause)continue;
+   if((!!still||await customerDisputed(db,customer))!==pause)continue;
    await stripe(env,`subscriptions/${encodeURIComponent(summary.subscriptionId)}`,pauseParams(pause));
   }
   catch(error){console.error('Supporter service pause update failed',{subscriptionId:summary.subscriptionId,pause,errorName:error?.name||'Error',stripeStatus:Number(error?.stripeStatus)||null});}
@@ -1617,16 +1662,17 @@ async function syncServicePauses(env,db,grouped){
 }
 async function resumeServicePause(env,db,customer){
  try{
+  if(await customerDisputed(db,customer))return;
   const rows=await db.prepare(`SELECT DISTINCT subscription_id FROM supporter_dunning WHERE customer_id=? AND status='suspended' AND invoice_id NOT LIKE 'hold:%'`).bind(customer).all();
   const stopped=new Set((rows.results||[]).map(row=>row.subscription_id));
   for(const subscription of await subscriptions(env,customer))
    if(subscription?.metadata?.dpi_service_pause==='dunning'&&!stopped.has(subscription.id))await stripe(env,`subscriptions/${encodeURIComponent(subscription.id)}`,pauseParams(false));
  }catch(error){console.error('Supporter service resume failed; the billing schedule retries it',{errorName:error?.name||'Error',stripeStatus:Number(error?.stripeStatus)||null});}
 }
-// 停止から2か月たっても支払われない契約を解約し、未払いの請求書を取り消す。請求書・契約を Stripe で確かめてから行う。
+// 停止から1か月たっても支払われない契約を解約し、未払いの請求書を取り消す。請求書・契約を Stripe で確かめてから行う。
 async function cancelLongUnpaid(env,db,now){
  const rows=await db.prepare(`SELECT * FROM supporter_dunning WHERE status='suspended' AND invoice_id NOT LIKE 'hold:%' AND subscription_id IS NOT NULL
-  AND suspended_at<=? ORDER BY suspended_at LIMIT 50`).bind(now-58*86400).all();
+  AND suspended_at<=? ORDER BY suspended_at LIMIT 50`).bind(now-27*86400).all();
  let canceled=0;
  for(const row of rows.results||[]){
   if(now<autoCancelAt(row.suspend_at))continue;
@@ -1688,7 +1734,9 @@ async function runBillingScheduleTasks(env,db,nowMs){
  await db.prepare(`UPDATE supporter_dunning SET status='retry_scheduled',retry_attempted_at=NULL,updated_at=? WHERE status='retrying' AND updated_at<=?`).bind(now,now-1800).run();
  // 停止の巻き添え（別の請求書が停止中）で先に停止した行も、本来の月末に1回だけ再決済する。
  const due=await db.prepare(`SELECT * FROM supporter_dunning WHERE invoice_id NOT LIKE 'hold:%' AND retry_at<=?
-  AND (status='retry_scheduled' OR (status='suspended' AND retry_attempted_at IS NULL AND suspended_at<retry_at)) ORDER BY retry_at LIMIT 300`).bind(now).all();
+  AND (status='retry_scheduled' OR (status='suspended' AND retry_attempted_at IS NULL AND suspended_at<retry_at))
+  AND NOT EXISTS (SELECT 1 FROM supporter_dunning x WHERE x.customer_id=supporter_dunning.customer_id AND x.invoice_id LIKE 'hold:dispute:%' AND x.status='suspended')
+  ORDER BY retry_at LIMIT 300`).bind(now).all();
  for(const row of due.results||[]){
   const claim=await db.prepare(`UPDATE supporter_dunning SET status=CASE WHEN status='suspended' THEN 'suspended' ELSE 'retrying' END,retry_attempted_at=?,updated_at=?
    WHERE invoice_id=? AND status IN ('retry_scheduled','suspended') AND retry_attempted_at IS NULL`).bind(now,now,row.invoice_id).run();
@@ -1723,6 +1771,7 @@ async function runBillingScheduleTasks(env,db,nowMs){
   catch(error){console.error('Supporter suspension email failed',{invoiceId:row.invoice_id,errorName:error?.name||'Error'});}
  }
  await reconcileSuspendedInvoices(env,db,null,50,now);
+ await reconcileDisputeHolds(env,db);
  if(grouped)await syncServicePauses(env,db,grouped);
  const autoCanceled=await cancelLongUnpaid(env,db,now);
  const failedNotices=await db.prepare(`SELECT n.invoice_id,n.kind,d.customer_id,d.subscription_id,d.amount_due,d.currency,d.retry_at,d.suspend_at

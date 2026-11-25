@@ -6,7 +6,7 @@ import { customChangeQuote,currentCustomChange,customChangePublic,stageCustomCha
 import { refreshSupporterSnapshotSafely } from './supporter-snapshot.js';
 import { PREFECTURES, loadSupporterAreaCatalogue, geographicEntitlements, normalizeGeographicRule } from './supporter-geo.js';
 import { planFeatures } from '../site/supporter/plan-features.js';
-import { billingMode, createPreviewCheckout, previewCheckoutResult } from './supporter-billing.js';
+import { billingMode, createPreviewCheckout, releaseDisputeHolds, previewCheckoutResult } from './supporter-billing.js';
 import { basicCredentialsValid, reviewAccessConfigured, reviewChallenge, reviewCookie, reviewCookieValid } from './supporter-review.js';
 import { imageRulesEnabled, imageRulesV2Enabled, isImageRuleType, isImageRuleV2Type, imageRuleOptions, savedTsunamiOutputs, savedRadarContents, savedRadarMinutes, radarIntervalText, HIRES_RADAR_CONTENTS, TSUNAMI_MAP_OUTPUTS, WARNING_TABLE_KINDS, WARNING_TABLE_DELIVER_ON, normalizeImageRuleFields, loadEarthquakeMunicipalities, IMAGE_RULE_TYPE_OPTIONS, HIRES_RADAR_CONDITIONS, WEATHER_MAP_PRODUCTS, WEATHER_MAP_SEVERITIES, EARTHQUAKE_MAP_PRODUCTS, EARTHQUAKE_MAP_INTENSITIES } from './supporter-image-rules.js';
 
@@ -704,8 +704,9 @@ async function supporterLimits(env, db, uid) {
  const row = await db.prepare('SELECT customer_id FROM supporter_billing WHERE discord_user_id=?').bind(uid).first();
  if (!row?.customer_id) throw Object.assign(new Error('通知設定は有料プランの契約後に利用できます。'),{status:409});
  try {
-  const suspension = await db.prepare(`SELECT invoice_id FROM supporter_dunning WHERE customer_id=? AND status='suspended' LIMIT 1`).bind(row.customer_id).first();
-  if (suspension) throw Object.assign(new Error('月末再決済を確認できなかったため、有料プランの通知設定は利用停止中です。契約管理画面からお支払いを完了してください。'),{status:409});
+  const suspension = await db.prepare(`SELECT invoice_id FROM supporter_dunning WHERE customer_id=? AND status='suspended' ORDER BY CASE WHEN invoice_id LIKE 'hold:dispute:%' THEN 0 ELSE 1 END LIMIT 1`).bind(row.customer_id).first();
+  if (String(suspension?.invoice_id||'').startsWith('hold:dispute:')) throw Object.assign(new Error('お支払いへの異議申立てを確認中のため、有料プランの通知設定は利用停止中です。お問い合わせください。'),{status:409});
+  if (suspension) throw Object.assign(new Error('お支払いを確認できなかったため、有料プランの通知設定は利用停止中です。未払いの請求書をすべてお支払いください。'),{status:409});
   await reconcilePaidCheckoutSubscription(env,row.customer_id,uid,db);
   const custom=await getCustomPlan(db,uid);
   const summaries=enrichCustomSubscriptions(await customerSubscriptionSummaries(env,row.customer_id),custom);
@@ -1036,6 +1037,14 @@ export async function handleSupporterRequest(request, env, ctx) {
       await db.prepare(`UPDATE supporter_disciplinary_actions SET status='failed',last_error=?,updated_at=? WHERE request_id=? AND status<>'completed'`).bind(clean(error?.message||error?.name||'unknown').slice(0,500),Math.floor(Date.now()/1000),requestId).run();
       throw error;
      }
+    }
+    if (input.action === 'release_dispute_hold') {
+     const reason = clean(input.reason);
+     if (reason.length < 5 || reason.length > 500) return response({message:'操作理由を5〜500文字で入力してください。'},400);
+     const released = account.customer_id ? await releaseDisputeHolds(env,db,account.customer_id) : 0;
+     const auditRecorded = await writeSupporterAudit(db,admin.email,input.action,uid,{reason,requestId:clean(input.requestId),released});
+     if (released) { const task=refreshSupporterSnapshotSafely(env,db,subscriptionSummariesByCustomer,'dispute_released'); if(ctx?.waitUntil)ctx.waitUntil(task);else await task; }
+     return response({success:true,message:released?'支払異議による利用停止を解除しました。':'支払異議による利用停止はありませんでした。',auditRecorded});
     }
     if (input.action === 'reset_checkout_state') {
      if (env.SUPPORTER_BILLING_MODE !== 'test') return response({message:'この操作はStripeテスト環境でのみ利用できます。'},403);
