@@ -5,16 +5,19 @@
 //   node scripts/stripe-e2e.mjs 更新 異議       … 名前に含むものだけ
 //   node scripts/stripe-e2e.mjs --shared        … 本番サイトと同じサンドボックスで行う（試験の間だけ Webhook 送信先を止めて、終わったら戻す）
 //   node scripts/stripe-e2e.mjs --notify        … メールと Discord 通知を、種類ごとに 1 回ずつ実際に送る（STRIPE_E2E_PROXY の中継が送る。宛先は中継の中で決まる）
+//   node scripts/stripe-e2e.mjs --jobs=5        … 5 つに分けて同時に行う（試験の中身は同じ。--notify とは併用できない）
 //   node scripts/stripe-e2e.mjs --browser       … 支払い画面（Stripe Checkout）の実操作も行う（puppeteer-core と Chrome が必要。scripts/e2e-checkout.mjs）
 //
 // キーは scripts/e2e-key.mjs（テストキーだけ）。Webhook は Stripe のイベントを取得し、手元の鍵で署名して渡す。
 // 時間はテストクロックで進め、手元の時刻（Date）も合わせる。結果は %LOCALAPPDATA%\dpi-bot\stripe-e2e-report.json。
 import assert from 'node:assert/strict';
+import { fork } from 'node:child_process';
 import { createHmac, randomUUID } from 'node:crypto';
 import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { DatabaseSync } from 'node:sqlite';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { cancelInPortal, closeBrowser, payInBrowser } from './e2e-checkout.mjs';
 import { e2eKey } from './e2e-key.mjs';
 import { EVENTS, PRICES, ROOT, ensurePortal, ensurePrices, findWebhooks, siteState, stripeClient } from './stripe-setup-lib.mjs';
@@ -29,6 +32,11 @@ const useBrowser = args.includes('--browser');
 const notify = args.includes('--notify');
 if (notify && !process.env.STRIPE_E2E_PROXY) throw new Error('--notify には中継（STRIPE_E2E_PROXY）が必要です。');
 const filters = args.filter(item => !item.startsWith('--'));
+const jobs = Number(args.find(item => item.startsWith('--jobs='))?.slice(7) || 1);
+if (!Number.isInteger(jobs) || jobs < 1 || jobs > 6) throw new Error('--jobs は 1〜6 です。');
+if (jobs > 1 && notify) throw new Error('--jobs と --notify は併用できません。');
+// --jobs の子。番号は、利用者の ID が重ならないようにするために使う。
+const worker = process.send ? Number(process.env.STRIPE_E2E_WORKER || 0) : 0;
 const GUILD = '12345678901234567', CHANNEL = '98765432109876543';
 const DAY = 86400;
 
@@ -107,6 +115,7 @@ async function database() {
 
 // --- 1 つの試験の環境（利用者 1 人・テストクロック 1 つ） ---
 let seedIds = {}, portalId = '', userSeq = 0;
+const EVENT_TYPES = EVENTS.map(type => `types[]=${encodeURIComponent(type)}`).join('&');
 const clocks = [], plainCustomers = [], seenEvents = new Set();
 class World {
  static async create({pm = 'pm_card_visa', clock = true} = {}) {
@@ -114,7 +123,7 @@ class World {
   resetNow();
   Object.assign(world, await database());
   currentClock = '';
-  world.uid = String(100000000000000000n + BigInt(RealDate.now()) * 10n + BigInt(userSeq += 1));
+  world.uid = String(100000000000000000n + BigInt(worker) * 10000000000000000n + BigInt(RealDate.now()) * 10n + BigInt(userSeq += 1));
   world.mails = [];
   world.mailTexts = [];
   world.adminMails = [];
@@ -169,7 +178,7 @@ class World {
  async pump() {
   const pending = [];
   for (let page = 0, after = ''; page < 5; page += 1) {
-   const list = await stripe('GET', `events?limit=100${after ? `&starting_after=${after}` : ''}`);
+   const list = await stripe('GET', `events?limit=100&${EVENT_TYPES}${after ? `&starting_after=${after}` : ''}`);
    for (const event of list.data) {
     if (seenEvents.has(`${this.uid}:${event.id}`)) continue;
     seenEvents.add(`${this.uid}:${event.id}`);
@@ -1124,6 +1133,48 @@ test('安全: 署名の誤り・本番のイベント・別の顧客の請求を
  await stripe('DELETE', `customers/${other}`);
 });
 
+async function runOne(item) {
+ if (item.browser && !useBrowser) return {record: {name: item.name, result: 'skipped'}, text: `－ ${item.name}（支払い画面の実操作は --browser のとき）`};
+ const started = RealDate.now(), captured = [], errors = console.error, warns = console.warn;
+ console.error = (...values) => captured.push(values.map(value => typeof value === 'string' ? value : JSON.stringify(value)).join(' ')); console.warn = console.error;
+ try { await item.run(); return {record: {name: item.name, result: 'passed'}, text: `✔ ${item.name}（${Math.round((RealDate.now() - started) / 1000)}秒）`}; }
+ catch (error) { return {record: {name: item.name, result: 'failed', error: error.message}, text: `✖ ${item.name}\n   ${String(error.stack || error).split('\n').slice(0, 6).join('\n   ')}\n   ${captured.slice(-4).join('\n   ').slice(0, 900)}`}; }
+ finally { console.error = errors; console.warn = warns; resetNow(); }
+}
+
+async function cleanUp() {
+ for (const id of clocks) await stripe('DELETE', `test_helpers/test_clocks/${id}`).catch(() => {});
+ for (const id of plainCustomers) await stripe('DELETE', `customers/${id}`).catch(() => {});
+ await closeBrowser();
+}
+
+// 子を分けて同時に行う。手の空いた子に次の試験を渡す。Webhook の停止・再開と結果の記録は親だけが行う。
+async function runParallel(picked, logs) {
+ const byIndex = new Map(), queue = picked.map(item => tests.indexOf(item));
+ const serve = number => new Promise(resolve => {
+  let running = -1;
+  const child = fork(fileURLToPath(import.meta.url), args.filter(item => item === '--browser' || item === '--shared'), {env: {...process.env, STRIPE_E2E_WORKER: String(number), STRIPE_E2E_SEED: JSON.stringify({seedIds, portalId})}});
+  const next = () => { running = queue.length ? queue.shift() : -1; if (running >= 0) child.send({run: running}); else child.send({end: true}); };
+  child.on('message', message => { if (message.ready) return next(); byIndex.set(running, message.record); logs(message.text); next(); });
+  child.on('exit', code => { if (running >= 0) { byIndex.set(running, {name: tests[running].name, result: 'failed', error: `試験の子が終了しました（${code}）`}); logs(`✖ ${tests[running].name}（試験の子が終了しました ${code}）`); } resolve(); });
+ });
+ await Promise.all(Array.from({length: Math.min(jobs, queue.length)}, (_, index) => serve(index + 1)));
+ return picked.map(item => byIndex.get(tests.indexOf(item)) || {name: item.name, result: 'failed', error: '実行されませんでした'});
+}
+
+async function childMain() {
+ ({seedIds, portalId} = JSON.parse(process.env.STRIPE_E2E_SEED));
+ await new Promise(resolve => {
+  process.on('message', async message => {
+   if (message.end) { await cleanUp(); return resolve(); }
+   process.send(await runOne(tests[message.run]));
+  });
+  process.on('disconnect', () => cleanUp().finally(() => process.exit(1)));
+  process.send({ready: true});
+ });
+ process.removeAllListeners('disconnect'); process.disconnect();
+}
+
 async function main() {
  const endpoints = (await findWebhooks(stripe)).filter(item => item.status === 'enabled');
  if (endpoints.length && !args.includes('--shared')) throw new Error('このサンドボックスには本番サイトの Webhook 送信先があります。--shared を付けると、試験の間だけ送信先を止めて実行します（本番サイトが受付停止・テストモードのときだけ）。');
@@ -1137,20 +1188,11 @@ async function main() {
  const quiet = () => {};
  seedIds = await ensurePrices(stripe, quiet); portalId = await ensurePortal(stripe, quiet);
  assert.deepEqual(Object.keys(seedIds).sort(), PRICES.map(([name]) => name).sort());
- const errors = console.error, warns = console.warn, logs = console.log;
- const results = [];
- for (const item of tests) {
-  if (filters.length && !filters.some(word => item.name.includes(word))) continue;
-  if (item.browser && !useBrowser) { results.push({name: item.name, result: 'skipped'}); logs(`－ ${item.name}（支払い画面の実操作は --browser のとき）`); continue; }
-  const started = RealDate.now(), captured = [];
-  console.error = (...values) => captured.push(values.map(value => typeof value === 'string' ? value : JSON.stringify(value)).join(' ')); console.warn = console.error;
-  try { await item.run(); results.push({name: item.name, result: 'passed'}); logs(`✔ ${item.name}（${Math.round((RealDate.now() - started) / 1000)}秒）`); }
-  catch (error) { results.push({name: item.name, result: 'failed', error: error.message}); logs(`✖ ${item.name}\n   ${String(error.stack || error).split('\n').slice(0, 6).join('\n   ')}\n   ${captured.slice(-4).join('\n   ').slice(0, 900)}`); }
-  finally { console.error = errors; console.warn = warns; resetNow(); }
- }
- for (const id of clocks) await stripe('DELETE', `test_helpers/test_clocks/${id}`).catch(() => {});
- for (const id of plainCustomers) await stripe('DELETE', `customers/${id}`).catch(() => {});
- await closeBrowser();
+ const logs = console.log;
+ const picked = tests.filter(item => !filters.length || filters.some(word => item.name.includes(word)));
+ const results = jobs > 1 ? await runParallel(picked, logs) : [];
+ if (jobs === 1) for (const item of picked) { const result = await runOne(item); results.push(result.record); logs(result.text); }
+ await cleanUp();
  if (notify) {
   for (const [label, map] of [['メール（ユーザー向け）', delivered.mail], ['メール（管理者向け）', delivered.admin], ['Discord', delivered.discord]]) {
    logs(`\n${label}: ${[...map.values()].filter(value => value === 'sent').length}／${map.size} 種類を送信`);
@@ -1166,5 +1208,5 @@ async function main() {
  }
  process.exitCode = report.failed ? 1 : 0;
 }
-main().catch(error => { console.error(`エラー: ${error.message}`); process.exitCode = 1; })
+(worker ? childMain() : main()).catch(error => { console.error(`エラー: ${error.message}`); process.exitCode = 1; })
  .finally(() => restoreWebhooks().catch(error => { console.error(`重要: Webhook 送信先を再開できませんでした（${stopped.join('、')}）。Stripe のダッシュボードで有効に戻してください: ${error.message}`); process.exitCode = 1; }));
