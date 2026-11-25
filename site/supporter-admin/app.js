@@ -378,7 +378,7 @@ function updateActionFields() {
  $('action-amount').required=amountActions.includes(action);
  $('payment-description').required=action==='create_payment_link';
  $('action-warning').textContent=action==='reset_checkout_state'
-  ?'テスト環境専用です。D1のcheckout_key・checkout_id・checkout_paramsだけを削除します。Stripe Customer、メール、クレジット、契約、請求は削除しません。'
+  ?'Stripeの状態を確かめて、支払い済みなら契約を作り、未払いの支払い画面は失効させてから、途中の記録を消します。契約・請求・クレジットは消しません。'
   :action==='release_dispute_hold'
    ?'支払異議による利用停止を解除し、配信と請求を再開します。解除した異議では、後から届く通知で再び停止しません。'
   :action==='confiscate_credit'

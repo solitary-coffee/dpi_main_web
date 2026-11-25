@@ -1,6 +1,6 @@
 import { publicMaintenanceGate } from './maintenance.js';
 import { handleSupporterRequest } from './supporter.js';
-import { billingWebhook, runSupporterBillingSchedule } from './supporter-billing.js';
+import { billingWebhook, resolveBillingEnv, runSupporterBillingSchedule } from './supporter-billing.js';
 import { isPrivateAssetPath } from './private-assets.js';
 import { handleNewsletterQueue, handleNewsletterRequest } from './newsletter.js';
 import { blockResponseForRequest } from './ip-block.js';
@@ -126,13 +126,13 @@ const application = {
 
 export default {
     fetch(request, env, ctx) {
-        return withAccessLog(request, env, ctx, 'dpi-bot.com', () => application.fetch(request, env, ctx));
+        return withAccessLog(request, env, ctx, 'dpi-bot.com', () => application.fetch(request, resolveBillingEnv(env), ctx));
     },
     queue(batch, env) {
         return application.queue(batch, env);
     },
     scheduled(controller, env) {
-        return application.scheduled(controller, env);
+        return application.scheduled(controller, resolveBillingEnv(env));
     },
 };
 
