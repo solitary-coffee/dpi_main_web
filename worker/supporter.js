@@ -6,7 +6,7 @@ import { customChangeQuote,currentCustomChange,customChangePublic,stageCustomCha
 import { refreshSupporterSnapshotSafely } from './supporter-snapshot.js';
 import { PREFECTURES, loadSupporterAreaCatalogue, geographicEntitlements, normalizeGeographicRule } from './supporter-geo.js';
 import { planFeatures } from '../site/supporter/plan-features.js';
-import { billingMode, createPreviewCheckout, recoverCheckoutState, releaseDisputeHolds, previewCheckoutResult } from './supporter-billing.js';
+import { billingMode, recoverCheckoutState, releaseDisputeHolds } from './supporter-billing.js';
 import { basicCredentialsValid, reviewAccessConfigured, reviewChallenge, reviewCookie, reviewCookieValid } from './supporter-review.js';
 import { imageRulesEnabled, imageRulesV2Enabled, isImageRuleType, isImageRuleV2Type, imageRuleOptions, savedTsunamiOutputs, savedRadarContents, savedRadarMinutes, radarIntervalText, HIRES_RADAR_CONTENTS, TSUNAMI_MAP_OUTPUTS, WARNING_TABLE_KINDS, WARNING_TABLE_DELIVER_ON, normalizeImageRuleFields, loadEarthquakeMunicipalities, IMAGE_RULE_TYPE_OPTIONS, HIRES_RADAR_CONDITIONS, WEATHER_MAP_PRODUCTS, WEATHER_MAP_SEVERITIES, EARTHQUAKE_MAP_PRODUCTS, EARTHQUAKE_MAP_INTENSITIES } from './supporter-image-rules.js';
 
@@ -735,13 +735,13 @@ export function supporterPreviewOpen(env) {
  return clean(env.SUPPORTER_PREVIEW_OPEN).toLowerCase() === 'true';
 }
 // 準備中（メンテナンス中）：ログインと閲覧はできるが、申込み・支払い・契約変更・通知設定の保存は受け付けない。
-// ログイン不要のテスト支払い（preview-checkout）と Stripe の Webhook は対象外。
+// Stripe の Webhook は対象外。
 export const SUPPORTER_INTAKE_PAUSED_MESSAGE = '現在準備中（メンテナンス中）のため、お申込み・お支払い・契約変更・通知設定の保存は受け付けていません。再開までお待ちください。';
 export function supporterIntakePaused(env) {
  return clean(env.SUPPORTER_INTAKE_PAUSED).toLowerCase() === 'true';
 }
 // 申込み・チャージの連続作成を抑える（Cloudflare の Rate Limiting。1分10回）。設定が無い・確認できないときは通す。
-async function assertSupporterRate(env, key) {
+export async function assertSupporterRate(env, key) {
  const limiter = env.SUPPORTER_RATE_LIMITER;
  if (typeof limiter?.limit !== 'function') return;
  let allowed = true;
@@ -1148,20 +1148,6 @@ export async function handleSupporterRequest(request, env, ctx) {
    headers.set('Cache-Control','no-store');headers.set('X-Content-Type-Options','nosniff');headers.set('Referrer-Policy','no-referrer');
    if ((headers.get('content-type')||'').includes('text/html')) headers.set('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'");
    return new Response(asset.body,{status:asset.status,statusText:asset.statusText,headers});
-  }
-  // テスト公開中だけ：ログイン不要でテスト支払いページ（Stripe テストモード）へ進む。
-  if (path === '/api/supporter/preview-checkout/result') {
-   if (!supporterPreviewOpen(env) || supporterPublicEnabled(env)) return notFound();
-   if (request.method !== 'GET') return response({message:'Method not allowed'},405);
-   return response(await previewCheckoutResult(env, new URL(request.url).searchParams.get('session_id')));
-  }
-  if (path === '/api/supporter/preview-checkout') {
-   if (!supporterPreviewOpen(env) || supporterPublicEnabled(env)) return notFound();
-   if (request.method !== 'POST') return response({message:'Method not allowed'},405);
-   assertSameOrigin(request);
-   const input = await readJson(request);
-   await assertSupporterRate(env, `preview:${clean(request.headers.get('cf-connecting-ip')) || 'unknown'}`);
-   return response(await createPreviewCheckout(env, clean(input?.plan), input));
   }
   if (path === '/api/supporter/plans' && request.method === 'GET' && (supporterPublicEnabled(env) || supporterPreviewOpen(env))) {
    return response(supporterPlansResponse(env));

@@ -70,20 +70,6 @@
 .billing-options{grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
 @media(max-width:768px){.plan-section .option-cards,.billing-options{grid-template-columns:1fr}}
 
-/* テスト公開中の注意書き */
-.preview-notice{margin:14px 0 22px;padding:14px 18px;border:1px solid #e0b84a;border-left:6px solid #e0b84a;border-radius:9px;background:#3d3418;color:#fff4d6;line-height:1.7}
-.preview-notice strong{display:block;margin-bottom:4px;font-size:1.05rem;color:#ffd96a}
-.preview-notice ul{margin:0;padding-left:1.3em}
-.preview-notice li{margin:2px 0}
-
-/* ログイン不要のテスト支払い（テスト公開中だけ） */
-.preview-checkout{border:1px dashed #e0b84a}
-.preview-checkout-buttons{display:flex;flex-wrap:wrap;gap:10px;margin-top:10px}
-.preview-checkout-subtitle{margin:18px 0 4px;font-size:1rem}
-.preview-credit-label{display:flex;align-items:center;gap:8px}
-.preview-credit-label input{width:9em}
-.preview-result-ok{padding:10px 12px;border-radius:8px;background:#203f34;color:#d9f7e4;font-weight:700}
-.preview-result-ng{padding:10px 12px;border-radius:8px;background:#3d2a1e;color:#ffe2c4;font-weight:700}
 /* 画像配信ルール：補足の一言と見本の画像 */
 .rule-help{margin:0;padding:6px 10px;border-left:3px solid #6caee8;color:var(--muted);font-size:.9rem}.rule-preview{display:flex;flex-wrap:wrap;gap:12px}.rule-preview-item{position:relative;margin:0;flex:1 1 220px;max-width:360px;padding:8px;border:1px solid var(--line);border-radius:7px;background:var(--panel)}.rule-preview-item img{display:block;width:100%;height:auto;border-radius:4px}.rule-preview-item figcaption{margin-top:6px;color:var(--muted);font-size:.82rem}.rule-preview-label{position:absolute;top:12px;left:12px;padding:2px 8px;border-radius:999px;background:#24445d;color:#dff1ff;font-size:.78rem;font-weight:700}
 /* 準備中（メンテナンス中）の案内と、受付停止中のボタン */
@@ -91,6 +77,5 @@
 .intake-paused-notice.hidden{display:none}
 .intake-paused-notice strong{display:block;margin-bottom:4px;font-size:1.2rem;color:#ffb3ba}
 .intake-paused-notice p{margin:2px 0}
-body.billing-live .preview-notice,body.billing-live #preview-checkout,body.billing-live .preview-only,body.preview-closed #preview-checkout,body.preview-closed .preview-only{display:none}
-body.intake-paused main button:not(#reload):not([data-preview-plan]):not([data-billing-action="portal"]):not([data-billing-action="status"]){pointer-events:none;opacity:.45}
+body.intake-paused main button:not(#reload):not([data-billing-action="portal"]):not([data-billing-action="status"]){pointer-events:none;opacity:.45}
 body.intake-paused main :is(#rules,#billing) :is(input,select,textarea){pointer-events:none;opacity:.6}

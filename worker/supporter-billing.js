@@ -54,48 +54,9 @@ export const PLAN_CATALOG=Object.freeze({
 // 契約（初回・カスタム）の都度払い。請求書が作られないため、明細と返金ではこの Checkout を直接調べる。
 const SUBSCRIBER_LIMIT_MESSAGE='現在の受付人数の上限に達しているため、新しいお申込みを受け付けていません。受付の再開をお待ちください。';
 const PLAN_CHECKOUT_KINDS=new Set(['initial_subscription','custom_subscription_initial','custom_change']);
-// テスト公開中だけの「ログイン不要のテスト支払い」。誰の契約にも紐づけず（customer・dpi_user なし）、
-// Webhook でも dpi_checkout_kind=preview_demo は何も反映しない。テストモードの鍵でだけ動く。
 // プラン（サブスク）関連の支払いページでは PayPay を出さない（次回以降の自動課金に使えないため）。
 // クレジットチャージなど 1 回払いでは使える。
 export const SUBSCRIPTION_EXCLUDED_PAYMENT_METHODS=Object.freeze({'excluded_payment_method_types[0]':'paypay'});
-export async function createPreviewCheckout(env,plan,input={}){
- // plan='credit' はクレジットチャージのテスト（金額は通常のチャージと同じ範囲）。クレジットは付与しない。
- const credit=plan==='credit';
- const definition=credit?null:PLAN_CATALOG[plan];
- if(!credit&&!definition)fail('プランを選び直してください。');
- const amount=credit?normalizeCreditTopupAmount(input?.amount):definition.yen;
- if(billingMode(env)==='live')fail('テスト支払いは利用できません。',404);
- if(!billingReady(env))fail('テスト支払いページを用意できません。時間をおいて再試行してください。',503);
- const origin=env.SUPPORTER_PUBLIC_ORIGIN||'https://dpi-bot.com';
- const session=await stripe(env,'checkout/sessions',{mode:'payment',...(credit?{}:SUBSCRIPTION_EXCLUDED_PAYMENT_METHODS),
-  'line_items[0][price_data][currency]':'jpy','line_items[0][price_data][unit_amount]':String(amount),
-  'line_items[0][price_data][product_data][name]':credit?`DPI-Bot クレジット ${amount.toLocaleString('ja-JP')}ポイント（テスト決済）`:`DPI-Bot ${definition.name}プラン 月額（テスト決済）`,'line_items[0][quantity]':'1',
-  'metadata[dpi_checkout_kind]':'preview_demo',[credit?'metadata[dpi_preview_credit_amount]':'metadata[dpi_plan]']:credit?String(amount):definition.id,
-  success_url:`${origin}/site/supporter/?preview_checkout=completed&session_id={CHECKOUT_SESSION_ID}#preview-checkout`,cancel_url:`${origin}/site/supporter/?preview_checkout=canceled#preview-checkout`,
-  expires_at:String(Math.floor(Date.now()/1000)+1800),integration_identifier:integrationIdentifier('dpi_preview_')},`dpi-preview-${crypto.randomUUID()}`);
- if(!session?.url)fail('テスト支払いページを用意できませんでした。',502);
- return {url:session.url};
-}
-// ログイン不要のテスト支払いから戻ったときの結果表示用。preview_demo の支払いだけを返し、個人情報は返さない。
-const PAYMENT_METHOD_LABELS=Object.freeze({card:'カード',paypay:'PayPay',link:'Link',konbini:'コンビニ',customer_balance:'銀行振込'});
-export async function previewCheckoutResult(env,sessionId){
- if(billingMode(env)==='live')fail('支払い結果を確認できません。',404);
- if(!/^cs_test_[A-Za-z0-9_]{10,200}$/.test(String(sessionId||'')))fail('支払い結果を確認できません。',400);
- const session=await stripe(env,`checkout/sessions/${encodeURIComponent(sessionId)}?expand[]=payment_intent.payment_method`);
- const metadata=checkoutMetadata(session);
- if(metadata.dpi_checkout_kind!=='preview_demo')fail('支払い結果を確認できません。',404);
- const credit=Boolean(metadata.dpi_preview_credit_amount);
- const plan=PLAN_CATALOG[metadata.dpi_plan];
- const methodType=session?.payment_intent?.payment_method?.type||'';
- return {
-  kind:credit?'credit':'plan',
-  completed:session?.status==='complete'&&session?.payment_status==='paid',
-  amount:Number(session?.amount_total||0),
-  planName:credit?null:(plan?.name||null),
-  paymentMethod:PAYMENT_METHOD_LABELS[methodType]||methodType||null,
- };
-}
 export function publicPlans(){return Object.values(PLAN_CATALOG).map(({priceEnv,...plan})=>plan);}
 function planDefinition(plan){const value=PLAN_CATALOG[plan];if(!value)fail('プランまたは追加オプション数が不正です。');return value;}
 function planPrice(env,plan){const definition=planDefinition(plan);const price=env[definition.priceEnv];if(!price)fail(`${definition.name}プランの決済設定が完了していません。`,503);return price;}
@@ -1489,7 +1450,7 @@ export async function billingWebhook(request,env,ctx){
  if(['checkout.session.completed','checkout.session.async_payment_succeeded'].includes(event.type)){
   const session=event.data?.object;
   if(checkoutMetadata(session).dpi_checkout_kind==='preview_demo'){
-   // ログイン不要のテスト支払い（テスト公開中の確認用）。契約・クレジット・通知には何も反映しない。
+   // 以前のテスト公開で使った、誰にも紐づかない支払い。遅れて届いても、契約・クレジット・通知には何も反映しない。
    console.log('Preview checkout completed (no-op)',{sessionId:clean(session?.id)});
   }else if(await rejectDisciplinedCheckout(env,db,session)){
    console.warn('Checkout completed after disciplinary action and was rejected',{sessionId:clean(session?.id),uid:clean(checkoutMetadata(session).dpi_user||session?.client_reference_id)});

@@ -815,11 +815,6 @@ function setRuleAccess(enabled){
 }
 
 // 準備中（メンテナンス中）：案内を出し、申込み・支払い・設定のボタンを押せなくする（サーバー側でも拒否する）。
-// テスト段階の注意書きとログイン不要のテスト支払いは、本番決済では出さない（取得できないときは出したまま）。
-function applyBillingMode(state) {
- document.body.classList.toggle('billing-live', state?.mode === 'live');
- if (state?.previewOpen !== undefined) document.body.classList.toggle('preview-closed', state.previewOpen !== true);
-}
 function applyIntakePaused(paused) {
  $('intake-paused-notice')?.classList.toggle('hidden', paused !== true);
  document.body.classList.toggle('intake-paused', paused === true);
@@ -827,7 +822,7 @@ function applyIntakePaused(paused) {
 async function checkIntakePaused() {
  try {
   const response = await fetch('/api/supporter/plans', {credentials:'same-origin', cache:'no-store', headers:{Accept:'application/json'}});
-  if (response.ok) { const state = await response.json(); applyBillingMode(state); applyIntakePaused(state.intakePaused === true); }
+  if (response.ok) applyIntakePaused((await response.json()).intakePaused === true);
  } catch { /* 案内を出せなくても、受付はサーバー側で止まっている。 */ }
 }
 
@@ -843,8 +838,7 @@ async function load() {
  updateImageRulesNote();
  try{const data=await api('/api/supporter/areas');areaCatalogue={municipalities:data.municipalities||[],districts:data.districts||[]};areaCatalogueFailed=false;}
  catch(error){areaCatalogue={municipalities:[],districts:[]};areaCatalogueFailed=true;status(error.message);}
- const {account,billingEnabled,intakePaused,mode} = await api('/api/supporter/account');
- applyBillingMode({mode});
+ const {account,billingEnabled,intakePaused} = await api('/api/supporter/account');
  applyIntakePaused(intakePaused);
  stripeBillingEnabled=billingEnabled===true;
  applyAccountEnforcement({suspended:account?.account_status==='suspended',status:account?.account_status||'active',reason:account?.status_reason||'',updatedAt:account?.status_updated_at||null});

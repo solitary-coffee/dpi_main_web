@@ -51,7 +51,7 @@ node scripts/billing-cutover.mjs backup    … 控え（個人情報を含む。
 node scripts/billing-cutover.mjs purge     … 控えを取ってから、サイトから申し込んだデバッグ分を消す（切替時に 1 回）
 ```
 
-`purge` は受付停止中・テストモードのときだけ動く。管理操作の監査ログ・二次利用の申請・デバッグ配信の設定は消さない。
+`purge` は、テストモードで、非公開または受付停止中のときだけ動く。管理操作の監査ログ・二次利用の申請・デバッグ配信の設定は消さない。
 
 ## 4. 切替
 
@@ -71,7 +71,8 @@ node scripts/billing-cutover.mjs stage public     … 一般公開（人数の�
 ## 5. 止める・戻す
 
 - 非公開にする: `SUPPORTER_PREVIEW_OPEN=false`・`SUPPORTER_PUBLIC_ENABLED=false`・`SUPPORTER_REVIEW_ENABLED=false`（2026-11-25〜。許可リストの人と管理者以外には 404。審査用のパスワードは登録したまま止めている）
-- もう一度テスト公開するとき: `SUPPORTER_PREVIEW_OPEN=true`。審査担当者にだけ見せるとき: `SUPPORTER_REVIEW_ENABLED=true`
+- 非公開の間の画面と機能は本番と同じ（「テスト段階」の案内と、ログイン不要のテスト支払いは 2026-11-25 に削除）。許可リストの人は、Stripe のテストモードで申込みから解約まで使える
+- 審査担当者にだけ見せるとき: `SUPPORTER_REVIEW_ENABLED=true`
 - 正式公開のとき: 「開発者紹介」の案内（有料プランで応援する）を戻す
 
 - 新しい受付だけを止める: `node scripts/billing-cutover.mjs stage pause`（契約者の解約・支払い方法の変更・配信は続く）

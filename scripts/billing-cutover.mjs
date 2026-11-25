@@ -8,7 +8,7 @@
 //   node scripts/billing-cutover.mjs stage public    … 一般公開
 //   node scripts/billing-cutover.mjs stage pause     … 受付だけを止める（契約者の解約・支払い方法の変更・配信は続く）
 //
-// purge は、受付停止中・テストモードのときだけ動く。管理操作の監査ログ・二次利用の申請・デバッグ配信の設定は消さない。
+// purge は、テストモードで、非公開または受付停止中のときだけ動く。管理操作の監査ログ・二次利用の申請・デバッグ配信の設定は消さない。
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -72,7 +72,7 @@ async function backup() {
 }
 async function purge() {
  const state = await siteState();
- if (state?.mode !== 'test' || state.intakePaused !== true) throw new Error('受付停止中・テストモードのときだけ削除できます。');
+ if (state?.mode !== 'test' || (state.published && state.intakePaused !== true)) throw new Error('テストモードで、非公開または受付停止中のときだけ削除できます。');
  const {before} = await backup();
  for (const [name, n] of Object.entries(before)) if (n) console.log(`  ${name}: ${n} 件`);
  if (await ask('サイトから申し込んだデバッグ分をすべて削除します。元に戻せません。よければ「削除する」と入力してください: ') !== '削除する') throw new Error('中止しました（何も消していません）。');
@@ -93,7 +93,7 @@ async function main() {
   if (value === 'live') {
    const {items, state} = await inspect(); print(items);
    if (!items.every(item => item.ok)) throw new Error('準備がそろっていないため、切り替えません。');
-   if (state.intakePaused !== true) throw new Error('受付停止のまま切り替えてください。');
+   if (state.published && state.intakePaused !== true) throw new Error('非公開または受付停止のまま切り替えてください。');
   } else if (await ask('契約者がいる状態でテストに戻すと、配信の設定が更新されなくなります。戻してよければ「戻す」と入力してください: ') !== '戻す') throw new Error('中止しました。');
   await writeConfigValues({SUPPORTER_BILLING_MODE: value});
   console.log(`wrangler.jsonc の SUPPORTER_BILLING_MODE を ${value} にしました。PR にしてマージすると反映されます。`);

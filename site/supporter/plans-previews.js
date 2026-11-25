@@ -3,15 +3,6 @@
 // 各見本の枠は data-preview-type（種類）・data-preview-file（最初に表示する見本）・data-preview-plan（対象プラン）を持つ。
 import {attachPreview} from './preview-lightbox.js';
 
-// テスト段階の注意書きは、本番決済では出さない（取得できないときは出したまま）。
-fetch('/api/supporter/plans', {credentials: 'same-origin', cache: 'no-store', headers: {Accept: 'application/json'}})
- .then(response => response.ok ? response.json() : null)
- .then(state => {
-  if (!state) return;
-  document.body.classList.toggle('billing-live', state.mode === 'live');
-  if (state.previewOpen !== undefined) document.body.classList.toggle('preview-closed', state.previewOpen !== true);
- }).catch(() => {});
-
 const section = document.querySelector('.comparison-previews');
 if (section) {
  const update = () => { if (!section.querySelector('.preview-thumb')) section.hidden = true; };

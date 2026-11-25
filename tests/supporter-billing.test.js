@@ -658,9 +658,7 @@ test('補償クレジットは対象・理由・有効期限を保存し利用�
  assert.match(billingSource,/supporter_credit_campaign_recipients/);assert.match(billingSource,/source_id LIKE 'compensation:%'/);assert.match(billingSource,/reason:clean\(row\.reason\)/);
  for(const text of ['全登録者','特定ユーザー','特定プランの契約者','利用者に表示する理由','有効期限'])assert.match(adminHtml,new RegExp(text));
  assert.match(adminSource,/credit-campaigns/);assert.match(adminSource,/compensationRequestId=crypto\.randomUUID/);assert.match(adminSource,/配布処理を再開/);assert.match(userSource,/補償 .*クレジット/);assert.match(userSource,/理由:/);
- // テスト公開中の注意書き（.preview-notice）だけは「実際の請求は発生しません」を含めてよい。
- const userHtmlWithoutPreviewNotice=userHtml.replace(/<div class="preview-notice"[\s\S]*?<\/div>/,'');
- assert.doesNotMatch(`${userHtmlWithoutPreviewNotice}\n${userSource}`,/先行提供|Stripeテスト環境|月・予定|実際の請求は発生しません/);
+ assert.doesNotMatch(`${userHtml}\n${userSource}`,/先行提供|Stripeテスト環境|月・予定|実際の請求は発生しません/);
 });
 test('billing dunning sends success and failure mail and blocks access after month-end failure',async()=>{
  const [billingSource,supporterSource,uiSource,migration,configText,indexSource]=await Promise.all([
