@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
 import { readdir, readFile } from 'node:fs/promises';
-import { adminBillingAction, billingAction, billingMode, billingWebhook, createPreviewCheckout, customerInvoices, dunningSchedule, runSupporterBillingSchedule, subscriptionSummary } from '../worker/supporter-billing.js';
+import { adminBillingAction, autoCancelAt, billingAction, billingMode, billingWebhook, createPreviewCheckout, customerInvoices, dunningSchedule, runSupporterBillingSchedule, subscriptionSummary } from '../worker/supporter-billing.js';
 import { handleSupporterRequest } from '../worker/supporter.js';
 import { buildSupporterSnapshot } from '../worker/supporter-snapshot.js';
 import { subscriptionSummariesByCustomer } from '../worker/supporter-billing.js';
@@ -337,4 +337,70 @@ test('プラン一覧は決済モードを返し、申込みの連続作成は42
  assert.deepEqual(keys, ['preview:192.0.2.1']);
  assert.equal((await send({limit: async () => { throw new Error('down'); }})).status, 200);
  assert.equal((await send(undefined)).status, 200);
+});
+
+test('停止中は新しい請求を止め、支払いを確認したら請求も再開する', async t => {
+ const store = await database(t); if (!store) return;
+ const env = envFor(store.db);
+ insertDunning(store.raw, 'in_1', 'suspend_scheduled', {retry_attempted_at: 1});
+ let current = subscription({status: 'past_due'});
+ const calls = stripeMock(t, {'GET subscriptions': () => ({data: [current]}), 'GET invoices/in_1': {livemode: false, id: 'in_1', status: 'open'}, 'POST subscriptions/sub_x': {livemode: false}});
+ await runSupporterBillingSchedule(env, SUSPEND * 1000);
+ assert.equal(calls.find(call => call.path === 'subscriptions/sub_x').params['pause_collection[behavior]'], 'void');
+ // 当方が付けた一時停止は、利用者の一時停止（hold）として扱わない
+ current = subscription({pause_collection: {behavior: 'void'}, metadata: {dpi_service_pause: 'dunning'}});
+ calls.length = 0;
+ await runSupporterBillingSchedule(env, (SUSPEND + 43200) * 1000);
+ assert.equal(store.dunning('hold:sub_x'), undefined);
+ assert.equal(calls.some(call => call.path === 'subscriptions/sub_x'), false, '停止中は付け外しを繰り返さない');
+ assert.equal(await delivered(env, store.db), 0);
+ await webhook(env, 'invoice.paid', {id: 'in_1', customer: CUSTOMER, subscription: 'sub_x'});
+ assert.equal(calls.find(call => call.path === 'subscriptions/sub_x').params.pause_collection, '');
+ assert.equal(await delivered(env, store.db), 1);
+});
+
+test('停止から2か月後の1日0時に自動解約し、未払いの請求を取り消す', async t => {
+ assert.equal(autoCancelAt(SUSPEND), jst('2027-02-01T00:00:00'));
+ assert.equal(autoCancelAt(jst('2027-01-01T00:00:00')), jst('2027-03-01T00:00:00'));
+ const store = await database(t); if (!store) return;
+ const env = envFor(store.db);
+ insertDunning(store.raw, 'in_1', 'suspended', {retry_attempted_at: 1, suspended_at: SUSPEND + 5});
+ const open = {livemode: false, id: 'in_1', status: 'open', customer: CUSTOMER, subscription: 'sub_x', amount_due: 300, currency: 'jpy'};
+ const calls = stripeMock(t, {'GET subscriptions': {data: [subscription({status: 'past_due', pause_collection: {behavior: 'void'}, metadata: {dpi_service_pause: 'dunning'}})]}, 'GET invoices/in_1': open, 'GET subscriptions/sub_x': subscription({status: 'past_due'}),
+  'DELETE subscriptions/sub_x': {livemode: false, status: 'canceled'}, 'POST invoices/in_1/void': {livemode: false, status: 'void'}});
+ assert.equal((await runSupporterBillingSchedule(env, jst('2027-01-31T12:00:00') * 1000)).autoCanceled, 0);
+ assert.equal(calls.some(call => call.method === 'DELETE'), false);
+ assert.equal((await runSupporterBillingSchedule(env, jst('2027-02-01T00:00:00') * 1000)).autoCanceled, 1);
+ assert.deepEqual(calls.filter(call => call.method === 'DELETE' || call.path.endsWith('/void')).map(call => call.path), ['subscriptions/sub_x', 'invoices/in_1/void']);
+ assert.equal(store.dunning('in_1').status, 'closed');
+});
+
+test('自動解約は、支払い済み・別の顧客や契約・停止して間もないものを対象にしない', async t => {
+ const store = await database(t); if (!store) return;
+ const env = envFor(store.db), at = jst('2027-02-01T00:00:00');
+ insertDunning(store.raw, 'in_paid', 'suspended', {retry_attempted_at: 1, suspended_at: SUSPEND});
+ insertDunning(store.raw, 'in_other', 'suspended', {retry_attempted_at: 1, suspended_at: SUSPEND});
+ insertDunning(store.raw, 'in_recent', 'suspended', {retry_attempted_at: 1, suspended_at: at - 86400});
+ insertDunning(store.raw, 'hold:sub_x', 'suspended', {suspended_at: SUSPEND});
+ const calls = stripeMock(t, {'GET subscriptions': {data: [subscription({status: 'past_due'})]}, 'GET subscriptions/sub_x': subscription({status: 'past_due'}), 'POST subscriptions/sub_x': {livemode: false},
+  'GET invoices/in_paid': {livemode: false, id: 'in_paid', status: 'paid', customer: CUSTOMER, subscription: 'sub_x'}, 'GET invoices/in_other': {livemode: false, id: 'in_other', status: 'open', customer: 'cus_other', subscription: 'sub_x'},
+  'GET invoices/in_recent': {livemode: false, id: 'in_recent', status: 'open', customer: CUSTOMER, subscription: 'sub_x'}});
+ assert.equal((await runSupporterBillingSchedule(env, at * 1000)).autoCanceled, 0);
+ assert.equal(calls.some(call => call.method === 'DELETE' || call.path.endsWith('/void')), false);
+});
+
+test('受付人数の上限に達したら、新しい申込みと未契約者のチャージを止める（契約者は止めない）', async t => {
+ const store = await database(t); if (!store) return;
+ const env = {...envFor(store.db), SUPPORTER_SUBSCRIBER_LIMIT: '1'};
+ let own = [];
+ stripeMock(t, {'GET subscriptions': () => ({data: own.length ? own : []}), 'GET checkout/sessions': {data: []}, 'POST customers/cus_x': {livemode: false, id: CUSTOMER},
+  'POST checkout/sessions': {livemode: false, id: 'cs_test_1', status: 'open', url: 'https://checkout.stripe.com/c/pay/x'}});
+ const act = (action, extra = {}) => billingAction(new Request(`https://dpi-bot.com/api/supporter/billing/${action}`), {...env, ...extra}, store.db, UID, {plan: 'plus', amount: 500, requestId: crypto.randomUUID(), legalConsentVersion: 'v'});
+ const original = globalThis.fetch;
+ // 一覧（全顧客）は別の契約者 1 人、本人の一覧は own
+ globalThis.fetch = async (url, init) => new URL(url).pathname === '/v1/subscriptions' && !new URL(url).searchParams.get('customer') ? Response.json({data: [subscription({customer: 'cus_full'})]}) : original(url, init);
+ for (const action of ['checkout', 'topup']) { const response = await act(action); assert.equal(response.status, 409); assert.match((await response.json()).message, /受付人数/); }
+ for (const limit of ['', '0', '2', 'x']) assert.equal((await act('topup', {SUPPORTER_SUBSCRIBER_LIMIT: limit})).status, 200, limit);
+ own = [subscription()];
+ assert.equal((await act('topup')).status, 200);
 });
