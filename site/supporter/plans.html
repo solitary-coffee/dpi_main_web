@@ -43,7 +43,7 @@
   </header>
   <section aria-labelledby="comparison-title">
    <h2 id="comparison-title">プラン別の利用できる機能</h2>
-   <p id="comparison-help">○は利用できる機能、—は対象外です。カスタムは契約ごとに設定します。</p>
+   <p id="comparison-help">○は利用できる機能、—は対象外です。カスタムはBasicの機能をすべて含み、「契約による」の項目は契約ごとに設定します。</p>
    <h3 class="comparison-subtitle">料金・上限</h3>
    <div class="comparison-table-scroll" role="region" tabindex="0" aria-label="料金・上限">
     <table class="comparison-table comparison-table-simple">
@@ -67,23 +67,32 @@
       <tr><th scope="col">種類</th><th scope="col">設定</th><th scope="col">Basic</th><th scope="col">Plus</th><th scope="col" class="featured">Pro</th><th scope="col">カスタム</th></tr>
      </thead>
      <tbody>
-      <tr><th scope="rowgroup" rowspan="3" class="comparison-kind">配信する情報</th><th scope="row">地震情報</th><td>○</td><td>○</td><td>○</td><td>契約による</td></tr>
-      <tr><th scope="row">緊急地震速報</th><td>○</td><td>○</td><td>○</td><td>契約による</td></tr>
-      <tr><th scope="row">気象情報</th><td>○</td><td>○</td><td>○</td><td>契約による</td></tr>
-     </tbody>
-     <tbody>
-      <tr><th scope="rowgroup" rowspan="4" class="comparison-kind">対象地域</th><th scope="row">地方</th><td>○</td><td>○</td><td>○</td><td>契約による</td></tr>
+      <tr><th scope="rowgroup" rowspan="6" class="comparison-kind">地震情報</th><th scope="row">情報の種類の選択</th><td>○</td><td>○</td><td>○</td><td>○</td></tr>
+      <tr><th scope="row">全国・地方</th><td>○</td><td>○</td><td>○</td><td>○</td></tr>
+      <tr><th scope="row">震度・マグニチュードの条件</th><td>○</td><td>○</td><td>○</td><td>○</td></tr>
       <tr><th scope="row">都道府県</th><td>—</td><td>○</td><td>○</td><td>契約による</td></tr>
       <tr><th scope="row">市区町村</th><td>—</td><td>—</td><td>○</td><td>契約による</td></tr>
       <tr><th scope="row">市区町村の本文だけを抽出</th><td>—</td><td>—</td><td>○</td><td>契約による</td></tr>
      </tbody>
      <tbody>
-      <tr><th scope="rowgroup" rowspan="6" class="comparison-kind">配信条件</th><th scope="row">震度・マグニチュード</th><td>○</td><td>○</td><td>○</td><td>契約による</td></tr>
-      <tr><th scope="row">緊急地震速報の対象地方</th><td>○</td><td>○</td><td>○</td><td>契約による</td></tr>
-      <tr><th scope="row">緊急地震速報の最終報</th><td>○</td><td>○</td><td>○</td><td>契約による</td></tr>
-      <tr><th scope="row">警戒レベル・警報の種類</th><td>○</td><td>○</td><td>○</td><td>契約による</td></tr>
-      <tr><th scope="row">AND・OR・追加条件</th><td>—</td><td>—</td><td>○</td><td>契約による</td></tr>
-      <tr><th scope="row">複数チャンネルへ配信</th><td>—</td><td>—</td><td>○</td><td>契約による</td></tr>
+      <tr><th scope="rowgroup" rowspan="6" class="comparison-kind">緊急地震速報</th><th scope="row">予報・警報の選択</th><td>○</td><td>○</td><td>○</td><td>○</td></tr>
+      <tr><th scope="row">全国・地方</th><td>○</td><td>○</td><td>○</td><td>○</td></tr>
+      <tr><th scope="row">警報の対象地方の条件</th><td>○</td><td>○</td><td>○</td><td>○</td></tr>
+      <tr><th scope="row">震度・マグニチュードの条件</th><td>○</td><td>○</td><td>○</td><td>○</td></tr>
+      <tr><th scope="row">最終報を送る／送らない</th><td>○</td><td>○</td><td>○</td><td>○</td></tr>
+      <tr><th scope="row">都道府県</th><td>—</td><td>○</td><td>○</td><td>契約による</td></tr>
+     </tbody>
+     <tbody>
+      <tr><th scope="rowgroup" rowspan="6" class="comparison-kind">気象情報</th><th scope="row">情報の種類の選択</th><td>○</td><td>○</td><td>○</td><td>○</td></tr>
+      <tr><th scope="row">全国・地方</th><td>○</td><td>○</td><td>○</td><td>○</td></tr>
+      <tr><th scope="row">警戒レベル・警報・注意報の条件</th><td>○</td><td>○</td><td>○</td><td>○</td></tr>
+      <tr><th scope="row">都道府県</th><td>—</td><td>○</td><td>○</td><td>契約による</td></tr>
+      <tr><th scope="row">市区町村</th><td>—</td><td>—</td><td>○</td><td>契約による</td></tr>
+      <tr><th scope="row">市区町村の本文だけを抽出</th><td>—</td><td>—</td><td>○</td><td>契約による</td></tr>
+     </tbody>
+     <tbody>
+      <tr><th scope="rowgroup" rowspan="2" class="comparison-kind">組み合わせ・配信先</th><th scope="row">AND・OR・追加条件（テキスト配信、雨雲レーダー（簡略版））</th><td>—</td><td>—</td><td>○</td><td>契約による</td></tr>
+      <tr><th scope="row">1つのルールから複数チャンネルへ配信（画像配信も可）</th><td>—</td><td>—</td><td>○</td><td>契約による</td></tr>
      </tbody>
     </table>
    </div>
@@ -94,7 +103,7 @@
       <tr><th scope="col">種類</th><th scope="col">設定</th><th scope="col">Basic</th><th scope="col">Plus</th><th scope="col" class="featured">Pro</th><th scope="col">カスタム</th></tr>
      </thead>
      <tbody>
-      <tr><th scope="rowgroup" rowspan="2" class="comparison-kind">緊急地震速報（警報）の図</th><th scope="row">全国</th><td>○</td><td>○</td><td>○</td><td>契約による</td></tr>
+      <tr><th scope="rowgroup" rowspan="2" class="comparison-kind">緊急地震速報（警報）の図</th><th scope="row">全国</th><td>○</td><td>○</td><td>○</td><td>○</td></tr>
       <tr><th scope="row">地方</th><td>—</td><td>○</td><td>○</td><td>契約による</td></tr>
      </tbody>
      <tbody>
@@ -111,8 +120,8 @@
       <tr><th scope="row">発表のたびに配信</th><td>—</td><td>—</td><td>○</td><td>契約による</td></tr>
      </tbody>
      <tbody>
-      <tr><th scope="rowgroup" rowspan="3" class="comparison-kind">雨雲レーダー（簡略版）</th><th scope="row">地方</th><td>○</td><td>○</td><td>○</td><td>契約による</td></tr>
-      <tr><th scope="row">配信頻度・降雨検知</th><td>○</td><td>○</td><td>○</td><td>契約による</td></tr>
+      <tr><th scope="rowgroup" rowspan="3" class="comparison-kind">雨雲レーダー（簡略版）</th><th scope="row">地方</th><td>○</td><td>○</td><td>○</td><td>○</td></tr>
+      <tr><th scope="row">配信頻度・降雨検知</th><td>○</td><td>○</td><td>○</td><td>○</td></tr>
       <tr><th scope="row">降水量のしきい値</th><td>—</td><td>○</td><td>○</td><td>契約による</td></tr>
      </tbody>
      <tbody>
@@ -123,7 +132,7 @@
       <tr><th scope="row">配信頻度の自由な指定</th><td>—</td><td>—</td><td>○</td><td>契約による</td></tr>
      </tbody>
      <tbody>
-      <tr><th scope="rowgroup" rowspan="5" class="comparison-kind">津波</th><th scope="row">地図（全国）</th><td>○</td><td>○</td><td>○</td><td>契約による</td></tr>
+      <tr><th scope="rowgroup" rowspan="5" class="comparison-kind">津波</th><th scope="row">地図（全国）</th><td>○</td><td>○</td><td>○</td><td>○</td></tr>
       <tr><th scope="row">地図（地方）</th><td>—</td><td>○</td><td>○</td><td>契約による</td></tr>
       <tr><th scope="row">表（満潮時刻を含む）</th><td>—</td><td>○</td><td>○</td><td>契約による</td></tr>
       <tr><th scope="row">津波観測の表</th><td>—</td><td>○</td><td>○</td><td>契約による</td></tr>
@@ -279,9 +288,32 @@
   </section>
   <section class="comparison-notices" aria-labelledby="comparison-notes-heading">
    <h2 id="comparison-notes-heading">選択前にご確認ください</h2>
-   <p>追加オプションは、それぞれ月額200円でチャンネル＋3件・サーバー＋2件・通知ルール＋3件です。請求日は毎月26日です。詳細な金額はお申込み画面で必ず確認してください。</p>
-   <p>市区町村単位の設定はProまたは許可済みカスタムプランで、気象庁の地域コードなどで判定できる情報に限ります。北海道の「振興局相当」は気象庁の地方区分を指し、行政上の振興局区分との完全一致を保証するものではありません。EEWは市区町村指定に対応せず、雨雲レーダーは地方単位です。</p>
-   <p>有料プラン契約だけでは二次利用は許可されません。転載・再配信・加工配信には、別途<a href="/site/reuse/">二次利用申請</a>と承認が必要です。</p>
+   <h3>料金とお支払い</h3>
+   <ul>
+    <li>料金は税込の月額で、毎月26日に翌月分を自動で請求します。解約するまで自動で更新されます。</li>
+    <li>1日〜25日のお申込みでは、申込時に当月分を、同じ月の26日に翌月分を請求します。26日〜月末のお申込みでは、申込時に当月分と翌月分の2か月分を請求します。</li>
+    <li>26日のお支払いを確認できないときは、月末に1回再請求します。それでも確認できない場合は翌月1日0時に配信を停止し、停止から1か月で自動的に解約します。</li>
+    <li>追加オプションは、チャンネル3件・サーバー2件・ルール3件ごとに、それぞれ月額200円です。日割りは行わず、次回26日の請求から反映します。</li>
+   </ul>
+   <h3>変更と解約</h3>
+   <ul>
+    <li>上位プランへの変更はすぐに反映し、残りの期間の差額を請求します。下位プランへの変更は次回26日から反映し、返金はありません。</li>
+    <li>解約はいつでも手続きでき、契約期間の終わりまで利用できます。お客様のご都合による途中解約の返金はありません。</li>
+    <li>下位プランへの変更などで上限を超えた通知ルールや通知先は、一覧の下から順に削除されます。新しいプランで使えない地域や条件を含むルールは配信されません。</li>
+    <li>カスタムは個別のお見積りです。解約は画面から手続きでき、それ以外の変更は<a href="/site/supp/index.html">お問い合わせ</a>ください。</li>
+   </ul>
+   <h3>配信の内容と地域の指定</h3>
+   <ul>
+    <li>配信には遅延・欠落・誤りが生じることがあります。避難などの判断では、必ず気象庁や自治体などの公的な情報も確認してください。</li>
+    <li>市区町村の指定は、気象庁の地域コードで判定できる情報に限ります。緊急地震速報は都道府県まで、雨雲レーダーは全国または地方の単位です（簡略版は地方のみ）。</li>
+    <li>北海道内の地方区分は気象庁の区分で、行政上の振興局区分との完全一致を保証するものではありません。</li>
+   </ul>
+   <h3>ご利用の条件</h3>
+   <ul>
+    <li>Discordアカウントと、DPI-Botを導入して設定を管理できるサーバーが必要です。通知先のチャンネルでは、DPI-Botに「ウェブフックの管理」の権限が必要です。</li>
+    <li>有料プランの契約だけでは二次利用は許可されません。転載・再配信・加工配信には、別途<a href="/site/reuse/">二次利用申請</a>と承認が必要です。</li>
+    <li>お申込みの前に、<a href="/terms/terms.html">利用規約</a>・<a href="/terms/policy.html">プライバシーポリシー</a>・<a href="/terms/Specified.html">特定商取引法に基づく表記</a>をご確認ください。未成年の方は、法定代理人の同意が必要です。</li>
+   </ul>
    <a class="comparison-main-link" href="/site/supporter/#billing">契約・プラン変更はこちら</a>
   </section>
    </div>

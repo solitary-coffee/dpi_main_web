@@ -4,8 +4,8 @@
 // (site/supporter/app.js) and by the admin screen (site/supporter-admin/app.js), so the server
 // checks and the client UI can never drift apart. Keep this file dependency-free.
 export const ACTIVE_PLAN_STATUSES = Object.freeze(['active', 'trialing', 'past_due', 'unpaid', 'paused']);
-// Admin-issued custom contracts never grant access while past_due/unpaid.
-const CUSTOM_ACTIVE_STATUSES = Object.freeze(['active', 'trialing']);
+// Custom contracts keep their features while past_due/unpaid, like the standard plans: delivery stops at
+// 0:00 JST on the 1st of the next month (supporter_dunning), not at the failed payment.
 const PLAN_RANK = Object.freeze({supporter: 0, plus: 1, pro: 2});
 
 // Every grantable feature. `plan` = the cheapest standard plan that includes it
@@ -115,6 +115,11 @@ export const PLAN_FEATURES = Object.freeze({
  custom: featureSet(legacyCustomFeatureNames({})),
 });
 
+// A custom contract always includes every Basic feature (the comparison page promises it).
+export function withBasicFeatures(names) {
+ return sortFeatureNames([...(Array.isArray(names) ? names : []), ...PLAN_FEATURE_NAMES.supporter]);
+}
+
 // The first broken dependency in a list of feature names ({name, requires}), or null.
 export function missingFeatureDependency(names) {
  const set = new Set(names);
@@ -140,15 +145,15 @@ function isCustom(item) {
 // Per-contract feature names of a custom subscription summary (enrichCustomSubscriptions sets
 // `customFeatures`); falls back to the legacy column flags for older data.
 function customFeatureNames(item) {
- if (Array.isArray(item?.customFeatures)) return sortFeatureNames(item.customFeatures);
- return legacyCustomFeatureNames(item || {});
+ if (Array.isArray(item?.customFeatures)) return withBasicFeatures(item.customFeatures);
+ return withBasicFeatures(legacyCustomFeatureNames(item || {}));
 }
 
 // Features granted by one subscription summary, or null when it grants nothing.
 export function subscriptionFeatures(item) {
  if (!item || item.recognizedPlan === false || !ACTIVE_PLAN_STATUSES.includes(item.status)) return null;
  if (isCustom(item)) {
-  if (!CUSTOM_ACTIVE_STATUSES.includes(item.status) || (item.managedCustom !== true && item.recognizedPlan !== true)) return null;
+  if (item.managedCustom !== true && item.recognizedPlan !== true) return null;
   return featureSet(customFeatureNames(item));
  }
  return PLAN_FEATURES[item.planId] || null;

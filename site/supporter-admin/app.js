@@ -1,4 +1,4 @@
-import { FEATURE_DEFINITIONS, FEATURE_SECTIONS, PLAN_FEATURE_NAMES, missingFeatureDependency, featureLabel } from './plan-features.js';
+import { FEATURE_DEFINITIONS, FEATURE_SECTIONS, PLAN_FEATURE_NAMES, missingFeatureDependency, featureLabel, withBasicFeatures } from './plan-features.js';
 
 let accounts = [];
 let selectedAccount = null;
@@ -59,9 +59,11 @@ function renderCustomFeatureGroups(){
   for(const item of FEATURE_DEFINITIONS.filter(definition=>definition.section===section)){
    const label=document.createElement('label');label.className='custom-feature-option';
    const box=document.createElement('input');box.type='checkbox';box.dataset.feature=item.name;
+   // Basic の機能はカスタムに必ず含まれる（外せない）
+   if(item.plan==='supporter'){box.checked=true;box.disabled=true;}
    box.addEventListener('change',()=>{syncFeatureDependencies(item.name,box.checked);updateCustomEstimate();});
    const text=document.createElement('span');text.textContent=item.label;
-   const tag=document.createElement('small');tag.className='custom-feature-plan';tag.textContent=`${PLAN_TAG[item.plan]}以上`;
+   const tag=document.createElement('small');tag.className='custom-feature-plan';tag.textContent=item.plan==='supporter'?'Basic（必ず含む）':`${PLAN_TAG[item.plan]}以上`;
    label.append(box,text,tag);group.append(label);
   }
   root.append(group);
@@ -82,12 +84,12 @@ function syncFeatureDependencies(name,checked){
  updateFeatureCount();
 }
 function setFeatures(names){
- const wanted=new Set(names);
+ const wanted=new Set(withBasicFeatures(names));
  for(const box of featureBoxes())box.checked=wanted.has(box.dataset.feature);
  updateFeatureCount();
 }
 function applyFeaturePreset(preset){
- setFeatures(preset==='none'?[]:PLAN_FEATURE_NAMES[preset]||[]);
+ setFeatures(PLAN_FEATURE_NAMES[preset]||[]);
  updateCustomEstimate();
 }
 function updateFeatureCount(){
