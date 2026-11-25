@@ -35,9 +35,9 @@ test('Worker の入口で決済モードを解決する', async () => {
  assert.match(source, /application\.scheduled\(controller, resolveBillingEnv\(env\)\)/);
 });
 
-test('公開設定は非公開・テストモードのまま。本番用の欄は用意済みで、キーは書かない', async () => {
+test('公開設定は本番モードで一般公開。本番用の欄は用意済みで、キーは書かない', async () => {
  const config = JSON.parse(await read('../wrangler.jsonc'));
- assert.equal(config.vars.SUPPORTER_PUBLIC_ENABLED, 'false');
+ assert.deepEqual([config.vars.SUPPORTER_BILLING_MODE, config.vars.SUPPORTER_PUBLIC_ENABLED], ['live', 'true']);
  for (const [name] of PRICES) assert.ok(liveSettingName(name) in config.vars, name);
  assert.ok('STRIPE_LIVE_PORTAL_CONFIG' in config.vars);
  assert.doesNotMatch(JSON.stringify(config), /(?:sk|rk)_(?:test|live)_|whsec_/);

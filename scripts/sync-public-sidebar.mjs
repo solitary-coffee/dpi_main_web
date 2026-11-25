@@ -19,6 +19,8 @@ const excluded = new Set([
     'site/supporter-admin/index.html',
     'site/cdn-admin/index.html',
     'site/supporter-admin/stats.html',
+    'site/supporter-admin/payments.html',
+    'site/patlite-admin/index.html',
 ]);
 
 const menuItems = [
@@ -31,6 +33,7 @@ const menuItems = [
     ['/site/mail/index.html', 'メール配信', 'mail'],
     ['/site/survey/', '利用者アンケート', 'survey'],
     ['/site/reuse/', '二次利用申請', 'reuse'],
+    ['/site/supporter/plans.html', '有料プラン', 'supporter'],
     null,
     ['/site/invi/index.html', 'BOTを招待', 'invi'],
     ['/terms/index.html', '利用規約等', 'terms'],
@@ -58,6 +61,7 @@ function activeSection(relativePath) {
     if (relativePath.startsWith('site/mail/')) return 'mail';
     if (relativePath.startsWith('site/survey/')) return 'survey';
     if (relativePath.startsWith('site/reuse/')) return 'reuse';
+    if (relativePath.startsWith('site/supporter/')) return 'supporter';
     if (relativePath.startsWith('site/invi/')) return 'invi';
     if (relativePath.startsWith('site/buy/')) return 'buy';
     if (relativePath.startsWith('terms/')) return 'terms';

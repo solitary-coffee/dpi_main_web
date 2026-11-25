@@ -87,11 +87,11 @@ test('非公開の間は、審査用の入口を出さず一律404にする（�
  const basic = {headers: {Authorization: `Basic ${btoa(`review:${'x'.repeat(16)}`)}`}};
  assert.equal(await status('/site/supporter/', {SUPPORTER_REVIEW_ENABLED: 'false'}, basic), 404);
 });
-test('公開設定: 有料プランは非公開で、公開ページから案内しない', async () => {
+test('公開設定: 有料プランは一般公開で、トップページ・開発者紹介などから案内する', async () => {
  const { readFile } = await import('node:fs/promises');
  const config = JSON.parse(await readFile(new URL('../wrangler.jsonc', import.meta.url), 'utf8'));
- assert.deepEqual([config.vars.SUPPORTER_PREVIEW_OPEN, config.vars.SUPPORTER_PUBLIC_ENABLED, config.vars.SUPPORTER_REVIEW_ENABLED], ['false', 'false', 'false']);
- assert.doesNotMatch(await readFile(new URL('../site/dever/index.html', import.meta.url), 'utf8'), /site\/supporter\//);
+ assert.deepEqual([config.vars.SUPPORTER_PREVIEW_OPEN, config.vars.SUPPORTER_PUBLIC_ENABLED, config.vars.SUPPORTER_REVIEW_ENABLED], ['false', 'true', 'false']);
+ for (const page of ['../index.html', '../site/dever/index.html', '../site/status/index.html', '../map/index.html']) assert.match(await readFile(new URL(page, import.meta.url), 'utf8'), /site\/supporter\//, page);
 });
 test('管理画面は、非公開の利用者側フォルダを読み込まない（管理者の認証を通る場所から読む）', async () => {
  const { readFile, readdir } = await import('node:fs/promises');
