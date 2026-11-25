@@ -119,7 +119,7 @@ test('月末: 再請求の開始と結果。翌月1日: 停止・自動解約・
  assert.match(billing[4].description, /今回停止したもの: 2件\n停止中のアカウント: 1件\n支払いを確認できず自動解約: 0件\n12月の集計: 加入 1件、変更 0件、解約の予約 0件、解約 0件/);
 });
 
-test('返金・支払異議・チャージを支払いチャンネルへ送る', async t => {
+test('返金・支払異議を支払いチャンネルへ送り、チャージは送らない', async t => {
  const store = await database(t); if (!store) return;
  const env = envFor(store.db);
  const posts = mock(t, {stripe: {'GET subscriptions': {data: [subscription()]}, 'GET charges/ch_x': {livemode: true, id: 'ch_x', customer: CUSTOMER, payment_intent: 'pi_x'}, 'GET disputes/dp_x': {livemode: true, id: 'dp_x', status: 'needs_response', charge: 'ch_x', amount: 300}, 'POST subscriptions/sub_x': {livemode: true},
@@ -129,7 +129,7 @@ test('返金・支払異議・チャージを支払いチャンネルへ送る',
  const request = '00000000-0000-4000-8000-000000000001';
  const session = {id: 'cs_live_x', mode: 'payment', status: 'complete', payment_status: 'paid', customer: CUSTOMER, client_reference_id: UID, payment_intent: 'pi_top', amount_total: 500, currency: 'jpy', metadata: {dpi_checkout_kind: 'credit_topup', dpi_user: UID, dpi_credit_amount: '500', dpi_topup_request_id: request}};
  await webhook(env, 'checkout.session.completed', session); await webhook(env, 'checkout.session.completed', session);
- assert.deepEqual(posts.map(post => [post.channel, post.embed.title]), [['billing', '返金'], ['billing', '支払異議'], ['billing', 'クレジットチャージ完了']]);
+ assert.deepEqual(posts.map(post => [post.channel, post.embed.title]), [['billing', '返金'], ['billing', '支払異議']]);
 });
 
 test('Discord の障害は処理を止めず後で送り直し、消えた宛先には送り続けない。未設定なら送らない', async t => {

@@ -77,5 +77,6 @@
 .intake-paused-notice.hidden{display:none}
 .intake-paused-notice strong{display:block;margin-bottom:4px;font-size:1.2rem;color:#ffb3ba}
 .intake-paused-notice p{margin:2px 0}
+.pre-release-notice{max-width:100%;box-sizing:border-box;margin:14px 0 22px;padding:16px 18px;border:1px solid #ffb45c;border-left:6px solid #ffb45c;border-radius:9px;background:#543a20;color:#fff7e8;line-height:1.7;overflow-wrap:anywhere}.pre-release-notice strong{display:block;margin-bottom:4px;color:#ffd39a;font-size:1.2rem}.pre-release-notice p{margin:2px 0}.pre-release-notice a{color:#fff;text-decoration:underline;text-underline-offset:2px}@media(max-width:400px){.pre-release-notice{padding:13px 12px}}
 body.intake-paused main button:not(#reload):not([data-billing-action="portal"]):not([data-billing-action="status"]){pointer-events:none;opacity:.45}
 body.intake-paused main :is(#rules,#billing) :is(input,select,textarea){pointer-events:none;opacity:.6}

@@ -2,6 +2,7 @@
 .comparison-main{min-width:0}
 .comparison-page{max-width:1120px;width:100%;margin:0 auto 64px;color:var(--text)}
 .comparison-page a{color:#8ec9ff}
+.pre-release-notice{max-width:100%;box-sizing:border-box;margin:0 0 22px;padding:16px 18px;border:1px solid #ffb45c;border-left:6px solid #ffb45c;border-radius:9px;background:#543a20;color:#fff7e8;line-height:1.7;overflow-wrap:anywhere}.pre-release-notice strong{display:block;margin-bottom:4px;color:#ffd39a;font-size:1.2rem}.pre-release-notice p{margin:2px 0}@media(max-width:400px){.pre-release-notice{padding:13px 12px}}
 .comparison-page nav[aria-label="パンくずリスト"]{margin:0 0 22px;color:var(--muted);font-size:.9rem}
 .comparison-page nav[aria-label="パンくずリスト"] a{text-decoration:underline;text-underline-offset:3px}
 .comparison-hero{padding:25px 28px;border:1px solid var(--line);border-radius:8px;background:var(--panel);margin-bottom:28px}

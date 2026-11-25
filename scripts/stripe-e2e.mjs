@@ -15,7 +15,7 @@ import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { DatabaseSync } from 'node:sqlite';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { closeBrowser, payInBrowser } from './e2e-checkout.mjs';
+import { cancelInPortal, closeBrowser, payInBrowser } from './e2e-checkout.mjs';
 import { e2eKey } from './e2e-key.mjs';
 import { EVENTS, PRICES, ROOT, ensurePortal, ensurePrices, findWebhooks, siteState, stripeClient } from './stripe-setup-lib.mjs';
 import * as billing from '../worker/supporter-billing.js';
@@ -156,10 +156,13 @@ class World {
   await this.pump();
  }
  async deliver(event) {
+  const response = await this.deliverResponse(event);
+  if (response.status !== 200) throw new Error(`Webhook ${event.type} が ${response.status} を返しました: ${await response.text()}`);
+ }
+ async deliverResponse(event) {
   const body = JSON.stringify(event), ts = now();
   const signature = createHmac('sha256', 'whsec_e2e').update(`${ts}.${body}`).digest('hex');
-  const response = await billing.billingWebhook(new Request('https://dpi-bot.com/api/supporter/stripe/webhook', {method: 'POST', body, headers: {'stripe-signature': `t=${ts},v1=${signature}`}}), this.env);
-  if (response.status !== 200) throw new Error(`Webhook ${event.type} が ${response.status} を返しました: ${await response.text()}`);
+  return billing.billingWebhook(new Request('https://dpi-bot.com/api/supporter/stripe/webhook', {method: 'POST', body, headers: {'stripe-signature': `t=${ts},v1=${signature}`}}), this.env);
  }
  // この利用者に関係するイベントを、届いた順に 1 回ずつ渡す。
  async pump() {
@@ -607,7 +610,8 @@ test('通知: ほかの試験に無い種類（チャージ失敗・不正の警
  const sub = await world.sub();
  await stripe('POST', `subscriptions/${sub.id}`, {cancel_at_period_end: 'true'}); await world.settle();
  await stripe('POST', `subscriptions/${sub.id}`, {cancel_at_period_end: 'false'}); await world.settle();
- for (const kind of ['topup_failed', 'fraud_warning', 'leave_reserved', 'leave_reserved_canceled']) assert.ok(world.kinds().includes(kind), `${kind}: ${world.kinds()}`);
+ assert.ok(!world.kinds().includes('topup_failed'), 'チャージの Discord 通知が作られた');
+ for (const kind of ['fraud_warning', 'leave_reserved', 'leave_reserved_canceled']) assert.ok(world.kinds().includes(kind), `${kind}: ${world.kinds()}`);
  // 月の途中の停止（督促の行だけを作る。請求書は無いので Stripe 側は変わらない）
  world.raw.prepare(`INSERT INTO supporter_dunning(invoice_id,customer_id,subscription_id,amount_due,currency,status,initial_failed_at,retry_at,retry_attempted_at,suspend_at,updated_at) VALUES('in_e2e_stop',?,NULL,300,'jpy','suspend_scheduled',1,1,1,?,1)`).run(world.customer, at - 10);
  const [year, month] = jstParts(at);
@@ -616,6 +620,297 @@ test('通知: ほかの試験に無い種類（チャージ失敗・不正の警
  for (const kind of ['disciplinary_cancel', 'ban_account', 'unban_account'])
   assert.equal(await billing.sendSupporterDisciplinaryNotification(world.env, world.db, kind, {requestId: randomUUID(), uid: world.uid, email: 'e2e@example.com', reason: '通し試験のお知らせ（実際の処分ではありません）', canceledSubscriptions: 1, confiscatedCredits: 0}), true);
  assert.ok(world.mails.some(subject => subject.includes('チャージ失敗')), `メール: ${world.mails}`);
+});
+
+const financialState = async world => ({
+ subscriptions: (await world.subs()).filter(item => !['canceled', 'incomplete_expired'].includes(item.status)).length,
+ invoices: (await stripe('GET', `invoices?customer=${world.customer}&limit=100`)).data,
+ credits: await billing.customerCredits(world.env, world.customer),
+});
+const assertUniqueInvoices = invoices => assert.equal(new Set(invoices.map(item => item.id)).size, invoices.length, '請求書が重複している');
+
+test('事例: 定期処理の二重起動', async () => {
+ const world = await World.create(), previousFetch = globalThis.fetch;
+ let payRequests = 0;
+ try {
+  globalThis.fetch = async (input, init) => {
+   const url = new URL(typeof input === 'string' ? input : input.url);
+   if (url.hostname === 'api.stripe.com' && /\/invoices\/[^/]+\/pay$/u.test(url.pathname)) payRequests += 1;
+   return previousFetch(input, init);
+  };
+  const {schedule} = await world.subscribe('supporter');
+  await world.useCard('pm_card_chargeCustomerFail');
+  await world.advance(renewal(schedule.anchor)); await world.settle();
+  const times = dunningTimes(schedule.anchor);
+  await Promise.all([world.cron(schedule.anchor + 12 * 3600), world.cron(schedule.anchor + 12 * 3600)]);
+  await world.advance(times.retry); await Promise.all([world.cron(times.retry), world.cron(times.retry)]); await world.settle();
+  await world.advance(times.stop); await Promise.all([world.cron(times.stop), world.cron(times.stop)]);
+  await world.advance(times.cancel); await Promise.all([world.cron(times.cancel), world.cron(times.cancel)]); await world.settle();
+  const state = await financialState(world); assertUniqueInvoices(state.invoices);
+  assert.equal(payRequests, 1); assert.equal(state.subscriptions, 0); assert.equal(state.credits, 0);
+  assert.equal(world.dunning().length, 1); assert.equal(world.dunning()[0].status, 'closed');
+  // 1日0時の通知は、停止した月と自動解約した月の 2 回
+  assert.equal(world.kinds().filter(value => value === 'month_start').length, 2, '月初の通知が二重');
+  for (const kind of ['renewal_result', 'retry_start', 'retry_result']) assert.equal(world.kinds().filter(value => value === kind).length, 1, `${kind} が二重`);
+  assert.equal(world.mails.filter(subject => subject.includes('自動解約')).length, 1);
+  assert.equal(new Set(world.mails).size, world.mails.length, `メールが二重: ${world.mails}`);
+ } finally { globalThis.fetch = previousFetch; }
+});
+
+test('事例: 同時申込み', async () => {
+ const world = await World.create({clock: false});
+ const input = {plan: 'supporter', channelPacks: 0, serverPacks: 0, rulePacks: 0};
+ const [one, two] = await Promise.all([world.act('checkout', {...input, requestId: randomUUID()}), world.act('checkout', {...input, requestId: randomUUID()})]);
+ assert.equal(one.status, 200); assert.equal(two.status, 200); assert.equal(one.body.url, two.body.url);
+ assert.equal((await stripe('GET', `checkout/sessions?customer=${world.customer}&limit=10`)).data.filter(item => item.status === 'open').length, 1);
+ await payInBrowser(one.body.url); await world.settle(6000);
+ const state = await financialState(world); assert.equal(state.subscriptions, 1); assertUniqueInvoices(state.invoices); assert.equal(state.credits, 0);
+}, {browser: true});
+
+test('事例: Webhook の欠落', async () => {
+ const world = await World.create(); const {schedule} = await world.subscribe('supporter');
+ await world.useCard('pm_card_chargeCustomerFail');
+ const pump = world.pump; world.pump = async () => 0;
+ try { await world.advance(renewal(schedule.anchor)); await world.cron(schedule.anchor + 12 * 3600); }
+ finally { world.pump = pump; }
+ // 失敗の Webhook が届かなくても、定期処理が支払い不能の契約を見つけ、翌月1日0時の停止を予約する。
+ assert.deepEqual(world.dunning().map(row => row.invoice_id.startsWith('hold:')), [true]);
+ await world.pump();
+ assert.equal(world.dunning().filter(row => !row.invoice_id.startsWith('hold:')).length, 1);
+ const state = await financialState(world); assert.equal(state.subscriptions, 1); assertUniqueInvoices(state.invoices); assert.equal(state.credits, 0);
+});
+
+test('事例: Webhook の遅延・順序逆転', async () => {
+ const world = await World.create(); const {schedule} = await world.subscribe('supporter');
+ await world.advance(renewal(schedule.anchor)); await world.settle();
+ const invoice = (await stripe('GET', `invoices?customer=${world.customer}&limit=10`)).data.find(item => item.billing_reason === 'subscription_cycle');
+ assert.equal(invoice.status, 'paid');
+ await world.deliver({id: `evt_e2e${randomUUID()}`, type: 'invoice.payment_failed', livemode: false, created: invoice.created - 1, data: {object: {...invoice, status: 'open', amount_remaining: invoice.total}}});
+ await world.cron(dunningTimes(schedule.anchor).stop);
+ const state = await financialState(world); assert.equal(await world.rules(), 1); assert.equal(state.subscriptions, 1); assert.equal(world.dunning().length, 0); assertUniqueInvoices(state.invoices); assert.equal(state.credits, 0);
+});
+
+test('事例: メールの失敗', async () => {
+ const world = await World.create({clock: false}); let fail = true, sent = 0;
+ world.env.NOTICE_EMAIL = {send: async () => { if (fail) throw new Error('e2e mail outage'); sent += 1; }};
+ const amount = billing.selection({plan: 'supporter'}).monthly * billing.billingSchedule(Date.now()).initialMonths;
+ const intent = await stripe('POST', 'payment_intents', {amount: String(amount), currency: 'jpy', customer: world.customer, payment_method: 'pm_card_visa', confirm: 'true', setup_future_usage: 'off_session', 'automatic_payment_methods[enabled]': 'true', 'automatic_payment_methods[allow_redirects]': 'never'});
+ const session = {id: `cs_test_e2e${randomUUID().replaceAll('-', '')}`, mode: 'payment', status: 'complete', payment_status: 'paid', customer: world.customer, client_reference_id: world.uid, payment_intent: intent.id, amount_total: amount, currency: 'jpy', created: now(), metadata: {dpi_checkout_kind: 'initial_subscription', dpi_user: world.uid, dpi_plan: 'supporter', dpi_channel_packs: '0', dpi_server_packs: '0', dpi_rule_packs: '0', dpi_billing_anchor: String(billing.billingSchedule(Date.now()).anchor), dpi_legal_consent_version: 'e2e'}};
+ const response = await world.deliverResponse({id: `evt_e2e${randomUUID()}`, type: 'checkout.session.completed', livemode: false, created: now(), data: {object: session}});
+ assert.equal(response.status, 200, '修正中仕様: メール例外でも Webhook は 200');
+ assert.equal(await world.rules(), 1); assert.equal(world.raw.prepare('SELECT COUNT(*) AS n FROM supporter_stripe_events').get().n, 1);
+ fail = false;
+ const previousFetch = globalThis.fetch;
+ try {
+  globalThis.fetch = (input, init) => new URL(typeof input === 'string' ? input : input.url).pathname === `/v1/checkout/sessions/${session.id}` ? Promise.resolve(Response.json(session)) : previousFetch(input, init);
+  await world.cron(); assert.equal(sent, 1); await world.cron(); assert.equal(sent, 1, '2 回送った');
+ } finally { globalThis.fetch = previousFetch; }
+ const state = await financialState(world); assert.equal(state.subscriptions, 1); assertUniqueInvoices(state.invoices); assert.equal(state.credits, 0);
+});
+
+test('事例: Discord の失敗', async () => {
+ const world = await World.create({clock: false}), previousFetch = globalThis.fetch;
+ world.env.MEMBERSHIP_NOTICE_WEBHOOK = `https://discord.com/api/webhooks/12345678901234567/${'x'.repeat(30)}`;
+ let attempts = 0;
+ try {
+  globalThis.fetch = async (input, init) => { const url = new URL(typeof input === 'string' ? input : input.url); if (url.hostname === 'discord.com') { attempts += 1; if (attempts === 1) throw new TypeError('e2e network failure'); return new Response(null, {status: attempts === 2 ? 500 : 204}); } return previousFetch(input, init); };
+  await world.subscribe('supporter'); assert.equal(await world.rules(), 1);
+  assert.equal(world.raw.prepare("SELECT status FROM supporter_ops_notices WHERE kind='join'").get().status, 'pending');
+  await world.cron(); assert.equal(world.raw.prepare("SELECT status FROM supporter_ops_notices WHERE kind='join'").get().status, 'pending');
+  await world.cron(); assert.equal(world.raw.prepare("SELECT status FROM supporter_ops_notices WHERE kind='join'").get().status, 'sent');
+  const state = await financialState(world); assert.equal(state.subscriptions, 1); assertUniqueInvoices(state.invoices); assert.equal(state.credits, 0);
+ } finally { globalThis.fetch = previousFetch; }
+});
+
+test('事例: カードの削除', async () => {
+ const world = await World.create(); const {schedule} = await world.subscribe('supporter');
+ const method = (await world.sub()).default_payment_method; assert.match(method, /^pm_/);
+ await stripe('POST', `payment_methods/${method}/detach`);
+ await world.advance(renewal(schedule.anchor)); await world.settle();
+ assert.equal(world.dunning()[0]?.status, 'retry_scheduled');
+ const good = await world.useCard('pm_card_visa'); const invoice = world.dunning()[0]; await stripe('POST', `invoices/${invoice.invoice_id}/pay`, {payment_method: good}); await world.settle();
+ const state = await financialState(world); assert.equal(await world.rules(), 1); assert.equal(state.subscriptions, 1); assert.equal(world.dunning()[0].status, 'paid'); assertUniqueInvoices(state.invoices); assert.equal(state.credits, 0);
+});
+
+test('事例: クレジットの一部充当', async () => {
+ const world = await World.create(); const {schedule} = await world.subscribe('supporter');
+ await billing.adminBillingAction(world.env, world.customer, world.uid, {action: 'grant_credit', amount: 100, requestId: randomUUID(), reason: '一部充当試験'});
+ await world.advance(renewal(schedule.anchor)); await world.settle();
+ const invoice = (await stripe('GET', `invoices?customer=${world.customer}&limit=10`)).data.find(item => item.billing_reason === 'subscription_cycle');
+ assert.equal(invoice.total, 300); assert.equal(invoice.amount_paid, 200); assert.equal(await billing.customerCredits(world.env, world.customer), 0);
+ const state = await financialState(world); assert.equal(state.subscriptions, 1); assertUniqueInvoices(state.invoices);
+});
+
+test('事例: クレジットの期限切れ', async () => {
+ const world = await World.create({clock: false}), at = now(), used = `used-${randomUUID()}`, active = `active-${randomUUID()}`;
+ world.raw.prepare("INSERT INTO supporter_credit_lots(id,discord_user_id,source_type,source_id,original_amount,remaining_amount,expires_at,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)").run(used, world.uid, 'purchase', `pi_${used}`, 300, 0, at - 1, 'consumed', at - DAY, at - DAY);
+ world.raw.prepare("INSERT INTO supporter_credit_lots(id,discord_user_id,source_type,source_id,original_amount,remaining_amount,expires_at,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)").run(active, world.uid, 'purchase', `pi_${active}`, 200, 200, at + 600, 'active', at - DAY, at - DAY);
+ await billing.adminBillingAction(world.env, world.customer, world.uid, {action: 'grant_credit', amount: 200, requestId: randomUUID(), reason: '期限切れの試験'});
+ assert.equal((await world.cron(at)).expiredCredits, 0); assert.equal((await world.cron(at + 601)).expiredCredits, 1); assert.equal((await world.cron(at + 700)).expiredCredits, 0);
+ assert.equal(world.raw.prepare("SELECT status FROM supporter_credit_lots WHERE id=?").get(used).status, 'consumed');
+ const state = await financialState(world); assert.equal(state.subscriptions, 0); assert.equal(state.invoices.length, 0); assert.equal(state.credits, 0);
+});
+
+test('事例: 返金', async () => {
+ const world = await World.create({clock: false});
+ await payInBrowser((await world.act('checkout', {plan: 'supporter', channelPacks: 0, serverPacks: 0, rulePacks: 0})).body.url); await world.settle(6000);
+ const total = billing.billingSchedule(Date.now()).initialMonths * 300;
+ const intent = {id: (await stripe('GET', `payment_intents?customer=${world.customer}&limit=5`)).data.find(item => item.amount === total && item.status === 'succeeded').id};
+ await billing.adminBillingAction(world.env, world.customer, world.uid, {action: 'refund_latest', amount: 100, requestId: randomUUID(), reason: '一部返金の試験'}); await world.settle();
+ await billing.adminBillingAction(world.env, world.customer, world.uid, {action: 'refund_latest', amount: total - 100, requestId: randomUUID(), reason: '残額返金の試験'}); await world.settle();
+ await assert.rejects(() => billing.adminBillingAction(world.env, world.customer, world.uid, {action: 'refund_latest', amount: 1, requestId: randomUUID(), reason: '三回目の返金の試験'}));
+ assert.equal((await stripe('GET', `payment_intents/${intent.id}`)).amount_received, total);
+ const requestId = randomUUID(), at = now();
+ world.raw.prepare(`INSERT INTO supporter_credit_topups(request_id,discord_user_id,customer_id,amount,currency,status,created_at,updated_at) VALUES(?,?,?,500,'jpy','pending',?,?)`).run(requestId, world.uid, world.customer, at, at);
+ const topup = await world.pay(500, {dpi_checkout_kind: 'credit_topup', dpi_credit_amount: '500', dpi_topup_request_id: requestId});
+ await stripe('POST', 'refunds', {payment_intent: topup.intent.id, amount: '200'}); await world.settle();
+ const state = await financialState(world); assert.equal(state.subscriptions, 1); assertUniqueInvoices(state.invoices); assert.equal(state.credits, 300, 'チャージの一部返金だけ残高から差し引く');
+}, {browser: true});
+
+test('事例: 申込日の境目', async () => {
+ const cases = [[2027, 0, 25, 1, 2027, 0, 26], [2027, 0, 26, 2, 2027, 1, 26], [2027, 0, 27, 2, 2027, 1, 26], [2027, 11, 31, 2, 2028, 0, 26], [2028, 1, 29, 2, 2028, 2, 26], [2027, 1, 28, 2, 2027, 2, 26]];
+ for (const [year, month, day, months, ay, am, ad] of cases) { const value = billing.billingSchedule(jst(year, month, day, 12) * 1000); assert.equal(value.initialMonths, months); assert.equal(value.anchor, jst(ay, am, ad)); }
+ for (const [year, month, last] of [[2027, 1, 28], [2028, 1, 29], [2027, 3, 30], [2027, 0, 31]]) assert.equal(billing.dunningSchedule(jst(year, month, 26)).retryAt, jst(year, month, last, 12));
+});
+
+const reserveIn = world => async plan => {
+ const choice = {plan, channelPacks: 0, serverPacks: 0, rulePacks: 0}, preview = await world.act('preview-update', choice);
+ return world.act('update', {...choice, requestId: randomUUID(), prorationDate: preview.body.prorationDate, expectedCreditApplied: preview.body.creditApplied, useCredits: preview.body.creditApplied > 0});
+};
+test('事例: 変更の予約中の解約（契約管理画面の実操作）', async () => {
+ const world = await World.create(); const {schedule} = await world.subscribe('pro');
+ assert.equal((await reserveIn(world)('plus')).status, 200); await world.settle();
+ const text = await cancelInPortal((await world.act('portal')).body.url); await world.settle(6000);
+ const item = (await world.act('status')).body.subscriptions[0];
+ assert.equal(item.cancelAtPeriodEnd, true, `解約が予約されていない: ${text.slice(0, 600)}`);
+ const before = (await financialState(world)).invoices.length;
+ await world.advance(renewal(schedule.anchor)); await world.settle();
+ const state = await financialState(world); assert.equal(state.subscriptions, 0, '解約後も契約が残っている'); assert.equal(state.invoices.length, before, '解約後に請求された'); assert.equal(await world.rules(), 0);
+}, {browser: true});
+
+test('事例: 変更の予約中の未払い、解約予約中の変更', async () => {
+ const world = await World.create(); const {schedule} = await world.subscribe('pro');
+ assert.equal((await reserveIn(world)('plus')).status, 200);
+ await world.useCard('pm_card_chargeCustomerFail'); await world.advance(renewal(schedule.anchor)); await world.settle();
+ const row = world.dunning().find(item => !item.invoice_id.startsWith('hold:'));
+ assert.equal(row?.amount_due, 800, '変更の適用時の未払いを、変更後の料金で記録する');
+ const good = await world.useCard('pm_card_visa'); await stripe('POST', `invoices/${row.invoice_id}/pay`, {payment_method: good}); await world.settle();
+ const sub = await world.sub(); if (sub.schedule) await stripe('POST', `subscription_schedules/${sub.schedule}/release`, {});
+ await stripe('POST', `subscriptions/${sub.id}`, {cancel_at_period_end: 'true'}); await world.settle();
+ const changed = await reserveIn(world)('supporter').catch(error => ({status: error.status || 0, body: {message: error.message}})), state = await financialState(world);
+ assert.equal(changed.status, 409);
+ const preview = await world.act('preview-update', {plan: 'supporter', channelPacks: 0, serverPacks: 0, rulePacks: 0});
+ assert.equal(preview.status, 409); assert.match(preview.body.message, /解約の予約を取り消して/);
+ assert.equal((await world.act('status')).body.subscriptions[0].cancelAtPeriodEnd, true, '変更で解約の予約が消えた');
+ assert.equal(state.subscriptions, 1); assertUniqueInvoices(state.invoices); assert.equal(state.credits, 0);
+});
+
+test('事例: 停止中（未払い）', async () => {
+ const world = await World.create(); const {schedule} = await world.subscribe('supporter'); await world.useCard('pm_card_chargeCustomerFail');
+ await world.advance(renewal(schedule.anchor)); await world.settle(); const times = dunningTimes(schedule.anchor); await world.advance(times.retry); await world.cron(times.retry); await world.advance(times.stop); await world.cron(times.stop);
+ // チャージは停止中も使える（決定済み。時刻を進めているため、ここでは支払い画面を作れない）。変更で停止が解けないことを確かめる。
+ const changed = await reserveIn(world)('plus').catch(error => ({status: error.status || 0, body: {message: error.message}})); await world.settle();
+ console.log(`  停止中の変更: ${changed.status} ${String(changed.body.message || '').slice(0, 80)}`);
+ assert.equal(await world.rules(), 0, '停止中の変更で配信が再開した');
+ assert.notEqual(world.dunning().find(row => !row.invoice_id.startsWith('hold:')).status, 'paid');
+ assert.equal((await world.act('portal')).status, 200, '解約用の契約管理だけは可能');
+ const state = await financialState(world); assert.equal(state.subscriptions, 1); assertUniqueInvoices(state.invoices); assert.equal(state.credits, 0);
+});
+
+test('事例: アカウント', async () => {
+ const world = await World.create({clock: false}); await world.subscribe('supporter');
+ const email = `changed-${world.uid}@example.com`; await world.deliver({id: `evt_e2e${randomUUID()}`, type: 'customer.updated', livemode: false, created: now(), data: {object: {id: world.customer, email}}});
+ assert.equal(world.raw.prepare('SELECT billing_email FROM supporter_accounts WHERE discord_user_id=?').get(world.uid).billing_email, email);
+ // 退会・削除の処理は supporter-billing.js / supporter.js に存在しないため、ここでは契約が残ることを固定する。
+ const state = await financialState(world); assert.equal(state.subscriptions, 1); assertUniqueInvoices(state.invoices); assert.equal(state.credits, 0);
+});
+
+test('事例: 顧客の取り違え', async () => {
+ const world = await World.create({clock: false}), other = (await stripe('POST', 'customers', {name: 'other', 'metadata[dpi_user]': '999999999999999999'})).id; plainCustomers.push(other);
+ const intent = await stripe('POST', 'payment_intents', {amount: '300', currency: 'jpy', customer: other, payment_method: 'pm_card_visa', confirm: 'true', setup_future_usage: 'off_session', 'automatic_payment_methods[enabled]': 'true', 'automatic_payment_methods[allow_redirects]': 'never'});
+ const session = {id: `cs_test_e2e${randomUUID().replaceAll('-', '')}`, mode: 'payment', status: 'complete', payment_status: 'paid', customer: other, client_reference_id: world.uid, payment_intent: intent.id, amount_total: 300, currency: 'jpy', created: now(), metadata: {dpi_checkout_kind: 'initial_subscription', dpi_user: world.uid, dpi_plan: 'supporter', dpi_channel_packs: '0', dpi_server_packs: '0', dpi_rule_packs: '0', dpi_billing_anchor: String(billing.billingSchedule(Date.now()).anchor), dpi_legal_consent_version: 'e2e'}};
+ await assert.rejects(() => world.deliverResponse({id: `evt_e2e${randomUUID()}`, type: 'checkout.session.completed', livemode: false, created: now(), data: {object: session}}), /利用者を確認できません/);
+ assert.equal((await stripe('GET', `subscriptions?customer=${other}&status=all&limit=10`)).data.length, 0, '他人の customer に契約を作ってはならない');
+ const state = await financialState(world); assert.equal(state.subscriptions, 0); assert.equal(state.invoices.length, 0); assert.equal(state.credits, 0);
+});
+
+test('事例: Stripe の一時障害', async () => {
+ const world = await World.create({clock: false}), cronWorld = await World.create(), previousFetch = globalThis.fetch; let failures = 0, payFailures = 0;
+ const {schedule} = await cronWorld.subscribe('supporter'); await cronWorld.useCard('pm_card_chargeCustomerFail'); await cronWorld.advance(renewal(schedule.anchor)); await cronWorld.settle();
+ try {
+  globalThis.fetch = async (input, init) => { const url = new URL(typeof input === 'string' ? input : input.url); if (url.hostname === 'api.stripe.com' && url.pathname === '/v1/checkout/sessions' && failures < 2) { failures += 1; if (failures === 2) throw new DOMException('e2e timeout', 'TimeoutError'); return new Response(JSON.stringify({error: {message: 'temporary'}}), {status: 500, headers: {'content-type': 'application/json'}}); } if (url.hostname === 'api.stripe.com' && /\/invoices\/[^/]+\/pay$/u.test(url.pathname) && payFailures++ === 0) return new Response(JSON.stringify({error: {message: 'temporary'}}), {status: 500, headers: {'content-type': 'application/json'}}); return previousFetch(input, init); };
+  const input = {plan: 'supporter', channelPacks: 0, serverPacks: 0, rulePacks: 0, requestId: randomUUID()};
+  await assert.rejects(() => world.act('checkout', input));
+  await assert.rejects(() => world.act('checkout', input));
+  const recovered = await world.act('checkout', input); assert.equal(recovered.status, 200);
+  assert.equal((await stripe('GET', `checkout/sessions?customer=${world.customer}&limit=10`)).data.length, 1);
+  const state = await financialState(world); assert.equal(state.subscriptions, 0); assertUniqueInvoices(state.invoices); assert.equal(state.credits, 0);
+  await cronWorld.useCard('pm_card_visa'); const retryAt = cronWorld.dunning()[0].retry_at;
+  await cronWorld.cron(retryAt); assert.equal(cronWorld.dunning()[0].status, 'retry_scheduled');
+  await cronWorld.cron(retryAt + 1); await cronWorld.settle();
+  const cronState = await financialState(cronWorld); assert.equal(cronWorld.dunning()[0].status, 'paid'); assert.equal(cronState.subscriptions, 1); assertUniqueInvoices(cronState.invoices); assert.equal(cronState.credits, 0);
+ } finally { globalThis.fetch = previousFetch; }
+});
+
+test('事例: チャージの支払い方法', async () => {
+ const world = await World.create({clock: false});
+ const topup = await world.act('topup', {amount: 500, requestId: randomUUID()}); assert.equal(topup.status, 200);
+ const session = (await stripe('GET', `checkout/sessions?customer=${world.customer}&limit=10`)).data.find(item => item.url === topup.body.url);
+ for (const type of ['card', 'customer_balance', 'konbini', 'paypay']) assert.ok(session.payment_method_types.includes(type), `${type} が表示されない: ${session.payment_method_types}`);
+ const initial = await world.act('checkout', {plan: 'supporter', channelPacks: 0, serverPacks: 0, rulePacks: 0, requestId: randomUUID()}); assert.equal(initial.status, 200);
+ const first = (await stripe('GET', `checkout/sessions?customer=${world.customer}&limit=10`)).data.find(item => item.url === initial.body.url);
+ for (const type of ['customer_balance', 'konbini', 'paypay']) assert.ok(!first.payment_method_types.includes(type), `毎月の課金に使えない ${type} が表示された`);
+});
+
+// 銀行振込・コンビニ払い: 入金前は付与しない → 入金で 1 回だけ付与 → クレジットで申し込める。期限切れなら付与しない。
+const delayedTopup = async (world, kind, amount = 700) => {
+ const requestId = randomUUID(), at = now();
+ world.raw.prepare(`INSERT INTO supporter_credit_topups(request_id,discord_user_id,customer_id,amount,currency,status,created_at,updated_at) VALUES(?,?,?,?,'jpy','pending',?,?)`).run(requestId, world.uid, world.customer, amount, at, at);
+ const metadata = {dpi_checkout_kind: 'credit_topup', dpi_user: world.uid, dpi_credit_amount: String(amount), dpi_topup_request_id: requestId, dpi_legal_consent_version: 'e2e'};
+ const common = {amount: String(amount), currency: 'jpy', customer: world.customer, confirm: 'true', 'automatic_payment_methods[enabled]': 'true', 'automatic_payment_methods[allow_redirects]': 'never'};
+ const intent = kind === 'bank'
+  ? await stripe('POST', 'payment_intents', {...common, 'payment_method_data[type]': 'customer_balance', 'payment_method_options[customer_balance][funding_type]': 'bank_transfer', 'payment_method_options[customer_balance][bank_transfer][type]': 'jp_bank_transfer'})
+  : await stripe('POST', 'payment_intents', {...common, 'payment_method_data[type]': 'konbini', 'payment_method_data[billing_details][name]': 'E2E TEST', 'payment_method_data[billing_details][email]': kind});
+ const session = {id: `cs_test_e2e${randomUUID().replaceAll('-', '')}`, object: 'checkout.session', mode: 'payment', status: 'complete', payment_status: 'unpaid', livemode: false, customer: world.customer, client_reference_id: world.uid, payment_intent: intent.id, amount_total: amount, currency: 'jpy', created: at, metadata};
+ const send = (type, change = {}, created = now()) => world.deliver({id: `evt_e2e${randomUUID().replaceAll('-', '')}`, type, livemode: false, created, data: {object: {...session, ...change}}});
+ world.raw.prepare('UPDATE supporter_credit_topups SET checkout_session_id=? WHERE request_id=?').run(session.id, requestId);
+ const row = () => world.raw.prepare('SELECT * FROM supporter_credit_topups WHERE request_id=?').get(requestId);
+ const wait = async status => { for (let i = 0; i < 30; i += 1) { const value = await stripe('GET', `payment_intents/${intent.id}`); if (value.status === status) return value; await sleep(2000); } throw new Error(`支払いが ${status} になりません`); };
+ return {session, intent, send, row, wait};
+};
+test('事例: 銀行振込は入金を確認してから付与する', async () => {
+ const world = await World.create({clock: false}), topup = await delayedTopup(world, 'bank');
+ assert.equal(topup.intent.status, 'requires_action');
+ await topup.send('checkout.session.completed');
+ assert.equal(await billing.customerCredits(world.env, world.customer), 0, '入金前に付与された'); assert.equal(topup.row().status, 'pending'); assert.equal(world.mails.length, 0);
+ const choice = {plan: 'supporter', channelPacks: 0, serverPacks: 0, rulePacks: 0};
+ // 一部だけの入金では付与しない
+ await stripe('POST', `test_helpers/customers/${world.customer}/fund_cash_balance`, {amount: '300', currency: 'jpy'}); await sleep(5000);
+ assert.notEqual((await stripe('GET', `payment_intents/${topup.intent.id}`)).status, 'succeeded', '一部の入金で完了した');
+ assert.equal(await billing.customerCredits(world.env, world.customer), 0);
+ await stripe('POST', `test_helpers/customers/${world.customer}/fund_cash_balance`, {amount: '400', currency: 'jpy'});
+ await topup.wait('succeeded');
+ await topup.send('checkout.session.async_payment_succeeded', {payment_status: 'paid'}); await topup.send('checkout.session.async_payment_succeeded', {payment_status: 'paid'});
+ assert.equal(await billing.customerCredits(world.env, world.customer), 700, '付与が 1 回でない'); assert.equal(topup.row().status, 'credited');
+ assert.equal(world.mails.filter(subject => subject.includes('チャージ完了')).length, 1);
+ assert.ok(!world.kinds().some(kind => kind.startsWith('topup')), 'チャージの Discord 通知が作られた');
+ if (billing.billingSchedule(Date.now()).initialMonths * 300 <= 700) {
+  const signed = await world.act('checkout', {...choice, useCredits: true, requestId: randomUUID()}); assert.equal(signed.status, 200, JSON.stringify(signed.body)); await world.settle();
+  assert.equal(await world.rules(), 1, '入金後のクレジットで利用を開始できない');
+ }
+});
+test('事例: コンビニ払いは入金を確認してから付与する。期限切れは付与しない', async () => {
+ const world = await World.create({clock: false}), paid = await delayedTopup(world, 'succeed_immediately@example.com');
+ await paid.send('checkout.session.completed');
+ assert.equal(await billing.customerCredits(world.env, world.customer), 0, '入金前に付与された');
+ await paid.wait('succeeded'); await paid.send('checkout.session.async_payment_succeeded', {payment_status: 'paid'});
+ assert.equal(await billing.customerCredits(world.env, world.customer), 700);
+ const expired = await delayedTopup(world, 'expire_immediately@example.com');
+ await expired.send('checkout.session.completed'); await expired.wait('requires_payment_method');
+ await expired.send('checkout.session.async_payment_failed');
+ assert.equal(expired.row().status, 'failed'); assert.equal(await billing.customerCredits(world.env, world.customer), 700);
+ assert.equal(world.mails.filter(subject => subject.includes('チャージ失敗')).length, 1);
+ assert.ok(!world.kinds().some(kind => kind.startsWith('topup')));
 });
 
 test('安全: 署名の誤り・本番のイベント・別の顧客の請求を受け付けない', async () => {
