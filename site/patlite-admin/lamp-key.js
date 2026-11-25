@@ -1,5 +1,5 @@
 // 積層灯ページ・操作盤で共通: Cloudflare Access のログインが切れても表示を続けるための鍵。
-//   - ログイン中に発行してブラウザに保存する（有効 400 日・1 日ごとに更新）。鍵でできるのは「状態を読む・強制停止の報告・依頼を実行済みにする」だけ
+//   - ログイン中に発行してブラウザに保存する（有効 90 日・1 日ごとに更新）。鍵でできるのは「状態を読む・強制停止の報告・依頼を実行済みにする」だけ
 //   - まずログイン（Access）で読み、読めないとき（ログイン切れ）だけ鍵で Access の外の API（/api/patlite/lamp/*）を使う
 export const STATE_API = '/site/patlite-admin/api/state';
 export const COMMAND_DONE_API = '/site/patlite-admin/api/command/done';
@@ -7,7 +7,7 @@ export const DEVICE_API = '/site/patlite-admin/api/device';
 const LAMP_KEY_API = '/site/patlite-admin/api/lamp-key';
 const LAMP_API = { [STATE_API]: '/api/patlite/lamp/state', [COMMAND_DONE_API]: '/api/patlite/lamp/command-done', [DEVICE_API]: '/api/patlite/lamp/device' };
 const LAMP_KEY_STORAGE = 'patlite-lamp-key';
-const LAMP_KEY_RENEW_SECONDS = 86400;   // ログイン中は 1 日ごとに新しい鍵へ更新する（有効 400 日）
+const LAMP_KEY_RENEW_SECONDS = 86400;   // ログイン中は 1 日ごとに新しい鍵へ更新する（有効 90 日）
 export const FETCH_TIMEOUT_MS = 10_000;   // 返事が来ないまま待ち続けない（ログインの確認で止まっても鍵へ切り替える）
 
 // viaKey: いま鍵で読んでいる（ログイン切れ）。loginLost: ログインでは読めなかった（鍵が無いときも true）
@@ -32,7 +32,7 @@ function forgetLampKey() {
 // ログイン中に呼ぶ: 鍵が無い・発行から 1 日以上たっていたら新しく発行して保存する
 export async function renewLampKey() {
     const saved = savedLampKey();
-    if (lamp.renewing || (saved && Date.now() / 1000 - Number(saved.issuedAt || 0) < LAMP_KEY_RENEW_SECONDS)) return;
+    if (lamp.renewing || (saved && !String(saved.key || '').startsWith('v1.') && Date.now() / 1000 - Number(saved.issuedAt || 0) < LAMP_KEY_RENEW_SECONDS)) return;
     lamp.renewing = true;
     try {
         const response = await fetch(LAMP_KEY_API, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: '{}', signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });

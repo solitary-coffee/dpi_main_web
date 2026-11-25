@@ -417,9 +417,14 @@ h3 {
     margin-bottom: 5px;
 }
 
-.info-card-title-line h4 {
+.info-card-title-line h4,
+.info-card-title-line h2 {
     margin: 0;
     font-size: 1.3em;
+    text-align: start;
+    color: inherit;
+    border-bottom: 0;
+    padding-bottom: 0;
 }
 
 .info-card-date {

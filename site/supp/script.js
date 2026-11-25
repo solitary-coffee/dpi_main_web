@@ -10,6 +10,7 @@ window.onDpiRecaptchaReady = function() {
 };
 
 document.addEventListener('DOMContentLoaded', function() {
+    import('/site-menu-a11y.js').then(({ setupSiteMenu }) => setupSiteMenu());
     
     // --- ① メニュー開閉機能 ---
     const menuToggleBtn = document.getElementById('menu-toggle-btn');

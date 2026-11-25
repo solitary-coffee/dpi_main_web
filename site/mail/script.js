@@ -16,6 +16,7 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 function setupMenu() {
+    import('/site-menu-a11y.js').then(({ setupSiteMenu }) => setupSiteMenu());
     const button = document.getElementById('menu-toggle-btn');
     const sidebar = document.querySelector('.sidebar');
     const overlay = document.querySelector('.overlay');

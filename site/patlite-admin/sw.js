@@ -1,7 +1,7 @@
 // 積層灯ページの Service Worker。中身は shell-worker.js（ログインが切れた後の再読み込み・再起動でもページを開けるようにする）。
 importScripts('/site/patlite-admin/shell-worker.js');
 self.startShellWorker({
-    cacheName: 'patlite-admin-shell-v1',
+    cacheName: 'patlite-admin-shell-v2',
     page: '/site/patlite-admin/',
     assets: [
         '/site/patlite-admin/script.js', '/site/patlite-admin/logic.js', '/site/patlite-admin/lamp-key.js', '/site/patlite-admin/ticker.js',

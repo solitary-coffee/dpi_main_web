@@ -16,7 +16,7 @@
 //   patlite_commands に積み、state の応答に未実行の依頼を含める。積層灯ページが実行して
 //   POST /site/patlite-admin/api/command/done で完了にする（done を先に取ったページだけが実行する）。
 // - 積層灯ページ用の鍵（Cloudflare Access のログインが切れても、表示だけは続けるため）:
-//   POST /site/patlite-admin/api/lamp-key（ログイン中の管理者だけ）で、署名付きの鍵（有効 400 日）を発行する。
+//   POST /site/patlite-admin/api/lamp-key（ログイン中の管理者だけ）で、署名付きの鍵（有効 90 日）を発行する。
 //   積層灯ページはこの鍵をブラウザに保存し、ログインが切れて /site/patlite-admin/api/* を読めなくなったら
 //   Access の外にある /api/patlite/lamp/state・/api/patlite/lamp/device・/api/patlite/lamp/command-done を
 //   Authorization: Bearer <鍵> で使う。鍵でできるのは「状態を読む・強制停止の状態を知らせる・依頼を実行済みにする」だけで、
@@ -49,7 +49,9 @@ export const DEFAULT_SETTINGS = Object.freeze({
 });
 
 const LAMP_PATH_PREFIX = '/api/patlite/lamp/';
-export const LAMP_KEY_TTL_SECONDS = 400 * 86400;
+export const LAMP_KEY_TTL_SECONDS = 90 * 86400;
+export const LAMP_KEY_V1_ACCEPT_UNTIL = 1798729200; // 2026-12-31T15:00:00Z
+const LAMP_KEY_EXPIRY_SKEW_SECONDS = 10 * 60;
 
 export class PatliteAdminError extends Error {
     constructor(status, message, code) {
@@ -112,16 +114,20 @@ export async function patliteAdminLampKey(request, env, admin, now = Date.now() 
     const secret = lampSecret(env);
     if (!secret) throw new PatliteAdminError(503, '積層灯ページ用の鍵を発行できません（PATLITE_BRIDGE_TOKEN が未設定）。', 'lamp_key_not_configured');
     const expiresAt = Math.floor(now + LAMP_KEY_TTL_SECONDS);
-    const payload = `v1.${expiresAt}.${crypto.randomUUID().replaceAll('-', '')}`;
+    const payload = `v2.${expiresAt}.${crypto.randomUUID().replaceAll('-', '')}`;
     console.log('patlite lamp key issued', { admin: String(admin?.email || '').slice(0, 200), expiresAt });
     return { success: true, key: `${payload}.${await lampSignature(secret, payload)}`, expiresAt };
 }
 
 export async function lampKeyValid(env, key, now = Date.now() / 1000) {
     const secret = lampSecret(env);
-    const match = String(key || '').match(/^(v1\.(\d{9,12})\.[0-9a-f]{32})\.([0-9a-f]{64})$/u);
-    if (!secret || !match || Number(match[2]) <= now) return false;
-    const [left, right] = await Promise.all([digest(await lampSignature(secret, match[1])), digest(match[3])]);
+    const match = String(key || '').match(/^((v[12])\.(\d{9,12})\.[0-9a-f]{32})\.([0-9a-f]{64})$/u);
+    if (!secret || !match) return false;
+    const expiresAt = Number(match[3]);
+    if (expiresAt <= now) return false;
+    if (match[2] === 'v2' && expiresAt > now + LAMP_KEY_TTL_SECONDS + LAMP_KEY_EXPIRY_SKEW_SECONDS) return false;
+    if (match[2] === 'v1' && now >= LAMP_KEY_V1_ACCEPT_UNTIL) return false;
+    const [left, right] = await Promise.all([digest(await lampSignature(secret, match[1])), digest(match[4])]);
     return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 

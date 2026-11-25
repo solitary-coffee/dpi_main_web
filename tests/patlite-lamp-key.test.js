@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
-import { handlePatliteLamp, lampKeyValid, patliteAdminLampKey, LAMP_KEY_TTL_SECONDS } from '../worker/patlite-admin.js';
+import { handlePatliteLamp, lampKeyValid, patliteAdminLampKey, LAMP_KEY_TTL_SECONDS, LAMP_KEY_V1_ACCEPT_UNTIL } from '../worker/patlite-admin.js';
 
 class FakeD1 {
     constructor() { this.device = null; this.claimed = []; }
@@ -29,18 +29,36 @@ const env = () => ({ PATLITE_BRIDGE_TOKEN: 'bridge-token-for-test', REUSE_DB: ne
 const issueRequest = () => new Request('https://dpi-bot.com/site/patlite-admin/api/lamp-key', { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: 'https://dpi-bot.com' }, body: '{}' });
 const lampRequest = (action, key, init = {}) => new Request(`https://dpi-bot.com/api/patlite/lamp/${action}`, { ...init, headers: { ...(init.headers || {}), ...(key ? { Authorization: `Bearer ${key}` } : {}) } });
 
-test('発行した鍵は 400 日有効で、改ざん・期限切れ・別の秘密値では通らない', async () => {
+const signedKey = async (version, expiresAt, secret = env().PATLITE_BRIDGE_TOKEN) => {
+    const payload = `${version}.${expiresAt}.${'0'.repeat(32)}`;
+    const cryptoKey = await crypto.subtle.importKey('raw', new TextEncoder().encode(`patlite-lamp-key:${secret}`), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+    const bytes = new Uint8Array(await crypto.subtle.sign('HMAC', cryptoKey, new TextEncoder().encode(payload)));
+    return `${payload}.${[...bytes].map((value) => value.toString(16).padStart(2, '0')).join('')}`;
+};
+
+test('発行した v2 鍵は 90 日有効で、異常な期限・改ざん・別の秘密値では通らない', async () => {
     const e = env();
     const now = 1_800_000_000;
     const issued = await patliteAdminLampKey(issueRequest(), e, { email: 'admin@example.com' }, now);
+    assert.match(issued.key, /^v2\./u);
     assert.equal(issued.expiresAt, now + LAMP_KEY_TTL_SECONDS);
     assert.equal(await lampKeyValid(e, issued.key, now + 86400), true);
     assert.equal(await lampKeyValid(e, issued.key, issued.expiresAt + 1), false);
     assert.equal(await lampKeyValid(e, issued.key.replace(/\.\d+\./u, `.${issued.expiresAt + 999}.`), now), false);
+    assert.equal(await lampKeyValid(e, await signedKey('v2', now + LAMP_KEY_TTL_SECONDS + 601), now), false);
     assert.equal(await lampKeyValid({ PATLITE_BRIDGE_TOKEN: 'other' }, issued.key, now), false);
     assert.equal(await lampKeyValid({ ...e, PATLITE_LAMP_SECRET: 'rotated' }, issued.key, now), false, 'PATLITE_LAMP_SECRET を変えると全部無効');
     assert.equal(await lampKeyValid({}, issued.key, now), false);
     assert.equal(await lampKeyValid(e, e.PATLITE_BRIDGE_TOKEN, now), false, 'ブリッジの合言葉そのものは鍵にならない');
+});
+
+test('v1 鍵は移行期限より前だけ受け付ける', async () => {
+    const before = LAMP_KEY_V1_ACCEPT_UNTIL - 1;
+    const key = await signedKey('v1', LAMP_KEY_V1_ACCEPT_UNTIL + 86400);
+    assert.equal(await lampKeyValid(env(), key, before), true);
+    assert.equal(await lampKeyValid(env(), key, LAMP_KEY_V1_ACCEPT_UNTIL), false);
+    assert.equal(await lampKeyValid(env(), await signedKey('v1', before), before), false);
+    assert.equal(await lampKeyValid(env(), key.replace(/^v1\./u, 'v3.'), before), false);
 });
 
 test('別サイトからの発行は拒否する', async () => {

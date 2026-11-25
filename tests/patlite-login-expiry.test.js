@@ -89,10 +89,11 @@ test('lampFetch: ログインで読めないときだけ鍵を使い、鍵が無
     const calls = [];
     let login = () => reply({ success: true, from: 'login' });
     let key = () => reply({ success: true, from: 'key' });
+    let issue = () => reply({ success: true, key: 'v1.key', expiresAt: Date.now() / 1000 + 1000 });
     globalThis.fetch = async (url, init) => {
         calls.push({ url, init });
         assert.ok(init.signal, '返事が来ないまま待ち続けない');
-        if (url.endsWith('/lamp-key')) return reply({ success: true, key: 'v1.key', expiresAt: Date.now() / 1000 + 1000 });
+        if (url.endsWith('/lamp-key')) return issue();
         return url.startsWith('/api/patlite/lamp/') ? key() : login();
     };
     try {
@@ -105,6 +106,12 @@ test('lampFetch: ログインで読めないときだけ鍵を使い、鍵が無
         assert.deepEqual([lamp.viaKey, lamp.loginLost], [false, false]);
         await renewLampKey();
         assert.equal(savedLampKey().key, 'v1.key');
+        issue = () => { throw new TypeError('Failed to issue'); };
+        await renewLampKey();
+        assert.equal(savedLampKey().key, 'v1.key', '発行失敗時も以前の鍵を残す');
+        issue = () => reply({ success: true, key: 'v2.key', expiresAt: Date.now() / 1000 + 1000 });
+        await renewLampKey();
+        assert.equal(savedLampKey().key, 'v2.key', 'v1 は 1 日待たず v2 に更新する');
 
         for (const broken of [() => { throw new TypeError('Failed to fetch'); }, () => reply({ success: false }, 403), () => new Response('<html>', { status: 200 })]) {
             login = broken;
@@ -112,7 +119,7 @@ test('lampFetch: ログインで読めないときだけ鍵を使い、鍵が無
             assert.deepEqual([lamp.viaKey, lamp.loginLost], [true, true]);
         }
         assert.equal(calls.at(-1).url, '/api/patlite/lamp/state');
-        assert.equal(calls.at(-1).init.headers.Authorization, 'Bearer v1.key');
+        assert.equal(calls.at(-1).init.headers.Authorization, 'Bearer v2.key');
         assert.equal(calls.at(-1).init.credentials, 'omit');
 
         key = () => reply({ success: false }, 401);
