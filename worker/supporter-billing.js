@@ -85,6 +85,8 @@ async function stripe(env,path,params,key,method=params?'POST':'GET'){
  if(!r.ok){
   const detail=String(result?.error?.message||'').replace(/[\r\n\t]/g,' ').slice(0,300);
   console.error('Stripe API request failed',{path,status:r.status,requestId:r.headers.get('request-id')||'',type:result?.error?.type||'',code:result?.error?.code||'',param:result?.error?.param||'',message:String(result?.error?.message||'').slice(0,300)});
+  const approvalRequired=/requires human approval/i.test(detail);
+  if(approvalRequired)throw Object.assign(new Error('Stripeで承認が必要なため、申請を送りました。Stripeのダッシュボードで承認すると実行されます。'),{status:409,stripeStatus:r.status,approvalRequired:true});
   throw Object.assign(new Error(detail&&env.SUPPORTER_BILLING_MODE==='test'?`Stripeテスト環境が決済情報を拒否しました: ${detail}`:'Stripeへの接続に失敗しました。時間をおいて再試行してください。'),{status:502,stripeStatus:r.status,stripeCode:clean(result?.error?.code)});
  }
  if(typeof result.livemode==='boolean'&&result.livemode!==expectedLivemode(env))fail('決済環境（テスト・本番）が一致しません。',503);
@@ -769,11 +771,11 @@ export async function rejectDisciplinedCheckout(env,db,session){
   catch(first){
    let error=first;
    // 銀行振込・コンビニ払いの返金は、返金先を集めるメールの宛先が要ることがある（400）。宛先を付けて1回だけやり直す。
-   if(error?.stripeStatus===400&&error?.stripeCode!=='charge_already_refunded'&&email){try{result=await refund(true);}catch(retryError){error=retryError;}}
+   if(error?.stripeStatus===400&&!error?.approvalRequired&&error?.stripeCode!=='charge_already_refunded'&&email){try{result=await refund(true);}catch(retryError){error=retryError;}}
    if(!result&&error?.stripeCode==='charge_already_refunded')result={status:'succeeded'};
    if(!result){
-    if(![400,402,403,404].includes(Number(error?.stripeStatus))){await db.prepare(`UPDATE supporter_payment_alerts SET outcome='retry' WHERE event_id=?`).bind(operationId).run();throw error;}
-    await queueNotice(env,db,{id:operationId,channel:'billing',kind:'refund_needed',title:'返金の対応が必要',tone:'bad',at:now,lines:[`金額: ${yen(amount)}`,'BAN中に届いた入金の返金が自動でできませんでした。管理画面で該当者を確認し、Stripeで返金してください']});
+    if(!error?.approvalRequired&&![400,402,403,404].includes(Number(error?.stripeStatus))){await db.prepare(`UPDATE supporter_payment_alerts SET outcome='retry' WHERE event_id=?`).bind(operationId).run();throw error;}
+    await queueNotice(env,db,{id:operationId,channel:'billing',kind:'refund_needed',title:'返金の対応が必要',tone:'bad',at:now,lines:[`金額: ${yen(amount)}`,error?.approvalRequired?'BAN中に届いた入金の返金は、Stripeの承認待ちです。Stripeのダッシュボードで承認してください':'BAN中に届いた入金の返金が自動でできませんでした。管理画面で該当者を確認し、Stripeで返金してください']});
     await db.prepare(`UPDATE supporter_payment_alerts SET kind='refund_needed',outcome='manual' WHERE event_id=?`).bind(operationId).run();
     return true;
    }
@@ -1324,7 +1326,7 @@ export async function billingAction(request,env,db,uid,input={}){
   if(preview.creditApplied>0&&input.useCredits!==true)return json({message:'残高の利用と差額の支払いへの確認が必要です。料金をもう一度確認してください。'},409);
   let updateResult=null;
   if(preview.changeTiming==='next_period')await scheduleSubscriptionChange(env,current,choice,`dpi-user-update-${uid}-${requestId}`,{'dpi_updated_by':'user'});
-  else updateResult=await updateSubscription(env,current,choice,`dpi-user-update-${uid}-${requestId}`,{'metadata[dpi_updated_by]':'user'},prorationDate);
+  else updateResult=await updateSubscription(env,current,choice,`dpi-user-update-${uid}-${requestId}`,{'metadata[dpi_updated_by]':'user'},prorationDate,preview.planProrationBreakdown.prepaidCredit||0);
   const baseMessage=preview.changeTiming==='next_period'?'ダウングレードを予約しました。返金は行わず、次回26日から新しい内容を適用します。':updateResult?.paymentPending?`基本プランの変更は支払い確認待ちです。契約管理から支払い方法をご確認ください。${updateResult.optionsDeferred?'追加オプションは支払い完了後に改めて変更してください。':''}`:'プランと追加オプションを更新しました。基本プランの差額だけを日割りし、追加オプションは次回26日から反映します。';
   const creditMessage=preview.nextInvoiceCreditApplied>0?' 次回分の残高は26日の請求書確定時に使われます。':'';
   const scheduleMessage=updateResult?.releasedSchedule?' 以前予約したダウングレードは取り消しました。':'';
@@ -1446,6 +1448,13 @@ export function prorationBreakdown(lines){
  const unusedPlanCredit=prorations.reduce((sum,line)=>sum+Math.max(0,-Number(line.amount||0)),0);
  return {unusedPlanCredit,newPlanCharge,net:newPlanCharge-unusedPlanCredit};
 }
+// 初回の利用料は Stripe の請求書ではなく申込み時の支払いで受け取るため、最初の更新の前の変更では、Stripe の差額に支払い済みの分が含まれない。
+// 新しいプランの日割りと同じ割合で、いまのプランの分を差し引く。一度変更した後（Stripe が差し引く）と、最初の更新の後では何もしない。
+export function initialPeriodCredit(currentSummary,breakdown,oldYen,newYen){
+ if(!currentSummary?.startedAt||!currentSummary.currentPeriodStart||Math.abs(currentSummary.currentPeriodStart-currentSummary.startedAt)>60)return 0;
+ if(breakdown.unusedPlanCredit!==0||!(breakdown.newPlanCharge>0)||!(oldYen>0)||!(newYen>oldYen))return 0;
+ return Math.round(breakdown.newPlanCharge*oldYen/newYen);
+}
 export function creditApplication(credits,immediateCharge,nextInvoiceSubtotal){
  const available=Math.max(0,Number(credits)||0);
  const immediateCreditApplied=Math.min(available,Math.max(0,Number(immediateCharge)||0));
@@ -1480,6 +1489,8 @@ async function previewSubscriptionUpdate(env,customer,current,choice,requestedPr
    'subscription_details[proration_date]':String(prorationDate),
   });
   planProrationBreakdown=prorationBreakdown(invoice.lines?.data);
+  const prepaidCredit=initialPeriodCredit(currentSummary,planProrationBreakdown,Number(base.price?.unit_amount)||0,PLAN_CATALOG[choice.plan].yen);
+  if(prepaidCredit)planProrationBreakdown={unusedPlanCredit:prepaidCredit,newPlanCharge:planProrationBreakdown.newPlanCharge,net:planProrationBreakdown.newPlanCharge-prepaidCredit,prepaidCredit};
  }
  const planProration=planProrationBreakdown.net;
  const customerObject=await stripe(env,`customers/${encodeURIComponent(customer)}`),credits=creditsFromBalance(customerObject.balance);
@@ -1530,7 +1541,7 @@ async function scheduleSubscriptionChange(env,current,choice,key,extraMetadata={
  for(const [name,value] of Object.entries(metadata))params[`phases[1][metadata][${name}]`]=String(value);
  return await stripe(env,`subscription_schedules/${encodeURIComponent(schedule.id)}`,params,`${key}-schedule-update`);
 }
-async function updateSubscription(env,current,choice,key,extra={},prorationDate){
+async function updateSubscription(env,current,choice,key,extra={},prorationDate,prepaidCredit=0){
  const base=current.items?.data?.find(item=>item.price?.id!==env.STRIPE_PRICE_ADDON);
  const addon=current.items?.data?.find(item=>item.price?.id===env.STRIPE_PRICE_ADDON);
  if(!base?.id)fail('契約項目を確認できませんでした。',409);
@@ -1545,6 +1556,8 @@ async function updateSubscription(env,current,choice,key,extra={},prorationDate)
   const existingScheduleId=scheduleId(current);
   if(existingScheduleId){await stripe(env,`subscription_schedules/${encodeURIComponent(existingScheduleId)}/release`,{},`${key}-schedule-release`);releasedSchedule=true;}
   const baseParams={'items[0][id]':base.id,'items[0][price]':planPrice(env,choice.plan),'items[0][quantity]':'1',proration_behavior:'always_invoice',payment_behavior:'pending_if_incomplete',proration_date:String(prorationDate||Math.floor(Date.now()/1000))};
+  // 変更の請求と一体で差し引く（支払いが済まなければ、変更も差し引きも行われない）。
+  if(prepaidCredit>0)Object.assign(baseParams,{'add_invoice_items[0][price_data][currency]':'jpy','add_invoice_items[0][price_data][product]':stripeId(base.price?.product),'add_invoice_items[0][price_data][unit_amount]':String(-prepaidCredit),'add_invoice_items[0][quantity]':'1'});
   if(!optionsChanged)Object.assign(baseParams,metadata);
   result=await stripe(env,`subscriptions/${encodeURIComponent(current.id)}`,baseParams,`${key}-base`);
   if(result.pending_update)return{subscription:result,paymentPending:true,optionsDeferred:optionsChanged,releasedSchedule};
@@ -1606,7 +1619,7 @@ export async function adminBillingAction(env,customer,uid,input){
   const preview=await previewSubscriptionUpdate(env,customer,current,choice);
   let updateResult=null;
   if(preview.changeTiming==='next_period')await scheduleSubscriptionChange(env,current,choice,key,{dpi_admin_reason:reason,dpi_updated_by:'admin'});
-  else updateResult=await updateSubscription(env,current,choice,key,{'metadata[dpi_admin_reason]':reason,'metadata[dpi_updated_by]':'admin'},preview.prorationDate);
+  else updateResult=await updateSubscription(env,current,choice,key,{'metadata[dpi_admin_reason]':reason,'metadata[dpi_updated_by]':'admin'},preview.prorationDate,preview.planProrationBreakdown.prepaidCredit||0);
   const message=preview.changeTiming==='next_period'?'ダウングレードを次回26日から適用するよう予約しました。返金は行いません。':updateResult?.paymentPending?`基本プランの変更は支払い確認待ちです。${updateResult.optionsDeferred?'追加オプションは支払い完了後に改めて変更してください。':''}`:'契約内容を変更しました。基本プランだけ日割りし、追加オプションは日割りせず次回26日から反映します。';
   return {message,paymentPending:updateResult?.paymentPending===true,optionsDeferred:updateResult?.optionsDeferred===true,subscriptions:await customerSubscriptionSummaries(env,customer)};
  }
