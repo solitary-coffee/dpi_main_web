@@ -71,6 +71,7 @@ globalThis.fetch = (input, init = {}) => {
   const {title, description} = body.embeds[0], label = channel === 'billing' ? '支払い' : '加入・変更・解約', key = `${label}: ${kindOf(title)}`;
   return sendOnce('discord', key, '/__notice', {channel, body}).then(() => new Response(null, {status: 204}));
  }
+ if (shiftMs && url.hostname === 'api.stripe.com' && url.pathname === '/v1/checkout/sessions' && init.method === 'POST' && init.body?.get?.('expires_at')) init.body.set('expires_at', String(Math.floor(RealDate.now() / 1000) + 3600));
  if (currentClock && url.hostname === 'api.stripe.com' && url.pathname === '/v1/subscriptions' && (init.method || 'GET') === 'GET' && !url.searchParams.has('customer')) {
   url.searchParams.set('test_clock', currentClock);
   return baseFetch(url.href, init);
@@ -118,9 +119,11 @@ let seedIds = {}, portalId = '', userSeq = 0;
 const EVENT_TYPES = EVENTS.map(type => `types[]=${encodeURIComponent(type)}`).join('&');
 const clocks = [], plainCustomers = [], seenEvents = new Set();
 class World {
- static async create({pm = 'pm_card_visa', clock = true} = {}) {
+ // 2026年11月だけの扱い（1か月分で11月・12月）の間は、普段の流れを12月の時刻で確かめる。11月の流れは start を指定した試験で確かめる。
+ static async create({pm = 'pm_card_visa', clock = true, start = 0} = {}) {
   const world = new World();
   resetNow();
+  if (clock && (start || billing.billingSchedule(Date.now()).novemberOffer)) setNow(start || jst(2026, 11, 2, 12));
   Object.assign(world, await database());
   currentClock = '';
   world.uid = String(100000000000000000n + BigInt(worker) * 10000000000000000n + BigInt(RealDate.now()) * 10n + BigInt(userSeq += 1));
@@ -366,7 +369,7 @@ test('3Dセキュア: 更新で本人確認を求められたら失敗として�
 });
 
 test('手動の一時停止: 翌月1日0時に停止し、解除で再開', async () => {
- const world = await World.create();
+ const world = await World.create({start: Math.floor(RealDate.now() / 1000)}); // 停止の時刻は実際の時刻から決まる
  const {sub} = await world.subscribe('supporter');
  await stripe('POST', `subscriptions/${sub.id}`, {'pause_collection[behavior]': 'void'}); await world.settle();
  const hold = world.dunning().find(row => row.invoice_id === `hold:${sub.id}`);
@@ -608,6 +611,9 @@ test('管理操作: クレジットの付与・削除・失効、支払いURL、
  assert.equal((await world.cron(at)).expiredCredits, 1); assert.equal(await credits(), 200);
  assert.match((await admin('create_payment_link', {amount: 500, description: '通し試験'})).url, /^https:\/\/checkout\.stripe\.com\//);
  await world.subscribe('supporter');
+ if (billing.prepaidRenewalPending(await world.sub())) { // 11月25日に試験するとき
+  await assert.rejects(() => admin('cancel_at_period_end'), /確定処理中/); await stripe('POST', `subscriptions/${(await world.sub()).id}`, {'metadata[dpi_prepaid_renewal]': '', 'metadata[dpi_prepaid_until]': ''}); await world.settle();
+ }
  await admin('change_subscription', {plan: 'plus', channelPacks: 1, serverPacks: 0, rulePacks: 0}); await world.settle();
  let state = (await world.act('status')).body.subscriptions[0];
  assert.deepEqual([state.planId, state.channelPacks], ['plus', 1]);
@@ -1117,6 +1123,43 @@ test('追加: 利用者2人の更新（片方は失敗）', async () => {
  const invoice = await stripe('GET', `invoices/${bad.dunning().find(row => !row.invoice_id.startsWith('hold:')).invoice_id}`);
  await good.deliver({id: `evt_e2e${randomUUID().replaceAll('-', '')}`, type: 'invoice.payment_failed', livemode: false, created: now(), data: {object: invoice}});
  assert.equal(good.dunning().length, 0); assert.equal((await good.sub()).status, 'active');
+});
+
+test('11月の申込み: 25日は1か月分で、26日0時は0円、12月26日から通常の請求（オプション・変更・知らせ）', async () => {
+ const world = await World.create({start: jst(2026, 10, 25, 22)});
+ const {sub, schedule} = await world.subscribe('supporter', {channel: 1});
+ assert.equal(schedule.initialMonths, 1); assert.equal(sub.status, 'active'); assert.equal(await world.rules(), 1);
+ let status = (await world.act('status')).body.subscriptions[0]; assert.equal(status.nextRenewalAt, jst(2026, 11, 26));
+ for (const action of ['portal', 'preview-update']) assert.equal((await world.act(action, {plan: 'plus', channelPacks: 1, serverPacks: 0, rulePacks: 0})).status, 409);
+ // 契約作成の通知がもう一度届いても、差し引きは 1 回だけ
+ await world.deliver({id: `evt_e2e${randomUUID().replaceAll('-', '')}`, type: 'customer.subscription.created', livemode: false, created: now(), data: {object: sub}});
+ assert.deepEqual((await stripe('GET', `invoiceitems?customer=${world.customer}&pending=true&limit=10`)).data.map(item => item.amount), [-500]);
+ const mails = world.mails.length;
+ await world.advance(jst(2026, 10, 26, 3)); await world.settle();
+ const invoices = async () => (await stripe('GET', `invoices?customer=${world.customer}&limit=20`)).data;
+ let cycle = (await invoices()).filter(item => item.billing_reason === 'subscription_cycle'); assert.equal(cycle.length, 1); assert.equal(cycle[0].total, 0); assert.equal(cycle[0].status, 'paid');
+ assert.equal(world.mails.length, mails, `0円の請求でメールが届いた: ${world.mails.slice(mails)}`); assert.equal(world.dunning().length, 0); assert.equal(await world.rules(), 1);
+ status = (await world.act('status')).body.subscriptions[0]; assert.equal(status.nextRenewalAt, jst(2026, 11, 26));
+ await world.advance(jst(2026, 11, 3)); assert.equal(await world.rules(), 1, '12月に使えない');
+ // 変更の差額は、支払い済みの分を差し引いた額
+ const preview = (await world.act('preview-update', {plan: 'plus', channelPacks: 1, serverPacks: 0, rulePacks: 0})).body; assert.ok(preview.planProrationBreakdown.unusedPlanCredit > 0 && preview.planProration < 500, JSON.stringify(preview.planProrationBreakdown));
+ await world.advance(renewal(jst(2026, 11, 26))); await world.settle();
+ cycle = (await invoices()).filter(item => item.billing_reason === 'subscription_cycle'); assert.equal(cycle.length, 2); assert.equal(cycle[0].amount_paid, 500); assert.equal(world.mails.filter(subject => /お支払い完了/.test(subject)).length > 0, true);
+ assert.equal((await stripe('GET', `invoiceitems?customer=${world.customer}&pending=true&limit=10`)).data.length, 0);
+});
+
+test('11月の申込み: 残高だけの申込み（25日）とカード（27日）も1か月分。12月26日から通常の請求', async () => {
+ const world = await World.create({start: jst(2026, 10, 25, 22)}), only = creditOnly(world);
+ await only.grant(700); const done = await only.signup('supporter'); assert.equal(done.status, 200, JSON.stringify(done.body)); await world.settle();
+ assert.equal(await only.credits(), 400);
+ await world.advance(jst(2026, 10, 26, 3)); await world.settle(); assert.equal(await only.credits(), 400, '26日に残高が減った'); assert.equal(await world.rules(), 1);
+ await world.advance(renewal(jst(2026, 11, 26))); await world.settle(); assert.equal(await only.credits(), 100); assert.equal(await world.rules(), 1);
+ const late = await World.create({start: jst(2026, 10, 27, 9)}); const {schedule} = await late.subscribe('plus'); assert.equal(schedule.initialMonths, 1);
+ assert.equal((await stripe('GET', `invoiceitems?customer=${late.customer}&limit=10`)).data.length, 0);
+ await late.advance(jst(2026, 11, 10)); await late.settle(); assert.equal(await late.rules(), 1);
+ assert.equal((await stripe('GET', `invoices?customer=${late.customer}&limit=20`)).data.filter(item => item.total > 0).length, 0);
+ await late.advance(renewal(jst(2026, 11, 26))); await late.settle();
+ assert.deepEqual((await stripe('GET', `invoices?customer=${late.customer}&limit=20`)).data.filter(item => item.total > 0).map(item => item.amount_paid), [800]);
 });
 
 test('安全: 署名の誤り・本番のイベント・別の顧客の請求を受け付けない', async () => {

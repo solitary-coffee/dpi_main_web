@@ -11,10 +11,10 @@ test('plan, channel and server add-ons are server controlled',()=>{
  for(const v of [{plan:'supporter',channelPacks:6,serverPacks:0},{plan:'supporter',channelPacks:0,serverPacks:-1},{plan:'supporter',channelPacks:'1',serverPacks:0},{plan:'unknown',channelPacks:0,serverPacks:0}])assert.throws(()=>selection(v));
 });
 test('billing is anchored to the 26th JST and late-month signup charges two months',()=>{
- const before=billingSchedule(Date.parse('2026-11-25T03:00:00Z'));
- assert.deepEqual(before,{billingDay:26,anchor:Math.floor(Date.parse('2026-11-25T15:00:00Z')/1000),initialMonths:1,lateMonth:false});
- const after=billingSchedule(Date.parse('2026-11-25T15:00:00Z'));
- assert.deepEqual(after,{billingDay:26,anchor:Math.floor(Date.parse('2026-12-25T15:00:00Z')/1000),initialMonths:2,lateMonth:true});
+ const before=billingSchedule(Date.parse('2027-03-25T03:00:00Z'));
+ assert.deepEqual(before,{billingDay:26,anchor:Math.floor(Date.parse('2027-03-25T15:00:00Z')/1000),initialMonths:1,lateMonth:false});
+ const after=billingSchedule(Date.parse('2027-03-25T15:00:00Z'));
+ assert.deepEqual(after,{billingDay:26,anchor:Math.floor(Date.parse('2027-04-25T15:00:00Z')/1000),initialMonths:2,lateMonth:true});
  const yearEnd=billingSchedule(Date.parse('2026-12-31T03:00:00Z'));
  assert.equal(yearEnd.anchor,Math.floor(Date.parse('2027-01-25T15:00:00Z')/1000));
 });
@@ -65,7 +65,7 @@ test('paid initial Checkout creates a fixed-26th subscription without trial',()=
 test('credit-funded signup creates the fixed-26th subscription without card details or a trial',()=>{
  const env={STRIPE_PRICE_SUPPORTER:'price_basic',STRIPE_PRICE_PLUS:'price_plus',STRIPE_PRICE_PRO:'price_pro',STRIPE_PRICE_ADDON:'price_addon'};
  const choice=selection({plan:'plus',channelPacks:1,serverPacks:1}),schedule={anchor:1800000000,initialMonths:1,lateMonth:false};
- const params=creditSignupSubscriptionParams(env,'cus_credit','637850681666961408',choice,schedule,'2026-11-15','123e4567-e89b-42d3-a456-426614174100');
+ const params=creditSignupSubscriptionParams(env,'cus_credit','637850681666961408',choice,schedule,'2026-11-15','123e4567-e89b-42d3-a456-426614174100',1799000000);
  assert.equal(params.customer,'cus_credit');assert.equal(params.billing_cycle_anchor,'1800000000');assert.equal(params.proration_behavior,'none');assert.equal(params.payment_behavior,'error_if_incomplete');
  assert.equal(params['items[0][price]'],'price_plus');assert.equal(params['items[1][price]'],'price_addon');assert.equal(params['items[1][quantity]'],'2');
  assert.equal(params['metadata[dpi_initial_payment_method]'],'credit_balance');assert.equal(params.default_payment_method,undefined);assert.equal(params.trial_end,undefined);assert.equal(params.payment_method_types,undefined);
