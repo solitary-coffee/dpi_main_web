@@ -109,7 +109,7 @@
     "NEWSLETTER_PUBLIC_ORIGIN": "https://dpi-bot.com",
     "REUSE_PUBLIC_ORIGIN": "https://dpi-bot.com",
     "SUPPORTER_PUBLIC_ORIGIN": "https://dpi-bot.com",
-    "SUPPORTER_BILLING_MODE": "test",
+    "SUPPORTER_BILLING_MODE": "live",
     "SUPPORTER_PREVIEW_OPEN": "false",
     "SUPPORTER_REVIEW_ENABLED": "false",
     "SUPPORTER_PUBLIC_ENABLED": "false",

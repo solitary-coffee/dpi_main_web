@@ -630,7 +630,7 @@ test('paid plan configuration contains test catalog IDs and consent storage',asy
   readFile(new URL('../site/supporter/app.js',import.meta.url),'utf8'),
  ]);
  const config=JSON.parse(configText);
- assert.equal(config.vars.SUPPORTER_BILLING_MODE,'test');
+ assert.equal(config.vars.SUPPORTER_BILLING_MODE,'live');
  for(const key of ['STRIPE_PRICE_SUPPORTER','STRIPE_PRICE_PLUS','STRIPE_PRICE_PRO','STRIPE_PRICE_ADDON','STRIPE_PORTAL_CONFIG','SUPPORTER_CONSENT_VERSION'])assert.ok(config.vars[key]);
  assert.match(migration,/legal_consent_version/);assert.match(migration,/legal_consent_at/);
  assert.match(creditMigration,/supporter_credit_topups/);assert.match(creditMigration,/supporter_credit_lots/);assert.match(creditMigration,/expires_at/);
