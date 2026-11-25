@@ -1477,6 +1477,11 @@ export async function billingWebhook(request,env,ctx){
   const summary=subscriptionSummary(subscription,env);
   // 支払いの回復・一時停止の解除は、Stripe の現在の状態で確かめてから停止を解く。
   const holder=clean(stripeId(subscription?.customer));
+  // 支払い不能・一時停止は、定期処理を待たずに翌月1日0時の停止を予約する（月末の定期処理の後に起きても1か月ずれない）。
+  if(holder&&subscription?.id&&(['unpaid','paused'].includes(subscription.status)||subscription.pause_collection)&&await db.prepare('SELECT discord_user_id FROM supporter_billing WHERE customer_id=?').bind(holder).first()){
+   const current=(await customerSubscriptionSummaries(env,holder)).find(item=>item.subscriptionId===subscription.id);
+   if(current&&serviceHeld(current))await openServiceHold(db,holder,current,Number(event.created)||Math.floor(Date.now()/1000));
+  }
   if(holder&&subscription?.id&&await db.prepare(`SELECT invoice_id FROM supporter_dunning WHERE invoice_id=? AND status IN ('suspend_scheduled','suspended')`).bind(`${HOLD_PREFIX}${subscription.id}`).first())
    await releaseServiceHolds(db,await customerSubscriptionSummaries(env,holder));
   if(summary.customId){
@@ -1567,7 +1572,7 @@ async function syncServiceHolds(env,db,now){
  for(const row of open.results||[])if(!known.has(row.subscription_id))
   await db.prepare(`UPDATE supporter_dunning SET status='closed',updated_at=? WHERE invoice_id=?`).bind(now,row.invoice_id).run();
  for(const [customer,summaries] of grouped)for(const summary of summaries)
-  if(summary.subscriptionId&&serviceHeld(summary))await openServiceHold(db,customer,summary,now);
+  if(summary.subscriptionId&&serviceHeld(summary))await openServiceHold(db,customer,summary,now-3600); // 1日0時に初めて見つけたものは前月中の変化とみなし、すぐ停止する
 }
 // 停止中の請求書を Stripe と照合する（支払い完了の Webhook を取りこぼしても再開できるように）。
 async function reconcileSuspendedInvoices(env,db,customer=null,limit=50){
@@ -1594,7 +1599,7 @@ async function runBillingScheduleTasks(env,db,nowMs){
  await db.prepare(`UPDATE supporter_dunning SET status='retry_scheduled',retry_attempted_at=NULL,updated_at=? WHERE status='retrying' AND updated_at<=?`).bind(now,now-1800).run();
  // 停止の巻き添え（別の請求書が停止中）で先に停止した行も、本来の月末に1回だけ再決済する。
  const due=await db.prepare(`SELECT * FROM supporter_dunning WHERE invoice_id NOT LIKE 'hold:%' AND retry_at<=?
-  AND (status='retry_scheduled' OR (status='suspended' AND retry_attempted_at IS NULL AND suspended_at<retry_at)) ORDER BY retry_at LIMIT 50`).bind(now).all();
+  AND (status='retry_scheduled' OR (status='suspended' AND retry_attempted_at IS NULL AND suspended_at<retry_at)) ORDER BY retry_at LIMIT 300`).bind(now).all();
  for(const row of due.results||[]){
   const claim=await db.prepare(`UPDATE supporter_dunning SET status=CASE WHEN status='suspended' THEN 'suspended' ELSE 'retrying' END,retry_attempted_at=?,updated_at=?
    WHERE invoice_id=? AND status IN ('retry_scheduled','suspended') AND retry_attempted_at IS NULL`).bind(now,now,row.invoice_id).run();
@@ -1620,11 +1625,10 @@ async function runBillingScheduleTasks(env,db,nowMs){
  }
  try{await syncServiceHolds(env,db,now);}catch(error){console.error('Supporter service hold check failed',{errorName:error?.name||'Error',stripeStatus:Number(error?.stripeStatus)||null});}
  // 翌月1日0時を過ぎても支払いを確認できないものは、再決済の結果を待たずに必ず停止する。
- const stopping=await db.prepare(`SELECT * FROM supporter_dunning WHERE status IN ('suspend_scheduled','retry_scheduled') AND suspend_at<=? ORDER BY suspend_at LIMIT 500`).bind(now).all();
- for(const row of stopping.results||[]){
-  const result=await db.prepare(`UPDATE supporter_dunning SET status='suspended',suspended_at=?,updated_at=? WHERE invoice_id=? AND status IN ('suspend_scheduled','retry_scheduled')`).bind(now,now,row.invoice_id).run();
-  if(!result.meta?.changes)continue;suspended+=Number(result.meta.changes);
-  if(row.status!=='retry_scheduled')continue;
+ const unfinished=await db.prepare(`SELECT * FROM supporter_dunning WHERE status='retry_scheduled' AND suspend_at<=? ORDER BY suspend_at LIMIT 100`).bind(now).all();
+ const stopped=await db.prepare(`UPDATE supporter_dunning SET status='suspended',suspended_at=?,updated_at=? WHERE status IN ('suspend_scheduled','retry_scheduled') AND suspend_at<=?`).bind(now,now,now).run();
+ suspended+=Number(stopped.meta?.changes||0);
+ for(const row of unfinished.results||[]){
   try{await sendBillingNotification(env,db,'final_failed',{id:row.invoice_id,customer:row.customer_id,subscription:row.subscription_id,amount_due:row.amount_due,currency:row.currency},row.retry_at,row.suspend_at);}
   catch(error){console.error('Supporter suspension email failed',{invoiceId:row.invoice_id,errorName:error?.name||'Error'});}
  }

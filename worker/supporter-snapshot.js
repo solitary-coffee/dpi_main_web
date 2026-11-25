@@ -61,13 +61,16 @@ async function digestPrefix(value) {
 }
 
 export async function buildSupporterSnapshot(db, env, loadSubscriptions, nowMs = Date.now()) {
+    // 停止時刻（翌月1日0時）を過ぎた未払いは、停止の定期処理が遅れても含めない。整数だけを埋め込む。
+    const nowSeconds = Math.max(0, Math.floor(Number(nowMs) / 1000)) || 0;
     const rows = await db.prepare(`SELECT a.discord_user_id,a.settings_json,a.revision,a.registered_at,b.customer_id
         FROM supporter_accounts a
         JOIN supporter_billing b ON b.discord_user_id=a.discord_user_id
         WHERE a.account_status='active' AND b.customer_id IS NOT NULL
           AND NOT EXISTS (
             SELECT 1 FROM supporter_dunning d
-            WHERE d.customer_id=b.customer_id AND d.status='suspended'
+            WHERE d.customer_id=b.customer_id AND (d.status='suspended'
+              OR (d.status IN ('suspend_scheduled','retry_scheduled') AND d.suspend_at<=${nowSeconds}))
           )
         ORDER BY a.discord_user_id`).all();
     const accounts = (rows.results || []).filter(row => snapshotUserAllowed(env, row));

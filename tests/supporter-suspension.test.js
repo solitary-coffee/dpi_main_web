@@ -59,7 +59,7 @@ function insertDunning(raw, id, status, extra = {}) {
  raw.prepare(`INSERT INTO supporter_dunning(invoice_id,customer_id,subscription_id,amount_due,currency,status,initial_failed_at,retry_at,retry_attempted_at,suspend_at,suspended_at,updated_at)
   VALUES(?,?,'sub_x',300,'jpy',?,1,?,?,?,?,?)`).run(id, CUSTOMER, status, row.retry_at, row.retry_attempted_at, row.suspend_at, row.suspended_at, row.updated_at ?? 1);
 }
-const delivered = async (env, db) => (await buildSupporterSnapshot(db, env, subscriptionSummariesByCustomer)).rules.length;
+const delivered = async (env, db, at = jst('2026-11-27T12:00:00')) => (await buildSupporterSnapshot(db, env, subscriptionSummariesByCustomer, at * 1000)).rules.length;
 async function webhook(env, type, object, extra = {}) {
  const raw = JSON.stringify({id: extra.id || `evt_${type}_${Math.random()}`, type, livemode: env.SUPPORTER_BILLING_MODE === 'live', created: 1_800_000_000, data: {object, ...extra.data}, ...extra.event});
  const ts = Math.floor(Date.now() / 1000), sig = createHmac('sha256', 'whsec_example').update(`${ts}.${raw}`).digest('hex');
@@ -183,6 +183,42 @@ for (const [label, state] of [['unpaid', {status: 'unpaid'}], ['paused', {status
   assert.equal(await delivered(env, store.db), 1);
  });
 }
+
+test('月末の定期処理の後に起きた一時停止も、1か月ずれずに翌月1日0時に止まる（Webhook・定期処理のどちらで見つけても）', async t => {
+ for (const viaWebhook of [true, false]) {
+  const store = await database(t); if (!store) return;
+  const env = envFor(store.db);
+  let current = subscription();
+  stripeMock(t, {'GET subscriptions': () => ({data: [current]})});
+  await runSupporterBillingSchedule(env, jst('2026-11-30T12:00:00') * 1000);
+  current = subscription({status: 'paused'});
+  if (viaWebhook) {
+   await webhook(env, 'customer.subscription.updated', current, {event: {created: jst('2026-11-30T18:00:00')}});
+   assert.equal(store.dunning('hold:sub_x').suspend_at, SUSPEND);
+  }
+  await runSupporterBillingSchedule(env, (SUSPEND + 1) * 1000);
+  assert.equal(await delivered(env, store.db), 0);
+ }
+});
+
+test('定期処理が動かなくても、配信設定は翌月1日0時を過ぎた未払いを含めない', async t => {
+ const store = await database(t); if (!store) return;
+ const env = envFor(store.db);
+ insertDunning(store.raw, 'in_1', 'suspend_scheduled', {retry_attempted_at: 1});
+ stripeMock(t, {'GET subscriptions': {data: [subscription({status: 'past_due'})]}});
+ assert.equal(await delivered(env, store.db, SUSPEND - 1), 1);
+ assert.equal(await delivered(env, store.db, SUSPEND), 0);
+});
+
+test('月末の再決済と停止は、対象が多くても1回で全件を処理する', async t => {
+ const store = await database(t); if (!store) return;
+ const env = envFor(store.db);
+ for (let index = 0; index < 120; index += 1) insertDunning(store.raw, `in_${index}`, 'retry_scheduled');
+ for (let index = 0; index < 600; index += 1) insertDunning(store.raw, `stop_${index}`, 'suspend_scheduled', {retry_attempted_at: 1});
+ stripeMock(t, Object.fromEntries(Array.from({length: 120}, (_, index) => [`GET invoices/in_${index}`, {livemode: false, id: `in_${index}`, status: 'paid', customer: CUSTOMER, subscription: 'sub_x'}])));
+ assert.equal((await runSupporterBillingSchedule(env, jst('2026-11-30T12:00:00') * 1000)).paid, 120);
+ assert.equal((await runSupporterBillingSchedule(env, SUSPEND * 1000)).suspended, 600);
+});
 
 test('クレジット失効は1人の失敗で止まらない', async t => {
  const store = await database(t); if (!store) return;
