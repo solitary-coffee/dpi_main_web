@@ -1183,12 +1183,12 @@ export async function handleSupporterRequest(request, env, ctx) {
   const pausedPortal = supporterIntakePaused(env) && path === '/api/supporter/billing/portal';
   if (request.method !== 'GET' && supporterIntakePaused(env) && !pausedPortal) return response({message:SUPPORTER_INTAKE_PAUSED_MESSAGE,intakePaused:true},503);
   if (request.method !== 'GET') { assertSameOrigin(request); assertCsrf(request,session); }
-  if (/^\/api\/supporter\/billing\/(checkout|topup|preview-update|update|portal|status)$/.test(path)) {
+  if (/^\/api\/supporter\/billing\/(checkout|topup|preview-update|update|pay-unpaid|portal|status)$/.test(path)) {
    const expected=path.endsWith('/status')?'GET':'POST';
    if(request.method!==expected)return response({message:'Method not allowed'},405);
    const input=request.method==='POST'?await readJson(request):{};
    if(pausedPortal)input.existingOnly=true;
-   if(path.endsWith('/checkout')||path.endsWith('/topup'))await assertSupporterRate(env,`billing:${uid}`);
+   if(path.endsWith('/checkout')||path.endsWith('/topup')||path.endsWith('/pay-unpaid'))await assertSupporterRate(env,`billing:${uid}`);
    if(path.endsWith('/checkout')||path.endsWith('/topup')){
     const currentAccount=await db.prepare('SELECT account_status,status_reason,status_updated_at FROM supporter_accounts WHERE discord_user_id=?').bind(uid).first();
     if(currentAccount)assertSupporterAccountActive(currentAccount);

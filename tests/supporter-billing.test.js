@@ -244,8 +244,8 @@ test('paid plans stay separate from secondary-use applications and private in na
  assert.match(billingUi,/契約・請求に関するお知らせに使用します/);
  assert.match(billingUi,/チャージ結果のお知らせに使用します/);
  assert.doesNotMatch(billingUi,/利用する操作を選択|ページを移動せず/);
- assert.match(billingUi,/クレジットチャージ式/);
- assert.match(billingUi,/クレジット支払い式/);
+ assert.match(billingUi,/事前チャージ式/);
+ assert.match(billingUi,/クレジットカード支払い式/);
  assert.match(billingUi,/setBillingMode/);
  assert.match(billingUi,/topupEmail\.value/);
  assert.match(billingUi,/クレジットでプランを申し込む/);
@@ -525,7 +525,7 @@ test('update preview prorates only the base plan and confirms options without pr
   let data={livemode:false};
   if(path==='/v1/subscriptions')data={livemode:false,data:[current]};
   else if(path==='/v1/invoices/create_preview')data={livemode:false,lines:{data:[{amount:-100,parent:{subscription_item_details:{proration:true}}},{amount:700,parent:{subscription_item_details:{proration:true}}},{amount:1280,parent:{subscription_item_details:{proration:false}}}]}};
-  else if(path==='/v1/customers/cus_x'&&(init.method||'GET')==='GET')data={livemode:false,balance:-100};
+  else if(path==='/v1/customers/cus_x'&&(init.method||'GET')==='GET')data={livemode:false,balance:-100,invoice_settings:{default_payment_method:'pm_x'}};
   else if(path==='/v1/subscriptions/sub_x')data={...current,livemode:false};
   return new Response(JSON.stringify(data),{status:200,headers:{'content-type':'application/json'}});
  };

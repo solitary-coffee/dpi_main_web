@@ -121,7 +121,7 @@ class World {
   world.env = {SUPPORTER_BILLING_MODE: 'test', STRIPE_SECRET_KEY: KEY, STRIPE_WEBHOOK_SECRET: 'whsec_e2e', ...seedIds, STRIPE_PORTAL_CONFIG: portalId, SUPPORTER_PUBLIC_ORIGIN: 'https://dpi-bot.com',
    SUPPORTER_PUBLIC_ENABLED: 'true', REUSE_DB: world.db, NOTICE_FROM_EMAIL: 'notice@dpi-bot.com', CONTACT_TO_EMAIL: 'admin@example.com', NOTICE_EMAIL: {send: async mail => {
     const admin = mail.to === world.env.CONTACT_TO_EMAIL;
-    if (admin) world.adminMails.push(mail.subject); else { world.mails.push(mail.subject); world.mailTexts.push(mail.text); assert.match(mail.html, />公式サイト<\/a>/); }
+    if (admin) world.adminMails.push(mail.subject); else { world.mails.push(mail.subject); world.mailTexts.push(mail.text); assert.match(mail.html, />契約・支払い方法の管理<\/a>/); }
     if (notify) await sendOnce(admin ? 'admin' : 'mail', kindOf(mail.subject), '/__mail', testMail(admin ? '管理者向け' : 'ユーザー向け', mail.subject, admin ? '運営担当者に届く重要通知です。利用者には送られません。' : '有料プランの利用者に届くメールです。', mail.text, mail.headers, mail.html));
    }},
    ...(notify ? {BILLING_NOTICE_WEBHOOK: `https://discord.com/api/webhooks/111111111111111111/${'billing'.padEnd(30, '_')}`, MEMBERSHIP_NOTICE_WEBHOOK: `https://discord.com/api/webhooks/222222222222222222/${'membership'.padEnd(30, '_')}`} : {})};
@@ -300,7 +300,7 @@ test('未払い: 失敗 → 月末の再決済 → 翌月1日0時に停止 → �
  assert.equal(await world.rules(), 1, '1日0時より前に止まっている');
  await world.advance(times.stop); await world.cron(times.stop);
  assert.equal(world.dunning().find(row => row.invoice_id === invoiceId).status, 'suspended');
- assert.deepEqual(world.kinds().filter(kind => kind !== 'join'), ['retry_start', 'retry_result', 'month_start']);
+ assert.deepEqual(world.kinds().filter(kind => kind !== 'join'), ['renewal_result', 'retry_start', 'retry_result', 'month_start']);
  assert.match(world.notices().find(row => row.kind === 'retry_result').description, /失敗: 1件（300円）/);
   assert.match(world.notices().find(row => row.kind === 'month_start').description, /今回停止: 1件\n停止中の合計: 1件/);
  assert.equal(await world.rules(), 0);
@@ -928,6 +928,76 @@ test('事例: コンビニ払いは入金を確認してから付与する。期
  assert.equal(expired.row().status, 'failed'); assert.equal(await billing.customerCredits(world.env, world.customer), 700);
  assert.equal(world.mails.filter(subject => subject.includes('チャージ失敗')).length, 1);
  assert.ok(!world.kinds().some(kind => kind.startsWith('topup')));
+});
+
+// カードを登録していない人が、チャージしたクレジットだけで使う。
+const creditOnly = world => ({
+ grant: amount => billing.adminBillingAction(world.env, world.customer, world.uid, {action: 'grant_credit', amount, requestId: randomUUID(), reason: 'カードなしの通し試験'}),
+ credits: () => billing.customerCredits(world.env, world.customer),
+ signup: plan => world.act('checkout', {plan, channelPacks: 0, serverPacks: 0, rulePacks: 0, useCredits: true, requestId: randomUUID()}),
+ invoices: async () => (await stripe('GET', `invoices?customer=${world.customer}&limit=20`)).data,
+});
+test('カードなし: クレジットだけで申込み → 変更 → 26日の更新。足りない変更は請求を作らずに断る', async () => {
+ const world = await World.create(), only = creditOnly(world);
+ assert.equal((await stripe('GET', `customers/${world.customer}`)).invoice_settings.default_payment_method, null);
+ await only.grant(6000);
+ const months = billing.billingSchedule(Date.now()).initialMonths;
+ assert.equal((await only.signup('supporter')).status, 200); await world.settle();
+ assert.equal(await only.credits(), 6000 - 300 * months); assert.equal(await world.rules(), 1);
+ // 期間の初めに変更して、日割りの差額をはっきりさせる
+ await world.advance(renewal((await world.sub()).items.data[0].current_period_end)); await world.settle();
+ const afterRenewal = await only.credits(); assert.equal(afterRenewal, 6000 - 300 * (months + 1), '更新がクレジットで支払われていない');
+ const upgrade = await reserveIn(world)('plus'); assert.equal(upgrade.status, 200, JSON.stringify(upgrade.body)); await world.settle();
+ assert.equal((await world.act('status')).body.subscriptions[0].planId, 'plus');
+ const spent = afterRenewal - await only.credits(); assert.ok(spent > 300 && spent <= 500, `差額 ${spent}`);
+ // 残高を減らして、足りない変更を試す
+ await billing.adminBillingAction(world.env, world.customer, world.uid, {action: 'remove_credit', amount: await only.credits() - 100, requestId: randomUUID(), reason: 'カードなしの通し試験'});
+ const before = (await only.invoices()).length, choice = {plan: 'pro', channelPacks: 0, serverPacks: 0, rulePacks: 0};
+ const preview = await world.act('preview-update', choice); assert.equal(preview.status, 200); assert.equal(preview.body.paymentMethodRegistered, false); assert.ok(preview.body.creditShortage > 0);
+ const refused = await world.act('update', {...choice, requestId: randomUUID(), prorationDate: preview.body.prorationDate, expectedCreditApplied: preview.body.creditApplied, useCredits: true});
+ assert.equal(refused.status, 409); assert.match(refused.body.message, /クレジットが.+円不足/);
+ assert.equal((await only.invoices()).length, before, '断ったのに請求が作られた'); assert.equal(await only.credits(), 100); assert.ok(!(await world.sub()).pending_update);
+ // ダウングレードの予約は残高に関係なくできる
+ assert.equal((await reserveIn(world)('supporter')).status, 200);
+ assert.ok((await only.invoices()).every(item => item.status === 'paid'));
+});
+test('カードなし: 残高不足で未払い → チャージして画面から支払う → 配信が続く。再請求・停止後もクレジットで払える', async () => {
+ const world = await World.create(), only = creditOnly(world);
+ const months = billing.billingSchedule(Date.now()).initialMonths;
+ await only.grant(300 * months); assert.equal((await only.signup('supporter')).status, 200); await world.settle(); assert.equal(await only.credits(), 0);
+ const anchor = (await world.sub()).items.data[0].current_period_end, times = dunningTimes(anchor);
+ await world.advance(renewal(anchor)); await world.settle();
+ const bill = () => world.dunning().filter(row => !row.invoice_id.startsWith('hold:'));
+ assert.equal(bill()[0]?.status, 'retry_scheduled'); assert.equal(await world.rules(), 1, '月末までは配信を続ける');
+ let state = (await world.act('status')).body; assert.deepEqual(state.unpaid, {count: 1, total: 300, payableWithCredits: false});
+ assert.equal((await world.act('pay-unpaid', {requestId: randomUUID(), expectedTotal: 300})).status, 409);
+ await only.grant(299); assert.equal((await world.act('pay-unpaid', {requestId: randomUUID(), expectedTotal: 300})).status, 409); assert.equal(await only.credits(), 299, '一部だけ引かれた');
+ await only.grant(201);
+ const both = await Promise.all([1, 2].map(() => world.act('pay-unpaid', {requestId: randomUUID(), expectedTotal: 300}).catch(error => ({status: error.status, body: {}})))); await world.settle();
+ assert.ok(both.some(item => item.status === 200 && item.body.complete), JSON.stringify(both)); assert.equal(await only.credits(), 200, '二重に引かれた');
+ assert.equal(bill()[0].status, 'paid'); assert.equal((await world.sub()).status, 'active'); assert.equal(await world.rules(), 1);
+ assert.equal((await stripe('GET', `invoices/${bill()[0].invoice_id}`)).status, 'paid'); assert.equal(world.mails.filter(subject => subject.includes('再決済完了')).length, 1);
+ assert.equal((await world.act('status')).body.unpaid.count, 0);
+ // 次の月: 残高 200 では足りない → 未払い → 月末までに足りる額をチャージ → 再請求がクレジットで成功
+ const next = (await world.sub()).items.data[0].current_period_end, later = dunningTimes(next);
+ await world.advance(renewal(next)); await world.settle(); assert.equal(bill().filter(row => row.status === 'retry_scheduled').length, 1);
+ const shown = await only.credits(); await only.grant(400);
+ await world.advance(later.retry); await world.cron(later.retry); await world.settle();
+ assert.ok(bill().every(row => row.status === 'paid'), JSON.stringify(bill().map(row => row.status))); assert.equal((await world.sub()).status, 'active');
+ assert.equal((await only.invoices()).filter(item => item.status === 'open').length, 0);
+ assert.ok(await only.credits() >= 0 && await only.credits() < shown + 400, '再請求でクレジットが使われていない');
+});
+test('カードなし: 停止した後でも、チャージして画面から支払えば再開する', async () => {
+ const world = await World.create(), only = creditOnly(world);
+ await only.grant(300 * billing.billingSchedule(Date.now()).initialMonths); await only.signup('supporter'); await world.settle();
+ const anchor = (await world.sub()).items.data[0].current_period_end, times = dunningTimes(anchor);
+ await world.advance(renewal(anchor)); await world.settle(); await world.advance(times.retry); await world.cron(times.retry); await world.settle();
+ await world.advance(times.stop); await world.cron(times.stop); assert.equal(await world.rules(), 0, '停止していない');
+ await only.grant(1000); const unpaid = (await world.act('status')).body.unpaid; assert.deepEqual(unpaid, {count: 1, total: 300, payableWithCredits: true});
+ const paid = await world.act('pay-unpaid', {requestId: randomUUID(), expectedTotal: unpaid.total}); assert.equal(paid.status, 200, JSON.stringify(paid.body)); await world.settle();
+ assert.equal(await world.rules(), 1, '支払ったのに再開しない'); assert.equal(await only.credits(), 700); assert.equal((await world.sub()).status, 'active');
+ await billing.adminBillingAction(world.env, world.customer, world.uid, {action: 'cancel_immediately', requestId: randomUUID(), reason: 'カードなしの通し試験'}); await world.settle();
+ assert.equal(await world.rules(), 0); assert.equal(await only.credits(), 700, '解約で残高が変わった');
 });
 
 test('安全: 署名の誤り・本番のイベント・別の顧客の請求を受け付けない', async () => {

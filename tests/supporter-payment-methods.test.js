@@ -5,14 +5,15 @@ import { readFile } from 'node:fs/promises';
 const pages = ['site/supporter/index.html', 'site/supporter/plans.html'];
 
 for (const page of pages) {
- test(`${page} に支払い方法表がある`, async () => {
-  const html = await readFile(page, 'utf8');
-  assert.match(html, /id="payment-methods-title"/);
-  assert.match(html, /<caption>支払い方法ごとの利用可否<\/caption>/);
-  assert.match(html, /<th scope="col">プランの申込み・毎月の支払い<\/th>/);
-  assert.match(html, /<th scope="row">PayPay<\/th><td>×<\/td><td>○<\/td>/);
-  assert.match(html, /<th scope="row">銀行振込<\/th><td>×<\/td>/);
-  assert.match(html, /<th scope="row">コンビニ払い<\/th><td>×<\/td>/);
+ test(`${page} は、カードと事前チャージの違い・引き落としの順番を示す`, async () => {
+  const html = await readFile(page, 'utf8'), section = html.slice(html.indexOf('id="payment-methods-title"'), html.indexOf('カード番号はDPI-Botでは保存しません'));
+  for (const brand of ['Visa', 'Mastercard', 'American Express', 'JCB', 'Diners Club', 'Discover']) assert.ok(section.includes(brand), brand);
+  assert.match(section, /<h3>クレジットカード支払い式<\/h3>[\s\S]*そのまますぐに申し込めます/);
+  assert.match(section, /<h3>事前チャージ式<\/h3>[\s\S]*カードが無くても使えます[\s\S]*PayPay・コンビニ払い・銀行振込・クレジットカード/);
+  assert.match(section, /PayPay・コンビニ払い・銀行振込は、プランを直接支払うことはできません。いったんチャージしてから/);
+  assert.match(section, /① 事前チャージの残高[\s\S]*② クレジットカード/);
+  assert.match(section, /残高で全額を支払えた場合、カードには請求しません。/);
+  assert.doesNotMatch(section, /<table|×/);
  });
 }
 

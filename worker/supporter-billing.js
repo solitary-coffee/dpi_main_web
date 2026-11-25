@@ -115,6 +115,61 @@ export async function customerCredits(env,customer){
  if(!customer||!billingReady(env))return 0;
  return creditsFromBalance((await stripe(env,`customers/${encodeURIComponent(customer)}`)).balance);
 }
+export function paymentMethodRegistered(customer,subscription){
+ return !!(stripeId(customer?.invoice_settings?.default_payment_method)||stripeId(customer?.default_source)||stripeId(subscription?.default_payment_method));
+}
+async function recordInvoiceCreditPayment(env,db,uid,customer,invoiceId,amount,transactionId){
+ const credits=await customerCredits(env,customer),now=new Date().toISOString();
+ await db.prepare(`INSERT INTO supporter_credit_events
+  (id,discord_user_id,credit_delta,balance_after,stripe_transaction_id,reason,actor,created_at)
+  VALUES(?,?,?,?,?,'invoice_payment','user',?) ON CONFLICT DO NOTHING`)
+  .bind(`invoice:${invoiceId}`,uid,-amount,credits,transactionId||`invoice:${invoiceId}`,now).run();
+ await purchasedCreditStatus(db,uid,credits);
+ return credits;
+}
+export async function payInvoiceWithCredits(env,db,customer,uid,invoiceId){
+ const encoded=encodeURIComponent(invoiceId),invoice=await stripe(env,`invoices/${encoded}`),invoiceCustomer=stripeId(invoice?.customer),subscriptionId=invoiceSubscriptionId(invoice);
+ const owned=await db.prepare(`SELECT invoice_id FROM supporter_dunning WHERE invoice_id=? AND customer_id=? AND subscription_id=?`).bind(invoiceId,customer,subscriptionId).first();
+ if(invoiceCustomer!==customer||!subscriptionId||!owned)fail('この請求書はお支払いできません。',403);
+ if(!['open','paid'].includes(invoice?.status))fail('この請求書はお支払いできません。',409);
+ const amount=Math.max(0,Number(invoice.amount_remaining)||0),transactions=[];
+ await stripeListAll(env,`customers/${encodeURIComponent(customer)}/balance_transactions?limit=100`,item=>{if(item?.metadata?.dpi_credit_invoice===invoiceId)transactions.push(item);});
+ const net=transactions.reduce((sum,item)=>sum+(Number(item.amount)||0),0),n=transactions.length;
+ const debit=transactions.find(item=>Number(item.amount)>0);
+ if(invoice.status==='paid'){
+  const credits=net>0?await recordInvoiceCreditPayment(env,db,uid,customer,invoiceId,net,debit?.id):await customerCredits(env,customer);
+  return {invoice,amount:net,credits,alreadyPaid:true};
+ }
+ if(!Number.isSafeInteger(amount)||amount<1)fail('請求額を確認できません。',409);
+ if(net>0&&net<amount){
+  await stripe(env,`customers/${encodeURIComponent(customer)}/balance_transactions`,{amount:String(-net),currency:'jpy',description:`DPI-Bot invoice credit reversal: ${invoiceId}`,'metadata[dpi_user]':uid,'metadata[dpi_credit_action]':'invoice_payment','metadata[dpi_credit_invoice]':invoiceId},`dpi-credit-invoice-reverse-${invoiceId}-${n}`);
+  fail('クレジットの充当状態を復旧しました。もう一度お試しください。',503);
+ }
+ let transaction=debit;
+ if(net<amount){
+  const credits=await customerCredits(env,customer);
+  if(credits<amount)fail(`クレジットが${(amount-credits).toLocaleString('ja-JP')}円不足しています。`,409);
+  transaction=await stripe(env,`customers/${encodeURIComponent(customer)}/balance_transactions`,{amount:String(amount),currency:'jpy',description:`DPI-Bot invoice credit payment: ${invoiceId}`,'metadata[dpi_user]':uid,'metadata[dpi_credit_action]':'invoice_payment','metadata[dpi_credit_invoice]':invoiceId},`dpi-credit-invoice-${invoiceId}-${n}`);
+ }
+ let paid;
+ try{paid=await stripe(env,`invoices/${encoded}/pay`,{paid_out_of_band:'true'},`dpi-credit-invoice-pay-${invoiceId}-${n}`);}
+ catch(error){
+  let current;
+  try{current=await stripe(env,`invoices/${encoded}`);}catch{throw error;}
+  // 時間切れ・5xx・混雑では、後から支払いが成立することがある。戻さずに残し、次の実行で引き落とし済みとして続ける。
+  const refused=[400,402,403,404].includes(Number(error?.stripeStatus));
+  if(current?.status==='open'&&!refused)throw error;
+  if(current?.status==='paid')paid=current;
+  else if(current?.status==='open'){
+   await stripe(env,`customers/${encodeURIComponent(customer)}/balance_transactions`,{amount:String(-amount),currency:'jpy',description:`DPI-Bot invoice credit reversal: ${invoiceId}`,'metadata[dpi_user]':uid,'metadata[dpi_credit_action]':'invoice_payment','metadata[dpi_credit_invoice]':invoiceId},`dpi-credit-invoice-reverse-${invoiceId}-${n}`);
+   throw error;
+  }else throw error;
+ }
+ if(paid?.status!=='paid')fail('請求書の支払いを確認できません。',503);
+ const credits=await recordInvoiceCreditPayment(env,db,uid,customer,invoiceId,amount,transaction?.id);
+ try{await recordInvoicePaid(env,db,paid);await reconcileSuspendedInvoices(env,db,customer,5);}catch(error){console.error('Supporter credit invoice reconciliation failed',{invoiceId,errorName:error?.name||'Error'});}
+ return {invoice:paid,amount,credits,alreadyPaid:false};
+}
 async function purchasedCreditStatus(db,uid,stripeCredits){
  const now=Math.floor(Date.now()/1000);
  let lots;
@@ -387,25 +442,38 @@ async function dunningState(db,customer){
   ORDER BY CASE WHEN status='suspended' AND invoice_id LIKE 'hold:dispute:%' THEN 0 WHEN status='suspended' THEN 1 ELSE 2 END,initial_failed_at DESC LIMIT 1`).bind(customer).first();
  return {reason:String(row?.invoice_id||'').startsWith(DISPUTE_PREFIX)?'dispute':'payment',usageSuspended:row?.status==='suspended',status:row?.status||null,retryAt:unix(row?.retry_at),suspendAt:unix(row?.suspend_at)};
 }
+async function unpaidInvoices(env,db,customer){
+ if(!customer)return [];
+ const rows=await db.prepare(`SELECT invoice_id,initial_failed_at FROM supporter_dunning
+  WHERE customer_id=? AND invoice_id LIKE 'in_%' AND status IN ('retry_scheduled','retrying','suspend_scheduled','suspended')
+  ORDER BY initial_failed_at,invoice_id`).bind(customer).all();
+ const result=[];
+ for(const row of rows.results||[]){
+  const invoice=await stripe(env,`invoices/${encodeURIComponent(row.invoice_id)}`);
+  if(invoice?.status==='open'&&stripeId(invoice.customer)===customer&&invoiceSubscriptionId(invoice)&&Number(invoice.amount_remaining)>0)result.push({row,invoice,amount:Number(invoice.amount_remaining),debited:0});
+ }
+ // 引き落とし済みで、支払いの確定だけが残っている分は、もう一度残高を求めない。
+ if(result.length)await stripeListAll(env,`customers/${encodeURIComponent(customer)}/balance_transactions?limit=100`,item=>{
+  const target=result.find(entry=>entry.invoice.id===item?.metadata?.dpi_credit_invoice);if(target)target.debited+=Number(item.amount)||0;
+ });
+ return result;
+}
+const unpaidCreditNeeded=items=>items.reduce((sum,item)=>sum+(item.debited>=item.amount?0:item.amount),0);
 const mailDate=value=>new Intl.DateTimeFormat('ja-JP',{dateStyle:'long',timeStyle:'medium',timeZone:'Asia/Tokyo'}).format(new Date(Number(value)*1000));
 // 本文（テキスト）から HTML 版を作る。「名前: URL」の行は、名前をクリックすると開けるリンクにする。リンクにするのは当方と Stripe の URL だけ。
 const MAIL_LINK_HOSTS=new Set(['dpi-bot.com','discord.gg',...STRIPE_DOCUMENT_HOSTS]);
 const escapeHtml=value=>String(value).replace(/[&<>"']/g,character=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[character]));
 function mailLink(line){
  const link=line.match(/^([^:：]{1,60}): (https:\/\/\S+)$/);
- if(link){try{const url=new URL(link[2]);if(url.protocol==='https:'&&MAIL_LINK_HOSTS.has(url.hostname)&&!url.username&&!url.port)return `<a href="${escapeHtml(url.href)}" style="color:#1d5fbf;text-decoration:underline">${escapeHtml(link[1])}</a>`;}catch{}}
- const mail=line.match(/^メール: ([A-Za-z0-9._+-]+@[A-Za-z0-9.-]+)$/);
- if(mail)return `<a href="mailto:${escapeHtml(mail[1])}" style="color:#1d5fbf;text-decoration:underline">メールで問い合わせる</a>`;
+ if(link){try{const url=new URL(link[2]);if(url.protocol==='https:'&&MAIL_LINK_HOSTS.has(url.hostname)&&!url.username&&!url.port)return `<a href="${escapeHtml(url.href)}" style="color:#3d4652;font-weight:bold;text-decoration:underline">${escapeHtml(link[1])}</a>`;}catch{}}
  return escapeHtml(line);
 }
 export function mailHtml(text){
- const body=String(text).split('\n').map(line=>/^-{10,}$/.test(line)?'<hr style="border:0;border-top:1px solid #c9d1dc;margin:14px 0">':line?`<div style="margin:3px 0">${mailLink(line)}</div>`:'<div style="height:10px"></div>').join('');
- return `<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body style="margin:0;padding:16px;background:#f3f5f8"><div style="max-width:620px;margin:0 auto;padding:20px;background:#ffffff;border:1px solid #d9dfe7;border-radius:8px;color:#1f2733;font-family:'Hiragino Sans','Yu Gothic',Meiryo,sans-serif;font-size:15px;line-height:1.7;overflow-wrap:anywhere">${body}</div></body></html>`;
+ const body=String(text).split('\n').map(line=>/^-{10,}$/.test(line)?'<hr style="border:0;border-top:1px solid #b9bcc1;margin:14px 0">':line?`<div style="margin:3px 0">${mailLink(line)}</div>`:'<div style="height:10px"></div>').join('');
+ return `<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body style="margin:0;padding:16px;background:#d5d7da"><div style="max-width:620px;margin:0 auto;padding:20px;background:#ececee;border:1px solid #b9bcc1;border-radius:8px;color:#33363b;font-family:'Hiragino Sans','Yu Gothic',Meiryo,sans-serif;font-size:15px;line-height:1.7;overflow-wrap:anywhere">${body}</div></body></html>`;
 }
-function supporterMailSignature(env){
- return ['----------------------------------------','DPI-Bot','公式サイト: https://dpi-bot.com/','契約・支払い方法の管理: https://dpi-bot.com/site/supporter/','お問い合わせ: https://dpi-bot.com/site/supp/index.html',
-  ...(clean(env.NOTICE_REPLY_TO_EMAIL)?[`メール: ${clean(env.NOTICE_REPLY_TO_EMAIL)}`]:[]),'公式サポートサーバー: https://discord.gg/qFuZcGUb4K','利用規約: https://dpi-bot.com/terms/terms.html','特定商取引法に基づく表記: https://dpi-bot.com/terms/Specified.html','プライバシーポリシー: https://dpi-bot.com/terms/policy.html',
-  '※このメールは有料プランのお支払い・契約に関する重要なお知らせのため、配信停止の設定にかかわらずお送りしています。','※お心当たりがない場合は、お手数ですが上記のお問い合わせ先へご連絡ください。','----------------------------------------'].join('\n');
+function supporterMailSignature(){
+ return ['----------------------------------------','DPI-Bot','契約・支払い方法の管理: https://dpi-bot.com/site/supporter/','お問い合わせ: https://dpi-bot.com/site/supp/index.html','利用規約・特定商取引法に基づく表記: https://dpi-bot.com/terms/index.html','※お支払い・契約に関する重要なお知らせのため、配信停止の設定にかかわらずお送りしています。'].join('\n');
 }
 function billingMailContent(env,kind,invoice,retryAt,suspendAt,sentAt){
  const amount=new Intl.NumberFormat('ja-JP',{style:'currency',currency:clean(invoice.currency||'jpy').toUpperCase(),maximumFractionDigits:0}).format(Number(invoice.amount_paid||invoice.amount_due||invoice.total||0));
@@ -414,8 +482,8 @@ function billingMailContent(env,kind,invoice,retryAt,suspendAt,sentAt){
  const definitions={
   payment_succeeded:['【DPI-Bot】お支払い完了のお知らせ',[`DPI-Bot有料プランのお支払いが完了しました。`,`請求額: ${amount}`,`請求書: ${number}`]],
   retry_succeeded:['【DPI-Bot】再決済完了のお知らせ',[`月末の再決済が完了しました。引き続き有料プランをご利用いただけます。`,`請求額: ${amount}`,`請求書: ${number}`]],
-  payment_failed:['【DPI-Bot】お支払い失敗と月末再決済のお知らせ',[`26日のお支払いを完了できませんでした。`,`月末再決済日時: ${date(retryAt)}`,`請求額: ${amount}`,`請求書: ${number}`,'月末までに契約管理画面から支払方法をご確認ください。','この請求は登録済みの支払方法で再決済します。26日以降にチャージしたクレジットは、次回以降の請求から利用されます。']],
-  final_failed:['【DPI-Bot】月末再決済失敗・利用停止のお知らせ',[`月末の再決済を完了できませんでした。`,`利用停止日時: ${date(suspendAt)}`,`請求額: ${amount}`,`請求書: ${number}`,'翌月以降、有料プランの通知設定は支払い完了まで利用停止となります。未払いの請求が複数ある場合は、すべてのお支払いを確認してから再開します。','停止中は新しい月額料金を請求しません。停止から1か月間お支払いを確認できない場合は、契約を自動的に解約し、未払いの請求を取り消します。']],
+  payment_failed:['【DPI-Bot】お支払い失敗と月末再決済のお知らせ',[`26日のお支払いを完了できませんでした。`,`月末再決済日時: ${date(retryAt)}`,`請求額: ${amount}`,`請求書: ${number}`,'月末までに契約管理画面から支払方法をご確認ください。','請求額以上のクレジットをチャージすると、契約・支払い方法の管理画面の操作、または月末の再決済でクレジットから支払えます（一部だけの充当はできません）。']],
+  final_failed:['【DPI-Bot】月末再決済失敗・利用停止のお知らせ',[`月末の再決済を完了できませんでした。`,`利用停止日時: ${date(suspendAt)}`,`請求額: ${amount}`,`請求書: ${number}`,'翌月以降、有料プランの通知設定は支払い完了まで利用停止となります。未払いの請求が複数ある場合は、すべてのお支払いを確認してから再開します。','停止中は新しい月額料金を請求しません。停止から1か月間お支払いを確認できない場合は、契約を自動的に解約し、未払いの請求を取り消します。','請求額以上のクレジットをチャージすると、契約・支払い方法の管理画面の操作、または月末の再決済でクレジットから支払えます（一部だけの充当はできません）。']],
   auto_canceled:['【DPI-Bot】有料プラン自動解約のお知らせ',['利用停止から1か月間お支払いを確認できなかったため、有料プランの契約を自動的に解約しました。',`取り消した請求: ${amount}`,'今回の未払いの請求を新たにお支払いいただく必要はありません。再度ご利用になる場合は、改めてお申込みください。']],
   credit_topup_succeeded:['【DPI-Bot】クレジットチャージ完了のお知らせ',[`クレジットチャージが完了しました。`,`購入額: ${amount}`,`付与クレジット: ${Number(invoice.amount_paid||0).toLocaleString('ja-JP')}クレジット`,`有効期限: ${date(invoice.expires_at)}`,'購入クレジットは、有料プラン・プラン変更・追加オプションの支払いに利用できます。']],
   credit_topup_failed:['【DPI-Bot】クレジットチャージ失敗のお知らせ',[`クレジットチャージを完了できませんでした。`,`決済予定額: ${amount}`,'クレジットは付与されていません。支払方法を確認し、必要な場合は改めてチャージしてください。']],
@@ -429,7 +497,7 @@ function billingMailContent(env,kind,invoice,retryAt,suspendAt,sentAt){
  const management='お支払い・請求書の確認: https://dpi-bot.com/site/supporter/';
  if(['payment_failed','final_failed'].includes(kind))body.push(management);
  if(links.length)body.push(...links);else if((invoice.link_lookup_failed&&!body.includes(management))||kind==='credit_plan_payment_succeeded')body.push(kind==='credit_plan_payment_succeeded'?'お支払いの内容は契約・支払い方法の管理から確認できます':management);
- const lines=['DPI-Bot 有料プランをご利用いただき、ありがとうございます。','',...body,'',`通知番号: ${clean(invoice.id)}`,`送信日時（日本時間）: ${mailDate(sentAt)}`,'',supporterMailSignature(env)];
+ const lines=['DPI-Bot 有料プランをご利用いただき、ありがとうございます。','',...body,'',`通知番号: ${clean(invoice.id)}`,`送信日時（日本時間）: ${mailDate(sentAt)}`,'',supporterMailSignature()];
  return {subject,text:lines.join('\n')};
 }
 async function billingLinkGet(env,path,deadline){
@@ -503,7 +571,7 @@ function disciplinaryMailContent(env,kind,details,sentAt){
   ]],
  };
  const [subject,lines]=definitions[kind]||[];if(!subject)fail('通知メール種別を確認できません。',500);
- return{subject,text:['DPI-Bot 有料プランの利用者の方へ、大切なお知らせです。','',...lines,'',`通知番号: discipline:${clean(details.requestId)}`,`送信日時（日本時間）: ${mailDate(sentAt)}`,'',supporterMailSignature(env)].join('\n')};
+ return{subject,text:['DPI-Bot 有料プランの利用者の方へ、大切なお知らせです。','',...lines,'',`通知番号: discipline:${clean(details.requestId)}`,`送信日時（日本時間）: ${mailDate(sentAt)}`,'',supporterMailSignature()].join('\n')};
 }
 export async function sendSupporterDisciplinaryNotification(env,db,kind,details){
  const requestId=clean(details.requestId),uid=clean(details.uid),email=clean(details.email);
@@ -1016,6 +1084,8 @@ export async function billingAction(request,env,db,uid,input={}){
   await recoverCustomPriceChanges(env,db,uid);
   const resumed=await reconcileSuspendedInvoices(env,db,row.customer_id,5);
   const [summaries,invoices,credits,dunning]=await Promise.all([customerSubscriptionSummaries(env,row.customer_id),customerInvoices(env,row.customer_id),customerCredits(env,row.customer_id),dunningState(db,row.customer_id)]);
+  const unpaidItems=dunning.status?await unpaidInvoices(env,db,row.customer_id):[];
+  const unpaidTotal=unpaidItems.reduce((sum,item)=>sum+item.amount,0);
   const creditDetails=await purchasedCreditStatus(db,uid,credits);
   await releaseServiceHolds(env,db,summaries);
   const syncedCustom=await syncCustomWithStripe(db,uid,row.customer_id,summaries);
@@ -1042,7 +1112,7 @@ export async function billingAction(request,env,db,uid,input={}){
    }catch{ /* An unavailable or stale Checkout URL must never be displayed. */ }
   }
   if(resumed)await refreshSupporterSnapshotSafely(env,db,subscriptionSummariesByCustomer,'invoice_reconciled');
-  return json({mode:billingMode(env),billingDay:26,subscriptions:effective,customPlan:customPublic(syncedCustom),customCheckoutUrl,customChange:pendingCustomChange?{requestId:pendingCustomChange.request_id,status:pendingCustomChange.status,oldMonthlyYen:Number(pendingCustomChange.old_monthly_yen),nextMonthlyYen:Number(pendingCustomChange.next_monthly_yen),amountDueYen:Number(pendingCustomChange.amount_due_yen)}:null,customChangeCheckoutUrl,invoices,credits,creditDetails,dunning,accountEnforcement,rulesAdjustment,recoveredSubscription:recovery.recovered,creditTopupRecovery,deliveryEnabled:false});
+  return json({mode:billingMode(env),billingDay:26,subscriptions:effective,customPlan:customPublic(syncedCustom),customCheckoutUrl,customChange:pendingCustomChange?{requestId:pendingCustomChange.request_id,status:pendingCustomChange.status,oldMonthlyYen:Number(pendingCustomChange.old_monthly_yen),nextMonthlyYen:Number(pendingCustomChange.next_monthly_yen),amountDueYen:Number(pendingCustomChange.amount_due_yen)}:null,customChangeCheckoutUrl,invoices,credits,creditDetails,dunning,unpaid:{count:unpaidItems.length,total:unpaidTotal,payableWithCredits:unpaidItems.length>0&&credits>=unpaidCreditNeeded(unpaidItems)},accountEnforcement,rulesAdjustment,recoveredSubscription:recovery.recovered,creditTopupRecovery,deliveryEnabled:false});
  }
  // カスタムプランは解約だけを利用者が行える（Stripe の解約専用画面）。ほかの変更は管理者へ問い合わせ。
  if(customLocked(customPlan)&&action==='portal')return await customCancellationPortal(env,row.customer_id,customPlan);
@@ -1093,6 +1163,23 @@ export async function billingAction(request,env,db,uid,input={}){
   if(checkout.status!=='open')return json({message:'チャージ決済の反映を確認中です。残高を再読み込みしてください。'},409);
   return json({url:checkout.url,amount,credits:amount,expiresAt:checkout.expires_at||now+86400,mode:billingMode(env)});
  }
+ if(action==='pay-unpaid'){
+  const requestId=clean(input.requestId),expectedTotal=Number(input.expectedTotal);
+  if(!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestId)||!Number.isSafeInteger(expectedTotal)||expectedTotal<0)return json({message:'支払い情報が正しくありません。もう一度読み込み直してください。'},400);
+  const items=await unpaidInvoices(env,db,row.customer_id),total=items.reduce((sum,item)=>sum+item.amount,0);
+  if(total!==expectedTotal)return json({message:'金額が変わりました。もう一度確認してください。'},409);
+  const available=await customerCredits(env,row.customer_id);
+  const needed=unpaidCreditNeeded(items);
+  if(available<needed)return json({message:`クレジットが${(needed-available).toLocaleString('ja-JP')}円不足しています。`},409);
+  let paidCount=0,paidTotal=0,lastError=null;
+  for(const item of items){
+   try{const result=await payInvoiceWithCredits(env,db,row.customer_id,uid,item.invoice.id);paidCount+=1;paidTotal+=result.amount;}
+   catch(error){lastError=error;break;}
+  }
+  const [subscriptionsResult,credits,dunning]=await Promise.all([customerSubscriptionSummaries(env,row.customer_id),customerCredits(env,row.customer_id),dunningState(db,row.customer_id)]);
+  const creditDetails=await purchasedCreditStatus(db,uid,credits);
+  return json({message:lastError?`${paidCount}件を支払いました。残りの支払いは完了していません。`:`${paidCount}件の未払いをクレジットで支払いました。`,paidCount,total,paidTotal,credits,subscriptions:subscriptionsResult,dunning,creditDetails,complete:!lastError});
+ }
  const choice=selection(input);
  const recovery=await reconcilePaidCheckoutSubscription(env,row.customer_id,uid,db);
  const allExisting=await allSubscriptions(env,row.customer_id),existing=liveSubscriptions(allExisting);
@@ -1112,6 +1199,7 @@ export async function billingAction(request,env,db,uid,input={}){
   if(!current)return json({message:'更新できる契約がありません。先にプランを申し込んでください。'},409);
   if(cancelScheduled(current))return json({message:CANCEL_SCHEDULED_MESSAGE},409);
   const preview=await previewSubscriptionUpdate(env,row.customer_id,current,choice,prorationDate);
+  if(preview.creditShortage>0)return json({message:`クレジットが${preview.creditShortage.toLocaleString('ja-JP')}円不足しています。チャージしてから、もう一度お試しください。`},409);
   const expectedCreditApplied=Number(input.expectedCreditApplied||0);
   if(!Number.isInteger(expectedCreditApplied)||expectedCreditApplied!==preview.creditApplied)return json({message:'利用可能クレジットが変更されました。料金をもう一度確認してください。'},409);
   if(preview.creditApplied>0&&input.useCredits!==true)return json({message:'クレジット利用と差額支払いへの確認が必要です。料金をもう一度確認してください。'},409);
@@ -1260,8 +1348,9 @@ async function previewSubscriptionUpdate(env,customer,current,choice,requestedPr
   planProrationBreakdown=prorationBreakdown(invoice.lines?.data);
  }
  const planProration=planProrationBreakdown.net;
- const credits=await customerCredits(env,customer);
+ const customerObject=await stripe(env,`customers/${encodeURIComponent(customer)}`),credits=creditsFromBalance(customerObject.balance);
  const creditUse=creditApplication(credits,changeTiming==='immediate'?planProration:0,choice.monthly);
+ const hasPaymentMethod=paymentMethodRegistered(customerObject,current);
  return {
   prorationDate,expiresAt:prorationDate+600,billingDay:26,
   current:{plan:currentSummary.plan,planId:currentSummary.planId,monthly:currentSummary.amount,channels:currentSummary.channels,servers:currentSummary.servers,rules:currentSummary.rules},
@@ -1270,6 +1359,7 @@ async function previewSubscriptionUpdate(env,customer,current,choice,requestedPr
   planChanged,changeTiming,effectiveAt:changeTiming==='next_period'?currentSummary.nextRenewalAt:null,planProration,planProrationBreakdown,
   creditApplied:creditUse.totalCreditApplied,immediateCreditApplied:creditUse.immediateCreditApplied,nextInvoiceCreditApplied:creditUse.nextInvoiceCreditApplied,
   immediateDue:changeTiming==='next_period'?0:creditUse.immediateDue,nextInvoiceSubtotal:choice.monthly,nextInvoiceDue:creditUse.nextInvoiceDue,remainingCreditsAfterNext:creditUse.remainingAfterNext,
+  paymentMethodRegistered:hasPaymentMethod,creditShortage:!hasPaymentMethod&&changeTiming!=='next_period'&&creditUse.immediateDue>0?creditUse.immediateDue:0,
   creditGenerated:changeTiming==='next_period'?0:Math.max(0,-planProration),
   optionChange:{currentChannelPacks:currentSummary.channelPacks,nextChannelPacks:choice.channelPacks,currentServerPacks:currentSummary.serverPacks,nextServerPacks:choice.serverPacks,currentRulePacks:currentSummary.rulePacks,nextRulePacks:choice.rulePacks,prorated:false,effectiveAt:currentSummary.nextRenewalAt},
   nextRenewalAt:currentSummary.nextRenewalAt,
@@ -1996,7 +2086,15 @@ async function runBillingScheduleTasks(env,db,nowMs){
    // Stripe は同じ冪等キーには前回の応答（500 も）を返す。先に請求書の状態を確かめ、試行した時刻ごとのキーで支払う。
    invoice=await stripe(env,`invoices/${encodeURIComponent(row.invoice_id)}`);
    if(invoice?.status==='void'){await db.prepare(`UPDATE supporter_dunning SET status='closed',updated_at=? WHERE invoice_id=?`).bind(now,row.invoice_id).run();continue;}
-   if(invoice?.status!=='paid')invoice=await stripe(env,`invoices/${encodeURIComponent(row.invoice_id)}/pay`,{},`dpi-month-end-retry-${row.invoice_id}-${Math.floor(now/3600)}`);
+   if(invoice?.status!=='paid'){
+    const holder=await db.prepare('SELECT discord_user_id FROM supporter_billing WHERE customer_id=?').bind(row.customer_id).first();
+    if(holder?.discord_user_id&&Number(invoice.amount_remaining)>0){
+     // 残高不足・対象外（409・403）のときだけカードを試す。引き落とし済みで結果が不明なときは、カードに課金せず次回に続ける。
+     try{invoice=(await payInvoiceWithCredits(env,db,row.customer_id,holder.discord_user_id,row.invoice_id)).invoice;}
+     catch(error){if(![403,409].includes(error?.status))throw error;}
+    }
+    if(invoice?.status!=='paid')invoice=await stripe(env,`invoices/${encodeURIComponent(row.invoice_id)}/pay`,{},`dpi-month-end-retry-${row.invoice_id}-${Math.floor(now/3600)}`);
+   }
   }catch(error){paymentError=error;console.error('Supporter month-end payment retry failed',{invoiceId:row.invoice_id,errorName:error?.name||'Error',stripeStatus:Number(error?.stripeStatus)||null});}
   if(invoice?.status==='paid'){
    try{await recordInvoicePaid(env,db,invoice);}catch(error){console.error('Supporter payment success email failed',{invoiceId:row.invoice_id,errorName:error?.name||'Error'});}paid+=1;paidAmount+=Number(invoice.amount_paid||row.amount_due)||0;continue;
