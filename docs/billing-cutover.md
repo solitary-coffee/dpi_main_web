@@ -66,6 +66,9 @@ node scripts/billing-cutover.mjs stage invite     … 許可リスト（SUPPORTE
 node scripts/billing-cutover.mjs stage public     … 一般公開（人数の上限は SUPPORTER_SUBSCRIBER_LIMIT）→ PR をマージ
 ```
 
+本番決済で有効な契約を確認し、公式 Discord の加入者・プラン別ロールを Webhook と定期処理で同期します。
+ロール同期だけを止める場合は `SUPPORTER_ROLE_GUILD_ID` を空にしてください。
+
 切替後は、最初の 26 日（請求）・月末日 12:00（再決済）・翌月 1 日 0:00（停止）を確認する。
 
 ## 5. 止める・戻す

@@ -3,6 +3,7 @@ import { getCustomPlan,customLocked,customPublic,enrichCustomSubscriptions,syncC
 import { currentCustomChange,getCustomChange,commitCustomChange } from './supporter-custom-change.js';
 import { PLAN_FEATURES } from '../site/supporter/plan-features.js';
 import { flushNotices, jstDate, memberLabel, noticeCounts, queueMembershipNotice, queueNotice, suspendedCustomers, yen } from './supporter-ops-notice.js';
+import { reconcileSupporterRolesSafely } from './supporter-roles.js';
 
 // 決済のモード。SUPPORTER_BILLING_MODE は 'test' と 'live' だけを受け付け、キーの種類（sk/rk_test_・sk/rk_live_）と
 // 一致しないときは決済を無効にする。Stripe の応答・Webhook の livemode も、このモードと一致するものだけを扱う。
@@ -1087,6 +1088,7 @@ export async function billingAction(request,env,db,uid,input={}){
   const result=await provisionCreditFundedSignup(env,db,uid,row.customer_id,choice,input);
   const [summaries,credits]=await Promise.all([customerSubscriptionSummaries(env,row.customer_id),customerCredits(env,row.customer_id)]);
   const creditDetails=await purchasedCreditStatus(db,uid,credits);
+  await reconcileSupporterRolesSafely(env,db,subscriptionSummariesByCustomer,{discordUserId:uid});
   return json({message:`${result.amount.toLocaleString('ja-JP')}クレジットでお申し込みが完了しました。カード情報の入力は不要でした。`,paidWithCredits:true,creditApplied:result.amount,balanceAfter:result.balanceAfter,billingDay:26,subscriptions:summaries,credits,creditDetails,deliveryEnabled:false});
  }
  row=await recoverStaleCheckoutAttempt(db,uid,row);
@@ -1583,7 +1585,8 @@ export async function billingWebhook(request,env,ctx){
  await db.batch([db.prepare('INSERT INTO supporter_stripe_events(id,received_at) VALUES(?,?) ON CONFLICT DO NOTHING').bind(event.id,Date.now()),db.prepare('UPDATE supporter_billing SET dirty=1 WHERE customer_id=?').bind(eventCustomerId(event))]);
  const snapshotTask=refreshSupporterSnapshotSafely(env,db,subscriptionSummariesByCustomer,`stripe_${event.type}`);
  const noticeTask=flushNotices(env,db);
- if(ctx?.waitUntil){ctx.waitUntil(snapshotTask);ctx.waitUntil(noticeTask);}else{await snapshotTask;await noticeTask;}
+ const roleTask=reconcileSupporterRolesSafely(env,db,subscriptionSummariesByCustomer,{customer:eventCustomerId(event)||''});
+ if(ctx?.waitUntil){ctx.waitUntil(snapshotTask);ctx.waitUntil(noticeTask);ctx.waitUntil(roleTask);}else{await snapshotTask;await noticeTask;await roleTask;}
  return json({received:true});
 }
 // 運営向けの通知（Discord）。失敗しても Webhook の処理は止めない。
@@ -1683,6 +1686,7 @@ export async function runSupporterBillingSchedule(env,nowMs=Date.now()){
  await flushNotices(env,db,50);
  // Republish again so suspensions/recoveries from this run reach delivery promptly.
  await publishScheduledSnapshot(env,db,'billing_schedule');
+ await reconcileSupporterRolesSafely(env,db,subscriptionSummariesByCustomer,{nowMs,renew:true});
  if(taskError)throw taskError;
  return tasks;
 }

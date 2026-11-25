@@ -165,3 +165,28 @@ test('名前の装飾・メンション・改行を無害にし、テストモ�
 test('日本時間の日付', () => {
  assert.deepEqual([jstDate(jst('2026-12-26T00:00:00')).key, jstDate(jst('2026-12-25T23:59:59')).day, jstDate(jst('2028-02-10T12:00:00')).lastDay, jstDate(jst('2027-01-01T00:00:00')).start], ['2026-12-26', 25, 29, jst('2027-01-01T00:00:00')]);
 });
+
+test('本番の Webhook で、公式サーバーのロールを付け外しする。Discord が止まっていても 200 を返す', async t => {
+ for (const down of [false, true]) {
+  const store = await database(t); if (!store) return;
+  const env = envFor(store.db, {BILLING_NOTICE_WEBHOOK: '', MEMBERSHIP_NOTICE_WEBHOOK: '', DISCORD_BOT_TOKEN: 'token', SUPPORTER_ROLE_GUILD_ID: '123456789012345679', SUPPORTER_ROLE_MEMBER: '123456789012345671', SUPPORTER_ROLE_BASIC: '123456789012345672', SUPPORTER_ROLE_PLUS: '123456789012345673', SUPPORTER_ROLE_PRO: '123456789012345674', SUPPORTER_ROLE_CUSTOM: '123456789012345675'});
+  const calls = [], original = globalThis.fetch; let current = subscription();
+  globalThis.fetch = async (url, init = {}) => {
+   const target = new URL(url);
+   if (target.hostname !== 'discord.com') return Response.json(target.pathname === '/v1/subscriptions' ? {data: [current]} : {data: []});
+   calls.push(`${init.method} ${target.pathname.split('/').slice(-3).join('/')}`);
+   if (down) throw new TypeError('network');
+   return new Response(null, {status: 204});
+  };
+  try {
+   assert.equal((await webhook(env, 'customer.subscription.created', current)).status, 200);
+   assert.deepEqual(calls.sort(), [`PUT ${UID}/roles/123456789012345671`, `PUT ${UID}/roles/123456789012345672`]);
+   current = subscription({status: 'canceled'});
+   assert.equal((await webhook(env, 'customer.subscription.deleted', current)).status, 200);
+   assert.equal(calls.filter(call => call.startsWith('DELETE')).length, 2);
+   calls.length = 0;
+   assert.equal((await webhook({...env, SUPPORTER_ROLE_GUILD_ID: ''}, 'customer.subscription.updated', subscription())).status, 200);
+   assert.equal(calls.length, 0);
+  } finally { globalThis.fetch = original; }
+ }
+});
