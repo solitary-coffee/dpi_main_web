@@ -1162,6 +1162,24 @@ test('11月の申込み: 残高だけの申込み（25日）とカード（27日
  assert.deepEqual((await stripe('GET', `invoices?customer=${late.customer}&limit=20`)).data.filter(item => item.total > 0).map(item => item.amount_paid), [800]);
 });
 
+test('変更: 最初の更新の前でも、支払い済みの分を差し引く（27日の申込み、カード・残高・拒否・2回目の変更）', async () => {
+ const change = async (world, plan) => {
+  const selection = {plan, channelPacks: 0, serverPacks: 0, rulePacks: 0}, preview = await world.act('preview-update', selection); assert.equal(preview.status, 200, JSON.stringify(preview.body));
+  const result = await world.act('update', {...selection, requestId: randomUUID(), prorationDate: preview.body.prorationDate, expectedCreditApplied: preview.body.creditApplied, useCredits: preview.body.creditApplied > 0}); await world.settle();
+  return {preview: preview.body, status: result.status, body: result.body, invoice: (await stripe('GET', `invoices?customer=${world.customer}&limit=20`)).data.find(item => item.billing_reason === 'subscription_update')};
+ };
+ const card = await World.create({start: jst(2026, 10, 27, 9)}); await card.subscribe('supporter'); await card.advance(jst(2026, 10, 29, 9));
+ const first = await change(card, 'plus'); assert.equal(first.status, 200, JSON.stringify(first.body));
+ const ratio = first.preview.planProrationBreakdown.newPlanCharge / 800; assert.ok(ratio > 0.8 && ratio < 1);
+ assert.equal(first.preview.planProrationBreakdown.unusedPlanCredit, Math.round(first.preview.planProrationBreakdown.newPlanCharge * 300 / 800)); assert.equal(first.invoice.amount_paid, first.preview.planProration); assert.ok(first.invoice.amount_paid < 500);
+ const second = await change(card, 'pro'); assert.equal(second.status, 200); assert.equal(second.preview.planProrationBreakdown.prepaidCredit, undefined, '二重に差し引いた'); assert.ok(second.invoice.amount_paid > 350 && second.invoice.amount_paid < 480, String(second.invoice.amount_paid));
+ await card.advance(renewal(jst(2026, 11, 26))); await card.settle(); assert.equal((await stripe('GET', `invoices?customer=${card.customer}&limit=1`)).data[0].amount_paid, 1280);
+ const world = await World.create({start: jst(2026, 10, 27, 9)}), only = creditOnly(world); await only.grant(900); assert.equal((await only.signup('supporter')).status, 200); await world.settle();
+ const paid = await change(world, 'plus'); assert.equal(paid.status, 200, JSON.stringify(paid.body)); assert.equal(await only.credits(), 600 - paid.preview.planProration);
+ const bad = await World.create({start: jst(2026, 10, 27, 9)}); await bad.subscribe('supporter'); await bad.useCard('pm_card_chargeCustomerFail');
+ const failed = await change(bad, 'plus'); assert.equal(failed.body.paymentPending, true); assert.equal((await bad.act('status')).body.subscriptions[0].planId, 'supporter'); assert.equal((await stripe('GET', `invoiceitems?customer=${bad.customer}&pending=true&limit=10`)).data.length, 0); assert.equal(await billing.customerCredits(bad.env, bad.customer), 0);
+});
+
 test('安全: 署名の誤り・本番のイベント・別の顧客の請求を受け付けない', async () => {
  const world = await World.create({clock: false});
  const body = JSON.stringify({id: 'evt_x', type: 'invoice.paid', livemode: false, data: {object: {}}});
