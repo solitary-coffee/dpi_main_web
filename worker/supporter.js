@@ -1141,7 +1141,9 @@ export async function handleSupporterRequest(request, env, ctx) {
     const channelsByGuild=Object.fromEntries(channelResults.map(result=>[result.guildId,result.channels]));
     return response({account:supporterAdminDetails(row,channelsByGuild),customPlan:customPublic(await getCustomPlan(db,uid)),channelLookupFailedGuildIds:channelResults.filter(result=>result.failed).map(result=>result.guildId)});
    }
-   const asset = await env.ASSETS.fetch(request);
+   // 利用者側（非公開の間は 404）と同じ機能の定義を、管理者の認証を通るこの場所から読む。
+   const shared = path === '/site/supporter-admin/plan-features.js' ? new Request(new URL('/site/supporter/plan-features.js', request.url), {headers: {Accept: 'text/javascript'}}) : request;
+   const asset = await env.ASSETS.fetch(shared);
    const headers = new Headers(asset.headers);
    headers.set('Cache-Control','no-store');headers.set('X-Content-Type-Options','nosniff');headers.set('Referrer-Policy','no-referrer');
    if ((headers.get('content-type')||'').includes('text/html')) headers.set('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'");

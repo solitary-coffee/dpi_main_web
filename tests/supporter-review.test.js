@@ -94,3 +94,10 @@ test('公開設定: 有料プランは非公開で、公開ページから案内
  assert.deepEqual([config.vars.SUPPORTER_PREVIEW_OPEN, config.vars.SUPPORTER_PUBLIC_ENABLED, config.vars.SUPPORTER_REVIEW_ENABLED], ['false', 'false', 'false']);
  assert.doesNotMatch(await readFile(new URL('../site/dever/index.html', import.meta.url), 'utf8'), /site\/supporter\//);
 });
+test('管理画面は、非公開の利用者側フォルダを読み込まない（管理者の認証を通る場所から読む）', async () => {
+ const { readFile, readdir } = await import('node:fs/promises');
+ const dir = new URL('../site/supporter-admin/', import.meta.url);
+ for (const name of (await readdir(dir)).filter(item => /\.(?:js|html|css)$/.test(item))) assert.doesNotMatch(await readFile(new URL(name, dir), 'utf8'), /(?:from '|src="|href="|import\(')(?:\.\.\/|\/site\/)supporter\//, name);
+ const worker = await readFile(new URL('../worker/supporter.js', import.meta.url), 'utf8');
+ assert.ok(worker.indexOf("path === '/site/supporter-admin/plan-features.js'") > worker.indexOf('const admin = await authenticateNewsletterAdmin(request, env);'));
+});
