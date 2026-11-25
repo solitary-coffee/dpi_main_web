@@ -419,12 +419,14 @@ export async function sendBillingNotification(env,db,kind,invoice,retryAt=null,s
  const content=billingMailContent(kind,invoice,retryAt,suspendAt);
  try{
   await env.NOTICE_EMAIL.send({to:account.billing_email,from:{email:clean(env.NOTICE_FROM_EMAIL),name:'DPI-Bot'},subject:content.subject,text:content.text,...(clean(env.NOTICE_REPLY_TO_EMAIL)?{replyTo:clean(env.NOTICE_REPLY_TO_EMAIL)}:{}),headers:{'Auto-Submitted':'auto-generated','Content-Language':'ja','X-DPI-Mail-Type':`supporter-${kind}`}});
-  await db.prepare(`UPDATE supporter_billing_notifications SET status='sent',sent_at=?,updated_at=? WHERE invoice_id=? AND kind=?`).bind(now,now,invoiceId,kind).run();
  }catch(error){
   const firstFailed=String(notice?.last_error||'').match(/^(\d+):/)?.[1]||String(now);
   await db.prepare(`UPDATE supporter_billing_notifications SET status='failed',last_error=?,updated_at=? WHERE invoice_id=? AND kind=?`).bind(`${firstFailed}:${clean(error?.code||error?.name||'unknown')}`.slice(0,80),now,invoiceId,kind).run();
   throw Object.assign(error,{billingEmailFailure:true});
  }
+ // 送れた後の記録だけの失敗では、失敗扱いにしない（同じメールを送り直さない）。
+ try{await db.prepare(`UPDATE supporter_billing_notifications SET status='sent',sent_at=?,updated_at=? WHERE invoice_id=? AND kind=?`).bind(now,now,invoiceId,kind).run();}
+ catch(error){console.error('Supporter billing email was sent but not recorded',{invoiceId,kind,errorName:error?.name||'Error'});}
 }
 async function sendBillingNotificationSafely(env,db,kind,invoice,retryAt=null,suspendAt=null){
  try{await sendBillingNotification(env,db,kind,invoice,retryAt,suspendAt);}
@@ -1927,8 +1929,8 @@ async function runBillingScheduleTasks(env,db,nowMs){
  const autoCanceled=await cancelLongUnpaid(env,db,now);
  await queueStopNotices(env,db,now,{suspended,autoCanceled});
  const failedNotices=await db.prepare(`SELECT invoice_id,kind,attempts,last_error,updated_at FROM supporter_billing_notifications
-  WHERE status='failed' AND attempts<5 AND kind IN ('payment_succeeded','payment_failed','retry_succeeded','final_failed','auto_canceled','credit_topup_succeeded','credit_topup_failed','credit_plan_payment_succeeded','credit_expired')
-  ORDER BY updated_at LIMIT 25`).all();
+  WHERE status='failed' AND attempts<5 AND updated_at>=? AND kind IN ('payment_succeeded','payment_failed','retry_succeeded','final_failed','auto_canceled','credit_topup_succeeded','credit_topup_failed','credit_plan_payment_succeeded','credit_expired')
+  ORDER BY updated_at LIMIT 25`).bind(now-3*86400).all();
  for(const row of failedNotices.results||[]){
   const firstFailed=Number(String(row.last_error||'').match(/^(\d+):/)?.[1]||row.updated_at||0);
   if(!firstFailed||now-firstFailed>3*86400)continue;

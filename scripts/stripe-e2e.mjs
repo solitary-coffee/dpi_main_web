@@ -742,12 +742,12 @@ test('事例: クレジットの一部充当', async () => {
 });
 
 test('事例: クレジットの期限切れ', async () => {
- const world = await World.create({clock: false}), at = now();
- world.raw.prepare("INSERT INTO supporter_credit_lots(id,discord_user_id,source_type,source_id,original_amount,remaining_amount,expires_at,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)").run('used', world.uid, 'purchase', 'pi_used', 300, 0, at - 1, 'consumed', at - DAY, at - DAY);
- world.raw.prepare("INSERT INTO supporter_credit_lots(id,discord_user_id,source_type,source_id,original_amount,remaining_amount,expires_at,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)").run('active', world.uid, 'purchase', 'pi_active', 200, 200, at + 1, 'active', at - DAY, at - DAY);
+ const world = await World.create({clock: false}), at = now(), used = `used-${randomUUID()}`, active = `active-${randomUUID()}`;
+ world.raw.prepare("INSERT INTO supporter_credit_lots(id,discord_user_id,source_type,source_id,original_amount,remaining_amount,expires_at,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)").run(used, world.uid, 'purchase', `pi_${used}`, 300, 0, at - 1, 'consumed', at - DAY, at - DAY);
+ world.raw.prepare("INSERT INTO supporter_credit_lots(id,discord_user_id,source_type,source_id,original_amount,remaining_amount,expires_at,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)").run(active, world.uid, 'purchase', `pi_${active}`, 200, 200, at + 600, 'active', at - DAY, at - DAY);
  await billing.adminBillingAction(world.env, world.customer, world.uid, {action: 'grant_credit', amount: 200, requestId: randomUUID(), reason: '期限切れの試験'});
- assert.equal((await world.cron(at)).expiredCredits, 0); assert.equal((await world.cron(at + 2)).expiredCredits, 1); assert.equal((await world.cron(at + 3)).expiredCredits, 0);
- assert.equal(world.raw.prepare("SELECT status FROM supporter_credit_lots WHERE id='used'").get().status, 'consumed');
+ assert.equal((await world.cron(at)).expiredCredits, 0); assert.equal((await world.cron(at + 601)).expiredCredits, 1); assert.equal((await world.cron(at + 700)).expiredCredits, 0);
+ assert.equal(world.raw.prepare("SELECT status FROM supporter_credit_lots WHERE id=?").get(used).status, 'consumed');
  const state = await financialState(world); assert.equal(state.subscriptions, 0); assert.equal(state.invoices.length, 0); assert.equal(state.credits, 0);
 });
 

@@ -83,3 +83,20 @@ test('書き込み権限判定は403を拒否し、404・400を許可し、200�
  assert.equal(await verifyStripeWritePermissions('rk_live_x',{fetchImpl:response(400)}),RUNTIME_WRITE_PROBES.length);
  await assert.rejects(verifyStripeWritePermissions('rk_live_x',{fetchImpl:response(200)}),/成功してしまいました/);
 });
+
+test('期限切れの失敗通知が多くても、新しい失敗通知を送り直す。送信後の記録の失敗では送り直さない',async t=>{
+ const store=await database(t);if(!store)return;
+ const now=Math.floor(Date.now()/1000),insert=(id,at)=>{
+  store.raw.prepare(`INSERT INTO supporter_dunning(invoice_id,customer_id,subscription_id,amount_due,currency,status,initial_failed_at,retry_at,suspend_at,updated_at) VALUES(?,?,'sub_mail',300,'jpy','retry_scheduled',?,?,?,?)`).run(id,CUSTOMER,now,now+86400,now+90000,now);
+  store.raw.prepare(`INSERT INTO supporter_billing_notifications(invoice_id,kind,status,attempts,last_error,updated_at) VALUES(?,'payment_failed','failed',1,?,?)`).run(id,`${at}:Error`,at);
+ };
+ for(let index=0;index<40;index+=1)insert(`in_expired_${index}`,now-5*86400);
+ insert('in_fresh',now-3600);
+ let sends=0;const original=globalThis.fetch;t.after(()=>{globalThis.fetch=original;});
+ globalThis.fetch=async()=>Response.json({data:[],livemode:false});
+ const db={...store.db,prepare(sql){if(sql.includes("SET status='sent'"))throw new Error('D1 unavailable');return store.db.prepare(sql);}};
+ const environment={...env(db),NOTICE_EMAIL:{async send(){sends+=1;}}};
+ await runSupporterBillingSchedule(environment,now*1000);await runSupporterBillingSchedule(environment,now*1000);
+ assert.equal(sends,1);
+ assert.notEqual(store.raw.prepare("SELECT status FROM supporter_billing_notifications WHERE invoice_id='in_fresh'").get().status,'failed');
+});
