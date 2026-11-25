@@ -17,6 +17,19 @@ node scripts/stripe-e2e.mjs --shared --browser  … 支払い画面（Stripe Che
 - 時間はテストクロックで進める。終わると、作った顧客はテストクロックと一緒に消える。
 - 全部を実行したときの結果は `%LOCALAPPDATA%\\dpi-bot\\stripe-e2e-report.json` に残り、`billing-cutover.mjs status` が確認する。
 
+- `STRIPE_E2E_PROXY`（この PC の中継）を指定すると、キーを手元に置かずに実行できる。中継は、登録済みのテストキーを持つ Worker の開発用プレビュー（`wrangler dev --remote`）で動かし、テストキー以外では動かないようにする。
+
+## 1.5 運営向けの通知（Discord）
+
+`worker/supporter-ops-notice.js` が、Worker Secrets の `BILLING_NOTICE_WEBHOOK`（支払い）・`MEMBERSHIP_NOTICE_WEBHOOK`（加入・変更・解約）へ送る。チャンネルの作成と登録は dpi_code の `tools/billing_notice_channels.py`。
+
+| チャンネル | 内容 |
+|---|---|
+| 支払い | 26 日 0 時の請求の開始、12 時の結果、月末日 12 時の再請求の開始と結果、1 日 0 時の停止・自動解約の件数と前月の集計、返金・支払異議・不正の警告、クレジットチャージ |
+| 加入・変更・解約 | 新規加入（再加入）、プラン変更、変更の予約、解約の予約と取り消し、解約（自動解約を含む） |
+
+同じ出来事は 1 回だけ送り、Discord に届かないときは次の機会に送り直す。メールアドレスや Stripe の ID は載せない。テストモードでは題名に「【テスト】」が付く。
+
 ## 2. 本番用の Stripe 設定（何度でも・切替前に行える）
 
 ダッシュボードで行うもの:

@@ -19,6 +19,7 @@ import { e2eKey } from './e2e-key.mjs';
 import { EVENTS, PRICES, ROOT, ensurePortal, ensurePrices, findWebhooks, stripeClient } from './stripe-setup-lib.mjs';
 import * as billing from '../worker/supporter-billing.js';
 import { buildSupporterSnapshot } from '../worker/supporter-snapshot.js';
+import { stageCustomChange } from '../worker/supporter-custom-change.js';
 
 const KEY = e2eKey();
 const stripe = stripeClient(KEY);
@@ -27,6 +28,24 @@ const useBrowser = args.includes('--browser');
 const filters = args.filter(item => !item.startsWith('--'));
 const GUILD = '12345678901234567', CHANNEL = '98765432109876543';
 const DAY = 86400;
+
+// Stripe の全体の一覧には、テストクロックの顧客の契約が出ない。試験中の利用者のテストクロックを指定して、本番と同じ見え方にする。
+let currentClock = '', currentCustomer = '';
+const baseFetch = globalThis.fetch;
+globalThis.fetch = (input, init = {}) => {
+ const url = new URL(typeof input === 'string' ? input : input.url ?? input.href);
+ if (currentClock && url.hostname === 'api.stripe.com' && url.pathname === '/v1/subscriptions' && (init.method || 'GET') === 'GET' && !url.searchParams.has('customer')) {
+  url.searchParams.set('test_clock', currentClock);
+  return baseFetch(url.href, init);
+ }
+ // 請求書の全体の一覧（26日の結果の集計）も同じ。試験中の利用者の請求書だけにする。
+ if (currentClock && url.hostname === 'api.stripe.com' && url.pathname === '/v1/invoices' && (init.method || 'GET') === 'GET' && !url.searchParams.has('customer') && !url.searchParams.has('subscription')) {
+  url.searchParams.set('customer', currentCustomer);
+  url.searchParams.delete('created[gte]'); // テストクロックの請求書は、作成日の絞り込みだけ実際の時刻で働く（Worker 側でも作成日を確かめる）
+  return baseFetch(url.href, init);
+ }
+ return baseFetch(input, init);
+};
 
 // --- 時刻 ---
 const RealDate = Date;
@@ -59,12 +78,13 @@ async function database() {
 
 // --- 1 つの試験の環境（利用者 1 人・テストクロック 1 つ） ---
 let seedIds = {}, portalId = '', userSeq = 0;
-const clocks = [], seenEvents = new Set();
+const clocks = [], plainCustomers = [], seenEvents = new Set();
 class World {
  static async create({pm = 'pm_card_visa', clock = true} = {}) {
   const world = new World();
   resetNow();
   Object.assign(world, await database());
+  currentClock = '';
   world.uid = String(100000000000000000n + BigInt(RealDate.now()) * 10n + BigInt(userSeq += 1));
   world.mails = [];
   world.env = {SUPPORTER_BILLING_MODE: 'test', STRIPE_SECRET_KEY: KEY, STRIPE_WEBHOOK_SECRET: 'whsec_e2e', ...seedIds, STRIPE_PORTAL_CONFIG: portalId, SUPPORTER_PUBLIC_ORIGIN: 'https://dpi-bot.com',
@@ -72,9 +92,11 @@ class World {
   const params = {name: `e2e ${world.uid}`, email: `e2e-${world.uid}@example.com`, 'metadata[dpi_user]': world.uid};
   if (clock) {
    const created = await stripe('POST', 'test_helpers/test_clocks', {frozen_time: String(now()), name: `dpi-e2e ${world.uid}`});
-   world.clock = created.id; clocks.push(created.id); params.test_clock = created.id;
+   world.clock = currentClock = created.id; clocks.push(created.id); params.test_clock = created.id;
   }
   world.customer = (await stripe('POST', 'customers', params)).id;
+  currentCustomer = world.customer;
+  if (!clock) plainCustomers.push(world.customer);
   world.raw.prepare('INSERT INTO supporter_accounts(discord_user_id,billing_email,registered_at,updated_at,settings_json) VALUES(?,?,?,?,?)').run(world.uid, params.email, '2026-01-01', '2026-01-01',
    JSON.stringify({rules: [{name: 'R1', guildId: GUILD, channelId: CHANNEL, channelIds: [CHANNEL], type: 'earthquake', detail: 'all', region: 'all'}]}));
   world.raw.prepare('INSERT INTO supporter_billing(discord_user_id,customer_id) VALUES(?,?)').run(world.uid, world.customer);
@@ -129,6 +151,8 @@ class World {
  async rules() { return (await buildSupporterSnapshot(this.db, this.env, billing.subscriptionSummariesByCustomer, Date.now())).rules.length; }
  async subs() { return (await stripe('GET', `subscriptions?customer=${this.customer}&status=all&limit=20`)).data; }
  async sub() { return (await this.subs()).find(item => !['canceled', 'incomplete_expired'].includes(item.status)); }
+ notices() { return this.raw.prepare('SELECT kind,payload_json FROM supporter_ops_notices ORDER BY created_at,rowid').all().map(row => ({kind: row.kind, ...JSON.parse(row.payload_json)})); }
+ kinds() { return this.notices().map(row => row.kind); }
  dunning() { return this.raw.prepare('SELECT * FROM supporter_dunning ORDER BY initial_failed_at').all(); }
  // 支払い画面の代わりに、同じ内容の支払いを API で完了させ、完了の通知を渡す（画面の実操作は --browser で確かめる）。
  async pay(amount, metadata, card = this.card) {
@@ -182,7 +206,12 @@ test('申込み・更新: 初回 → 26日の更新 → 明細と配信', async 
  assert.equal(status.status, 200); assert.equal(status.body.subscriptions[0].planId, 'supporter'); assert.equal(status.body.subscriptions[0].channels, 5);
  // 同じ完了通知がもう一度届いても、契約は増えない
  assert.equal((await world.subs()).length, 1);
+ assert.deepEqual(world.kinds(), ['join']);
+ await world.advance(schedule.anchor + 10); await world.cron(schedule.anchor + 10);
  await world.advance(renewal(schedule.anchor)); await world.settle();
+ await world.advance(schedule.anchor + 12 * 3600); await world.cron(schedule.anchor + 12 * 3600);
+ assert.deepEqual(world.kinds(), ['join', 'renewal_start', 'renewal_result']);
+ assert.match(world.notices()[1].description, /対象: 1件（合計 500円）/); assert.match(world.notices()[2].description, /成功: 1件（500円）/);
  const invoices = (await stripe('GET', `invoices?customer=${world.customer}&limit=10`)).data;
  const paid = invoices.find(item => item.status === 'paid' && item.amount_paid === choice.monthly);
  assert.ok(paid, `更新の請求が支払われていない: ${JSON.stringify(invoices.map(item => [item.status, item.amount_due]))}`);
@@ -222,6 +251,9 @@ test('未払い: 失敗 → 月末の再決済 → 翌月1日0時に停止 → �
  assert.equal(await world.rules(), 1, '1日0時より前に止まっている');
  await world.advance(times.stop); await world.cron(times.stop);
  assert.equal(world.dunning().find(row => row.invoice_id === invoiceId).status, 'suspended');
+ assert.deepEqual(world.kinds().filter(kind => kind !== 'join'), ['retry_start', 'retry_result', 'month_start']);
+ assert.match(world.notices().find(row => row.kind === 'retry_result').description, /失敗: 1件（300円）/);
+ assert.match(world.notices().find(row => row.kind === 'month_start').description, /今回停止したもの: 1件\n停止中のアカウント: 1件/);
  assert.equal(await world.rules(), 0);
  assert.equal((await world.sub()).pause_collection?.behavior, 'void', '停止中の請求が止まっていない');
  const before = (await stripe('GET', `invoices?customer=${world.customer}&limit=20`)).data.length;
@@ -236,7 +268,7 @@ test('未払い: 失敗 → 月末の再決済 → 翌月1日0時に停止 → �
  const good = await world.useCard('pm_card_visa');
  await stripe('POST', `invoices/${invoiceId}/pay`, {payment_method: good}); await world.settle();
  assert.equal(world.dunning().find(row => row.invoice_id === invoiceId).status, 'paid');
- assert.equal(await world.rules(), 1, '支払い後に再開していない');
+ { const sub = await world.sub(); const rows = world.dunning().map(row => [row.invoice_id.slice(0, 12), row.status]); assert.equal(await world.rules(), 1, `支払い後に再開していない: ${JSON.stringify({status: sub.status, pause: sub.pause_collection, mark: sub.metadata.dpi_service_pause, rows})}`); }
  assert.equal((await world.sub()).pause_collection, null, '請求が再開していない');
  const [y, m] = jstParts(times.next);
  await world.advance(renewal(jst(y, m + 1, 26))); await world.settle();
@@ -258,6 +290,8 @@ test('自動解約: 停止から1か月後の1日0時に解約し、未払いの
  assert.equal((await stripe('GET', `invoices/${invoiceId}`)).status, 'void');
  assert.equal((await world.subs())[0].status, 'canceled');
  assert.ok(world.mails.some(subject => subject.includes('自動解約')));
+ assert.ok(world.notices().some(row => row.kind === 'leave' && row.title.includes('自動')), '自動解約の通知が無い');
+ assert.ok(world.notices().some(row => row.kind === 'month_start' && row.description.includes('自動解約: 1件')));
  // 改めて申し込めて、前の未払いは条件にならない
  world.card = 'pm_card_visa';
  await world.subscribe('supporter');
@@ -304,6 +338,7 @@ test('変更: アップグレードは即時・差額、ダウングレードは
  assert.equal(down.preview.changeTiming, 'next_period'); assert.equal(down.preview.immediateDue, 0);
  state = (await world.act('status')).body.subscriptions[0];
  assert.equal(state.planId, 'pro'); assert.equal(state.scheduledChange?.planId, 'plus');
+ assert.ok(world.kinds().includes('change') && world.kinds().includes('change_reserved'), `変更の通知: ${world.kinds()}`);
  // 予約の後のカード変更が、切替の後も効く
  const method = await world.useCard('pm_card_mastercard');
  const [y, m] = jstParts(schedule.anchor);
@@ -327,6 +362,7 @@ test('解約: 期間末まで配信し、終わったら止まる。再契約で
  assert.equal((await world.subs())[0].status, 'canceled'); assert.equal(await world.rules(), 0);
  await world.subscribe('plus');
  assert.equal(await world.rules(), 1);
+ assert.deepEqual(world.notices().map(row => row.title.replace('【テスト】', '')), ['新規加入', '解約の予約', '解約', '再加入']);
 });
 
 test('クレジット: チャージは1回だけ付与 → 全額払いの申込み → 次回の請求に充当 → 返金で取消', async () => {
@@ -436,7 +472,7 @@ for (const [label, evidence, outcome] of [['勝ち', 'winning_evidence', 'won'],
  });
 }
 
-test('カスタム: 初回決済 → 26日の更新 → 増額の差額決済 → 解約専用の画面', async () => {
+test('カスタム: 初回決済 → 26日の更新 → 解約専用の画面', async () => {
  const world = await World.create();
  const at = new Date().toISOString(), plan = {id: randomUUID(), revision: 1};
  const columns = world.raw.prepare('PRAGMA table_info(supporter_custom_plans)').all();
@@ -465,6 +501,63 @@ test('カスタム: 初回決済 → 26日の更新 → 増額の差額決済 �
  assert.equal(portal.status, 200, JSON.stringify(portal.body)); assert.match(portal.body.url, /\/flow|billing\.stripe\.com/);
  await stripe('POST', `subscriptions/${(await world.sub()).id}`, {cancel_at_period_end: 'true'}); await world.settle();
  assert.equal((await world.act('portal')).status, 409);
+});
+
+test('カスタムの料金変更: 増額は差額の支払い後、減額は次回から（支払い画面の実操作）', async () => {
+ const world = await World.create({clock: false});
+ const at = new Date().toISOString();
+ const columns = world.raw.prepare('PRAGMA table_info(supporter_custom_plans)').all();
+ const values = {discord_user_id: world.uid, id: randomUUID(), name: 'E2E', status: 'offered', revision: 1, confirmed_yen: 1000, estimated_yen: 1000, channel_limit: 10, server_limit: 3, rule_limit: 10, created_at: at, updated_at: at};
+ const used = columns.filter(column => column.name in values || (column.notnull && column.dflt_value === null));
+ world.raw.prepare(`INSERT INTO supporter_custom_plans(${used.map(column => column.name).join(',')}) VALUES(${used.map(() => '?').join(',')})`).run(...used.map(column => values[column.name] ?? (/INT/i.test(column.type) ? 0 : at)));
+ const plan = () => world.raw.prepare('SELECT * FROM supporter_custom_plans').get();
+ const initial = await billing.createCustomCheckout(world.env, world.customer, world.uid, plan(), randomUUID());
+ world.raw.prepare('UPDATE supporter_custom_plans SET stripe_checkout_id=?').run(initial.id);
+ await payInBrowser(initial.url); await world.settle(6000);
+ assert.equal(plan().status, 'active', '初回決済の後に契約が有効になっていない');
+ const next = monthlyYen => ({name: 'E2E', channels: 10, servers: 3, rules: 10, features: [], monthlyYen, secondaryReuse: false, reason: 'e2e'});
+ const stage = monthlyYen => stageCustomChange(world.db, world.uid, world.customer, plan(), next(monthlyYen), 'e2e@example.com', '通し試験の変更', randomUUID());
+ const up = await stage(1600);
+ const checkout = await billing.createCustomDifferenceCheckout(world.env, world.customer, world.uid, plan(), up);
+ world.raw.prepare('UPDATE supporter_custom_plan_changes SET checkout_session_id=?,checkout_expires_at=? WHERE request_id=?').run(checkout.id, checkout.expiresAt, up.request_id);
+ assert.equal(Number(plan().confirmed_yen), 1000, '支払い前に新しい条件になっている');
+ await payInBrowser(checkout.url); await world.settle(6000);
+ assert.equal(Number(plan().confirmed_yen), 1600); assert.equal((await world.sub()).items.data[0].price.unit_amount, 1600);
+ assert.equal((await stripe('GET', `checkout/sessions/${checkout.id}`)).amount_total, 600);
+ const down = await stage(1000);
+ await billing.settleCustomPriceChange(world.env, world.db, world.uid, down.request_id); await world.settle();
+ assert.equal(Number(plan().confirmed_yen), 1000); assert.equal((await world.sub()).items.data[0].price.unit_amount, 1000);
+ assert.equal(await world.rules(), 1);
+ assert.equal(world.kinds().filter(kind => kind === 'change').length, 2, `変更の通知: ${world.kinds()}`);
+ const labels = (await billing.customerInvoices(world.env, world.customer)).map(item => item.label).filter(Boolean);
+ assert.ok(labels.includes('初回利用料') && labels.includes('カスタムプランの差額'));
+}, {browser: true});
+
+test('管理操作: クレジットの付与・削除・失効、支払いURL、契約変更、期間末・即時の終了、処分', async () => {
+ const world = await World.create({clock: false});
+ const admin = (action, extra = {}) => billing.adminBillingAction(world.env, world.customer, world.uid, {action, requestId: randomUUID(), reason: '通し試験の操作', ...extra});
+ const credits = () => billing.customerCredits(world.env, world.customer);
+ await admin('grant_credit', {amount: 700}); assert.equal(await credits(), 700);
+ await admin('remove_credit', {amount: 200}); assert.equal(await credits(), 500);
+ await assert.rejects(() => admin('remove_credit', {amount: 501}));
+ // 失効: 期限を過ぎた購入分だけを取り消す
+ const at = now();
+ world.raw.prepare("INSERT INTO supporter_credit_lots(id,discord_user_id,source_type,source_id,original_amount,remaining_amount,expires_at,status,created_at,updated_at) VALUES(?,?,'purchase','cs_e2e',300,300,?,'active',?,?)").run(`lot-${randomUUID()}`, world.uid, at - 10, at - 100, at - 100);
+ assert.equal((await world.cron(at)).expiredCredits, 1); assert.equal(await credits(), 200);
+ assert.match((await admin('create_payment_link', {amount: 500, description: '通し試験'})).url, /^https:\/\/checkout\.stripe\.com\//);
+ await world.subscribe('supporter');
+ await admin('change_subscription', {plan: 'plus', channelPacks: 1, serverPacks: 0, rulePacks: 0}); await world.settle();
+ let state = (await world.act('status')).body.subscriptions[0];
+ assert.deepEqual([state.planId, state.channelPacks], ['plus', 1]);
+ await admin('cancel_at_period_end'); await world.settle();
+ assert.equal((await world.act('status')).body.subscriptions[0].cancelAtPeriodEnd, true);
+ await admin('cancel_immediately'); await world.settle();
+ assert.equal(await world.rules(), 0);
+ await world.subscribe('pro'); await admin('grant_credit', {amount: 300});
+ const result = await billing.adminDisciplinaryBillingAction(world.env, world.customer, world.uid, {action: 'disciplinary_cancel', requestId: randomUUID(), reason: '通し試験の処分'}); await world.settle();
+ assert.equal(result.canceledSubscriptions, 1); assert.equal(await credits(), 0); assert.equal(await world.rules(), 0);
+ const open = await world.act('checkout', {plan: 'supporter', channelPacks: 0, serverPacks: 0, rulePacks: 0}); assert.equal(open.status, 200, JSON.stringify(open.body));
+ assert.equal(await billing.expireSupporterPendingCheckouts(world.env, world.db, world.uid, randomUUID()), 1);
 });
 
 test('安全: 署名の誤り・本番のイベント・別の顧客の請求を受け付けない', async () => {
@@ -506,6 +599,7 @@ async function main() {
   finally { console.error = errors; console.warn = warns; resetNow(); }
  }
  for (const id of clocks) await stripe('DELETE', `test_helpers/test_clocks/${id}`).catch(() => {});
+ for (const id of plainCustomers) await stripe('DELETE', `customers/${id}`).catch(() => {});
  await closeBrowser();
  const count = kind => results.filter(item => item.result === kind).length;
  const report = {finishedAt: new RealDate().toISOString(), passed: count('passed'), failed: count('failed'), skipped: count('skipped'), filtered: filters.length > 0, results};
