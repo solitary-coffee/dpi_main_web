@@ -37,7 +37,7 @@ let currentClock = '', currentCustomer = '';
 // --notify: 同じ種類（題名）は 1 回だけ送る。日付などの数字の違いは同じ種類とみなす。
 const delivered = {mail: new Map(), admin: new Map(), discord: new Map()};
 // 試験のメールは、件名と本文の先頭で「誰に届くものか」を示す。
-const testMail = (audience, subject, note, text, headers) => ({headers, subject: `【通し試験｜${audience}】${subject}`,
+const testMail = (audience, subject, note, text, headers, html) => ({headers, ...(html ? {html: html.replace(/(<body[^>]*>)/, `$1<p style="max-width:620px;margin:0 auto 12px;padding:10px 14px;background:#fff3d6;border:1px solid #e0b24a;border-radius:8px;font-size:14px"><strong>【${audience}】</strong>${note}<br>これは有料プランの通し試験です。実際の請求・契約・処分ではありません。</p>`)} : {}), subject: `【通し試験｜${audience}】${subject}`,
  text: `━━━━━━━━━━━━━━━━━━━━
 【${audience}】${note}
 これは有料プランの通し試験です。実際の請求・契約・処分ではありません。
@@ -61,9 +61,7 @@ globalThis.fetch = (input, init = {}) => {
  if (notify && url.hostname === 'discord.com' && url.pathname.startsWith('/api/webhooks/')) {
   const channel = url.pathname.includes('membership') ? 'membership' : 'billing', body = JSON.parse(init.body);
   const {title, description} = body.embeds[0], label = channel === 'billing' ? '支払い' : '加入・変更・解約', key = `${label}: ${kindOf(title)}`;
-  return sendOnce('discord', key, '/__notice', {channel, body})
-   .then(() => sendOnce('admin', key, '/__mail', testMail('管理者向け', title, `運営の Discord「${label}」チャンネルに届く通知と同じ内容です。利用者には送られません。`, description)))
-   .then(() => new Response(null, {status: 204}));
+  return sendOnce('discord', key, '/__notice', {channel, body}).then(() => new Response(null, {status: 204}));
  }
  if (currentClock && url.hostname === 'api.stripe.com' && url.pathname === '/v1/subscriptions' && (init.method || 'GET') === 'GET' && !url.searchParams.has('customer')) {
   url.searchParams.set('test_clock', currentClock);
@@ -118,10 +116,13 @@ class World {
   currentClock = '';
   world.uid = String(100000000000000000n + BigInt(RealDate.now()) * 10n + BigInt(userSeq += 1));
   world.mails = [];
+  world.mailTexts = [];
+  world.adminMails = [];
   world.env = {SUPPORTER_BILLING_MODE: 'test', STRIPE_SECRET_KEY: KEY, STRIPE_WEBHOOK_SECRET: 'whsec_e2e', ...seedIds, STRIPE_PORTAL_CONFIG: portalId, SUPPORTER_PUBLIC_ORIGIN: 'https://dpi-bot.com',
-   SUPPORTER_PUBLIC_ENABLED: 'true', REUSE_DB: world.db, NOTICE_FROM_EMAIL: 'notice@dpi-bot.com', NOTICE_EMAIL: {send: async mail => {
-    world.mails.push(mail.subject);
-    if (notify) await sendOnce('mail', kindOf(mail.subject), '/__mail', testMail('ユーザー向け', mail.subject, '有料プランの利用者に届くメールです。', mail.text, mail.headers));
+   SUPPORTER_PUBLIC_ENABLED: 'true', REUSE_DB: world.db, NOTICE_FROM_EMAIL: 'notice@dpi-bot.com', CONTACT_TO_EMAIL: 'admin@example.com', NOTICE_EMAIL: {send: async mail => {
+    const admin = mail.to === world.env.CONTACT_TO_EMAIL;
+    if (admin) world.adminMails.push(mail.subject); else { world.mails.push(mail.subject); world.mailTexts.push(mail.text); assert.match(mail.html, />公式サイト<\/a>/); }
+    if (notify) await sendOnce(admin ? 'admin' : 'mail', kindOf(mail.subject), '/__mail', testMail(admin ? '管理者向け' : 'ユーザー向け', mail.subject, admin ? '運営担当者に届く重要通知です。利用者には送られません。' : '有料プランの利用者に届くメールです。', mail.text, mail.headers, mail.html));
    }},
    ...(notify ? {BILLING_NOTICE_WEBHOOK: `https://discord.com/api/webhooks/111111111111111111/${'billing'.padEnd(30, '_')}`, MEMBERSHIP_NOTICE_WEBHOOK: `https://discord.com/api/webhooks/222222222222222222/${'membership'.padEnd(30, '_')}`} : {})};
   const params = {name: `e2e ${world.uid}`, email: `e2e-${world.uid}@example.com`, 'metadata[dpi_user]': world.uid};
@@ -256,6 +257,9 @@ test('申込み・更新: 初回 → 26日の更新 → 明細と配信', async 
  assert.equal((await world.sub()).status, 'active');
  assert.equal(new Set(invoices.map(item => item.id)).size, invoices.length);
  assert.ok(world.mails.some(subject => subject.includes('お支払い完了')));
+ assert.ok(world.mailTexts.some(text => /領収書: https:\/\/pay\.stripe\.com\//.test(text)), '初回支払いの領収書リンクが無い');
+ assert.ok(world.mailTexts.some(text => /請求書（画面）: https:\/\/invoice\.stripe\.com\//.test(text) && /請求書（PDF）: https:\/\/(?:pay|files)\.stripe\.com\//.test(text)), '更新の請求書リンクが無い');
+ assert.equal(world.adminMails.length, 0, '通常通知が管理者メールになった');
  assert.equal(await world.rules(), 1);
 });
 
@@ -281,6 +285,7 @@ test('未払い: 失敗 → 月末の再決済 → 翌月1日0時に停止 → �
  const times = dunningTimes(schedule.anchor);
  assert.deepEqual(world.dunning().filter(row => !row.invoice_id.startsWith('hold:')).map(row => row.status), ['retry_scheduled']);
  assert.equal((await world.sub()).status, 'past_due');
+ assert.ok(world.mailTexts.some(text => /お支払い・請求書の確認: https:\/\/dpi-bot\.com\/site\/supporter\//.test(text) && /請求書（画面）: https:\/\/invoice\.stripe\.com\//.test(text)), '未払い案内の確認・請求書リンクが無い');
  const invoiceId = world.dunning()[0].invoice_id;
  assert.equal((await stripe('GET', `invoices/${invoiceId}`)).auto_advance, false, 'Stripe の自動再試行が止まっていない');
  assert.equal(await world.rules(), 1);
@@ -493,6 +498,7 @@ for (const [label, evidence, outcome] of [['勝ち', 'winning_evidence', 'won'],
   // 異議のイベントには顧客が入らないため、対象の通知だけを渡す
   const send = async type => world.deliver({id: `evt_e2e${randomUUID()}`, type, livemode: false, created: now(), data: {object: await stripe('GET', `disputes/${dispute.id}`)}});
   await send('charge.dispute.created');
+  assert.equal(world.adminMails.length, 1, `異議の管理者メール: ${world.adminMails}`);
   assert.equal(await world.rules(), 0, '異議で止まっていない');
   await world.cron();
   assert.equal((await world.sub()).pause_collection?.behavior, 'void');
@@ -500,6 +506,7 @@ for (const [label, evidence, outcome] of [['勝ち', 'winning_evidence', 'won'],
   for (let i = 0; i < 30; i += 1) { await sleep(2000); if ((await stripe('GET', `disputes/${dispute.id}`)).status === outcome) break; }
   assert.equal((await stripe('GET', `disputes/${dispute.id}`)).status, outcome);
   await send('charge.dispute.closed');
+  assert.equal(world.adminMails.length, 1, '異議終了を管理者へ送った');
   if (outcome === 'won') assert.equal(await world.rules(), 1, '勝ったのに再開していない');
   else {
    assert.equal(await world.rules(), 0);
@@ -607,6 +614,7 @@ test('通知: ほかの試験に無い種類（チャージ失敗・不正の警
  await send('checkout.session.async_payment_failed', {id: `cs_test_fail${requestId}`, mode: 'payment', payment_status: 'unpaid', customer: world.customer, amount_total: 500, currency: 'jpy', metadata: {dpi_checkout_kind: 'credit_topup', dpi_user: world.uid}});
  const charge = (await stripe('GET', `charges?customer=${world.customer}&limit=1`)).data[0];
  await send('radar.early_fraud_warning.created', {id: `issfr_${randomUUID()}`, charge: charge.id});
+ assert.equal(world.adminMails.length, 1, `不正警告の管理者メール: ${world.adminMails}`);
  const sub = await world.sub();
  await stripe('POST', `subscriptions/${sub.id}`, {cancel_at_period_end: 'true'}); await world.settle();
  await stripe('POST', `subscriptions/${sub.id}`, {cancel_at_period_end: 'false'}); await world.settle();
@@ -620,6 +628,7 @@ test('通知: ほかの試験に無い種類（チャージ失敗・不正の警
  for (const kind of ['disciplinary_cancel', 'ban_account', 'unban_account'])
   assert.equal(await billing.sendSupporterDisciplinaryNotification(world.env, world.db, kind, {requestId: randomUUID(), uid: world.uid, email: 'e2e@example.com', reason: '通し試験のお知らせ（実際の処分ではありません）', canceledSubscriptions: 1, confiscatedCredits: 0}), true);
  assert.ok(world.mails.some(subject => subject.includes('チャージ失敗')), `メール: ${world.mails}`);
+ assert.equal(world.adminMails.length, 1, '不正警告以外も管理者メールになった');
 });
 
 const financialState = async world => ({
@@ -893,6 +902,7 @@ test('事例: 銀行振込は入金を確認してから付与する', async () 
  await topup.send('checkout.session.async_payment_succeeded', {payment_status: 'paid'}); await topup.send('checkout.session.async_payment_succeeded', {payment_status: 'paid'});
  assert.equal(await billing.customerCredits(world.env, world.customer), 700, '付与が 1 回でない'); assert.equal(topup.row().status, 'credited');
  assert.equal(world.mails.filter(subject => subject.includes('チャージ完了')).length, 1);
+ assert.ok(world.mailTexts.some(text => /領収書: https:\/\/pay\.stripe\.com\//.test(text)), 'クレジットチャージの領収書リンクが無い');
  assert.ok(!world.kinds().some(kind => kind.startsWith('topup')), 'チャージの Discord 通知が作られた');
  if (billing.billingSchedule(Date.now()).initialMonths * 300 <= 700) {
   const signed = await world.act('checkout', {...choice, useCredits: true, requestId: randomUUID()}); assert.equal(signed.status, 200, JSON.stringify(signed.body)); await world.settle();
