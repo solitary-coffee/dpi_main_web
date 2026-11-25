@@ -109,7 +109,7 @@ test('予約ダウングレード後のアップグレードは予約を解除�
  globalThis.fetch=async(url,init={})=>{const parsed=new URL(url),method=init.method||'GET',params=new URLSearchParams(init.body||'');calls.push({path:parsed.pathname,method,params,headers:init.headers});let data={livemode:false};
   if(parsed.pathname==='/v1/subscriptions'&&method==='GET')data={livemode:false,data:[current]};
   else if(parsed.pathname==='/v1/invoices/create_preview')data={livemode:false,lines:{data:[{amount:-200,proration:true},{amount:500,proration:true}]}};
-  else if(parsed.pathname==='/v1/customers/cus_x'&&method==='GET')data={livemode:false,balance:0};
+  else if(parsed.pathname==='/v1/customers/cus_x'&&method==='GET')data={livemode:false,balance:0,invoice_settings:{default_payment_method:'pm_x'}};
   else if(parsed.pathname==='/v1/subscription_schedules/sched_down/release')data={livemode:false,id:'sched_down',released_subscription:'sub_x'};
   else if(parsed.pathname==='/v1/subscriptions/sub_x')data={...current,livemode:false,pending_update:{expires_at:renewal}};
   else if(parsed.pathname==='/v1/subscription_schedules/sched_down')data={livemode:false,id:'sched_down',phases:[]};

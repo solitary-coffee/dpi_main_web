@@ -158,25 +158,42 @@
   </section>
 
   <section class="payment-methods" aria-labelledby="payment-methods-title">
-   <h2 id="payment-methods-title">受け付けている支払い方法</h2>
-   <table class="payment-methods-table">
-    <caption>支払い方法ごとの利用可否</caption>
-    <thead><tr><th scope="col">支払い方法</th><th scope="col">プランの申込み・毎月の支払い</th><th scope="col">クレジットチャージ</th></tr></thead>
-    <tbody>
-     <tr><th scope="row">クレジットカード・デビットカード</th><td>○</td><td>○</td></tr>
-     <tr><th scope="row">Apple Pay・Google Pay</th><td>○（対応端末）</td><td>○</td></tr>
-     <tr><th scope="row">Link</th><td>○</td><td>○</td></tr>
-     <tr><th scope="row">PayPay</th><td>×</td><td>○</td></tr>
-     <tr><th scope="row">銀行振込</th><td>×</td><td>○（入金の確認後に付与）</td></tr>
-     <tr><th scope="row">コンビニ払い</th><td>×</td><td>○（入金の確認後に付与）</td></tr>
-     <tr><th scope="row">チャージ済みクレジット</th><td>○（初回の全額払い、次回以降の請求への充当）</td><td>—</td></tr>
-    </tbody>
-   </table>
+   <h2 id="payment-methods-title">お支払い方法</h2>
+   <p class="payment-lead">お支払い方法は「クレジットカード支払い式」と「事前チャージ式」の2つです。<br>どちらでも、プランの申込み・変更・毎月の更新ができます。</p>
+   <div class="payment-ways">
+    <article class="payment-way">
+     <h3>クレジットカード支払い式</h3>
+     <p class="payment-way-lead">そのまますぐに申し込めます。</p>
+     <dl>
+      <dt>使えるカード</dt><dd>Visa・Mastercard・American Express・JCB・Diners Club・Discover<br>（Apple Pay・Google Pay・Link にも対応。デビットカード・プリペイドカードはカード会社により利用できないことがあります）</dd>
+     </dl>
+     <ol class="payment-steps"><li>プランを選ぶ</li><li>カードで支払う</li><li>利用開始（毎月26日に自動更新）</li></ol>
+    </article>
+    <article class="payment-way">
+     <h3>事前チャージ式</h3>
+     <p class="payment-way-lead">先にクレジット（1円＝1クレジット）を購入し、その残高から支払います。カードが無くても使えます。</p>
+     <dl>
+      <dt>チャージに使える方法</dt><dd>PayPay・コンビニ払い・銀行振込・クレジットカード・Apple Pay・Google Pay・Link</dd>
+     </dl>
+     <ol class="payment-steps"><li>500円からチャージする</li><li>入金の確認後、残高に入る</li><li>プランを選び、残高で支払う</li><li>利用開始（毎月26日に残高から自動更新）</li></ol>
+     <p class="payment-note">PayPay・コンビニ払い・銀行振込は、プランを直接支払うことはできません。いったんチャージしてから、その残高でお支払いいただきます。</p>
+    </article>
+   </div>
+   <div class="payment-order">
+    <h3>引き落としの順番</h3>
+    <p class="payment-order-flow"><strong>① 事前チャージの残高</strong><span aria-hidden="true"> → </span><span class="visually-hidden">の次に</span><strong>② クレジットカード</strong></p>
+    <ul>
+     <li>毎月の更新とプラン変更の差額は、先に事前チャージの残高から支払い、足りない分だけを登録済みのカードに請求します。</li>
+     <li><strong>残高で全額を支払えた場合、カードには請求しません。</strong></li>
+     <li>新しく申し込むときは、選んだ方法で初回の全額を支払います（残高とカードは併用できません）。</li>
+     <li>カードの登録が無く残高が足りないときは、差額のかかるプラン変更はできません。毎月の更新は未払いになり、月末の再請求でも足りなければ翌月1日0時に停止します。</li>
+     <li>未払いの請求は、請求額以上の残高があるときだけ、残高から支払えます（一部だけの支払いはできません）。</li>
+    </ul>
+   </div>
    <ul class="payment-methods-notes">
-    <li>毎月の自動課金に使えない支払い方法は、チャージしたクレジットでプランを申し込めます。</li>
-    <li>端末・カード・Stripeの審査や提供状況により表示されないことがあります（コンビニ払いを含みます）。</li>
-    <li>銀行振込の手数料は利用者負担です。入金の確認までクレジットは利用できません。</li>
-    <li>クレジットの決済はStripeが行い、カード番号はDPI-Botでは保存しません。</li>
+    <li>銀行振込・コンビニ払いは、入金の確認まで残高に反映されません。銀行振込の手数料は利用者の負担です。</li>
+    <li>端末・カード会社・Stripeの審査や提供状況により、表示されない支払い方法があります（コンビニ払いを含みます）。</li>
+    <li>決済はStripeが行い、カード番号はDPI-Botでは保存しません。</li>
    </ul>
   </section>
 
