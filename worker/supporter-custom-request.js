@@ -6,13 +6,13 @@ import {customPublic,getCustomPlan} from './supporter-custom.js';
 // 準備中の画像配信。公開済み機能と同じキー空間で要望・回答を扱う。
 export const CUSTOM_PLANNED_ITEMS = Object.freeze([
  {name:'estimatedIntensity',label:'推計震度分布'},
- {name:'typhoon',label:'台風情報'},
- {name:'rainDisaster',label:'大雨災害危険度'},
- {name:'volcano',label:'火山情報'},
- {name:'rainForecast',label:'降水短時間予報'},
- {name:'himawari',label:'ひまわり'},
+ {name:'typhoon',label:'台風の進路予想図'},
+ {name:'rainDisaster',label:'土砂災害警戒情報・記録的短時間大雨情報の図'},
+ {name:'volcano',label:'火山（噴火警報・噴火速報・降灰予報）の図'},
+ {name:'rainForecast',label:'今後の雨（15時間先までの予想）'},
+ {name:'himawari',label:'気象衛星（ひまわり）'},
  {name:'weatherDistribution',label:'天気分布予報'},
- {name:'amedas',label:'アメダス'},
+ {name:'amedas',label:'アメダスの分布図'},
 ].map(item=>Object.freeze(item)));
 
 export const CUSTOM_REQUEST_STATUSES = Object.freeze(['submitted','estimating','answered','accepted','consulting','objected','withdrawn','closed']);
