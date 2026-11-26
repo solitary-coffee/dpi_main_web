@@ -5,7 +5,7 @@ import {customPublic,getCustomPlan} from './supporter-custom.js';
 
 // 準備中の画像配信。公開済み機能と同じキー空間で要望・回答を扱う。
 export const CUSTOM_PLANNED_ITEMS = Object.freeze([
- {name:'estimatedIntensity',label:'推定震度分布'},
+ {name:'estimatedIntensity',label:'推計震度分布'},
  {name:'typhoon',label:'台風情報'},
  {name:'rainDisaster',label:'大雨災害危険度'},
  {name:'volcano',label:'火山情報'},
