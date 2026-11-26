@@ -818,7 +818,7 @@ export async function handleSupporterRequest(request, env, ctx) {
    }
    if(path==='/site/supporter-admin/api/custom-requests'||path.startsWith('/site/supporter-admin/api/custom-requests/')){
     if(request.method!=='GET')assertAdminOrigin(request);
-    return await handleSupporterCustomRequestAdminApi(request,db,env);
+     return await handleSupporterCustomRequestAdminApi(request,db,env,admin);
    }
    if(path==='/site/supporter-admin/api/credit-campaigns'){
     if(request.method!=='POST')return response({message:'Method not allowed'},405);

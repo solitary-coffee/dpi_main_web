@@ -276,6 +276,8 @@ const paymentLinkMailText=(row,url)=>{
   `金額の目安: ${String(answer.amount||'').trim()||'記載なし'}`,
   `支払いURL: ${url}`,
   '',
+  'お支払いにより、利用規約（https://dpi-bot.com/terms/terms.html）と特定商取引法に基づく表記（https://dpi-bot.com/terms/Specified.html）に同意したものとします。',
+  '',
   'URL には有効期限があります。期限が切れた場合はお知らせください。',
   'お支払いの確認後に配信が有効になります。',
   '',
@@ -295,8 +297,33 @@ async function sendPaymentLinkEmail(request,db,env,id){
  return json({sent:true,to,sentAt});
 }
 
-const adminMatch=path=>path.match(/^\/site\/supporter-admin\/api\/custom-requests\/([A-Za-z0-9_-]{1,100})(?:\/(answer|status|features|payment-link-email))?$/);
-export async function handleSupporterCustomRequestAdminApi(request,db,env){
+async function writeAccountCreatedAudit(db,admin,uid,requestId){
+ try{
+  await db.prepare(`INSERT INTO admin_audit_events
+   (id, actor, action, entity_type, entity_id, details_json, created_at)
+   VALUES (?, ?, ?, ?, ?, ?, ?)`)
+   .bind(crypto.randomUUID(),admin.email,'supporter.custom_request_account_created','supporter_account',uid,JSON.stringify({requestId}),new Date().toISOString()).run();
+ }catch(error){
+  console.error('Paid plan billing audit write failed',{action:'custom_request_account_created',errorName:error?.name||'Error'});
+ }
+}
+async function ensureCustomRequestAccount(db,id,admin){
+ const row=await requireAdminRow(db,id);
+ if(row.status==='withdrawn')fail('取り下げ済みのご要望からアカウントは作成できません。',409);
+ if(!isObject(parseJson(row.answer_json)))fail('回答が登録されていません。');
+ const request=parseJson(row.request_json);
+ let email;
+ try{email=emailField({email:request?.email});}catch{fail('ご要望のメールアドレスが登録されていないか、形式が正しくありません。');}
+ const now=new Date().toISOString();
+ const result=await db.prepare(`INSERT INTO supporter_accounts(discord_user_id,discord_name,billing_email,registered_at,updated_at) VALUES(?,?,?,?,?)
+  ON CONFLICT(discord_user_id) DO NOTHING`).bind(row.discord_user_id,'',email,now,now).run();
+ const created=changed(result);
+ if(created)await writeAccountCreatedAudit(db,admin,row.discord_user_id,id);
+ return {created};
+}
+
+const adminMatch=path=>path.match(/^\/site\/supporter-admin\/api\/custom-requests\/([A-Za-z0-9_-]{1,100})(?:\/(answer|status|features|payment-link-email|ensure-account))?$/);
+export async function handleSupporterCustomRequestAdminApi(request,db,env,admin){
  const url=new URL(request.url),path=url.pathname;
  const base=path==='/site/supporter-admin/api/custom-requests',match=adminMatch(path);
  if(!base&&!match)return null;
@@ -310,6 +337,7 @@ export async function handleSupporterCustomRequestAdminApi(request,db,env){
  if(request.method==='GET'&&match&&!match[2])return json({item:customRequestPublic(await requireAdminRow(db,match[1]),{admin:true}),plannedItems:CUSTOM_PLANNED_ITEMS});
  if(request.method==='GET'&&match?.[2]==='features')return json(customRequestFeatures(await requireAdminRow(db,match[1])));
  if(request.method==='POST'&&match?.[2]==='payment-link-email')return await sendPaymentLinkEmail(request,db,env,match[1]);
+ if(request.method==='POST'&&match?.[2]==='ensure-account')return json(await ensureCustomRequestAccount(db,match[1],admin));
  if(request.method==='POST'&&match?.[2]==='answer'){
   const input=bodyKeys(await readJson(request),['answer','revision']);
   return json({item:customRequestPublic(await answerCustomRequest(db,match[1],input.answer,input.revision),{admin:true})});
