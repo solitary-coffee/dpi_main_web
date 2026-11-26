@@ -2,6 +2,7 @@ import {FEATURE_DEFINITIONS, missingFeatureDependency} from '../site/supporter/p
 import {queueNotice} from './supporter-ops-notice.js';
 import {readJson} from './reuse.js';
 import {customPublic,getCustomPlan} from './supporter-custom.js';
+import {mailHtml,supporterMailSignature} from './supporter-billing.js';
 
 // 準備中の画像配信。公開済み機能と同じキー空間で要望・回答を扱う。
 export const CUSTOM_PLANNED_ITEMS = Object.freeze([
@@ -202,8 +203,8 @@ export async function setCustomRequestStatus(db,id,status,revision,{now=nowSecon
 }
 
 export function customRequestFeatures(row){
- if(row?.status!=='accepted')fail('申込み済みのご要望ではありません。',409);
  const answer=parseJson(row.answer_json);
+ if(!isObject(answer))fail('回答が登録されていません。');
  const marks=isObject(answer?.marks)?answer.marks:{};
  const yes=FEATURE_NAMES.filter(name=>marks[name]==='yes');
  const partial=FEATURE_NAMES.filter(name=>marks[name]==='partial');
@@ -252,8 +253,50 @@ export async function handleSupporterCustomRequestApi(request,env,db,uid,{rateLi
  return json({message:'Method not allowed'},405);
 }
 
-const adminMatch=path=>path.match(/^\/site\/supporter-admin\/api\/custom-requests\/([A-Za-z0-9_-]{1,100})(?:\/(answer|status|features))?$/);
-export async function handleSupporterCustomRequestAdminApi(request,db){
+const paymentLinkUrl=value=>{
+ if(typeof value!=='string'||chars(value)>2048)fail('支払いURLが正しくありません。');
+ try{
+  const url=new URL(value);
+  if(url.protocol!=='https:'||url.hostname!=='checkout.stripe.com'||url.username||url.password)fail('Stripeの支払いURLを指定してください。');
+  return url.href;
+ }catch(error){if(error instanceof CustomRequestError)throw error;fail('Stripeの支払いURLを指定してください。');}
+};
+const paymentLinkMailText=(row,url)=>{
+ const request=parseJson(row.request_json)||{},answer=parseJson(row.answer_json);
+ if(!isObject(answer))fail('回答が登録されていません。');
+ const contact=String(request.contact||'').trim()||'お客様';
+ const quantity=value=>Number.isInteger(value)?String(value):'記載なし';
+ return [
+  `${contact} 様`,
+  '',
+  'DPI-Bot カスタムプランのお支払いについてご案内します。',
+  '',
+  `ご要望番号: ${row.id}`,
+  `回答の数量: サーバー ${quantity(answer.servers)}、チャンネル ${quantity(answer.channels)}、ルール ${quantity(answer.rules)}`,
+  `金額の目安: ${String(answer.amount||'').trim()||'記載なし'}`,
+  `支払いURL: ${url}`,
+  '',
+  'URL には有効期限があります。期限が切れた場合はお知らせください。',
+  'お支払いの確認後に配信が有効になります。',
+  '',
+  supporterMailSignature(),
+ ].join('\n');
+};
+async function sendPaymentLinkEmail(request,db,env,id){
+ if(!env?.NOTICE_EMAIL?.send)fail('メール送信機能が設定されていません。',503);
+ const input=bodyKeys(await readJson(request),['url']);
+ const url=paymentLinkUrl(input.url),row=await requireAdminRow(db,id),requestData=parseJson(row.request_json)||{};
+ let to;
+ try{to=emailField({email:requestData.email});}catch{fail('ご要望のメールアドレスが登録されていないか、形式が正しくありません。');}
+ const subject='【DPI-Bot】カスタムプランのお支払いのご案内',text=paymentLinkMailText(row,url),sentAt=nowSeconds();
+ try{
+  await env.NOTICE_EMAIL.send({to,from:{email:String(env.NOTICE_FROM_EMAIL||'').trim(),name:'DPI-Bot'},subject,text,html:mailHtml(text),...(String(env.NOTICE_REPLY_TO_EMAIL||'').trim()?{replyTo:String(env.NOTICE_REPLY_TO_EMAIL).trim()}: {})});
+ }catch{fail('支払いURLのメール送信に失敗しました。',502);}
+ return json({sent:true,to,sentAt});
+}
+
+const adminMatch=path=>path.match(/^\/site\/supporter-admin\/api\/custom-requests\/([A-Za-z0-9_-]{1,100})(?:\/(answer|status|features|payment-link-email))?$/);
+export async function handleSupporterCustomRequestAdminApi(request,db,env){
  const url=new URL(request.url),path=url.pathname;
  const base=path==='/site/supporter-admin/api/custom-requests',match=adminMatch(path);
  if(!base&&!match)return null;
@@ -266,6 +309,7 @@ export async function handleSupporterCustomRequestAdminApi(request,db){
  }
  if(request.method==='GET'&&match&&!match[2])return json({item:customRequestPublic(await requireAdminRow(db,match[1]),{admin:true}),plannedItems:CUSTOM_PLANNED_ITEMS});
  if(request.method==='GET'&&match?.[2]==='features')return json(customRequestFeatures(await requireAdminRow(db,match[1])));
+ if(request.method==='POST'&&match?.[2]==='payment-link-email')return await sendPaymentLinkEmail(request,db,env,match[1]);
  if(request.method==='POST'&&match?.[2]==='answer'){
   const input=bodyKeys(await readJson(request),['answer','revision']);
   return json({item:customRequestPublic(await answerCustomRequest(db,match[1],input.answer,input.revision),{admin:true})});

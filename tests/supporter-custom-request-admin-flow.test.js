@@ -30,6 +30,23 @@ test('ご要望詳細に保存と支払いURL作成までの3段階がある',as
  assert.match(script,/navigator\.clipboard\.writeText\(url\)/);
 });
 
+test('回答後の契約欄表示条件と未申込みの注意を備える',async()=>{
+ const [html,script]=await Promise.all([read('../site/supporter-admin/custom-requests.html'),read('../site/supporter-admin/custom-requests.js')]);
+ assert.match(html,/id="contract-warning"[^>]*hidden>利用者はまだこの回答に申し込んでいません。利用者と合意済みの場合だけ進めてください。/);
+ assert.match(script,/const showContract=Boolean\(item\.answer\)&&!\['withdrawn','closed'\]\.includes\(item\.status\)/);
+ assert.match(script,/\$\('contract-warning'\)\.hidden=!showContract\|\|item\.status==='accepted'/);
+ assert.match(script,/if\(showContract\)loadContractWorkflow\(item\)/);
+});
+
+test('支払いURLの新規作成メール送信と既存URL送信の操作がある',async()=>{
+ const [html,script]=await Promise.all([read('../site/supporter-admin/custom-requests.html'),read('../site/supporter-admin/custom-requests.js')]);
+ for(const id of ['contract-checkout-email','contract-email-existing','contract-email-result'])assert.match(html,new RegExp(`id="${id}"`));
+ assert.match(html,/支払いURLを作成してメールで送る/);assert.match(html,/この支払いURLをメールで送る/);
+ assert.match(script,/window\.confirm\(`次の宛先に支払いURLを送信しますか？/);
+ assert.match(script,/\/payment-link-email`,'POST',\{url\}/);
+ assert.match(script,/paymentLinkBusy/);
+});
+
 test('支払いURLはcheckout.stripe.comのHTTPSだけを許可する',()=>{
  assert.equal(stripeCheckoutUrl('https://checkout.stripe.com/c/pay/test'),'https://checkout.stripe.com/c/pay/test');
  for(const value of ['http://checkout.stripe.com/c/pay/test','https://checkout.stripe.com.example.com/c/pay/test','https://example.com/checkout','not-a-url'])assert.throws(()=>stripeCheckoutUrl(value),/Stripeの支払いURL/);
