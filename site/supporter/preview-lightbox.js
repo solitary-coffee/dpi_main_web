@@ -20,7 +20,7 @@ export const PLANNED_PREVIEW_TYPES = Object.freeze({
  'planned-thunder': '雷レーダー',
  'planned-estimated-intensity': '推計震度分布',
  'planned-typhoon': '台風の進路予想図',
- 'planned-rain-disaster': '土砂災害警戒情報・記録的短時間大雨情報の図',
+ 'planned-rain-disaster': '記録的短時間大雨情報の図',
  'planned-volcano': '火山（噴火警報・噴火速報・降灰予報）の図',
  'planned-rain-forecast': '今後の雨（15時間先までの予想）',
  'planned-himawari': '気象衛星（ひまわり）',

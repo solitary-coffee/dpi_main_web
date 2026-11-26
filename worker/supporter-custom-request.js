@@ -8,7 +8,7 @@ import {mailHtml,stripe,supporterMailSignature} from './supporter-billing.js';
 export const CUSTOM_PLANNED_ITEMS = Object.freeze([
  {name:'estimatedIntensity',label:'推計震度分布'},
  {name:'typhoon',label:'台風の進路予想図'},
- {name:'rainDisaster',label:'土砂災害警戒情報・記録的短時間大雨情報の図'},
+ {name:'rainDisaster',label:'記録的短時間大雨情報の図'},
  {name:'volcano',label:'火山（噴火警報・噴火速報・降灰予報）の図'},
  {name:'rainForecast',label:'今後の雨（15時間先までの予想）'},
  {name:'himawari',label:'気象衛星（ひまわり）'},
