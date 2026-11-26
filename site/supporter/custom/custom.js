@@ -1,4 +1,4 @@
-import {FEATURE_DEFINITIONS, FEATURE_SECTIONS} from '../plan-features.js';
+import {FEATURE_DEFINITIONS, FEATURE_SECTIONS, featureLabel} from '../plan-features.js';
 
 let session=null;
 let items=[];
@@ -99,7 +99,7 @@ function printFeatureTable(item){
   const standardPlan=definition.planned?'準備中':PLAN_LABELS[definition.plan]||'—';
   const notes=[request.wantNotes?.[definition.name]&&`ご希望：${request.wantNotes[definition.name]}`,answer?.notes?.[definition.name]&&`提供：${answer.notes[definition.name]}`].filter(Boolean).join('／')||'—';
   const tr=document.createElement('tr');
-  tr.append(el('th','',definition.label),el('td','',standardPlan),el('td','print-mark',`${WANT_LABELS[requested]||'—'} ${requested==='yes'?'必要':requested==='maybe'?'できれば':'不要'}`),...(answer?[el('td','print-mark',MARK_LABELS[mark]||'—')]:[]),el('td','',notes));tbody.append(tr);
+  tr.append(el('th','',definition.planned?definition.label:featureLabel(definition.name)),el('td','',standardPlan),el('td','print-mark',`${WANT_LABELS[requested]||'—'} ${requested==='yes'?'必要':requested==='maybe'?'できれば':'不要'}`),...(answer?[el('td','print-mark',MARK_LABELS[mark]||'—')]:[]),el('td','',notes));tbody.append(tr);
  }
  if(!tbody.children.length){const tr=document.createElement('tr');const td=el('td','','ご希望の機能はありません。');td.colSpan=answer?5:4;tr.append(td);tbody.append(tr);}
  table.append(thead,tbody);return table;

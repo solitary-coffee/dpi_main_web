@@ -20,7 +20,7 @@ test('カスタムプランの利用者ページと管理ページがある',asy
 test('ご要望の機能一覧はFEATURE_DEFINITIONSを単一の定義元にする',async()=>{
  const source=await read('../site/supporter/custom/custom.js');
  assert.ok(FEATURE_DEFINITIONS.length>0);
- assert.match(source,/import \{FEATURE_DEFINITIONS, FEATURE_SECTIONS\} from '\.\.\/plan-features\.js'/);
+ assert.match(source,/import \{FEATURE_DEFINITIONS, FEATURE_SECTIONS(, featureLabel)?\} from '\.\.\/plan-features\.js'/);
  assert.match(source,/\.\.\.FEATURE_DEFINITIONS/);
  for(const feature of FEATURE_DEFINITIONS)assert.equal(typeof feature.name,'string');
 });
