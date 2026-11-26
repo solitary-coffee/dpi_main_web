@@ -23,7 +23,8 @@ const answerInput=()=>({
 
 async function database(){
  const raw=new DatabaseSync(':memory:');
- raw.exec(`CREATE TABLE supporter_accounts(discord_user_id TEXT PRIMARY KEY,discord_name TEXT);`);
+ raw.exec(`CREATE TABLE supporter_accounts(discord_user_id TEXT PRIMARY KEY,discord_name TEXT,billing_email TEXT,registered_at TEXT,updated_at TEXT,account_status TEXT NOT NULL DEFAULT 'active');
+  CREATE TABLE admin_audit_events(id TEXT PRIMARY KEY,actor TEXT NOT NULL,action TEXT NOT NULL,entity_type TEXT NOT NULL,entity_id TEXT,details_json TEXT NOT NULL DEFAULT '{}',created_at TEXT NOT NULL);`);
  raw.exec(await readFile(new URL('../migrations/0037_supporter_custom_requests.sql',import.meta.url),'utf8'));
  const statement=(sql,values=[])=>({
   bind(...input){return statement(sql,input);},
@@ -121,6 +122,44 @@ test('回答済みなら申込み前でも契約機能を取得でき、回答�
  assert.deepEqual(customRequestFeatures(row),{features:['eewMap'],yes:['eewMap'],partial:[],servers:2,channels:5,rules:10});
 });
 
+test('ensure-accountはご要望の送り主をメール付きで作成し監査ログを残す',async()=>{
+ const {raw,db}=await database();
+ await createCustomRequest(db,UID,requestInput(),{id:ID,now:100000});
+ await answerCustomRequest(db,ID,answerInput(),0,{now:100010});
+ const endpoint=`https://example.test/site/supporter-admin/api/custom-requests/${ID}/ensure-account`;
+ const response=await handleSupporterCustomRequestAdminApi(new Request(endpoint,{method:'POST'}),db,{}, {email:'admin@example.com'});
+ assert.equal(response.status,200);assert.deepEqual(await response.json(),{created:true});
+ const account=raw.prepare('SELECT * FROM supporter_accounts WHERE discord_user_id=?').get(UID);
+ assert.equal(account.discord_name,'');assert.equal(account.billing_email,'user@example.com');assert.equal(account.account_status,'active');
+ assert.match(account.registered_at,/^\d{4}-\d{2}-\d{2}T/);assert.equal(account.updated_at,account.registered_at);
+ assert.equal(raw.prepare('SELECT COUNT(*) AS count FROM supporter_accounts WHERE discord_user_id=?').get(OTHER).count,0);
+ const audit=raw.prepare('SELECT * FROM admin_audit_events').get();
+ assert.equal(audit.actor,'admin@example.com');assert.equal(audit.action,'supporter.custom_request_account_created');assert.equal(audit.entity_id,UID);
+ assert.deepEqual(JSON.parse(audit.details_json),{requestId:ID});
+});
+
+test('ensure-accountは既存アカウントを変更せずcreated:falseを返す',async()=>{
+ const {raw,db}=await database();
+ await createCustomRequest(db,UID,requestInput(),{id:ID,now:100000});
+ await answerCustomRequest(db,ID,answerInput(),0,{now:100010});
+ raw.prepare('INSERT INTO supporter_accounts(discord_user_id,discord_name,billing_email,registered_at,updated_at,account_status) VALUES(?,?,?,?,?,?)').run(UID,'既存名','old@example.jp','old-created','old-updated','suspended');
+ const response=await handleSupporterCustomRequestAdminApi(new Request(`https://example.test/site/supporter-admin/api/custom-requests/${ID}/ensure-account`,{method:'POST'}),db,{}, {email:'admin@example.com'});
+ assert.deepEqual(await response.json(),{created:false});
+ const account=raw.prepare('SELECT * FROM supporter_accounts WHERE discord_user_id=?').get(UID);
+ assert.equal(account.discord_name,'既存名');assert.equal(account.billing_email,'old@example.jp');assert.equal(account.account_status,'suspended');
+ assert.equal(raw.prepare('SELECT COUNT(*) AS count FROM admin_audit_events').get().count,0);
+});
+
+test('ensure-accountは回答なしと不正メールを400、取り下げ済みを409にする',async()=>{
+ const run=async mutate=>{
+  const {raw,db}=await database();await createCustomRequest(db,UID,requestInput(),{id:ID,now:100000});await mutate(raw,db);
+  return handleSupporterCustomRequestAdminApi(new Request(`https://example.test/site/supporter-admin/api/custom-requests/${ID}/ensure-account`,{method:'POST'}),db,{}, {email:'admin@example.com'});
+ };
+ await rejectsStatus(run(async()=>{}),400);
+ await rejectsStatus(run(async(raw,db)=>{await answerCustomRequest(db,ID,answerInput(),0,{now:100010});raw.prepare('UPDATE supporter_custom_requests SET request_json=?').run(JSON.stringify({...requestInput(),email:'invalid'}));}),400);
+ await rejectsStatus(run(async(raw,db)=>{await answerCustomRequest(db,ID,answerInput(),0,{now:100010});raw.prepare("UPDATE supporter_custom_requests SET status='withdrawn'").run();}),409);
+});
+
 test('支払いURLメールはご要望の宛先へ件名とURLを含めて送る',async()=>{
  const {db}=await database();
  await createCustomRequest(db,UID,requestInput(),{id:ID,now:100000});
@@ -134,6 +173,7 @@ test('支払いURLメールはご要望の宛先へ件名とURLを含めて送�
  assert.equal(messages.length,1);assert.equal(messages[0].to,'user@example.com');
  assert.equal(messages[0].subject,'【DPI-Bot】カスタムプランのお支払いのご案内');
  assert.match(messages[0].text,/ご要望番号: 11111111-1111-4111-8111-111111111111/);assert.match(messages[0].text,new RegExp(url.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
+  assert.match(messages[0].text,/https:\/\/dpi-bot\.com\/terms\/terms\.html/);assert.match(messages[0].text,/https:\/\/dpi-bot\.com\/terms\/Specified\.html/);
  assert.match(messages[0].html,/checkout\.stripe\.com/);assert.equal(messages[0].replyTo,'support@dpi-bot.com');
 });
 

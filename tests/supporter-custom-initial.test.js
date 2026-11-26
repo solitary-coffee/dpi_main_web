@@ -26,6 +26,9 @@ test('custom first payment is full month before 26 JST and double charge from 26
   assert.equal(Number(p['metadata[dpi_billing_anchor]']),schedule.anchor);
   assert.equal(p.mode,'payment');
   assert.equal(p['payment_intent_data[setup_future_usage]'],'off_session');
+   assert.match(p['custom_text[submit][message]'],/https:\/\/dpi-bot\.com\/terms\/terms\.html/);
+   assert.match(p['custom_text[submit][message]'],/https:\/\/dpi-bot\.com\/terms\/Specified\.html/);
+   assert.ok([...p['custom_text[submit][message]']].length<=1200);
   assert.equal(p['line_items[0][price_data][recurring][interval]'],undefined);
   assert.equal(p['subscription_data[billing_cycle_anchor_config][day_of_month]'],undefined);
  }

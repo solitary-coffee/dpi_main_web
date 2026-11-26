@@ -2366,6 +2366,7 @@ export function customInitialCheckoutParams(customer,uid,offer,requestId,now=Dat
   'payment_intent_data[metadata][dpi_checkout_kind]':'custom_subscription_initial',
   'payment_intent_data[metadata][dpi_user]':uid,
   'payment_intent_data[metadata][dpi_custom_id]':offer.id,
+   'custom_text[submit][message]':`お支払いにより、利用規約（${origin}/terms/terms.html）と特定商取引法に基づく表記（${origin}/terms/Specified.html）に同意したものとします。`,
   success_url:`${origin}/site/supporter/?custom=completed`,
   cancel_url:`${origin}/site/supporter/?custom=canceled`,
   expires_at:String(Math.floor(now/1000)+86400-300),

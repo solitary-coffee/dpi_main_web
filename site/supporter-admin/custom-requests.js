@@ -103,8 +103,14 @@ async function saveContract(event){
    const preview=await sendCustomPlan({...payload,action:'preview'});if(!preview.quote)throw new Error('料金プレビューを取得できませんでした。');
    if(!window.confirm(activeCustomPlanConfirmation(preview.quote))){setStepResult('contract-save-result','変更を取り消しました。');return;}
   }else if(!window.confirm(newCustomPlanConfirmation(payload))){setStepResult('contract-save-result','設定の保存を取り消しました。');return;}
+  let accountCreated=false;
+  if(payload.discordUserId===current.discordUserId){
+   const ensured=await api(`/site/supporter-admin/api/custom-requests/${encodeURIComponent(current.id)}/ensure-account`,'POST',{});
+   accountCreated=ensured.created===true;
+  }
   const data=await sendCustomPlan(payload);contractAccount={...(contractAccount||{}),discordUserId:payload.discordUserId,customPlan:data.customPlan||contractAccount?.customPlan};contractRequestId=crypto.randomUUID();contractSaved=true;
-  setStepResult('contract-save-result',data.message||'カスタムプランとして保存しました。','success');
+  const createdMessage=accountCreated?'有料プランに未登録だったため、ご要望のメールアドレスでアカウントを作成しました。 ':'';
+  setStepResult('contract-save-result',createdMessage+(data.message||'カスタムプランとして保存しました。'),'success');
   if(data.url)renderCheckoutUrl(data.url,data.message);
   const canCheckout=contractAccount.customPlan?.status==='offered';syncPaymentLinkButtons();
   if(!canCheckout&&!data.url)setStepResult('contract-checkout-result','既存の有効な契約は新規の支払いURL作成対象ではありません。');
