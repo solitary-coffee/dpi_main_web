@@ -27,6 +27,7 @@ document.addEventListener('DOMContentLoaded', () => {
  renderCustomFeatureGroups();
  for(const button of document.querySelectorAll('[data-preset]'))button.addEventListener('click',()=>applyFeaturePreset(button.dataset.preset));
  applyFeaturePreset('pro');
+ loadCustomRequestDraft();
  $('custom-form').addEventListener('submit',event=>{event.preventDefault();submitCustom('save');});
  $('custom-load').addEventListener('click',loadCustom);
  $('custom-checkout').addEventListener('click',()=>submitCustom('checkout'));
@@ -46,6 +47,26 @@ document.addEventListener('DOMContentLoaded', () => {
  updateCompensationFields();
  loadAccounts();
 });
+
+function loadCustomRequestDraft(){
+ if(new URLSearchParams(location.search).get('customDraft')!=='1')return;
+ try{
+  const draft=JSON.parse(sessionStorage.getItem('supporter-admin-custom-draft')||'null');
+  if(!draft)return;
+  $('custom-settings-details').open=true;
+  $('custom-uid').value=draft.discordUserId||'';
+  $('custom-confirm').value=draft.discordUserId||'';
+  $('custom-servers').value=String(draft.servers??5);
+  $('custom-channels').value=String(draft.channels??20);
+  $('custom-rules').value=String(draft.rules??30);
+  setFeatures(draft.features||[]);
+  customRequestId=draft.requestId||'';
+  $('custom-reason').value=draft.requestId?`カスタムプランご要望 ${draft.requestId} を反映`:'';
+  $('custom-result').textContent='申込み済みのご要望を読み込みました。対象Discord ID、料金、機能を確認して保存してください。';
+  sessionStorage.removeItem('supporter-admin-custom-draft');
+  updateCustomEstimate();
+ }catch{$('custom-result').textContent='ご要望の読み込みに失敗しました。';}
+}
 
 // Custom contract features: one checkbox per feature of plan-features.js, grouped by section.
 const PLAN_TAG={supporter:'Basic',plus:'Plus',pro:'Pro'};

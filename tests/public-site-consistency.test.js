@@ -23,6 +23,7 @@ const excluded = new Set([
     'site/supporter-admin/index.html',
     'site/supporter-admin/stats.html',
     'site/supporter-admin/payments.html',
+    'site/supporter-admin/custom-requests.html',
     'site/cdn-admin/index.html',
     'site/patlite-admin/index.html',
 ]);
@@ -65,7 +66,7 @@ test('公開ページの左メニューは同じ項目と順序を使用する',
         assert.deepEqual(links, expectedMenu, relativePath);
         checked += 1;
     }
-    assert.equal(checked, 63);
+    assert.equal(checked, 64);
 });
 
 test('配信一覧と申請用カタログの状態が一致する', async () => {

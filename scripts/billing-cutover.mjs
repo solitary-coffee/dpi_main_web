@@ -16,7 +16,7 @@ import { PRICES, ROOT, ask, readConfigValue, siteState, wrangler, writeConfigVal
 
 const DB = 'REUSE_DB';
 // 子 → 親の順（外部キー）。
-export const PURGE_TABLES = ['supporter_custom_plan_changes', 'supporter_custom_plans', 'supporter_credit_campaign_recipients', 'supporter_credit_campaigns',
+export const PURGE_TABLES = ['supporter_custom_requests', 'supporter_custom_plan_changes', 'supporter_custom_plans', 'supporter_credit_campaign_recipients', 'supporter_credit_campaigns',
  'supporter_credit_events', 'supporter_credit_grants', 'supporter_credit_lots', 'supporter_credit_signups', 'supporter_credit_topups', 'supporter_dunning',
  'supporter_billing_notifications', 'supporter_payment_alerts', 'supporter_ops_notices', 'supporter_disciplinary_actions', 'supporter_discord_roles', 'supporter_stripe_events', 'supporter_billing', 'supporter_accounts'];
 export const purgeSql = () => `${PURGE_TABLES.map(name => `DELETE FROM ${name};`).join('\n')}\n`;

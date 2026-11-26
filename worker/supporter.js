@@ -11,6 +11,7 @@ import { billingMode, recoverCheckoutState, releaseDisputeHolds } from './suppor
 import { basicCredentialsValid, reviewAccessConfigured, reviewChallenge, reviewCookie, reviewCookieValid } from './supporter-review.js';
 import { imageRulesEnabled, imageRulesV2Enabled, isImageRuleType, isImageRuleV2Type, imageRuleOptions, savedTsunamiOutputs, savedRadarContents, savedRadarMinutes, radarIntervalText, HIRES_RADAR_CONTENTS, TSUNAMI_MAP_OUTPUTS, WARNING_TABLE_KINDS, WARNING_TABLE_DELIVER_ON, normalizeImageRuleFields, loadEarthquakeMunicipalities, IMAGE_RULE_TYPE_OPTIONS, HIRES_RADAR_CONDITIONS, WEATHER_MAP_PRODUCTS, WEATHER_MAP_SEVERITIES, EARTHQUAKE_MAP_PRODUCTS, EARTHQUAKE_MAP_INTENSITIES } from './supporter-image-rules.js';
 import { supporterAdminPayments } from './supporter-admin-payments.js';
+import {customRequestsEnabled,handleSupporterCustomRequestApi,handleSupporterCustomRequestAdminApi} from './supporter-custom-request.js';
 
 const response = (data, status = 200) => Response.json(data, {status, headers: {'Cache-Control':'no-store'}});
 const refreshSupporterAccessSafely = (env, db, reason, discordUserId) => Promise.all([
@@ -756,7 +757,7 @@ export async function assertSupporterRate(env, key) {
  if (!allowed) throw Object.assign(new Error('短時間に操作が続いたため受け付けられません。1分ほど待ってからお試しください。'), {status: 429});
 }
 function supporterPlansResponse(env) {
- return {mode:billingMode(env), billingEnabled:billingReady(env), intakePaused:supporterIntakePaused(env), previewOpen:supporterPreviewOpen(env)&&!supporterPublicEnabled(env), deliveryEnabled:supporterPublicEnabled(env)&&billingReady(env), plans:publicPlans(), addons:{channel:{yen:200,channels:3},server:{yen:200,servers:2},rule:{yen:200,rules:3},prorated:false},billingDay:26};
+ return {mode:billingMode(env), billingEnabled:billingReady(env), intakePaused:supporterIntakePaused(env), previewOpen:supporterPreviewOpen(env)&&!supporterPublicEnabled(env), deliveryEnabled:supporterPublicEnabled(env)&&billingReady(env), customRequests:{enabled:customRequestsEnabled(env)}, plans:publicPlans(), addons:{channel:{yen:200,channels:3},server:{yen:200,servers:2},rule:{yen:200,rules:3},prorated:false},billingDay:26};
 }
 export function supporterTestUserAllowed(env, discordUserId) {
  if (supporterPublicEnabled(env) || supporterPreviewOpen(env)) return true;
@@ -814,6 +815,10 @@ export async function handleSupporterRequest(request, env, ctx) {
    if (path === '/site/supporter-admin') {
     const redirect = new URL(request.url);redirect.pathname='/site/supporter-admin/';
     return new Response(null,{status:308,headers:{Location:redirect.toString(),'Cache-Control':'no-store'}});
+   }
+   if(path==='/site/supporter-admin/api/custom-requests'||path.startsWith('/site/supporter-admin/api/custom-requests/')){
+    if(request.method!=='GET')assertAdminOrigin(request);
+    return await handleSupporterCustomRequestAdminApi(request,db);
    }
    if(path==='/site/supporter-admin/api/credit-campaigns'){
     if(request.method!=='POST')return response({message:'Method not allowed'},405);
@@ -1180,6 +1185,10 @@ export async function handleSupporterRequest(request, env, ctx) {
   if (path === '/api/supporter/areas' && request.method === 'GET') {
    const areas=await loadSupporterAreaCatalogue();
    return response({municipalities:areas.municipalities,districts:areas.districts,source:areas.source});
+  }
+  if(path==='/api/supporter/custom-requests'||path.startsWith('/api/supporter/custom-requests/')){
+   if(request.method!=='GET'){assertSameOrigin(request);assertCsrf(request,session);}
+   return await handleSupporterCustomRequestApi(request,env,db,uid,{rateLimit:()=>assertSupporterRate(env,`custom-request:${uid}`)});
   }
   // 受付停止中でも、契約者の支払い方法の変更と解約（portal）は止めない。
   const pausedPortal = supporterIntakePaused(env) && path === '/api/supporter/billing/portal';
