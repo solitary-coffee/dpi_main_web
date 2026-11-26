@@ -30,6 +30,23 @@ test('印刷でご要望欄と確認欄をページ途中で切らない',async(
  for(const css of [customerCss,adminCss]){assert.match(css,/@media print/);assert.match(css,/break-inside:avoid/);assert.match(css,/@page\{size:A4/);}
 });
 
+test('利用者向けの印刷は選択したご要望1件のA4書類を生成する',async()=>{
+ const [html,js,css]=await Promise.all([read('../site/supporter/custom/index.html'),read('../site/supporter/custom/custom.js'),read('../site/supporter/custom/custom.css')]);
+ assert.match(html,/id="print-document" class="print-document"/);
+ assert.match(html,/id="print-request"/);
+ assert.match(html,/PDFで保存（印刷）/);
+ assert.match(js,/カスタムプラン ご要望書（控え）/);
+ assert.match(js,/function buildPrintDocument\(item\)/);
+ assert.match(js,/allDefinitions\(\)/);
+ assert.match(js,/この書類は控えです。契約・請求は運営が確定するまで発生しません。/);
+ assert.match(css,/@page\{size:A4 portrait;margin:15mm\}/);
+ assert.match(css,/@media print/);
+ assert.match(css,/body>\*:not\(\.print-document\)\{display:none!important\}/);
+ assert.match(css,/\.print-document\{display:block!important/);
+ assert.match(css,/thead\{display:table-header-group\}/);
+ assert.doesNotMatch(js,/innerHTML/);
+});
+
 test('カスタムご要望リンクは公開APIが明示的に有効な場合だけ表示する',async()=>{
  const [page,gate]=await Promise.all([read('../site/supporter/plans.html'),read('../site/supporter/plans-previews.js')]);
  assert.match(page,/href="\/site\/supporter\/custom\/" data-feature-gate="customRequests" hidden/);

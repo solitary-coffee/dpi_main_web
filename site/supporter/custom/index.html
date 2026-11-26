@@ -38,7 +38,11 @@
    <nav class="breadcrumbs screen-only" aria-label="パンくずリスト"><a href="/site/supporter/plans.html">有料プラン</a><span aria-hidden="true"> / </span><strong>カスタムプランのご要望</strong></nav>
    <header class="custom-hero">
     <div><p class="eyebrow">CUSTOM PLAN REQUEST</p><h1>カスタムプランのご要望</h1><p>ご要望を送り、運営からの最終確認を見てからお申し込みいただけます。</p></div>
-    <button id="print" class="secondary-btn screen-only" type="button">印刷・PDF保存</button>
+    <div class="print-actions screen-only">
+     <label for="print-request">印刷するご要望</label>
+     <select id="print-request" disabled><option value="">ご要望がありません</option></select>
+     <button id="print" class="secondary-btn" type="button" disabled>PDFで保存（印刷）</button>
+    </div>
    </header>
    <p id="status" class="form-status" role="status" aria-live="polite"></p>
    <section class="section account-section screen-only" aria-labelledby="account-title">
@@ -97,6 +101,7 @@
       <!-- dpi-public-footer:end -->
   </main>
  </div>
+ <article id="print-document" class="print-document" aria-label="カスタムプラン ご要望書（控え）"></article>
  <script src="../../../script.js"></script>
  <script type="module" src="custom.js"></script>
 </body>
