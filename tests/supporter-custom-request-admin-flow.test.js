@@ -33,7 +33,9 @@ test('ご要望詳細に保存と支払いURL作成までの3段階がある',as
 test('回答後の契約欄表示条件と未申込みの注意を備える',async()=>{
  const [html,script]=await Promise.all([read('../site/supporter-admin/custom-requests.html'),read('../site/supporter-admin/custom-requests.js')]);
  assert.match(html,/id="contract-warning"[^>]*hidden>利用者はまだこの回答に申し込んでいません。利用者と合意済みの場合だけ進めてください。/);
- assert.match(script,/const showContract=Boolean\(item\.answer\)&&!\['withdrawn','closed'\]\.includes\(item\.status\)/);
+ // 終了したご要望でも契約手続きへ進める（取り下げは除く）
+ assert.match(script,/const showContract=Boolean\(item\.answer\)&&item\.status!=='withdrawn';/);
+ assert.match(script,/このご要望は終了しています。/);
  assert.match(script,/\$\('contract-warning'\)\.hidden=!showContract\|\|item\.status==='accepted'/);
  assert.match(script,/if\(showContract\)loadContractWorkflow\(item\)/);
 });
