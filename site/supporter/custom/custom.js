@@ -21,7 +21,7 @@ function formatDate(value){if(!value)return '—';const date=new Date(Number(val
 function countValue(id){const value=$(id).value;return value===''?null:Number(value);}
 function allDefinitions(){
  const known=new Set(FEATURE_DEFINITIONS.map(item=>item.name));
- return [...FEATURE_DEFINITIONS,...plannedItems.filter(item=>!known.has(item.name)).map(item=>({name:item.name,label:item.label||item.name,section:'planned',plan:'custom',requires:[],note:item.note||'',planned:true}))];
+ return [...FEATURE_DEFINITIONS,...plannedItems.filter(item=>!known.has(item.name)).map(item=>({name:item.name,label:item.label||'準備中の機能',section:'planned',plan:'custom',requires:[],note:item.note||'',planned:true}))];
 }
 function sectionTitle(section){if(section==='planned')return '準備中の画像配信';return FEATURE_SECTIONS.find(([key])=>key===section)?.[1]||section;}
 function featureHint(item){
@@ -84,6 +84,57 @@ function featureTable(item){
  for(const definition of allDefinitions().filter(def=>names.has(def.name))){const tr=document.createElement('tr');const requested=definition.plan==='supporter'?'yes':request.wants?.[definition.name]||'no';tr.append(el('th','',definition.label),el('td','',definition.plan==='custom'?'個別相談':PLAN_LABELS[definition.plan]||'—'),el('td','mark',WANT_LABELS[requested]||'—'));if(confirmed)tr.append(el('td','mark',MARK_LABELS[answer.marks?.[definition.name]||'no']||'—'));const notes=[request.wantNotes?.[definition.name]&&`ご希望：${request.wantNotes[definition.name]}`,confirmed&&answer.notes?.[definition.name]&&`運営：${answer.notes[definition.name]}`].filter(Boolean).join('\n');tr.append(el('td','',notes||'—'));tbody.append(tr);}
  table.append(thead,tbody);wrap.append(table);return wrap;
 }
+function printInfo(rows){
+ const dl=el('dl','print-info print-block');
+ for(const [term,value] of rows){const box=document.createElement('div');box.append(el('dt','',term),el('dd','',String(value??'—')));dl.append(box);}
+ return dl;
+}
+// 書類には、希望した機能と提供される機能だけを 1 つの表で載せる（全機能を並べると長くなるため）
+function printFeatureTable(item){
+ const request=item.request||{},answer=item.answer;const table=el('table','print-table print-features');const thead=document.createElement('thead');const head=document.createElement('tr');
+ for(const label of ['種類','機能名','含まれる標準プラン','ご希望',...(answer?['提供']:[]),'備考'])head.append(el('th','',label));thead.append(head);const tbody=document.createElement('tbody');
+ // 有料プランの一覧と同じく、種類ごとに行をまとめて左端に種類を出す
+ const order=id=>{const i=FEATURE_SECTIONS.findIndex(([key])=>key===id);return i<0?99:i;};
+ const rows=allDefinitions().filter(definition=>(definition.plan==='supporter'?'yes':request.wants?.[definition.name]||'no')!=='no'||(answer?.marks?.[definition.name]||'no')!=='no').sort((a,b)=>order(a.section)-order(b.section));
+ rows.forEach((definition,index)=>{
+  const requested=definition.plan==='supporter'?'yes':request.wants?.[definition.name]||'no';const mark=answer?.marks?.[definition.name]||'no';
+  const kind=sectionTitle(definition.section);
+  const standardPlan=definition.planned?'準備中':PLAN_LABELS[definition.plan]||'—';
+  const notes=[request.wantNotes?.[definition.name]&&`ご希望：${request.wantNotes[definition.name]}`,answer?.notes?.[definition.name]&&`提供：${answer.notes[definition.name]}`].filter(Boolean).join('／')||'—';
+  const tr=document.createElement('tr');
+  if(index===0||sectionTitle(rows[index-1].section)!==kind){let span=1;while(rows[index+span]&&sectionTitle(rows[index+span].section)===kind)span++;const th=el('th','print-kind',kind);th.scope='rowgroup';th.rowSpan=span;tr.append(th);}
+  tr.append(el('th','',definition.label),el('td','',standardPlan),el('td','print-mark',`${WANT_LABELS[requested]||'—'} ${requested==='yes'?'必要':requested==='maybe'?'できれば':'不要'}`),...(answer?[el('td','print-mark',MARK_LABELS[mark]||'—')]:[]),el('td','',notes));tbody.append(tr);
+ });
+ if(!tbody.children.length){const tr=document.createElement('tr');const td=el('td','','ご希望の機能はありません。');td.colSpan=answer?6:5;tr.append(td);tbody.append(tr);}
+ table.append(thead,tbody);return table;
+}
+function printAnswer(item){
+ const answer=item.answer;if(!answer)return null;const section=el('section','print-block print-answer');section.append(el('h2','','運営の回答'));
+ section.append(printInfo([['金額の目安',answer.amount||'—'],['メモ',answer.memo||'—']]));
+ return section;
+}
+function buildPrintDocument(item){
+ const root=$('print-document');const request=item.request||{};root.replaceChildren();
+ root.append(el('h1','','カスタムプラン ご要望書（控え）'));
+ root.append(printInfo([['ご要望番号',item.id],['受付日',formatDate(item.createdAt)],['更新日',formatDate(item.updatedAt)],['印刷日',new Intl.DateTimeFormat('ja-JP',{dateStyle:'long'}).format(new Date())]]));
+ root.append(printInfo([['お名前',request.contact||'未記入'],['メールアドレス',request.email||'—'],['ご予算',request.budget||'未記入'],['サーバー数',request.servers??'—'],['チャンネル数',request.channels??'—'],['ルール数',request.rules??'—']]));
+ const features=el('section','print-block print-features-section');features.append(el('h2','','ご希望の機能'),printFeatureTable(item));root.append(features);
+ const free=el('section','print-block print-free');free.append(el('h2','','そのほかのご要望'),el('p','',request.request||'記入なし'));root.append(free);
+ const answer=printAnswer(item);if(answer)root.append(answer);
+ root.append(el('p','print-notice','この書類は控えです。契約・請求は運営が確定するまで発生しません。'));
+}
+function updatePrintSelection(){
+ const select=$('print-request');const selected=select.value;select.replaceChildren();
+ for(const item of items){const option=document.createElement('option');option.value=String(item.id);option.textContent=`ご要望 ${item.id}`;select.append(option);}
+ if(items.some(item=>String(item.id)===selected))select.value=selected;
+ const unavailable=items.length===0;select.disabled=unavailable;$('print').disabled=unavailable;
+ if(unavailable){const option=document.createElement('option');option.value='';option.textContent='ご要望がありません';select.append(option);}
+}
+function printSelectedRequest(){
+ const item=items.find(candidate=>String(candidate.id)===$('print-request').value);
+ if(!item){setStatus('印刷するご要望を選んでください。');return;}
+ buildPrintDocument(item);window.print();
+}
 function actionButton(label,className,handler){const button=el('button',className,label);button.type='button';button.addEventListener('click',handler);return button;}
 async function decide(item,decision,message=''){
  if(decision==='withdraw'&&!confirm('このご要望を取り下げますか？'))return;
@@ -117,10 +168,10 @@ function renderContract(){
  if(contract.status==='offered'){root.append(el('p','accepted-note','お支払いが完了すると契約が始まります。'));if(paymentUrl){const pay=document.createElement('a');pay.className='primary-btn screen-only';pay.href=paymentUrl;pay.textContent='お支払いへ進む（有料プランの画面）';root.append(pay);}}
  else root.append(el('p','accepted-note','この内容で契約中です。'));
 }
-function renderItems(){renderContract();const root=$('items');root.replaceChildren();if(!items.length)root.append(el('p','empty-list','まだ送信したご要望はありません。'));else for(const item of items)root.append(renderItem(item));$('items-section').hidden=false;}
+function renderItems(){renderContract();const root=$('items');root.replaceChildren();if(!items.length)root.append(el('p','empty-list','まだ送信したご要望はありません。'));else for(const item of items)root.append(renderItem(item));updatePrintSelection();$('items-section').hidden=false;}
 async function loadRequests(){const data=await api('/api/supporter/custom-requests');plannedItems=Array.isArray(data.plannedItems)?data.plannedItems:[];items=Array.isArray(data.items)?data.items:[];contract=data.contract||null;paymentUrl=typeof data.paymentUrl==='string'&&data.paymentUrl.startsWith('/')?data.paymentUrl:'';$('preparing').hidden=data.enabled!==false;requestsEnabled=data.enabled!==false;if(!$('request-id').value)renderFeatureForm();renderItems();updateFormVisibility();}
 async function initialize(){
- $('print').addEventListener('click',()=>window.print());$('cancel-edit').addEventListener('click',resetForm);
+ $('print').addEventListener('click',printSelectedRequest);$('cancel-edit').addEventListener('click',resetForm);
  $('request-form').addEventListener('submit',async event=>{event.preventDefault();if(!$('request-form').reportValidity())return;const id=$('request-id').value;const body={request:collectRequest()};const method=id?'PUT':'POST';if(id)body.revision=Number($('request-revision').value);$('submit-request').disabled=true;try{await api(id?`/api/supporter/custom-requests/${encodeURIComponent(id)}`:'/api/supporter/custom-requests',method,body);setStatus(id?'ご要望を更新しました。':'ご要望を送信しました。');resetForm();await loadRequests();}catch(error){setStatus(error.message);}finally{$('submit-request').disabled=false;}});
  try{session=await api('/api/reuse/session');if(!session.authenticated){$('user').textContent='Discordログインが必要です。';setStatus('このページの利用にはDiscordログインが必要です。');return;}$('user').textContent=session.user?.username||'ログイン済み';$('login-link').hidden=true;await loadRequests();}catch(error){setStatus(error.message);}
 }

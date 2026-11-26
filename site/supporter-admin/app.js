@@ -1,4 +1,5 @@
 import { FEATURE_DEFINITIONS, FEATURE_SECTIONS, PLAN_FEATURE_NAMES, missingFeatureDependency, featureLabel, withBasicFeatures } from './plan-features.js';
+import {activeCustomPlanConfirmation,customPlanEstimate,customPlanValidationError,newCustomPlanConfirmation,sendCustomPlan,stripeCheckoutUrl} from './custom-plan-api.js';
 
 let accounts = [];
 let selectedAccount = null;
@@ -445,8 +446,7 @@ async function submitAction(event) {
 }
 
 function paymentLink(value) {
- const link=element('a','','作成した支払いURLを開く');link.href=typeof value==='string'?value:'';link.target='_blank';link.rel='noopener noreferrer';
- if(link.protocol!=='https:'||link.hostname!=='checkout.stripe.com')throw new Error('Stripeの支払いURLを確認できませんでした。');
+ const link=element('a','','作成した支払いURLを開く');link.href=stripeCheckoutUrl(value);link.target='_blank';link.rel='noopener noreferrer';
  return link;
 }
 
@@ -465,10 +465,7 @@ function customPayload(){
  };
 }
 function updateCustomEstimate(){
- const p=customPayload(),has=name=>p.features.includes(name);
- const base=has('complexConditions')||has('strictMunicipality')?1280:has('municipalityScope')||p.channels>2||p.servers>1||p.rules>5?800:300;
- const defaults=base===1280?[20,5,30]:base===800?[10,3,15]:[2,1,5];
- const price=base+Math.ceil(Math.max(0,p.channels-defaults[0])/3)*200+Math.max(0,p.servers-defaults[1])*200+Math.ceil(Math.max(0,p.rules-defaults[2])/5)*100+(p.secondaryReuse?200:0);
+ const price=customPlanEstimate(customPayload());
  $('custom-estimate').textContent=Number.isFinite(price)?`${price.toLocaleString('ja-JP')}円／月（参考値）`:'—';
 }
 function loadCustom(){
@@ -492,55 +489,24 @@ async function submitCustom(action){
  const payload={...customPayload(),action};
  const account=accounts.find(item=>item.discordUserId===payload.discordUserId);
  payload.expectedRevision=loadedCustomRevision??account?.customPlan?.revision??0;
- if(!/^\d{17,20}$/.test(payload.discordUserId)||payload.confirmDiscordUserId!==payload.discordUserId){
-  $('custom-result').textContent='Discord IDと確認欄を一致させてください。';return;
- }
- if(payload.reason.length<5){$('custom-result').textContent='理由を5文字以上入力してください。';return;}
- const missing=missingFeatureDependency(payload.features);
- if(missing){$('custom-result').textContent=`「${featureLabel(missing.name)}」には「${missing.requires.map(featureLabel).join('」または「')}」も必要です。`;return;}
+ const validationError=customPlanValidationError(payload,missingFeatureDependency,featureLabel);
+ if(validationError){$('custom-result').textContent=validationError;return;}
  if(action==='save'&&!$('custom-form').reportValidity())return;
  if(action==='cancel'&&!window.confirm('このユーザーのカスタム契約を停止します。Stripeの契約も即時解約され、返金は自動実行しません。続行しますか？'))return;
  if(action==='cancel-change'&&!window.confirm('未決済の当月差額請求を無効化し、既存契約を維持しますか？'))return;
  const button=$(`custom-${action==='checkout'?'checkout':action==='cancel-change'?'cancel-change':action==='cancel'?'cancel':'save'}`);
  button.disabled=true;$('custom-result').textContent='カスタムプランを処理しています…';
  try{
-  const send=async body=>{
-   const response=await fetch('/site/supporter-admin/api/custom-plan',{
-    method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','Accept':'application/json'},body:JSON.stringify(body),
-   });
-   const data=await response.json().catch(()=>({}));
-   if(!response.ok||!data.success)throw new Error(data.message||`HTTP ${response.status}`);
-   return data;
-  };
+  const send=body=>sendCustomPlan(body);
   if(action==='save'&&account?.customPlan?.status==='active'){
    const preview=await send({...payload,action:'preview'});
    const q=preview.quote;
    if(!q)throw new Error('料金プレビューを取得できませんでした。');
-   const summary=`カスタムプラン契約変更内容を確認してください。
-
-現在月額：${q.oldMonthlyYen.toLocaleString('ja-JP')}円
-変更後月額：${q.newMonthlyYen.toLocaleString('ja-JP')}円
-当月の追加請求：${q.immediateDueYen.toLocaleString('ja-JP')}円${q.noImmediateRefund?'（減額分の返金なし）':''}
-次回以降の月額：${q.nextMonthlyYen.toLocaleString('ja-JP')}円
-
-${q.immediateDueYen>0?'増額は差額の支払い確認後に適用します。':'追加決済なしで更新します。'}
-よろしいですか？`;
+   const summary=activeCustomPlanConfirmation(q);
    if(!window.confirm(summary)){$('custom-result').textContent='変更を取り消しました。';return;}
   }
   if(action==='save'&&account?.customPlan?.status!=='active'){
-   const summary=`このユーザーに新しくカスタムプランを設定します。
-
-Discord ID：${payload.discordUserId}
-プラン名：${payload.name}
-月額：${payload.monthlyYen.toLocaleString('ja-JP')}円
-上限：${payload.servers}サーバー／${payload.channels}チャンネル／${payload.rules}ルール
-複雑条件：${payload.complexConditions?'ON':'OFF'}
-市区町村：${payload.municipalityBranching?'ON':'OFF'}
-本文抽出：${payload.contentExtraction?'ON':'OFF'}
-複数チャンネル：${payload.multiDestination?'ON':'OFF'}
-二次利用の契約上の許容：${payload.secondaryReuse?'あり（別途申請必須）':'なし'}
-
-保存後も利用者の決済が確認されるまで配信権限は有効になりません。続行しますか？`;
+   const summary=newCustomPlanConfirmation(payload);
    if(!window.confirm(summary)){$('custom-result').textContent='設定の保存を取り消しました。';return;}
   }
   const data=await send(payload);
