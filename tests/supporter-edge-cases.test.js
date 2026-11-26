@@ -255,11 +255,22 @@ test('同時に届く一部返金と全額返金は競合を再試行して過�
    billingWebhook(webhookRequest({id:'evt_refund_300',livemode:false,type:'charge.refunded',data:{object:partial}}),env),
    billingWebhook(webhookRequest({id:'evt_refund_1000',livemode:false,type:'charge.refunded',data:{object:full}}),env),
   ]);
-  assert.equal(concurrent.filter(result=>result.status==='fulfilled').length,1);
-  assert.equal(concurrent.filter(result=>result.status==='rejected').length,1);
-  assert.deepEqual(reversals,[300]);assert.equal(topup.refunded_amount,300);assert.equal(topup.status,'credited');assert.equal(lot.remaining_amount,700);
-  const duplicate=await billingWebhook(webhookRequest({id:'evt_refund_300',livemode:false,type:'charge.refunded',data:{object:partial}}),env);assert.equal(duplicate.status,200);assert.deepEqual(reversals,[300]);
-  const response=await billingWebhook(webhookRequest({id:'evt_refund_1000',livemode:false,type:'charge.refunded',data:{object:full}}),env);assert.equal(response.status,200);
-  assert.deepEqual(reversals,[300,700]);assert.equal(topup.refunded_amount,1000);assert.equal(topup.status,'refunded');assert.equal(lot.remaining_amount,0);assert.equal(lot.status,'revoked');
+  // どちらが先に更新できるかは非同期処理の進み方で変わる（#237）。順番に依らない性質を確かめる。
+  // ・一部返金が先：全額返金は競合で断られ、再送で残り 700 を取り消す
+  // ・全額返金が先：1000 を取り消し、後から来た一部返金は処理済みとして何もしない
+  assert.ok(concurrent.some(result=>result.status==='fulfilled'));
+  const total=()=>reversals.reduce((sum,amount)=>sum+amount,0);
+  if(topup.refunded_amount===300){
+   assert.deepEqual(reversals,[300]);assert.equal(topup.status,'credited');assert.equal(lot.remaining_amount,700);
+   assert.equal(concurrent.filter(result=>result.status==='rejected').length,1);
+  }else{
+   assert.equal(topup.refunded_amount,1000);assert.deepEqual(reversals,[1000]);assert.equal(lot.remaining_amount,0);
+  }
+  assert.ok(total()<=1000,'同時に届いても返金額を超えて取り消さない');
+  // 両方を再送すると、順番に依らず全額返金後の状態になり、二重に取り消さない
+  for(const event of [{id:'evt_refund_300',object:partial},{id:'evt_refund_1000',object:full},{id:'evt_refund_300',object:partial}]){
+   const response=await billingWebhook(webhookRequest({id:event.id,livemode:false,type:'charge.refunded',data:{object:event.object}}),env);assert.equal(response.status,200);
+  }
+  assert.equal(total(),1000);assert.equal(topup.refunded_amount,1000);assert.equal(topup.status,'refunded');assert.equal(lot.remaining_amount,0);assert.equal(lot.status,'revoked');
  }finally{globalThis.fetch=originalFetch;}
 });
