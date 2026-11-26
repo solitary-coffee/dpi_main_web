@@ -474,7 +474,7 @@ export function mailHtml(text){
  const body=String(text).split('\n').map(line=>/^-{10,}$/.test(line)?'<hr style="border:0;border-top:1px solid #b9bcc1;margin:14px 0">':line?`<div style="margin:3px 0">${mailLink(line)}</div>`:'<div style="height:10px"></div>').join('');
  return `<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body style="margin:0;padding:16px;background:#d5d7da"><div style="max-width:620px;margin:0 auto;padding:20px;background:#ececee;border:1px solid #b9bcc1;border-radius:8px;color:#33363b;font-family:'Hiragino Sans','Yu Gothic',Meiryo,sans-serif;font-size:15px;line-height:1.7;overflow-wrap:anywhere">${body}</div></body></html>`;
 }
-function supporterMailSignature(){
+export function supporterMailSignature(){
  return ['----------------------------------------','DPI-Bot','契約・支払い方法の管理: https://dpi-bot.com/site/supporter/','お問い合わせ: https://dpi-bot.com/site/supp/index.html','利用規約・特定商取引法に基づく表記: https://dpi-bot.com/terms/index.html','※お支払い・契約に関する重要なお知らせのため、配信停止の設定にかかわらずお送りしています。'].join('\n');
 }
 function billingMailContent(env,kind,invoice,retryAt,suspendAt,sentAt){

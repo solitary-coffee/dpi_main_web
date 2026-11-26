@@ -5,7 +5,7 @@ import {DatabaseSync} from 'node:sqlite';
 import {
  CUSTOM_PLANNED_ITEMS,normalizeCustomRequest,normalizeCustomAnswer,
  createCustomRequest,listCustomRequestsForUser,updateCustomRequest,decideCustomRequest,
- answerCustomRequest,setCustomRequestStatus,customRequestFeatures,
+ answerCustomRequest,setCustomRequestStatus,customRequestFeatures,handleSupporterCustomRequestAdminApi,
 } from '../worker/supporter-custom-request.js';
 import {handleSupporterRequest} from '../worker/supporter.js';
 
@@ -110,6 +110,43 @@ test('回答のyesとpartialから公開済み機能だけを契約入力へ変�
   features:['eewMap','eewMapRegion'],yes:['eewMapRegion'],partial:['eewMap'],servers:2,channels:5,rules:10,
  });
  assert.equal(raw.prepare('SELECT revision FROM supporter_custom_requests WHERE id=?').get(ID).revision,2);
+});
+
+test('回答済みなら申込み前でも契約機能を取得でき、回答がなければ400になる',async()=>{
+ const {db}=await database();
+ let row=await createCustomRequest(db,UID,requestInput(),{id:ID,now:100000});
+ assert.throws(()=>customRequestFeatures(row),error=>error.status===400);
+ row=await answerCustomRequest(db,ID,answerInput(),0,{now:100010});
+ assert.equal(row.status,'answered');
+ assert.deepEqual(customRequestFeatures(row),{features:['eewMap'],yes:['eewMap'],partial:[],servers:2,channels:5,rules:10});
+});
+
+test('支払いURLメールはご要望の宛先へ件名とURLを含めて送る',async()=>{
+ const {db}=await database();
+ await createCustomRequest(db,UID,requestInput(),{id:ID,now:100000});
+ await answerCustomRequest(db,ID,answerInput(),0,{now:100010});
+ const messages=[],env={NOTICE_FROM_EMAIL:'notice@dpi-bot.com',NOTICE_REPLY_TO_EMAIL:'support@dpi-bot.com',NOTICE_EMAIL:{async send(message){messages.push(message);}}};
+ const url='https://checkout.stripe.com/c/pay/test_custom_request';
+ const response=await handleSupporterCustomRequestAdminApi(new Request(`https://example.test/site/supporter-admin/api/custom-requests/${ID}/payment-link-email`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({url})}),db,env);
+ assert.equal(response.status,200);
+ const result=await response.json();
+ assert.equal(result.sent,true);assert.equal(result.to,'user@example.com');assert.equal(typeof result.sentAt,'number');
+ assert.equal(messages.length,1);assert.equal(messages[0].to,'user@example.com');
+ assert.equal(messages[0].subject,'【DPI-Bot】カスタムプランのお支払いのご案内');
+ assert.match(messages[0].text,/ご要望番号: 11111111-1111-4111-8111-111111111111/);assert.match(messages[0].text,new RegExp(url.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
+ assert.match(messages[0].html,/checkout\.stripe\.com/);assert.equal(messages[0].replyTo,'support@dpi-bot.com');
+});
+
+test('支払いURLメールはStripe以外を400、メール機能未設定を503にする',async()=>{
+ const {db}=await database();
+ await createCustomRequest(db,UID,requestInput(),{id:ID,now:100000});
+ await answerCustomRequest(db,ID,answerInput(),0,{now:100010});
+ const endpoint=`https://example.test/site/supporter-admin/api/custom-requests/${ID}/payment-link-email`;
+ const call=(url,env)=>handleSupporterCustomRequestAdminApi(new Request(endpoint,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({url})}),db,env);
+ let sends=0;const env={NOTICE_FROM_EMAIL:'notice@dpi-bot.com',NOTICE_EMAIL:{async send(){sends+=1;}}};
+ await assert.rejects(()=>call('https://example.com/pay',env),error=>error.status===400);
+ assert.equal(sends,0);
+ await assert.rejects(()=>call('https://checkout.stripe.com/c/pay/test',{}),error=>error.status===503&&/メール送信機能/.test(error.message));
 });
 
 test('機能が無効な間は認証済み利用者の書き込みを403にする',async()=>{

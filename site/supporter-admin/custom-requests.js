@@ -7,6 +7,8 @@ let plannedItems=[];// 準備中の画像配信（日本語名はサーバーの
 let contractAccount=null;
 let contractRequestId='';
 let contractSaved=false;
+let currentCheckoutUrl='';
+let paymentLinkBusy=false;
 const $=id=>document.getElementById(id);
 const STATUS_LABELS={submitted:'受付済み',estimating:'見積もり中',answered:'回答あり',accepted:'申込み済み',consulting:'ご相談中',objected:'異議あり',withdrawn:'取り下げ',closed:'終了'};
 const WANT_LABELS={yes:'○',maybe:'△',no:'—'};
@@ -48,7 +50,7 @@ const defs=definitions(item);
   body.append(row);
  });
 }
-function renderDetail(item){current=item;$('detail-section').hidden=false;$('detail-title').textContent=`ご要望 ${item.id}`;$('detail-status').textContent=STATUS_LABELS[item.status]||item.status;$('request-summary').replaceChildren(el('p','',`メール：${item.request?.email||'—'} ／ お名前：${item.request?.contact||'—'} ／ 受付：${formatDate(item.createdAt)} ／ 更新：${formatDate(item.updatedAt)}`),summary(item));renderFeatureTable(item);renderPrintDocument(item);$('print').disabled=false;$('request-note').replaceChildren(el('h3','','そのほかのご要望'),el('p','',item.request?.request||'記入なし'),...(item.decisionMessage?[el('h3','',item.status==='objected'?'異議の内容':'利用者からのメッセージ'),el('p','',item.decisionMessage)]:[]));fillAnswer(item);const canAnswer=['submitted','estimating'].includes(item.status);$('answer-form').hidden=!canAnswer;$('estimating').hidden=!['submitted','consulting','objected'].includes(item.status);$('load-contract').hidden=item.status!=='accepted';$('contract-workflow').hidden=item.status!=='accepted';if(item.status==='accepted')loadContractWorkflow(item);$('detail-section').scrollIntoView({behavior:'smooth',block:'start'});}
+function renderDetail(item){current=item;$('detail-section').hidden=false;$('detail-title').textContent=`ご要望 ${item.id}`;$('detail-status').textContent=STATUS_LABELS[item.status]||item.status;$('request-summary').replaceChildren(el('p','',`メール：${item.request?.email||'—'} ／ お名前：${item.request?.contact||'—'} ／ 受付：${formatDate(item.createdAt)} ／ 更新：${formatDate(item.updatedAt)}`),summary(item));renderFeatureTable(item);renderPrintDocument(item);$('print').disabled=false;$('request-note').replaceChildren(el('h3','','そのほかのご要望'),el('p','',item.request?.request||'記入なし'),...(item.decisionMessage?[el('h3','',item.status==='objected'?'異議の内容':'利用者からのメッセージ'),el('p','',item.decisionMessage)]:[]));fillAnswer(item);const canAnswer=['submitted','estimating'].includes(item.status);$('answer-form').hidden=!canAnswer;$('estimating').hidden=!['submitted','consulting','objected'].includes(item.status);const showContract=Boolean(item.answer)&&!['withdrawn','closed'].includes(item.status);$('load-contract').hidden=!showContract;$('contract-workflow').hidden=!showContract;$('contract-warning').hidden=!showContract||item.status==='accepted';if(showContract)loadContractWorkflow(item);$('detail-section').scrollIntoView({behavior:'smooth',block:'start'});}
 async function loadDetail(id){setStatus('詳細を読み込み中…');try{current=unwrap(keepPlanned(await api(`/site/supporter-admin/api/custom-requests/${encodeURIComponent(id)}`)));renderDetail(current);setStatus('');}catch(error){setStatus(error.message,'error');}}
 function answerPayload(){const marks={},notes={};for(const row of document.querySelectorAll('#feature-table [data-feature]')){const name=row.dataset.feature;marks[name]=row.querySelector('.answer-mark').value;const note=row.querySelector('.answer-note').value.trim();if(note)notes[name]=note;}return {estimator:$('answer-estimator').value.trim(),amount:$('answer-amount').value.trim(),memo:$('answer-memo').value.trim(),servers:Number($('answer-servers').value),channels:Number($('answer-channels').value),rules:Number($('answer-rules').value),marks,notes};}
 async function updateStatus(status){if(!current)return;try{await api(`/site/supporter-admin/api/custom-requests/${encodeURIComponent(current.id)}/status`,'POST',{status,revision:current.revision});setStatus('状態を更新しました。','success');await loadDetail(current.id);await loadList();}catch(error){setStatus(error.message,'error');}}
@@ -70,7 +72,9 @@ function amountNumber(value){const match=String(value||'').match(/[0-9][0-9,]*/)
 function contractPayload(action){return {discordUserId:$('contract-uid').value.trim(),confirmDiscordUserId:$('contract-confirm').value.trim(),name:'カスタムプラン',channels:Number($('contract-channels').value),servers:Number($('contract-servers').value),rules:Number($('contract-rules').value),monthlyYen:Number($('contract-price').value),features:selectedContractFeatures(),secondaryReuse:false,reason:`カスタムプランご要望 ${current?.id||''} を反映`,requestId:contractRequestId,expectedRevision:Number(contractAccount?.customPlan?.revision||0),action};}
 function updateContractEstimate(){const price=customPlanEstimate(contractPayload('save'));$('contract-estimate').textContent=Number.isFinite(price)?`${price.toLocaleString('ja-JP')}円／月（参考値）`:'—';}
 function setStepResult(id,message,type=''){const node=$(id);node.className=`step-result${type?` ${type}`:''}`;node.textContent=message||'';}
-function invalidateContractSave(){if(!contractSaved)return;contractSaved=false;$('contract-checkout').disabled=true;setStepResult('contract-save-result','内容が変更されました。もう一度保存してください。');setStepResult('contract-checkout-result','');}
+function syncPaymentLinkButtons(){const canCreate=contractSaved&&contractAccount?.customPlan?.status==='offered';$('contract-checkout').disabled=paymentLinkBusy||!canCreate;$('contract-checkout-email').disabled=paymentLinkBusy||!canCreate;$('contract-email-existing').disabled=paymentLinkBusy||!currentCheckoutUrl;}
+function clearCheckoutUrl(){currentCheckoutUrl='';setStepResult('contract-checkout-result','');syncPaymentLinkButtons();}
+function invalidateContractSave(){if(!contractSaved)return;contractSaved=false;clearCheckoutUrl();setStepResult('contract-save-result','内容が変更されました。もう一度保存してください。');setStepResult('contract-email-result','');}
 function contractStatusText(account){
  if(!account)return '対象のDiscord IDは有料プランに未登録です。';
  const plan=account.customPlan;if(!plan)return '既存のカスタム契約はありません。';
@@ -78,7 +82,7 @@ function contractStatusText(account){
  return `既存のカスタム契約：${label}（revision ${plan.revision}）`;
 }
 async function loadContractWorkflow(item){
- const id=item.id;contractSaved=false;contractAccount=null;contractRequestId=id;$('contract-checkout').disabled=true;setStepResult('contract-save-result','回答内容を読み込み中…');setStepResult('contract-checkout-result','');$('contract-state').textContent='既存契約を確認中…';
+ const id=item.id;contractSaved=false;contractAccount=null;contractRequestId=id;paymentLinkBusy=false;currentCheckoutUrl='';syncPaymentLinkButtons();setStepResult('contract-save-result','回答内容を読み込み中…');setStepResult('contract-checkout-result','');setStepResult('contract-email-result','');$('contract-state').textContent='既存契約を確認中…';
  try{
   const [features,accountData]=await Promise.all([api(`/site/supporter-admin/api/custom-requests/${encodeURIComponent(id)}/features`),api('/site/supporter-admin/api/accounts')]);
   if(current?.id!==id)return;
@@ -102,27 +106,48 @@ async function saveContract(event){
   const data=await sendCustomPlan(payload);contractAccount={...(contractAccount||{}),discordUserId:payload.discordUserId,customPlan:data.customPlan||contractAccount?.customPlan};contractRequestId=crypto.randomUUID();contractSaved=true;
   setStepResult('contract-save-result',data.message||'カスタムプランとして保存しました。','success');
   if(data.url)renderCheckoutUrl(data.url,data.message);
-  const canCheckout=contractAccount.customPlan?.status==='offered';$('contract-checkout').disabled=!canCheckout;
+  const canCheckout=contractAccount.customPlan?.status==='offered';syncPaymentLinkButtons();
   if(!canCheckout&&!data.url)setStepResult('contract-checkout-result','既存の有効な契約は新規の支払いURL作成対象ではありません。');
   $('contract-state').textContent=contractStatusText(contractAccount);
- }catch(error){setStepResult('contract-save-result',error.message,'error');contractSaved=false;$('contract-checkout').disabled=true;}
+ }catch(error){setStepResult('contract-save-result',error.message,'error');contractSaved=false;syncPaymentLinkButtons();}
  finally{button.disabled=false;}
 }
 function renderCheckoutUrl(value,message='支払いURLを作成しました。'){
- const url=stripeCheckoutUrl(value),root=$('contract-checkout-result');root.className='step-result success';root.replaceChildren(el('p','',message));
+ const url=stripeCheckoutUrl(value),root=$('contract-checkout-result');currentCheckoutUrl=url;root.className='step-result success';root.replaceChildren(el('p','',message));
  const actions=el('div','checkout-actions');const link=el('a','','作成した支払いURLを開く');link.href=url;link.target='_blank';link.rel='noopener noreferrer';const copy=el('button','secondary-btn','コピー');copy.type='button';copy.addEventListener('click',async()=>{try{await navigator.clipboard.writeText(url);setStepResult('contract-checkout-result','支払いURLをコピーしました。','success');root.append(actions);}catch{setStepResult('contract-checkout-result','支払いURLをコピーできませんでした。','error');root.append(actions);}});actions.append(link,copy);root.append(actions);
+ syncPaymentLinkButtons();return url;
+}
+async function createCheckoutUrl(){
+ const payload=contractPayload('checkout'),validationError=customPlanValidationError(payload,missingFeatureDependency,featureLabel);if(validationError)throw new Error(validationError);
+ const data=await sendCustomPlan(payload),url=renderCheckoutUrl(data.url,data.message);contractRequestId=crypto.randomUUID();return url;
+}
+async function emailPaymentLink(url){
+ const to=current?.request?.email||'（メールアドレスなし）';
+ if(!window.confirm(`次の宛先に支払いURLを送信しますか？\n\n宛先: ${to}\nURL: ${url}`)){setStepResult('contract-email-result','メール送信を取り消しました。');return false;}
+ const data=await api(`/site/supporter-admin/api/custom-requests/${encodeURIComponent(current.id)}/payment-link-email`,'POST',{url});
+ setStepResult('contract-email-result',`送信済み：${data.to} ／ ${formatDate(data.sentAt)}`,'success');return true;
+}
+async function withPaymentLinkLock(action){
+ if(paymentLinkBusy)return;paymentLinkBusy=true;syncPaymentLinkButtons();
+ try{await action();}catch(error){setStepResult('contract-email-result',`送信失敗：${error.message}`,'error');}
+ finally{paymentLinkBusy=false;syncPaymentLinkButtons();}
 }
 async function createCheckout(){
- if(!contractSaved)return;const payload=contractPayload('checkout'),validationError=customPlanValidationError(payload,missingFeatureDependency,featureLabel);if(validationError){setStepResult('contract-checkout-result',validationError,'error');return;}
- const button=$('contract-checkout');button.disabled=true;setStepResult('contract-checkout-result','支払いURLを作成中…');
- try{const data=await sendCustomPlan(payload);renderCheckoutUrl(data.url,data.message);contractRequestId=crypto.randomUUID();}
- catch(error){setStepResult('contract-checkout-result',error.message,'error');}
- finally{button.disabled=!contractSaved;}
+ if(!contractSaved)return;paymentLinkBusy=true;syncPaymentLinkButtons();setStepResult('contract-checkout-result','支払いURLを作成中…');
+ try{await createCheckoutUrl();}
+ catch(error){currentCheckoutUrl='';setStepResult('contract-checkout-result',error.message,'error');}
+ finally{paymentLinkBusy=false;syncPaymentLinkButtons();}
+}
+async function createCheckoutAndEmail(){
+ if(!contractSaved)return;await withPaymentLinkLock(async()=>{setStepResult('contract-checkout-result','支払いURLを作成中…');setStepResult('contract-email-result','');const url=await createCheckoutUrl();await emailPaymentLink(url);});
+}
+async function emailExistingCheckout(){
+ if(!currentCheckoutUrl)return;await withPaymentLinkLock(async()=>{setStepResult('contract-email-result','');await emailPaymentLink(currentCheckoutUrl);});
 }
 async function loadContract(){if(!current)return;try{const data=await api(`/site/supporter-admin/api/custom-requests/${encodeURIComponent(current.id)}/features`);const draft={requestId:current.id,discordUserId:current.discordUserId||current.userId||'',features:data.features||[],servers:data.servers,channels:data.channels,rules:data.rules};sessionStorage.setItem('supporter-admin-custom-draft',JSON.stringify(draft));location.href='./?customDraft=1';}catch(error){setStatus(error.message,'error');}}
 
 $('refresh').addEventListener('click',loadList);$('status-filter').addEventListener('change',loadList);$('print').addEventListener('click',()=>{if(!current)return;setDocumentText('document-printed-at',formatDateOnly(new Date()));window.print();});$('estimating').addEventListener('click',()=>updateStatus('estimating'));$('close-request').addEventListener('click',()=>{if(confirm('このご要望を終了にしますか？'))updateStatus('closed');});$('load-contract').addEventListener('click',loadContract);
-$('contract-form').addEventListener('submit',saveContract);$('contract-checkout').addEventListener('click',createCheckout);$('contract-form').addEventListener('input',event=>{if(event.target.matches('input')){invalidateContractSave();updateContractEstimate();}});
+$('contract-form').addEventListener('submit',saveContract);$('contract-checkout').addEventListener('click',createCheckout);$('contract-checkout-email').addEventListener('click',createCheckoutAndEmail);$('contract-email-existing').addEventListener('click',emailExistingCheckout);$('contract-form').addEventListener('input',event=>{if(event.target.matches('input')){invalidateContractSave();updateContractEstimate();}});
 window.addEventListener('beforeprint',()=>{if(current)setDocumentText('document-printed-at',formatDateOnly(new Date()));});
 $('copy-request').addEventListener('click',()=>{if(!current)return;for(const row of document.querySelectorAll('#feature-table [data-feature]')){const wanted=current.request?.wants?.[row.dataset.feature]||'no';row.querySelector('.answer-mark').value=wanted==='yes'?'yes':wanted==='maybe'?'partial':'no';}});
 $('answer-form').addEventListener('submit',async event=>{event.preventDefault();if(!current||!event.currentTarget.reportValidity())return;try{await api(`/site/supporter-admin/api/custom-requests/${encodeURIComponent(current.id)}/answer`,'POST',{answer:answerPayload(),revision:current.revision});setStatus('回答を送信しました。','success');await loadDetail(current.id);await loadList();}catch(error){setStatus(error.message,'error');}});
