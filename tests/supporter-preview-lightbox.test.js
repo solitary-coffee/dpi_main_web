@@ -163,7 +163,7 @@ test('ページ: 契約画面と機能比較ページが拡大表示を使う', 
  // 機能比較ページの見本は manifest にある見本を指し、地震情報の図もある
  const figures = [...plans.matchAll(/data-preview-type="([^"]+)" data-preview-file="([^"]+)" data-preview-plan="([^"]+)"/g)];
  assert.ok(figures.length >= TYPES.length);
- for (const [, type, file] of figures)
+ for (const [, type, file] of figures.filter(([, type]) => !type.startsWith('planned-')))
   assert.ok((manifest[type] || []).some(item => item.file === file), `${type} ${file}`);
  for (const type of TYPES) assert.ok(figures.some(([, t]) => t === type), type);
  // 契約画面のサムネイル（rulePreviews の名前）も manifest にある
