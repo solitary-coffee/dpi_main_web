@@ -37,3 +37,10 @@ test('カスタムご要望リンクは公開APIが明示的に有効な場合�
  assert.match(gate,/data-feature-gate="customRequests"/);
 });
 
+
+test('管理画面のご要望は、準備中の機能を識別名のまま表示しない',async()=>{
+ const js=await read('../site/supporter-admin/custom-requests.js');
+ assert.doesNotMatch(js,/label:name\b/);
+ assert.match(js,/plannedItems/);
+ assert.match(js,/custom:'準備中'/);
+});

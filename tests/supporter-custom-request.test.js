@@ -165,3 +165,15 @@ test('利用者の取得は、運営が用意した契約（提示中・有効�
  raw.prepare("UPDATE supporter_custom_plans SET status='canceled'").run();
  assert.equal((await get()).contract,null);
 });
+
+test('管理画面の一覧と詳細は、準備中の機能の日本語名も返す',async()=>{
+ const {handleSupporterCustomRequestAdminApi}=await import('../worker/supporter-custom-request.js');
+ const {db}=await database();
+ await createCustomRequest(db,UID,requestInput(),{id:ID,now:100000});
+ const base='https://example.test/site/supporter-admin/api/custom-requests';
+ for(const url of [base,`${base}/${ID}`]){
+  const data=await (await handleSupporterCustomRequestAdminApi(new Request(url),db)).json();
+  assert.deepEqual(data.plannedItems,CUSTOM_PLANNED_ITEMS);
+  for(const item of data.plannedItems)assert.match(item.label,/[ぁ-んァ-ヶ一-龠]/,`${item.name} に日本語名がない`);
+ }
+});

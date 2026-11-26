@@ -262,9 +262,9 @@ export async function handleSupporterCustomRequestAdminApi(request,db){
   if(status&&!STATUS_SET.has(status))fail('statusが正しくありません。');
   const sql=`SELECT r.*,COALESCE(a.discord_name,'') AS discord_name FROM supporter_custom_requests r LEFT JOIN supporter_accounts a ON a.discord_user_id=r.discord_user_id${status?' WHERE r.status=?':''} ORDER BY r.updated_at DESC,r.id DESC`;
   const rows=status?await db.prepare(sql).bind(status).all():await db.prepare(sql).all();
-  return json({items:(rows.results||[]).map(row=>customRequestPublic(row,{admin:true}))});
+  return json({items:(rows.results||[]).map(row=>customRequestPublic(row,{admin:true})),plannedItems:CUSTOM_PLANNED_ITEMS});
  }
- if(request.method==='GET'&&match&&!match[2])return json({item:customRequestPublic(await requireAdminRow(db,match[1]),{admin:true})});
+ if(request.method==='GET'&&match&&!match[2])return json({item:customRequestPublic(await requireAdminRow(db,match[1]),{admin:true}),plannedItems:CUSTOM_PLANNED_ITEMS});
  if(request.method==='GET'&&match?.[2]==='features')return json(customRequestFeatures(await requireAdminRow(db,match[1])));
  if(request.method==='POST'&&match?.[2]==='answer'){
   const input=bodyKeys(await readJson(request),['answer','revision']);
