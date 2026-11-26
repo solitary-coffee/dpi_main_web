@@ -19,3 +19,4 @@
  .confirmation-box{margin-top:8mm;padding:4mm;border:2px solid #000}.confirmation-box p{margin:0 0 8mm;font-weight:700}.confirmation-box div{display:grid;grid-template-columns:1fr 2fr;gap:8mm}.confirmation-box span{display:block;min-height:8mm;border-bottom:1px solid #000}
 }
 
+.feature-kind{min-width:8em;font-weight:700;vertical-align:top}.document-feature-table .feature-kind{width:8.5em}

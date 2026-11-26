@@ -1,4 +1,4 @@
-import {FEATURE_DEFINITIONS, FEATURE_SECTIONS, featureLabel} from '../plan-features.js';
+import {FEATURE_DEFINITIONS, FEATURE_SECTIONS} from '../plan-features.js';
 
 let session=null;
 let items=[];
@@ -92,16 +92,20 @@ function printInfo(rows){
 // 書類には、希望した機能と提供される機能だけを 1 つの表で載せる（全機能を並べると長くなるため）
 function printFeatureTable(item){
  const request=item.request||{},answer=item.answer;const table=el('table','print-table print-features');const thead=document.createElement('thead');const head=document.createElement('tr');
- for(const label of ['機能名','含まれる標準プラン','ご希望',...(answer?['提供']:[]),'備考'])head.append(el('th','',label));thead.append(head);const tbody=document.createElement('tbody');
- for(const definition of allDefinitions()){
+ for(const label of ['種類','機能名','含まれる標準プラン','ご希望',...(answer?['提供']:[]),'備考'])head.append(el('th','',label));thead.append(head);const tbody=document.createElement('tbody');
+ // 有料プランの一覧と同じく、種類ごとに行をまとめて左端に種類を出す
+ const order=id=>{const i=FEATURE_SECTIONS.findIndex(([key])=>key===id);return i<0?99:i;};
+ const rows=allDefinitions().filter(definition=>(definition.plan==='supporter'?'yes':request.wants?.[definition.name]||'no')!=='no'||(answer?.marks?.[definition.name]||'no')!=='no').sort((a,b)=>order(a.section)-order(b.section));
+ rows.forEach((definition,index)=>{
   const requested=definition.plan==='supporter'?'yes':request.wants?.[definition.name]||'no';const mark=answer?.marks?.[definition.name]||'no';
-  if(requested==='no'&&mark==='no')continue;
+  const kind=sectionTitle(definition.section);
   const standardPlan=definition.planned?'準備中':PLAN_LABELS[definition.plan]||'—';
   const notes=[request.wantNotes?.[definition.name]&&`ご希望：${request.wantNotes[definition.name]}`,answer?.notes?.[definition.name]&&`提供：${answer.notes[definition.name]}`].filter(Boolean).join('／')||'—';
   const tr=document.createElement('tr');
-  tr.append(el('th','',definition.planned?definition.label:featureLabel(definition.name)),el('td','',standardPlan),el('td','print-mark',`${WANT_LABELS[requested]||'—'} ${requested==='yes'?'必要':requested==='maybe'?'できれば':'不要'}`),...(answer?[el('td','print-mark',MARK_LABELS[mark]||'—')]:[]),el('td','',notes));tbody.append(tr);
- }
- if(!tbody.children.length){const tr=document.createElement('tr');const td=el('td','','ご希望の機能はありません。');td.colSpan=answer?5:4;tr.append(td);tbody.append(tr);}
+  if(index===0||sectionTitle(rows[index-1].section)!==kind){let span=1;while(rows[index+span]&&sectionTitle(rows[index+span].section)===kind)span++;const th=el('th','print-kind',kind);th.scope='rowgroup';th.rowSpan=span;tr.append(th);}
+  tr.append(el('th','',definition.label),el('td','',standardPlan),el('td','print-mark',`${WANT_LABELS[requested]||'—'} ${requested==='yes'?'必要':requested==='maybe'?'できれば':'不要'}`),...(answer?[el('td','print-mark',MARK_LABELS[mark]||'—')]:[]),el('td','',notes));tbody.append(tr);
+ });
+ if(!tbody.children.length){const tr=document.createElement('tr');const td=el('td','','ご希望の機能はありません。');td.colSpan=answer?6:5;tr.append(td);tbody.append(tr);}
  table.append(thead,tbody);return table;
 }
 function printAnswer(item){
