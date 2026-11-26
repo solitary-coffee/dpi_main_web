@@ -1,8 +1,8 @@
-import {FEATURE_DEFINITIONS, missingFeatureDependency} from '../site/supporter/plan-features.js';
+import {FEATURE_DEFINITIONS, FEATURE_SECTIONS, missingFeatureDependency} from '../site/supporter/plan-features.js';
 import {queueNotice} from './supporter-ops-notice.js';
 import {readJson} from './reuse.js';
-import {customPublic,getCustomPlan} from './supporter-custom.js';
-import {mailHtml,supporterMailSignature} from './supporter-billing.js';
+import {customPublic,customRowFeatures,getCustomPlan} from './supporter-custom.js';
+import {mailHtml,stripe,supporterMailSignature} from './supporter-billing.js';
 
 // 準備中の画像配信。公開済み機能と同じキー空間で要望・回答を扱う。
 export const CUSTOM_PLANNED_ITEMS = Object.freeze([
@@ -261,36 +261,54 @@ const paymentLinkUrl=value=>{
   return url.href;
  }catch(error){if(error instanceof CustomRequestError)throw error;fail('Stripeの支払いURLを指定してください。');}
 };
-const paymentLinkMailText=(row,url)=>{
- const request=parseJson(row.request_json)||{},answer=parseJson(row.answer_json);
- if(!isObject(answer))fail('回答が登録されていません。');
+const paymentExpiryText=value=>{
+ const parts=Object.fromEntries(new Intl.DateTimeFormat('ja-JP',{timeZone:'Asia/Tokyo',year:'numeric',month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).formatToParts(new Date(Number(value)*1000)).map(part=>[part.type,part.value]));
+ return `${parts.year}年${parts.month}月${parts.day}日 ${parts.hour}:${parts.minute}`;
+};
+const paymentFeatureLines=plan=>{
+ const enabled=new Set(customRowFeatures(plan)),definitions=new Map(FEATURE_DEFINITIONS.map(item=>[item.name,item]));
+ const lines=[];
+ for(const [section,title] of FEATURE_SECTIONS){
+  const features=FEATURE_DEFINITIONS.filter(item=>item.section===section&&enabled.has(item.name)&&definitions.has(item.name));
+  if(features.length)lines.push(`【${title}】`,...features.map(item=>`・${item.label}`));
+ }
+ return lines;
+};
+const paymentLinkMailText=(row,plan,session,url)=>{
+ const request=parseJson(row.request_json)||{};
  const contact=String(request.contact||'').trim()||'お客様';
- const quantity=value=>Number.isInteger(value)?String(value):'記載なし';
  return [
-  `${contact} 様`,
+  contact==='お客様'?contact:`${contact} 様`,
   '',
   'DPI-Bot カスタムプランのお支払いについてご案内します。',
   '',
   `ご要望番号: ${row.id}`,
-  `回答の数量: サーバー ${quantity(answer.servers)}、チャンネル ${quantity(answer.channels)}、ルール ${quantity(answer.rules)}`,
-  `金額の目安: ${String(answer.amount||'').trim()||'記載なし'}`,
+  `ご契約内容: サーバー ${Number(plan.server_limit)}／チャンネル ${Number(plan.channel_limit)}／ルール ${Number(plan.rule_limit)}`,
+  `月額: ${Number(plan.confirmed_yen).toLocaleString('ja-JP')}円`,
+  'ご利用いただける機能:',
+  ...paymentFeatureLines(plan),
   `支払いURL: ${url}`,
+  `支払いURLの有効期限: ${paymentExpiryText(session.expires_at)}`,
   '',
   'お支払いにより、利用規約（https://dpi-bot.com/terms/terms.html）と特定商取引法に基づく表記（https://dpi-bot.com/terms/Specified.html）に同意したものとします。',
-  '',
-  'URL には有効期限があります。期限が切れた場合はお知らせください。',
+  '期限が切れた場合は、このメールにご返信ください。新しい支払いURLをお送りします。',
   'お支払いの確認後に配信が有効になります。',
   '',
   supporterMailSignature(),
  ].join('\n');
 };
 async function sendPaymentLinkEmail(request,db,env,id){
- if(!env?.NOTICE_EMAIL?.send)fail('メール送信機能が設定されていません。',503);
  const input=bodyKeys(await readJson(request),['url']);
  const url=paymentLinkUrl(input.url),row=await requireAdminRow(db,id),requestData=parseJson(row.request_json)||{};
+ const plan=await getCustomPlan(db,row.discord_user_id);
+ if(!plan||plan.status!=='offered'||!plan.stripe_checkout_id)fail('先にカスタムプランを保存し、支払いURLを作成してください。',409);
+ const session=await stripe(env,`checkout/sessions/${encodeURIComponent(plan.stripe_checkout_id)}`);
+ if(session.url!==url)fail('この支払いURLは現在の契約のものではありません。作り直してください。',409);
+ if(session.status!=='open')fail('支払いURLの有効期限が切れています。作り直してください。',409);
+ if(!env?.NOTICE_EMAIL?.send)fail('メール送信機能が設定されていません。',503);
  let to;
  try{to=emailField({email:requestData.email});}catch{fail('ご要望のメールアドレスが登録されていないか、形式が正しくありません。');}
- const subject='【DPI-Bot】カスタムプランのお支払いのご案内',text=paymentLinkMailText(row,url),sentAt=nowSeconds();
+ const subject='【DPI-Bot】カスタムプランのお支払いのご案内',text=paymentLinkMailText(row,plan,session,url),sentAt=nowSeconds();
  try{
   await env.NOTICE_EMAIL.send({to,from:{email:String(env.NOTICE_FROM_EMAIL||'').trim(),name:'DPI-Bot'},subject,text,html:mailHtml(text),...(String(env.NOTICE_REPLY_TO_EMAIL||'').trim()?{replyTo:String(env.NOTICE_REPLY_TO_EMAIL).trim()}: {})});
  }catch{fail('支払いURLのメール送信に失敗しました。',502);}

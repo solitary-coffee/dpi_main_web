@@ -4,6 +4,7 @@ import { currentCustomChange,getCustomChange,commitCustomChange } from './suppor
 import { PLAN_FEATURES } from '../site/supporter/plan-features.js';
 import { flushNotices, jstDate, memberLabel, noticeCounts, queueMembershipNotice, queueNotice, retryAdminNotices, suspendedCustomers, yen } from './supporter-ops-notice.js';
 import { reconcileSupporterRolesSafely } from './supporter-roles.js';
+import { mailSignatureText } from './mail-signature.js';
 
 // 決済のモード。SUPPORTER_BILLING_MODE は 'test' と 'live' だけを受け付け、キーの種類（sk/rk_test_・sk/rk_live_）と
 // 一致しないときは決済を無効にする。Stripe の応答・Webhook の livemode も、このモードと一致するものだけを扱う。
@@ -64,7 +65,7 @@ export function publicPlans(){return Object.values(PLAN_CATALOG).map(({priceEnv,
 function planDefinition(plan){const value=PLAN_CATALOG[plan];if(!value)fail('プランまたは追加オプション数が不正です。');return value;}
 function planPrice(env,plan){const definition=planDefinition(plan);const price=env[definition.priceEnv];if(!price)fail(`${definition.name}プランの決済設定が完了していません。`,503);return price;}
 export function billingReady(env){return billingMode(env)!=='' && !!env.STRIPE_WEBHOOK_SECRET && !!env.STRIPE_PRICE_SUPPORTER && !!env.STRIPE_PRICE_PLUS && !!env.STRIPE_PRICE_PRO && !!env.STRIPE_PRICE_ADDON && !!env.STRIPE_PORTAL_CONFIG;}
-async function stripe(env,path,params,key,method=params?'POST':'GET'){
+export async function stripe(env,path,params,key,method=params?'POST':'GET'){
  if(!billingReady(env)) fail('決済設定が完了していません。',503);
  const headers={Authorization:`Bearer ${env.STRIPE_SECRET_KEY}`,'Stripe-Version':'2026-09-30.endive'};
  if(key)headers['Idempotency-Key']=key;
@@ -475,7 +476,7 @@ export function mailHtml(text){
  return `<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body style="margin:0;padding:16px;background:#d5d7da"><div style="max-width:620px;margin:0 auto;padding:20px;background:#ececee;border:1px solid #b9bcc1;border-radius:8px;color:#33363b;font-family:'Hiragino Sans','Yu Gothic',Meiryo,sans-serif;font-size:15px;line-height:1.7;overflow-wrap:anywhere">${body}</div></body></html>`;
 }
 export function supporterMailSignature(){
- return ['----------------------------------------','DPI-Bot','契約・支払い方法の管理: https://dpi-bot.com/site/supporter/','お問い合わせ: https://dpi-bot.com/site/supp/index.html','利用規約・特定商取引法に基づく表記: https://dpi-bot.com/terms/index.html','※お支払い・契約に関する重要なお知らせのため、配信停止の設定にかかわらずお送りしています。'].join('\n');
+ return mailSignatureText({extraLines:['契約・支払い方法の管理: https://dpi-bot.com/site/supporter/','利用規約・特定商取引法に基づく表記: https://dpi-bot.com/terms/index.html','※お支払い・契約に関する重要なお知らせのため、配信停止の設定にかかわらずお送りしています。']});
 }
 function billingMailContent(env,kind,invoice,retryAt,suspendAt,sentAt){
  const amount=new Intl.NumberFormat('ja-JP',{style:'currency',currency:clean(invoice.currency||'jpy').toUpperCase(),maximumFractionDigits:0}).format(Number(invoice.amount_paid||invoice.amount_due||invoice.total||0));

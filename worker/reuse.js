@@ -1,5 +1,6 @@
 import { AccessAuthError, authenticateNewsletterAdmin } from './access.js';
 import { DELIVERY_CATALOG, DELIVERY_TYPES } from './delivery-catalog.js';
+import { mailSignatureText } from './mail-signature.js';
 
 const DISCORD_API = 'https://discord.com/api/v10';
 const DISCORD_AUTHORIZE = 'https://discord.com/oauth2/authorize';
@@ -1125,14 +1126,7 @@ async function sendReuseEmail(env, to, subject, text, type) {
 }
 
 function reuseEmailSignature() {
-    return [
-        '----------------------------------------',
-        'DPI-Bot 運営',
-        '公式サイト: https://dpi-bot.com/',
-        '公式サポートサーバー: https://discord.gg/qFuZcGUb4K',
-        'お問い合わせ: support@dpi-bot.com',
-        '© 2026 DPI-Bot',
-    ].join('\n');
+    return mailSignatureText();
 }
 
 function manageUrlFor(env, token) {

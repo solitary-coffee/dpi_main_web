@@ -26,6 +26,7 @@ async function database(){
  raw.exec(`CREATE TABLE supporter_accounts(discord_user_id TEXT PRIMARY KEY,discord_name TEXT,billing_email TEXT,registered_at TEXT,updated_at TEXT,account_status TEXT NOT NULL DEFAULT 'active');
   CREATE TABLE admin_audit_events(id TEXT PRIMARY KEY,actor TEXT NOT NULL,action TEXT NOT NULL,entity_type TEXT NOT NULL,entity_id TEXT,details_json TEXT NOT NULL DEFAULT '{}',created_at TEXT NOT NULL);`);
  raw.exec(await readFile(new URL('../migrations/0037_supporter_custom_requests.sql',import.meta.url),'utf8'));
+ for(const name of ['0025_supporter_custom_plans.sql','0032_supporter_custom_plan_features.sql'])raw.exec(await readFile(new URL(`../migrations/${name}`,import.meta.url),'utf8'));
  const statement=(sql,values=[])=>({
   bind(...input){return statement(sql,input);},
   async first(){return raw.prepare(sql).get(...values)??null;},
@@ -34,6 +35,15 @@ async function database(){
  });
  return {raw,db:{prepare:sql=>statement(sql)}};
 }
+const billingEnv=overrides=>({SUPPORTER_BILLING_MODE:'test',STRIPE_SECRET_KEY:'rk_test_example',STRIPE_WEBHOOK_SECRET:'whsec_x',STRIPE_PRICE_SUPPORTER:'price_basic',STRIPE_PRICE_PLUS:'price_plus',STRIPE_PRICE_PRO:'price_pro',STRIPE_PRICE_ADDON:'price_addon',STRIPE_PORTAL_CONFIG:'bpc_x',...overrides});
+function saveCustomPlan(raw,{status='offered',checkoutId='cs_test_mail',contact,features=['eewMap','weatherMap']}={}){
+ if(contact!==undefined){const row=raw.prepare('SELECT request_json FROM supporter_custom_requests WHERE id=?').get(ID);raw.prepare('UPDATE supporter_custom_requests SET request_json=? WHERE id=?').run(JSON.stringify({...JSON.parse(row.request_json),contact}),ID);}
+ raw.prepare('INSERT OR IGNORE INTO supporter_accounts(discord_user_id,discord_name) VALUES(?,?)').run(UID,'利用者');
+ raw.prepare(`INSERT INTO supporter_custom_plans(discord_user_id,id,status,channel_limit,server_limit,rule_limit,estimated_yen,confirmed_yen,stripe_checkout_id,reason,updated_by,created_at,updated_at,features_json)
+  VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(UID,'custom-mail',status,12,3,25,12345,12345,checkoutId,'ご要望から','運営','2026-11-26','2026-11-26',JSON.stringify(features));
+}
+const paymentEndpoint=`https://example.test/site/supporter-admin/api/custom-requests/${ID}/payment-link-email`;
+const paymentRequest=url=>new Request(paymentEndpoint,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({url})});
 const rejectsStatus=async(action,status)=>{
  await assert.rejects(action,error=>{assert.equal(error.status,status);return true;});
 };
@@ -160,33 +170,61 @@ test('ensure-accountは回答なしと不正メールを400、取り下げ済み
  await rejectsStatus(run(async(raw,db)=>{await answerCustomRequest(db,ID,answerInput(),0,{now:100010});raw.prepare("UPDATE supporter_custom_requests SET status='withdrawn'").run();}),409);
 });
 
-test('支払いURLメールはご要望の宛先へ件名とURLを含めて送る',async()=>{
- const {db}=await database();
+test('支払いURLメールは確定契約・種類別機能・日本時間の期限を案内する',async()=>{
+ const {raw,db}=await database();
  await createCustomRequest(db,UID,requestInput(),{id:ID,now:100000});
  await answerCustomRequest(db,ID,answerInput(),0,{now:100010});
- const messages=[],env={NOTICE_FROM_EMAIL:'notice@dpi-bot.com',NOTICE_REPLY_TO_EMAIL:'support@dpi-bot.com',NOTICE_EMAIL:{async send(message){messages.push(message);}}};
+ saveCustomPlan(raw);
+ const messages=[],env=billingEnv({NOTICE_FROM_EMAIL:'notice@dpi-bot.com',NOTICE_REPLY_TO_EMAIL:'support@dpi-bot.com',NOTICE_EMAIL:{async send(message){messages.push(message);}}});
  const url='https://checkout.stripe.com/c/pay/test_custom_request';
- const response=await handleSupporterCustomRequestAdminApi(new Request(`https://example.test/site/supporter-admin/api/custom-requests/${ID}/payment-link-email`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({url})}),db,env);
- assert.equal(response.status,200);
- const result=await response.json();
- assert.equal(result.sent,true);assert.equal(result.to,'user@example.com');assert.equal(typeof result.sentAt,'number');
- assert.equal(messages.length,1);assert.equal(messages[0].to,'user@example.com');
- assert.equal(messages[0].subject,'【DPI-Bot】カスタムプランのお支払いのご案内');
- assert.match(messages[0].text,/ご要望番号: 11111111-1111-4111-8111-111111111111/);assert.match(messages[0].text,new RegExp(url.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
-  assert.match(messages[0].text,/https:\/\/dpi-bot\.com\/terms\/terms\.html/);assert.match(messages[0].text,/https:\/\/dpi-bot\.com\/terms\/Specified\.html/);
- assert.match(messages[0].html,/checkout\.stripe\.com/);assert.equal(messages[0].replyTo,'support@dpi-bot.com');
+ const originalFetch=globalThis.fetch;globalThis.fetch=async input=>{assert.equal(new URL(input).pathname,'/v1/checkout/sessions/cs_test_mail');return Response.json({livemode:false,id:'cs_test_mail',status:'open',url,expires_at:Math.floor(Date.parse('2026-11-27T13:15:00Z')/1000)});};
+ try{
+  const response=await handleSupporterCustomRequestAdminApi(paymentRequest(url),db,env);
+  assert.equal(response.status,200);const result=await response.json();assert.equal(result.sent,true);assert.equal(result.to,'user@example.com');assert.equal(typeof result.sentAt,'number');
+ }finally{globalThis.fetch=originalFetch;}
+ assert.equal(messages.length,1);const message=messages[0];assert.equal(message.to,'user@example.com');assert.equal(message.subject,'【DPI-Bot】カスタムプランのお支払いのご案内');
+ assert.match(message.text,/Discord DM 様/);assert.match(message.text,/ご要望番号: 11111111-1111-4111-8111-111111111111/);
+ assert.match(message.text,/ご契約内容: サーバー 3／チャンネル 12／ルール 25/);assert.match(message.text,/月額: 12,345円/);
+ assert.match(message.text,/【緊急地震速報（警報）の図】\n・全国：警報が発表されたら配信/);assert.match(message.text,/【気象警報・注意報の地図】\n・全国・地方の選択/);
+ assert.ok(message.text.indexOf('【緊急地震速報（警報）の図】')<message.text.indexOf('【気象警報・注意報の地図】'));
+ assert.match(message.text,/支払いURLの有効期限: 2026年11月27日 22:15/);assert.doesNotMatch(message.text,/金額の目安|回答の数量/);
+ assert.match(message.text,/https:\/\/dpi-bot\.com\/terms\/terms\.html/);assert.match(message.text,/https:\/\/dpi-bot\.com\/terms\/Specified\.html/);
+ assert.match(message.html,/checkout\.stripe\.com/);assert.equal(message.replyTo,'support@dpi-bot.com');
+});
+
+test('支払いURLメールはお名前が空なら「お客様」だけにする',async()=>{
+ const {raw,db}=await database();await createCustomRequest(db,UID,requestInput(),{id:ID,now:100000});saveCustomPlan(raw,{contact:''});
+ const url='https://checkout.stripe.com/c/pay/test_custom_request',messages=[],env=billingEnv({NOTICE_FROM_EMAIL:'notice@dpi-bot.com',NOTICE_EMAIL:{async send(message){messages.push(message);}}});
+ const originalFetch=globalThis.fetch;globalThis.fetch=async()=>Response.json({livemode:false,status:'open',url,expires_at:1800000000});
+ try{await handleSupporterCustomRequestAdminApi(paymentRequest(url),db,env);}finally{globalThis.fetch=originalFetch;}
+ assert.match(messages[0].text,/^お客様\n/u);assert.doesNotMatch(messages[0].text,/お客様 様/u);
+});
+
+test('支払いURLメールは提示中の保存済み契約がなければ409にする',async()=>{
+ for(const status of [null,'active']){
+  const {raw,db}=await database();await createCustomRequest(db,UID,requestInput(),{id:ID,now:100000});if(status)saveCustomPlan(raw,{status});
+  await assert.rejects(()=>handleSupporterCustomRequestAdminApi(paymentRequest('https://checkout.stripe.com/c/pay/test'),db,billingEnv()),error=>error.status===409&&error.message==='先にカスタムプランを保存し、支払いURLを作成してください。');
+ }
+});
+
+test('支払いURLメールは現在の契約とURLが違う場合と期限切れを409にする',async()=>{
+ for(const scenario of [{sessionUrl:'https://checkout.stripe.com/c/pay/other',status:'open',message:'この支払いURLは現在の契約のものではありません。作り直してください。'},{sessionUrl:'https://checkout.stripe.com/c/pay/test',status:'expired',message:'支払いURLの有効期限が切れています。作り直してください。'}]){
+  const {raw,db}=await database();await createCustomRequest(db,UID,requestInput(),{id:ID,now:100000});saveCustomPlan(raw);
+  const originalFetch=globalThis.fetch;globalThis.fetch=async()=>Response.json({livemode:false,status:scenario.status,url:scenario.sessionUrl,expires_at:1800000000});
+  try{await assert.rejects(()=>handleSupporterCustomRequestAdminApi(paymentRequest('https://checkout.stripe.com/c/pay/test'),db,billingEnv()),error=>error.status===409&&error.message===scenario.message);}finally{globalThis.fetch=originalFetch;}
+ }
 });
 
 test('支払いURLメールはStripe以外を400、メール機能未設定を503にする',async()=>{
- const {db}=await database();
+ const {raw,db}=await database();
  await createCustomRequest(db,UID,requestInput(),{id:ID,now:100000});
  await answerCustomRequest(db,ID,answerInput(),0,{now:100010});
- const endpoint=`https://example.test/site/supporter-admin/api/custom-requests/${ID}/payment-link-email`;
- const call=(url,env)=>handleSupporterCustomRequestAdminApi(new Request(endpoint,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({url})}),db,env);
- let sends=0;const env={NOTICE_FROM_EMAIL:'notice@dpi-bot.com',NOTICE_EMAIL:{async send(){sends+=1;}}};
+ saveCustomPlan(raw);const call=(url,env)=>handleSupporterCustomRequestAdminApi(paymentRequest(url),db,env);
+ let sends=0;const env=billingEnv({NOTICE_FROM_EMAIL:'notice@dpi-bot.com',NOTICE_EMAIL:{async send(){sends+=1;}}});
  await assert.rejects(()=>call('https://example.com/pay',env),error=>error.status===400);
  assert.equal(sends,0);
- await assert.rejects(()=>call('https://checkout.stripe.com/c/pay/test',{}),error=>error.status===503&&/メール送信機能/.test(error.message));
+ const originalFetch=globalThis.fetch;globalThis.fetch=async()=>Response.json({livemode:false,status:'open',url:'https://checkout.stripe.com/c/pay/test',expires_at:1800000000});
+ try{await assert.rejects(()=>call('https://checkout.stripe.com/c/pay/test',billingEnv()),error=>error.status===503&&/メール送信機能/.test(error.message));}finally{globalThis.fetch=originalFetch;}
 });
 
 test('機能が無効な間は認証済み利用者の書き込みを403にする',async()=>{
@@ -227,7 +265,6 @@ test('申込み後は理由を添えて異議を申し出られ、運営は見�
 
 test('利用者の取得は、運営が用意した契約（提示中・有効）と支払いへの案内を返す',async()=>{
  const {raw,db}=await database();
- for(const name of ['0025_supporter_custom_plans.sql','0032_supporter_custom_plan_features.sql'])raw.exec(await readFile(new URL(`../migrations/${name}`,import.meta.url),'utf8'));
  raw.prepare("INSERT INTO supporter_accounts(discord_user_id,discord_name) VALUES(?,?)").run(UID,'利用者');
  const get=async()=>{const {handleSupporterCustomRequestApi}=await import('../worker/supporter-custom-request.js');return await (await handleSupporterCustomRequestApi(new Request('https://dpi-bot.com/api/supporter/custom-requests'),{SUPPORTER_CUSTOM_REQUESTS_ENABLED:'true'},db,UID)).json();};
  let data=await get();
