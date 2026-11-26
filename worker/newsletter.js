@@ -1,5 +1,6 @@
 import { AccessAuthError, authenticateNewsletterAdmin } from './access.js';
 import { DELIVERY_CATALOG } from './delivery-catalog.js';
+import { mailSignatureHtml as commonMailSignatureHtml, mailSignatureText as commonMailSignatureText } from './mail-signature.js';
 
 const CATEGORIES = Object.freeze({
     maintenance: 'メンテナンス情報',
@@ -2575,7 +2576,6 @@ function buildCampaignEmail(delivery, unsubscribeToken, env) {
         '',
         delivery.body_text,
         '',
-        '----------------------------------------',
         audienceNote,
         emailSignatureText(),
         ...(unsubscribeUrl
@@ -2617,17 +2617,11 @@ function buildCampaignEmail(delivery, unsubscribeToken, env) {
 }
 
 function emailSignatureText() {
-    return [
-        'DPI-Bot 運営',
-        '公式サイト: https://dpi-bot.com/',
-        '公式サポートサーバー: https://discord.gg/qFuZcGUb4K',
-        'お問い合わせ: support@dpi-bot.com',
-        '© 2026 DPI-Bot',
-    ].join('\n');
+    return commonMailSignatureText();
 }
 
 function emailSignatureHtml() {
-    return '<p style="margin-top:24px;padding-top:16px;border-top:1px solid #d8dee6;font-size:13px;color:#596273"><strong>DPI-Bot 運営</strong><br><a href="https://dpi-bot.com/">公式サイト</a><br><a href="https://discord.gg/qFuZcGUb4K">公式サポートサーバー</a><br><a href="mailto:support@dpi-bot.com">support@dpi-bot.com</a><br>© 2026 DPI-Bot</p>';
+    return commonMailSignatureHtml();
 }
 
 async function createUnsubscribeToken(subscriber, secret) {
