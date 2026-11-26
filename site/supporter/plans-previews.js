@@ -3,6 +3,15 @@
 // 各見本の枠は data-preview-type（種類）・data-preview-file（最初に表示する見本）・data-preview-plan（対象プラン）を持つ。
 import {attachPreview} from './preview-lightbox.js';
 
+// 公開の切り替えで隠している行は、公開 API が有効を返したときだけ出す
+fetch('/api/supporter/plans', {credentials: 'same-origin', cache: 'no-store', headers: {Accept: 'application/json'}})
+ .then(response => response.ok ? response.json() : null)
+ .then(flags => {
+  if (flags?.customRequests?.enabled !== true) return;
+  for (const item of document.querySelectorAll('[data-feature-gate="customRequests"]')) item.hidden = false;
+ })
+ .catch(() => {});
+
 const detailReferences = [...document.querySelectorAll('.detail-ref[href^="#"]')];
 const detailTarget = hash => {
  if (!hash || hash === '#') return null;

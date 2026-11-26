@@ -12,7 +12,7 @@ import {handleSupporterRequest} from '../worker/supporter.js';
 const UID='123456789012345678',OTHER='223456789012345678';
 const ID='11111111-1111-4111-8111-111111111111';
 const requestInput=()=>({
- contact:'Discord DM',budget:'月額3,000円程度',servers:2,channels:5,rules:10,
+ email:'User@Example.com',contact:'Discord DM',budget:'月額3,000円程度',servers:2,channels:5,rules:10,
  wants:{eewMap:'yes',estimatedIntensity:'maybe'},wantNotes:{estimatedIntensity:'準備中でも相談したい'},
  request:'複数サーバーへ配信したいです。',
 });
@@ -36,6 +36,13 @@ async function database(){
 const rejectsStatus=async(action,status)=>{
  await assert.rejects(action,error=>{assert.equal(error.status,status);return true;});
 };
+
+test('連絡用のメールアドレスは必須で、形を確かめて小文字にそろえる',()=>{
+ assert.equal(normalizeCustomRequest(requestInput()).email,'user@example.com');
+ for(const email of [undefined,'','user','user@','@example.com','a b@example.com','user@example','<x>@example.com',`${'a'.repeat(250)}@example.com`]){
+  assert.throws(()=>normalizeCustomRequest({...requestInput(),email}),error=>error.status===400,String(email));
+ }
+});
 
 test('要望と回答は機能キー、値、文字数、依存関係を共通検証する',()=>{
  const normalized=normalizeCustomRequest(requestInput());
@@ -122,4 +129,39 @@ test('機能が無効な間は認証済み利用者の書き込みを403にす�
  }),env);
  assert.equal(response.status,403);
  assert.equal((await response.json()).message,'カスタムプランのご要望受付は現在無効です。');
+});
+
+test('申込み後は理由を添えて異議を申し出られ、運営は見積もりからやり直せる',async()=>{
+ const {db}=await database();
+ let row=await createCustomRequest(db,UID,requestInput(),{id:ID,now:100000});
+ row=await answerCustomRequest(db,ID,answerInput(),0,{now:100010});
+ await rejectsStatus(decideCustomRequest(db,UID,ID,'object',1,{now:100015,message:'金額が違う'}),409);
+ row=await decideCustomRequest(db,UID,ID,'accept',1,{now:100020});
+ await rejectsStatus(decideCustomRequest(db,UID,ID,'object',2,{now:100030,message:'  '}),400);
+ row=await decideCustomRequest(db,UID,ID,'object',2,{now:100030,message:'金額が回答と違います'});
+ assert.equal(row.status,'objected');assert.equal(row.decision_message,'金額が回答と違います');
+ assert.equal((await listCustomRequestsForUser(db,UID))[0].decisionMessage,'金額が回答と違います');
+ await rejectsStatus(decideCustomRequest(db,OTHER,ID,'object',3,{message:'他人'}),404);
+ row=await setCustomRequestStatus(db,ID,'estimating',3,{now:100040});
+ assert.equal(row.status,'estimating');
+ row=await answerCustomRequest(db,ID,answerInput(),4,{now:100050});
+ assert.equal(row.status,'answered');
+});
+
+test('利用者の取得は、運営が用意した契約（提示中・有効）と支払いへの案内を返す',async()=>{
+ const {raw,db}=await database();
+ for(const name of ['0025_supporter_custom_plans.sql','0032_supporter_custom_plan_features.sql'])raw.exec(await readFile(new URL(`../migrations/${name}`,import.meta.url),'utf8'));
+ raw.prepare("INSERT INTO supporter_accounts(discord_user_id,discord_name) VALUES(?,?)").run(UID,'利用者');
+ const get=async()=>{const {handleSupporterCustomRequestApi}=await import('../worker/supporter-custom-request.js');return await (await handleSupporterCustomRequestApi(new Request('https://dpi-bot.com/api/supporter/custom-requests'),{SUPPORTER_CUSTOM_REQUESTS_ENABLED:'true'},db,UID)).json();};
+ let data=await get();
+ assert.equal(data.contract,null);assert.equal(data.paymentUrl,'');
+ raw.prepare(`INSERT INTO supporter_custom_plans(discord_user_id,id,status,channel_limit,server_limit,rule_limit,estimated_yen,confirmed_yen,reason,updated_by,created_at,updated_at,features_json)
+  VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(UID,'custom-1','offered',10,3,15,1500,1500,'ご要望から','運営','2026-11-26','2026-11-26','["eewMap","weatherMap"]');
+ data=await get();
+ assert.equal(data.contract.status,'offered');assert.equal(data.contract.monthlyYen,1500);assert.equal(data.paymentUrl,'/site/supporter/#billing');
+ raw.prepare("UPDATE supporter_custom_plans SET status='active'").run();
+ data=await get();
+ assert.equal(data.contract.status,'active');assert.equal(data.paymentUrl,'');
+ raw.prepare("UPDATE supporter_custom_plans SET status='canceled'").run();
+ assert.equal((await get()).contract,null);
 });

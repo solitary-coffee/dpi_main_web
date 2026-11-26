@@ -1,6 +1,7 @@
 import {FEATURE_DEFINITIONS, missingFeatureDependency} from '../site/supporter/plan-features.js';
 import {queueNotice} from './supporter-ops-notice.js';
 import {readJson} from './reuse.js';
+import {customPublic,getCustomPlan} from './supporter-custom.js';
 
 // 準備中の画像配信。公開済み機能と同じキー空間で要望・回答を扱う。
 export const CUSTOM_PLANNED_ITEMS = Object.freeze([
@@ -14,7 +15,7 @@ export const CUSTOM_PLANNED_ITEMS = Object.freeze([
  {name:'amedas',label:'アメダス'},
 ].map(item=>Object.freeze(item)));
 
-export const CUSTOM_REQUEST_STATUSES = Object.freeze(['submitted','estimating','answered','accepted','consulting','withdrawn','closed']);
+export const CUSTOM_REQUEST_STATUSES = Object.freeze(['submitted','estimating','answered','accepted','consulting','objected','withdrawn','closed']);
 const STATUS_SET = new Set(CUSTOM_REQUEST_STATUSES);
 const FEATURE_NAMES = Object.freeze(FEATURE_DEFINITIONS.map(item=>item.name));
 const FEATURE_SET = new Set(FEATURE_NAMES);
@@ -33,6 +34,12 @@ const textField=(input,name,max)=>{
  const value=input[name]===undefined?'':input[name];
  if(typeof value!=='string'||chars(value)>max)fail(`${name}は${max}文字以内で入力してください。`);
  return value.trim();
+};
+// 連絡用のメールアドレス（必須）。形だけを確かめ、小文字にそろえる
+const emailField=input=>{
+ const value=input.email;
+ if(typeof value!=='string'||chars(value.trim())>254||!/^[^\s@<>()",;:]+@[^\s@<>()",;:]+\.[^\s@<>()",;:]+$/.test(value.trim()))fail('連絡用のメールアドレスを正しく入力してください。');
+ return value.trim().toLowerCase();
 };
 const countField=(input,name)=>{
  const value=input[name]===undefined?null:input[name];
@@ -63,9 +70,9 @@ function itemMap(value,name,values,maxLength=0){
 }
 
 export function normalizeCustomRequest(input){
- exactKeys(input,['contact','budget','servers','channels','rules','wants','wantNotes','request'],'request');
+ exactKeys(input,['email','contact','budget','servers','channels','rules','wants','wantNotes','request'],'request');
  return {
-  contact:textField(input,'contact',200),budget:textField(input,'budget',100),
+  email:emailField(input),contact:textField(input,'contact',200),budget:textField(input,'budget',100),
   servers:countField(input,'servers'),channels:countField(input,'channels'),rules:countField(input,'rules'),
   wants:itemMap(input.wants,'wants',['yes','maybe','no']),
   wantNotes:itemMap(input.wantNotes,'wantNotes',[],80),
@@ -95,7 +102,7 @@ export function customRequestPublic(row,{admin=false}={}){
  const item={
   id:row.id,status:row.status,request:parseJson(row.request_json),answer:parseJson(row.answer_json),
   createdAt:Number(row.created_at),updatedAt:Number(row.updated_at),answeredAt:row.answered_at===null?null:Number(row.answered_at),
-  decidedAt:row.decided_at===null?null:Number(row.decided_at),revision:Number(row.revision),
+  decidedAt:row.decided_at===null?null:Number(row.decided_at),decisionMessage:row.decision_message||'',revision:Number(row.revision),
  };
  if(admin){item.discordUserId=row.discord_user_id;item.discordName=row.discord_name||'';}
  return item;
@@ -150,16 +157,20 @@ export async function updateCustomRequest(db,uid,id,input,revision,{now=nowSecon
  return await requireOwnRow(db,id,uid);
 }
 
-export async function decideCustomRequest(db,uid,id,decision,revision,{now=nowSeconds()}={}){
- if(!['accept','consult','withdraw'].includes(decision))fail('decisionが正しくありません。');
+export async function decideCustomRequest(db,uid,id,decision,revision,{now=nowSeconds(),message=''}={}){
+ if(!['accept','consult','withdraw','object'].includes(decision))fail('decisionが正しくありません。');
  if(!Number.isInteger(revision)||revision<0)fail('revisionが正しくありません。');
  const row=await requireOwnRow(db,id,uid);
  if(Number(row.revision)!==revision)fail('別の操作で更新されています。',409);
  if(decision==='withdraw'&&!USER_DECISION_OPEN.has(row.status))fail('このご要望は取り下げできません。',409);
- if(decision!=='withdraw'&&row.status!=='answered')fail('運営の回答後に決定してください。',409);
- const status={accept:'accepted',consult:'consulting',withdraw:'withdrawn'}[decision];
- const result=await db.prepare('UPDATE supporter_custom_requests SET status=?,decided_at=?,updated_at=?,revision=revision+1 WHERE id=? AND discord_user_id=? AND status=? AND revision=?')
-  .bind(status,now,now,id,uid,row.status,revision).run();
+ // 異議: 申し込んだ後（運営が契約を用意した後を含む）に、理由を添えて申し出る
+ if(decision==='object'){
+  if(row.status!=='accepted')fail('申込み後のご要望にだけ異議を申し出られます。',409);
+  if(!String(message||'').trim())fail('異議の内容をご記入ください。');
+ }else if(decision!=='withdraw'&&row.status!=='answered')fail('運営の回答後に決定してください。',409);
+ const status={accept:'accepted',consult:'consulting',withdraw:'withdrawn',object:'objected'}[decision];
+ const result=await db.prepare('UPDATE supporter_custom_requests SET status=?,decided_at=?,decision_message=?,updated_at=?,revision=revision+1 WHERE id=? AND discord_user_id=? AND status=? AND revision=?')
+  .bind(status,now,String(message||'').trim()||null,now,id,uid,row.status,revision).run();
  if(!changed(result))fail('別の操作で更新されています。',409);
  return await requireOwnRow(db,id,uid);
 }
@@ -181,7 +192,8 @@ export async function setCustomRequestStatus(db,id,status,revision,{now=nowSecon
  if(!Number.isInteger(revision)||revision<0)fail('revisionが正しくありません。');
  const row=await requireAdminRow(db,id);
  if(Number(row.revision)!==revision)fail('別の操作で更新されています。',409);
- if(status==='estimating'&&row.status!=='submitted')fail('見積中に変更できる状態ではありません。',409);
+ // 相談・異議を受けたら、見積もりからやり直せる
+ if(status==='estimating'&&!['submitted','consulting','objected'].includes(row.status))fail('見積中に変更できる状態ではありません。',409);
  if(status==='closed'&&['withdrawn','closed'].includes(row.status))fail('すでに終了しています。',409);
  const result=await db.prepare('UPDATE supporter_custom_requests SET status=?,updated_at=?,revision=revision+1 WHERE id=? AND status=? AND revision=?')
   .bind(status,now,id,row.status,revision).run();
@@ -208,7 +220,12 @@ export async function handleSupporterCustomRequestApi(request,env,db,uid,{rateLi
  const match=requestId(path);
  if(!base&&!match)return null;
  const enabled=customRequestsEnabled(env);
- if(request.method==='GET'&&base)return json({enabled,items:await listCustomRequestsForUser(db,uid),plannedItems:CUSTOM_PLANNED_ITEMS});
+ if(request.method==='GET'&&base){
+  // 運営が用意したカスタム契約（提示中・有効）。支払いは有料プランの画面の「専用の支払い手続き」から行う
+  const plan=await getCustomPlan(db,uid);
+  const contract=plan&&['offered','active'].includes(plan.status)?customPublic(plan):null;
+  return json({enabled,items:await listCustomRequestsForUser(db,uid),plannedItems:CUSTOM_PLANNED_ITEMS,contract,paymentUrl:contract?.status==='offered'?'/site/supporter/#billing':''});
+ }
  if(request.method!=='GET'&&!enabled)fail('カスタムプランのご要望受付は現在無効です。',403);
  if(request.method==='POST'&&base){
   const input=bodyKeys(await readJson(request),['request']);
@@ -227,9 +244,9 @@ export async function handleSupporterCustomRequestApi(request,env,db,uid,{rateLi
   const input=bodyKeys(await readJson(request),['decision','revision','message']);
   await rateLimit();
   const message=textField(input,'message',500);
-  const row=await decideCustomRequest(db,uid,match[1],input.decision,input.revision);
-  const label={accept:'申込み',consult:'相談',withdraw:'取り下げ'}[input.decision];
-  await queueNotice(env,db,{id:`custom-request:${row.id}:decision:${row.revision}`,channel:'membership',kind:'custom_request_decision',title:`カスタムプランの${label}`,lines:[`利用者 ID: ${uid}`,message&&`メッセージ: ${message}`],tone:input.decision==='accept'?'good':'info',at:row.updated_at});
+  const row=await decideCustomRequest(db,uid,match[1],input.decision,input.revision,{message});
+  const label={accept:'申込み',consult:'相談',withdraw:'取り下げ',object:'異議の申し出'}[input.decision];
+  await queueNotice(env,db,{id:`custom-request:${row.id}:decision:${row.revision}`,channel:'membership',kind:'custom_request_decision',title:`カスタムプランの${label}`,lines:[`利用者 ID: ${uid}`,message&&`メッセージ: ${message}`],tone:input.decision==='accept'?'good':input.decision==='object'?'warn':'info',at:row.updated_at});
   return json({item:customRequestPublic(row)});
  }
  return json({message:'Method not allowed'},405);

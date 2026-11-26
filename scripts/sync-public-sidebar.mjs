@@ -20,6 +20,7 @@ const excluded = new Set([
     'site/cdn-admin/index.html',
     'site/supporter-admin/stats.html',
     'site/supporter-admin/payments.html',
+    'site/supporter-admin/custom-requests.html',
     'site/patlite-admin/index.html',
 ]);
 

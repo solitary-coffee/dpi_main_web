@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+ <meta charset="UTF-8">
+ <meta name="viewport" content="width=device-width,initial-scale=1">
+ <meta name="robots" content="noindex,nofollow">
+ <title>カスタムプランご要望管理 | DPI-Bot</title>
+ <link rel="icon" href="../../img/dpi.png" type="image/png">
+ <link rel="stylesheet" href="../admin-shell.css">
+ <link rel="stylesheet" href="style.css">
+ <link rel="stylesheet" href="custom-requests.css">
+</head>
+<body class="admin-shell">
+ <button id="menu-toggle-btn" type="button" aria-label="メニューを開く"><span></span><span></span><span></span></button>
+ <div class="overlay"></div>
+ <div class="page-container">
+  <nav class="sidebar" aria-label="管理メニュー">
+   <div class="sidebar-header"><h2>管理メニュー</h2></div>
+   <ul>
+    <li><a href="/">公式サイト</a></li><li><a href="/site/admin-center/">統合管理センター</a></li>
+    <li><a href="/site/system-admin/">システム運用</a></li><li><a href="/site/ec2-admin/">EC2管理</a></li>
+    <li><a href="/site/xml-admin/">XML配信</a></li><li><a href="/site/status-admin/">ステータス管理</a></li>
+    <li><a href="/site/delivery-admin/">配信統計</a></li><li><a href="/site/delivery-flow-admin/">配信系統</a></li>
+    <li><a href="/site/system-admin/audit/">監査ログ</a></li><li><a href="/site/channel-admin/">配信先検索</a></li>
+    <li><a href="/site/reuse-admin/">二次利用申請管理</a></li><li><a href="/site/supporter-admin/" class="active" aria-current="page">有料プラン管理</a></li><li><a href="/site/cdn-admin/">画像CDN</a></li>
+    <li><a href="/site/patlite-admin/">積層灯</a></li><li><a href="/site/control-deck/">操作盤</a></li>
+    <li><a href="/site/mail-admin/">メール配信管理</a></li><li><a href="/site/discord-admin/">Discordお知らせ管理</a></li>
+    <li><a href="/site/ip-admin/">IP遮断管理</a></li><li><a href="/cdn-cgi/access/logout">ログアウト</a></li>
+   </ul>
+  </nav>
+  <main class="main-content">
+   <header class="topbar"><div><p class="eyebrow">CUSTOM REQUESTS</p><h1>カスタムプランご要望管理</h1></div><div class="admin-bar screen-only"><a class="stats-link" href="./">有料プラン管理へ戻る</a><button id="print" type="button">印刷・PDF保存</button><button id="refresh" type="button">再読み込み</button></div></header>
+   <div id="global-status" class="status" role="status" aria-live="polite"></div>
+   <section class="admin-section screen-only" aria-labelledby="filter-title"><div class="section-heading"><h2 id="filter-title">ご要望一覧</h2><label>状態で絞り込み <select id="status-filter"><option value="">すべて</option><option value="submitted">受付済み</option><option value="estimating">見積もり中</option><option value="answered">回答あり</option><option value="accepted">申込み済み</option><option value="objected">異議あり</option><option value="consulting">ご相談中</option><option value="withdrawn">取り下げ</option><option value="closed">終了</option></select></label></div><div id="request-list" class="request-list"></div></section>
+   <section id="detail-section" class="admin-section" hidden aria-labelledby="detail-title"><div class="section-heading"><div><p class="eyebrow">REQUEST DETAIL</p><h2 id="detail-title">ご要望の詳細</h2></div><span id="detail-status" class="status-badge"></span></div><div id="request-summary"></div><h3 class="document-title">カスタムプラン 最終確認書</h3><div id="feature-table" class="feature-table-wrap"></div><section id="request-note" class="keep-together"></section>
+    <form id="answer-form" class="answer-form screen-only"><h3>運営の回答</h3><div class="answer-meta"><label>金額の目安（月額）<input id="answer-amount" type="text" maxlength="100" placeholder="例：月額5,000円" required></label><label>作成者<input id="answer-estimator" type="text" maxlength="50" required></label><label>サーバー数<input id="answer-servers" type="number" min="0" max="100" required></label><label>チャンネル数<input id="answer-channels" type="number" min="0" max="100" required></label><label>通知ルール数<input id="answer-rules" type="number" min="0" max="100" required></label></div><label>メモ<textarea id="answer-memo" rows="4" maxlength="2000"></textarea></label><div class="admin-bar"><button id="copy-request" class="secondary-btn" type="button">ご希望どおりに入れる</button><button type="submit">回答を送る</button></div></form>
+    <div class="admin-bar detail-actions screen-only"><button id="estimating" type="button">見積もり中にする</button><button id="close-request" class="danger-btn" type="button">終了</button><button id="load-contract" type="button" hidden>カスタム契約に読み込む</button></div>
+   </section>
+  </main>
+ </div>
+ <script src="../../script.js"></script>
+ <script type="module" src="custom-requests.js"></script>
+</body>
+</html>
+
