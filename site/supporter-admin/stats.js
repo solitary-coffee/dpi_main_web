@@ -1,7 +1,8 @@
+import { supporterStats } from './stats-logic.js';
+
 const $=id=>document.getElementById(id);
 const yen=v=>new Intl.NumberFormat('ja-JP',{style:'currency',currency:'JPY',maximumFractionDigits:0}).format(Number(v)||0);
 const number=v=>Number(v||0).toLocaleString('ja-JP');
-const activeStatuses=new Set(['active','trialing','past_due','unpaid','paused']);
 function metric(node,label,value){
  const article=document.createElement('article');article.className='metric-card';
  const caption=document.createElement('span');caption.textContent=label;
@@ -26,16 +27,16 @@ async function load(){
  try{
   const r=await fetch('/site/supporter-admin/api/accounts',{credentials:'same-origin',cache:'no-store',headers:{Accept:'application/json'}});
   if(!r.ok)throw Error('契約・クレジット統計を取得できませんでした。');
-  const data=await r.json(),accounts=data.accounts||[],subscriptions=accounts.flatMap(a=>a.subscriptions||[]);
-  const active=subscriptions.filter(s=>activeStatuses.has(s.status)&&s.recognizedPlan!==false);
+  const data=await r.json(),accounts=data.accounts||[];
+  const {subscriptions,active,planCounts,monthlyAmount,cancelingCount}=supporterStats(accounts);
   const credit=data.creditSummary||{};
   const cards=$('stats-metrics');cards.replaceChildren();
   metric(cards,'登録アカウント数',number(accounts.length));
   metric(cards,'有効・対応中の契約数',number(active.length));
-  metric(cards,'月額合計（契約額）',yen(active.reduce((sum,s)=>sum+Number(s.amount||0),0)));
-  metric(cards,'解約予定',number(active.filter(s=>s.cancelAtPeriodEnd).length));
+  metric(cards,'月額合計（契約額）',yen(monthlyAmount));
+  metric(cards,'解約予定',number(cancelingCount));
   metric(cards,'BAN中の登録者',number(accounts.filter(a=>a.accountStatus==='suspended').length));
-  chart($('stats-plans'),[['Basic',active.filter(s=>s.planId==='supporter').length],['Plus',active.filter(s=>s.planId==='plus').length],['Pro',active.filter(s=>s.planId==='pro').length]]);
+  chart($('stats-plans'),[['Basic',planCounts.supporter],['Plus',planCounts.plus],['Pro',planCounts.pro],['カスタム',planCounts.custom]]);
   const statusLabels={active:'有効',trialing:'次回請求待ち',past_due:'支払遅延',unpaid:'未払い',paused:'一時停止',canceled:'解約済み',incomplete:'手続き未完了'};
   chart($('stats-status-chart'),[...new Set(subscriptions.map(s=>s.status))].map(status=>[statusLabels[status]||status,subscriptions.filter(s=>s.status===status).length]));
   chart($('stats-credits'),[['購入クレジット残高',credit.purchasedBalance||0],['管理者付与等の残高',credit.otherCredits||0]]);

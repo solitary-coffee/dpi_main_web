@@ -211,7 +211,10 @@ test('admin details describe image rule settings',()=>{
 
 test('comparison table lists the image delivery rows with the plan split (custom: per contract)',async()=>{
  const [html,css]=await Promise.all(['plans.html','plans.css'].map(file=>readFile(new URL('../site/supporter/'+file,import.meta.url),'utf8')));
- assert.doesNotMatch(html,/準備中/);
+ const released=html
+  .replace(/<tbody class="comparison-planned">[\s\S]*?<\/tbody>/,'')
+  .replace(/<div class="planned-previews">[\s\S]*?<\/section>/,'</section>');
+ assert.doesNotMatch(released,/準備中/);
  assert.match(html,/選んだ地域が発表の対象に含まれるときだけ配信します/);
  const row=(kind,label)=>{const body=html.match(new RegExp(`<th scope="rowgroup"[^>]*>${kind}(?:<a[^>]*>※</a>)?</th>[\\s\\S]*?</tbody>`))?.[0]||'';return body.match(new RegExp(`<th scope="row">${label}[^<]*(?:<a[^>]*>※</a>)?</th>((?:<td>[^<]*</td>){4})`))?.[1].match(/<td>([^<]*)<\/td>/g).map(cell=>cell.replace(/<\/?td>/g,''));};
  const C='契約による';
@@ -235,7 +238,7 @@ test('comparison table lists the image delivery rows with the plan split (custom
  for(const body of html.match(/<tbody>\s*<tr><th scope="rowgroup"[\s\S]*?<\/tbody>/g))
   assert.equal(Number(body.match(/rowspan="(\d+)"/)[1]),(body.match(/<tr>/g)||[]).length,body.slice(0,120));
  // Every row of the custom column is decided by the contract (price and add-ons excepted).
- const rows=[...html.matchAll(/<th scope="row">([^<]*)(?:<a[^>]*>※<\/a>)?<\/th>((?:<td>[^<]*<\/td>){4})/g)];
+ const rows=[...released.matchAll(/<th scope="row">([^<]*)(?:<a[^>]*>※<\/a>)?<\/th>((?:<td>[^<]*<\/td>){4})/g)];
  assert.ok(rows.length>30);
  const cell=text=>text.match(/<td>([^<]*)<\/td>/g).map(value=>value.replace(/<\/?td>/g,''));
  assert.deepEqual(cell(rows.find(([,label])=>label==='月額（税込）')[2]),['300円','800円','1,280円','個別']);

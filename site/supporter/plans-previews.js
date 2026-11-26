@@ -63,8 +63,12 @@ if (section) {
   const file = figure.dataset.previewFile;
   if (!type || !file) continue;
   const caption = figure.querySelector('figcaption')?.textContent || '';
+  const fallback = () => [...section.querySelectorAll('.preview-thumb')]
+   .filter(item => item.dataset.previewType === type)
+   .map(item => ({file: item.dataset.previewFile, caption: item.querySelector('figcaption')?.textContent || '',
+    plan: item.dataset.previewPlan || 'Plus以上', group: 'all'}));
   attachPreview(figure, type, {prefer: [file], caption,
-   fallback: {file, caption, plan: figure.dataset.previewPlan || 'Plus以上'}});
+   fallback});
  }
  update();
 }

@@ -16,6 +16,17 @@ export const PREVIEW_TYPES = Object.freeze({
  'tsunami-map': '津波警報・注意報・津波観測の図・表',
  'hires-radar': '雨雲レーダー（高解像度版）',
 });
+export const PLANNED_PREVIEW_TYPES = Object.freeze({
+ 'planned-thunder': '雷レーダー',
+ 'planned-estimated-intensity': '推計震度分布',
+ 'planned-typhoon': '台風の進路予想図',
+ 'planned-rain-disaster': '土砂災害警戒情報・記録的短時間大雨情報の図',
+ 'planned-volcano': '火山（噴火警報・噴火速報・降灰予報）の図',
+ 'planned-rain-forecast': '今後の雨（15時間先までの予想）',
+ 'planned-himawari': '気象衛星（ひまわり）',
+ 'planned-weather-distribution': '天気分布予報',
+ 'planned-amedas': 'アメダスの分布図',
+});
 export const PREVIEW_PLANS = Object.freeze(['Basic以上', 'Plus以上', 'Pro以上']);
 // まとまり（group）の見出し。拡大表示の見出しは「種類（まとまり）」。ここに無いまとまりは種類の名前だけ
 export const PREVIEW_GROUPS = Object.freeze({
@@ -77,7 +88,7 @@ export function groupFor(items, {prefer = [], group = ''} = {}) {
 
 // 拡大表示の見出し: 種類の名前（まとまりの名前があれば「種類（まとまり）」）
 export function titleFor(type, group) {
- const name = PREVIEW_TYPES[type] || '見本';
+ const name = PREVIEW_TYPES[type] || PLANNED_PREVIEW_TYPES[type] || '見本';
  const label = PREVIEW_GROUPS[type]?.[group];
  return label ? `${name}（${label}）` : name;
 }
@@ -180,7 +191,7 @@ function show() {
  view.title.textContent = titleFor(state.type, item.group);
  view.counter.textContent = `${state.index + 1} / ${state.items.length}`;
  view.image.src = `${PREVIEW_BASE}${item.file}`;
- view.image.alt = `見本：${PREVIEW_TYPES[state.type] || ''}（${item.caption}）`;
+ view.image.alt = `見本：${PREVIEW_TYPES[state.type] || PLANNED_PREVIEW_TYPES[state.type] || ''}（${item.caption}）`;
  view.plan.textContent = item.plan;
  view.plan.dataset.plan = item.plan;
  view.text.textContent = item.caption;
@@ -205,7 +216,7 @@ function step(offset) {
 
 // 拡大表示を開く。type = 見本の種類、prefer = 最初に表示したいファイル名の候補、group = prefer が無いときに開くまとまり、
 // opener = 閉じたときにフォーカスを戻す要素。← / → で切り替えるのは最初に表示した見本と同じまとまりの見本だけ。
-// manifest.json を読めない・その種類が無いときは、fallback（{file, caption, plan}）だけを表示する
+// manifest.json を読めない・その種類が無いときは、fallback（見本の配列またはそれを返す関数）を表示する
 export async function openPreview(type, {prefer = [], group = '', opener = null, fallback = null} = {}) {
  let items = [];
  try {
@@ -213,7 +224,10 @@ export async function openPreview(type, {prefer = [], group = '', opener = null,
  } catch {
   items = [];
  }
- if (!items.length && fallback) items = [fallback];
+ if (!items.length && fallback) {
+  const alternatives = typeof fallback === 'function' ? fallback() : fallback;
+  items = Array.isArray(alternatives) ? alternatives : (alternatives ? [alternatives] : []);
+ }
  if (!items.length) return false;
  if (!view) view = buildView();
  const shown = groupFor(items, {prefer, group});
@@ -237,7 +251,7 @@ export function attachPreview(target, type, {prefer = [], group = '', caption = 
  target.tabIndex = 0;
  target.setAttribute('role', 'button');
  target.setAttribute('aria-haspopup', 'dialog');
- target.setAttribute('aria-label', `${caption || PREVIEW_TYPES[type] || '見本'}を拡大表示（他の見本も見られます）`);
+ target.setAttribute('aria-label', `${caption || PREVIEW_TYPES[type] || PLANNED_PREVIEW_TYPES[type] || '見本'}を拡大表示（他の見本も見られます）`);
  const hint = element('span', 'preview-zoom-hint', 'クリックで拡大');
  hint.setAttribute('aria-hidden', 'true');
  target.append(hint);
