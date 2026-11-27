@@ -4,6 +4,20 @@ import test from 'node:test';
 import vm from 'node:vm';
 
 import { handleAdminCenterRequest } from '../worker/admin-center.js';
+import { __test as cdnAdminWorkerTest } from '../worker/cdn-admin.js';
+
+const SAMPLE_INVENTORY = {
+    generatedAt: '2026-11-18T12:00:00Z',
+    locations: [
+        {
+            id: 'r2', label: 'Cloudflare R2', available: true, error: '', objects: 3, bytes: 2_500_500,
+            categories: [
+                { id: 'small', label: '小さい画像', objects: 2, bytes: 500, latest: '2026-11-18T10:00:00Z' },
+                { id: 'large', label: '大きい画像', objects: 1, bytes: 2_500_000, latest: '2026-11-18T11:00:00Z' },
+            ],
+        },
+    ],
+};
 
 const SAMPLE_STATS = {
     version: 1,
@@ -199,7 +213,7 @@ async function renderPage(payload, status = 200) {
     context.globalThis = context;
     vm.runInContext(script, context);
     await context.CdnAdmin.ready;
-    return { elements, intervals, html };
+    return { elements, intervals, html, cdnAdmin: context.CdnAdmin };
 }
 
 test('画像CDN管理画面はサンプル集計をカード・表で表示し60秒ごとに更新する', async () => {
@@ -253,4 +267,49 @@ test('集計がまだ無い・古い・API失敗の表示', async () => {
     const failed = await renderPage({ success: false, message: 'Cloudflare Accessでの認証が必要です。' }, 403);
     assert.match(failed.elements['global-status'].textContent, /Cloudflare Access/u);
     assert.equal(failed.elements['global-status'].className, 'status error');
+});
+
+test('画像内訳は usage 内の正常な集計も大きさの降順・日本時間で表示する', async () => {
+    const page = await renderPage({
+        success: true, admin: 'a', fetchedAt: '2026-11-18T12:30:00Z', stats: {}, usage: { inventory: SAMPLE_INVENTORY },
+    });
+    const text = page.elements['inventory-locations'].textContent;
+    assert.match(page.elements['inventory-generated-at'].textContent, /2026\/11\/18 21:00:00/u);
+    assert.match(text, /Cloudflare R2合計 3枚 ／ 2\.5 MB/u);
+    assert.ok(text.indexOf('大きい画像') < text.indexOf('小さい画像'));
+    assert.match(text, /2026\/11\/18 20:00:00/u);
+    assert.doesNotMatch(await readFile(new URL('../site/cdn-admin/script.js', import.meta.url), 'utf8'), /innerHTML/u);
+    assert.equal(cdnAdminWorkerTest.MAX_OBJECT_BYTES, 2 * 1024 * 1024);
+});
+
+test('画像内訳は項目が欠けていても表示用データを安全に補う', async () => {
+    const { cdnAdmin } = await renderPage({ success: true, admin: 'a', fetchedAt: '2026-11-18T12:30:00Z', stats: {}, usage: null });
+    const view = cdnAdmin.inventoryViewModel({ locations: [{ categories: [{}] }] });
+    assert.equal(view.available, true);
+    assert.deepEqual(JSON.parse(JSON.stringify(view.locations[0])), {
+        id: '', label: '保存先', available: false, error: '', objects: 0, bytes: 0,
+        categories: [{ id: '', label: '種類不明', objects: 0, bytes: 0, latest: '未記録' }],
+    });
+    assert.equal(view.generatedAt, '未記録');
+});
+
+test('画像内訳が無い・壊れている場合は次回集計の案内を表示する', async () => {
+    const page = await renderPage({
+        success: true, admin: 'a', fetchedAt: '2026-11-18T12:30:00Z', stats: { inventory: { locations: 'broken' } }, usage: null,
+    });
+    assert.equal(page.cdnAdmin.inventoryViewModel(null).available, false);
+    assert.equal(page.cdnAdmin.inventoryViewModel('broken').available, false);
+    assert.match(page.elements['inventory-locations'].textContent, /まだ集計されていません（自宅の集計は 1 時間ごと）/u);
+});
+
+test('取得失敗の保存先は型名だけの理由と空の内訳を表示する', async () => {
+    const inventory = {
+        generatedAt: '2026-11-18T12:00:00Z',
+        locations: [{ id: 'home', label: '自宅', available: false, error: 'TimeoutError', objects: 0, bytes: 0, categories: [] }],
+    };
+    const page = await renderPage({
+        success: true, admin: 'a', fetchedAt: '2026-11-18T12:30:00Z', stats: { inventory }, usage: null,
+    });
+    assert.match(page.elements['inventory-locations'].textContent, /自宅合計 0枚 ／ 0 B ／ 取得不可: TimeoutError/u);
+    assert.match(page.elements['inventory-locations'].textContent, /取得できなかったため内訳はありません。/u);
 });

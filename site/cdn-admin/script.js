@@ -62,6 +62,7 @@
         renderOverview(stats, r2, quota, cap);
         renderR2(stats, r2, usage, quota, cap);
         renderAws(stats, limits);
+        renderInventory(selectInventory(stats.inventory, usage.inventory));
         renderHealth(stats.health);
         renderModes(stats.sendModes);
         renderCost(stats.cost);
@@ -147,6 +148,93 @@
         }
         document.getElementById('aws-cards').replaceChildren(...cards);
         document.getElementById('aws-note').textContent = 'S3はCloudWatchの1日1回の値、CloudFrontは今月（UTC）の合計です。';
+    }
+
+    function selectInventory(statsInventory, usageInventory) {
+        const statsView = inventoryViewModel(statsInventory);
+        return statsView.available ? statsView : inventoryViewModel(usageInventory);
+    }
+
+    // API の不完全な値を、DOM に依存しない安全な表示用データへ変換する。
+    function inventoryViewModel(inventory) {
+        const unavailable = Object.freeze({
+            available: false,
+            message: 'まだ集計されていません（自宅の集計は 1 時間ごと）',
+            generatedAt: '',
+            locations: [],
+        });
+        if (!inventory || typeof inventory !== 'object' || Array.isArray(inventory) || !Array.isArray(inventory.locations)) return unavailable;
+
+        const locations = inventory.locations
+            .filter((location) => location && typeof location === 'object' && !Array.isArray(location))
+            .map((location) => {
+                const categories = Array.isArray(location.categories) ? location.categories : [];
+                return {
+                    id: safeText(location.id),
+                    label: safeText(location.label) || safeText(location.id) || '保存先',
+                    available: location.available === true,
+                    error: safeText(location.error),
+                    objects: safeInteger(location.objects),
+                    bytes: safeInteger(location.bytes),
+                    categories: categories
+                        .filter((category) => category && typeof category === 'object' && !Array.isArray(category))
+                        .map((category) => ({
+                            id: safeText(category.id),
+                            label: safeText(category.label) || safeText(category.id) || '種類不明',
+                            objects: safeInteger(category.objects),
+                            bytes: safeInteger(category.bytes),
+                            latest: formatInventoryDate(category.latest),
+                        }))
+                        .sort((left, right) => right.bytes - left.bytes),
+                };
+            });
+        return {
+            available: true,
+            message: '',
+            generatedAt: formatInventoryDate(inventory.generatedAt),
+            locations,
+        };
+    }
+
+    function renderInventory(view) {
+        const generatedAt = document.getElementById('inventory-generated-at');
+        const target = document.getElementById('inventory-locations');
+        generatedAt.textContent = view.available ? `集計時刻: ${view.generatedAt}` : '';
+        if (!view.available) {
+            target.replaceChildren(el('p', 'cdn-notice', view.message));
+            return;
+        }
+        if (!view.locations.length) {
+            target.replaceChildren(el('p', 'muted', '保存先の記録がありません。'));
+            return;
+        }
+        target.replaceChildren(...view.locations.map((location) => {
+            const section = el('article', 'cdn-inventory-location');
+            const heading = el('div', 'cdn-inventory-heading');
+            const total = `合計 ${number(location.objects)}枚 ／ ${formatInventoryBytes(location.bytes)}`;
+            const summary = location.available ? total : `${total} ／ 取得不可${location.error ? `: ${location.error}` : ''}`;
+            heading.append(el('h3', '', location.label), el('p', location.available ? 'muted' : 'cdn-inventory-error', summary));
+            section.append(heading);
+
+            const wrap = el('div', 'table-wrap');
+            const table = el('table');
+            const thead = el('thead');
+            const header = el('tr');
+            ['種類', '枚数', '大きさ', '最新の日時'].forEach((label) => header.append(el('th', '', label)));
+            thead.append(header);
+            const tbody = el('tbody');
+            const rows = location.categories.map((category) => {
+                const row = el('tr');
+                row.append(el('td', '', category.label), el('td', '', `${number(category.objects)}枚`),
+                    el('td', '', formatInventoryBytes(category.bytes)), el('td', '', category.latest));
+                return row;
+            });
+            tbody.replaceChildren(...(rows.length ? rows : [emptyRow(4, location.available ? '種類別の記録がありません。' : '取得できなかったため内訳はありません。')]));
+            table.append(thead, tbody);
+            wrap.append(table);
+            section.append(wrap);
+            return section;
+        }));
     }
 
     function renderHealth(health) {
@@ -263,6 +351,24 @@
         if (bytes >= 1e3) return `${(bytes / 1e3).toFixed(1)} KB`;
         return `${bytes} B`;
     }
+    function formatInventoryBytes(value) {
+        const bytes = safeInteger(value);
+        if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(2)} GB`;
+        if (bytes >= 1e6) return `${(bytes / 1e6).toFixed(1)} MB`;
+        if (bytes >= 1e3) return `${(bytes / 1e3).toFixed(1)} KB`;
+        return `${bytes} B`;
+    }
+    function safeInteger(value) {
+        const numberValue = Number(value);
+        return Number.isFinite(numberValue) && numberValue >= 0 ? Math.floor(numberValue) : 0;
+    }
+    function safeText(value) { return typeof value === 'string' ? value : ''; }
+    function formatInventoryDate(value) {
+        const date = new Date(typeof value === 'string' ? value : '');
+        return Number.isFinite(date.getTime())
+            ? new Intl.DateTimeFormat('ja-JP', { dateStyle: 'medium', timeStyle: 'medium', timeZone: 'Asia/Tokyo' }).format(date)
+            : '未記録';
+    }
     function money(value) { return Number(value || 0).toFixed(2); }
     function number(value) { return new Intl.NumberFormat('ja-JP').format(Number(value || 0)); }
     function formatDate(value) {
@@ -286,5 +392,8 @@
     let ready = null;
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => { ready = start(); });
     else ready = start();
-    globalThis.CdnAdmin = Object.freeze({ loadStats, render, stop: () => clearInterval(timer), MODE_LABELS, get ready() { return ready; } });
+    globalThis.CdnAdmin = Object.freeze({
+        loadStats, render, inventoryViewModel, selectInventory,
+        stop: () => clearInterval(timer), MODE_LABELS, get ready() { return ready; },
+    });
 })();
