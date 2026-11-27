@@ -140,11 +140,25 @@ test('credit-funded signup restores the consumed balance when subscription creat
 test('paid Checkout provisioning is idempotent and uses the saved payment method',async()=>{
  const env={SUPPORTER_BILLING_MODE:'test',STRIPE_SECRET_KEY:'rk_test_example',STRIPE_WEBHOOK_SECRET:'whsec_x',STRIPE_PRICE_SUPPORTER:'price_basic',STRIPE_PRICE_PLUS:'price_plus',STRIPE_PRICE_PRO:'price_pro',STRIPE_PRICE_ADDON:'price_addon',STRIPE_PORTAL_CONFIG:'bpc_x'};
  const calls=[];const originalFetch=globalThis.fetch;
- globalThis.fetch=async(url,init={})=>{const path=new URL(url).pathname;const params=new URLSearchParams(init.body||'');calls.push({path,params,key:init.headers?.['Idempotency-Key']});let data={livemode:false};if(path==='/v1/subscriptions'&&init.method==='GET')data={livemode:false,data:[]};if(path==='/v1/payment_intents/pi_x')data={livemode:false,id:'pi_x',payment_method:'pm_x'};if(path==='/v1/subscriptions'&&init.method==='POST')data={livemode:false,id:'sub_x',status:'active'};return new Response(JSON.stringify(data),{status:200,headers:{'content-type':'application/json'}});};
+ globalThis.fetch=async(url,init={})=>{const path=new URL(url).pathname;const params=new URLSearchParams(init.body||'');calls.push({path,params,key:init.headers?.['Idempotency-Key']});let data={livemode:false};if(path==='/v1/subscriptions'&&init.method==='GET')data={livemode:false,data:[]};if(path==='/v1/payment_intents/pi_x')data={livemode:false,id:'pi_x',status:'succeeded',customer:'cus_x',amount_received:300,payment_method:'pm_x'};if(path==='/v1/subscriptions'&&init.method==='POST')data={livemode:false,id:'sub_x',status:'active'};return new Response(JSON.stringify(data),{status:200,headers:{'content-type':'application/json'}});};
  try{
   const anchor=Math.floor(Date.now()/1000)+86400;
-  const result=await provisionPaidCheckoutSubscription(env,{id:'cs_test_x',mode:'payment',payment_status:'paid',customer:'cus_x',payment_intent:'pi_x',metadata:{dpi_checkout_kind:'initial_subscription',dpi_user:'123',dpi_plan:'supporter',dpi_channel_packs:'0',dpi_server_packs:'0',dpi_billing_anchor:String(anchor),dpi_legal_consent_version:'v1'}});
+  const result=await provisionPaidCheckoutSubscription(env,{id:'cs_test_x',mode:'payment',payment_status:'paid',customer:'cus_x',payment_intent:'pi_x',amount_total:300,currency:'jpy',metadata:{dpi_checkout_kind:'initial_subscription',dpi_user:'123',dpi_plan:'supporter',dpi_channel_packs:'0',dpi_server_packs:'0',dpi_billing_anchor:String(anchor),dpi_legal_consent_version:'v1',dpi_initial_total:'300'}});
   assert.equal(result.id,'sub_x');const create=calls.find(call=>call.path==='/v1/subscriptions'&&call.params.size);assert.equal(create.key,'dpi-initial-subscription-v2-cs_test_x');assert.equal(create.params.get('default_payment_method'),'pm_x');assert.equal(create.params.get('billing_cycle_anchor'),String(anchor));assert.equal(create.params.get('proration_behavior'),'none');assert.equal(create.params.get('trial_end'),null);
+ }finally{globalThis.fetch=originalFetch;}
+});
+test('通常プランの初回決済は通貨・期待総額・PaymentIntentを照合してから契約を作る',async()=>{
+ const env={SUPPORTER_BILLING_MODE:'test',STRIPE_SECRET_KEY:'rk_test_example',STRIPE_WEBHOOK_SECRET:'whsec_x',STRIPE_PRICE_SUPPORTER:'price_basic',STRIPE_PRICE_PLUS:'price_plus',STRIPE_PRICE_PRO:'price_pro',STRIPE_PRICE_ADDON:'price_addon',STRIPE_PORTAL_CONFIG:'bpc_x'};
+ const base={id:'cs_verify',mode:'payment',payment_status:'paid',customer:'cus_x',payment_intent:'pi_verify',amount_total:300,currency:'jpy',metadata:{dpi_checkout_kind:'initial_subscription',dpi_user:'123',dpi_plan:'supporter',dpi_channel_packs:'0',dpi_server_packs:'0',dpi_rule_packs:'0',dpi_billing_anchor:String(Math.floor(Date.now()/1000)+86400),dpi_initial_total:'300'}};
+ let intent,creates=0;const originalFetch=globalThis.fetch;
+ globalThis.fetch=async(url,init={})=>{const path=new URL(url).pathname,method=init.method||'GET';if(path==='/v1/subscriptions'&&method==='GET')return Response.json({livemode:false,data:[]});if(path==='/v1/payment_intents/pi_verify')return Response.json(intent);if(path==='/v1/subscriptions'&&method==='POST'){creates+=1;return Response.json({livemode:false,id:'sub_ok',status:'active'});}return Response.json({livemode:false});};
+ try{
+  const valid={livemode:false,id:'pi_verify',status:'succeeded',customer:'cus_x',amount_received:300,payment_method:'pm_x'};
+  for(const [session,changed] of [[{...base,currency:'usd'},{}],[{...base,metadata:{...base.metadata,dpi_initial_total:'301'}},{}],[base,{status:'processing'}],[base,{customer:'cus_other'}],[base,{amount_received:299}]]){
+   intent={...valid,...changed};await assert.rejects(()=>provisionPaidCheckoutSubscription(env,session),error=>error.status===409);
+  }
+  assert.equal(creates,0);
+  intent=valid;assert.equal((await provisionPaidCheckoutSubscription(env,base)).id,'sub_ok');assert.equal(creates,1);
  }finally{globalThis.fetch=originalFetch;}
 });
 test('missing subscription is recovered from the newest paid Checkout for the same user',async()=>{
@@ -154,10 +168,10 @@ test('missing subscription is recovered from the newest paid Checkout for the sa
   if(path==='/v1/subscriptions'&&(init.method||'GET')==='GET')data={livemode:false,data:[]};
   else if(path==='/v1/checkout/sessions')data={livemode:false,data:[
    {id:'cs_old',created:10,mode:'payment',status:'complete',payment_status:'paid',customer:'cus_x',payment_intent:'pi_old',metadata:{dpi_checkout_kind:'initial_subscription',dpi_user:'123',dpi_plan:'supporter',dpi_channel_packs:'0',dpi_server_packs:'0',dpi_billing_anchor:String(anchor)}},
-   {id:'cs_latest',created:20,mode:'payment',status:'complete',payment_status:'paid',customer:'cus_x',payment_intent:'pi_latest',metadata:{dpi_checkout_kind:'initial_subscription',dpi_user:'123',dpi_plan:'plus',dpi_channel_packs:'0',dpi_server_packs:'0',dpi_billing_anchor:String(anchor)}},
+   {id:'cs_latest',created:20,mode:'payment',status:'complete',payment_status:'paid',customer:'cus_x',payment_intent:'pi_latest',amount_total:800,currency:'jpy',metadata:{dpi_checkout_kind:'initial_subscription',dpi_user:'123',dpi_plan:'plus',dpi_channel_packs:'0',dpi_server_packs:'0',dpi_billing_anchor:String(anchor),dpi_initial_total:'800'}},
    {id:'cs_other',created:30,mode:'payment',status:'complete',payment_status:'paid',customer:'cus_x',payment_intent:'pi_other',metadata:{dpi_checkout_kind:'initial_subscription',dpi_user:'999',dpi_plan:'pro',dpi_channel_packs:'0',dpi_server_packs:'0',dpi_billing_anchor:String(anchor)}},
   ]};
-  else if(path==='/v1/payment_intents/pi_latest')data={livemode:false,id:'pi_latest',payment_method:'pm_latest'};
+  else if(path==='/v1/payment_intents/pi_latest')data={livemode:false,id:'pi_latest',status:'succeeded',customer:'cus_x',amount_received:800,payment_method:'pm_latest'};
   else if(path==='/v1/subscriptions'&&init.method==='POST')data={livemode:false,id:'sub_recovered',status:'active'};
   return new Response(JSON.stringify(data),{status:200,headers:{'content-type':'application/json'}});
  };
@@ -750,7 +764,7 @@ test('請求Webhookは初回決済成功メールとダウングレード発効�
 
 test('初回決済Webhookは契約を作成し成功メールを重複送信しない',async()=>{
  const secret='whsec_example',timestamp=Math.floor(Date.now()/1000);
- const event={id:'evt_checkout_paid',livemode:false,type:'checkout.session.completed',data:{object:{id:'cs_test_paid',mode:'payment',status:'complete',payment_status:'paid',customer:'cus_x',payment_intent:'pi_x',client_reference_id:'123',amount_total:300,currency:'jpy',metadata:{dpi_checkout_kind:'initial_subscription',dpi_user:'123',dpi_plan:'supporter',dpi_channel_packs:'0',dpi_server_packs:'0',dpi_billing_anchor:String(timestamp+86400),dpi_legal_consent_version:'2026-11-04'}}}};
+ const event={id:'evt_checkout_paid',livemode:false,type:'checkout.session.completed',data:{object:{id:'cs_test_paid',mode:'payment',status:'complete',payment_status:'paid',customer:'cus_x',payment_intent:'pi_x',client_reference_id:'123',amount_total:300,currency:'jpy',metadata:{dpi_checkout_kind:'initial_subscription',dpi_user:'123',dpi_plan:'supporter',dpi_channel_packs:'0',dpi_server_packs:'0',dpi_billing_anchor:String(timestamp+86400),dpi_legal_consent_version:'2026-11-04',dpi_initial_total:'300'}}}};
  const raw=JSON.stringify(event),signature=createHmac('sha256',secret).update(`${timestamp}.${raw}`).digest('hex');
  const env={SUPPORTER_BILLING_MODE:'test',STRIPE_SECRET_KEY:'rk_test_example',STRIPE_WEBHOOK_SECRET:secret,STRIPE_PRICE_SUPPORTER:'price_basic',STRIPE_PRICE_PLUS:'price_plus',STRIPE_PRICE_PRO:'price_pro',STRIPE_PRICE_ADDON:'price_addon',STRIPE_PORTAL_CONFIG:'bpc_x',NOTICE_FROM_EMAIL:'notice@example.jp'};
  const events=new Set(),notices=new Map(),emails=[];
@@ -779,7 +793,7 @@ test('初回決済Webhookは契約を作成し成功メールを重複送信し�
  };
  env.REUSE_DB=db;
  const originalFetch=globalThis.fetch;let subscriptionCreates=0;
- globalThis.fetch=async(url,init={})=>{const parsed=new URL(url);let data={livemode:false};if(parsed.pathname==='/v1/subscriptions'&&(init.method||'GET')==='GET')data={livemode:false,data:[]};else if(parsed.pathname==='/v1/payment_intents/pi_x')data={livemode:false,id:'pi_x',payment_method:'pm_x'};else if(parsed.pathname==='/v1/subscriptions'){subscriptionCreates+=1;data={livemode:false,id:'sub_x',status:'active',customer:'cus_x'};}return new Response(JSON.stringify(data),{status:200,headers:{'content-type':'application/json'}});};
+ globalThis.fetch=async(url,init={})=>{const parsed=new URL(url);let data={livemode:false};if(parsed.pathname==='/v1/subscriptions'&&(init.method||'GET')==='GET')data={livemode:false,data:[]};else if(parsed.pathname==='/v1/payment_intents/pi_x')data={livemode:false,id:'pi_x',status:'succeeded',customer:'cus_x',amount_received:300,payment_method:'pm_x'};else if(parsed.pathname==='/v1/subscriptions'){subscriptionCreates+=1;data={livemode:false,id:'sub_x',status:'active',customer:'cus_x'};}return new Response(JSON.stringify(data),{status:200,headers:{'content-type':'application/json'}});};
  try{
   const request=()=>new Request('https://dpi-bot.com/api/supporter/stripe/webhook',{method:'POST',headers:{'stripe-signature':`t=${timestamp},v1=${signature}`},body:raw});
   assert.equal((await billingWebhook(request(),env)).status,200);assert.equal(subscriptionCreates,1);assert.equal(emails.length,1);assert.equal(emails[0].to,'user@example.jp');assert.match(emails[0].subject,/お支払い完了/);

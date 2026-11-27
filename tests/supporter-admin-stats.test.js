@@ -24,7 +24,7 @@ test('有料プラン管理画面はすべて同じ管理者用左メニュー�
   const actual = sidebar(html);
   assert.equal(actual, expected, name);
   assert.match(actual, />統合管理センター</u, name);
-  assert.match(actual, /class="active" aria-current="page">有料プラン管理</u, name);
+  assert.match(actual, /class="active" aria-current="page">有料プラン・申請管理</u, name);
   assert.doesNotMatch(actual, />配信内容</u, name);
   assert.doesNotMatch(actual, />BOTを招待</u, name);
   assert.match(html, /<script src="\.\.\/\.\.\/script\.js"><\/script>/u, name);

@@ -4,7 +4,7 @@
  <meta charset="UTF-8">
  <meta name="viewport" content="width=device-width,initial-scale=1">
  <meta name="robots" content="noindex,nofollow">
- <title>カスタムプランご要望管理 | DPI-Bot</title>
+ <title>カスタムプラン申請管理 | DPI-Bot</title>
  <link rel="icon" href="../../img/dpi.png" type="image/png">
  <link rel="stylesheet" href="../admin-shell.css">
  <link rel="stylesheet" href="style.css">
@@ -22,21 +22,21 @@
     <li><a href="/site/xml-admin/">XML配信</a></li><li><a href="/site/status-admin/">ステータス管理</a></li>
     <li><a href="/site/delivery-admin/">配信統計</a></li><li><a href="/site/delivery-flow-admin/">配信系統</a></li>
     <li><a href="/site/system-admin/audit/">監査ログ</a></li><li><a href="/site/channel-admin/">配信先検索</a></li>
-    <li><a href="/site/reuse-admin/">二次利用申請管理</a></li><li><a href="/site/supporter-admin/" class="active" aria-current="page">有料プラン管理</a></li><li><a href="/site/cdn-admin/">画像CDN</a></li>
+    <li><a href="/site/reuse-admin/">二次利用申請管理</a></li><li><a href="/site/supporter-admin/" class="active" aria-current="page">有料プラン・申請管理</a></li><li><a href="/site/cdn-admin/">画像CDN</a></li>
     <li><a href="/site/patlite-admin/">積層灯</a></li><li><a href="/site/control-deck/">操作盤</a></li>
     <li><a href="/site/mail-admin/">メール配信管理</a></li><li><a href="/site/discord-admin/">Discordお知らせ管理</a></li>
     <li><a href="/site/ip-admin/">IP遮断管理</a></li><li><a href="/cdn-cgi/access/logout">ログアウト</a></li>
    </ul>
   </nav>
   <main class="main-content">
-   <header class="topbar"><div><p class="eyebrow">CUSTOM REQUESTS</p><h1>カスタムプランご要望管理</h1></div><div class="admin-bar screen-only"><a class="stats-link" href="./">有料プラン管理へ戻る</a><button id="print" type="button" disabled>最終確認書をPDFで保存（印刷）</button><button id="refresh" type="button">再読み込み</button></div></header>
+   <header class="topbar"><div><p class="eyebrow">CUSTOM REQUESTS</p><h1>カスタムプラン申請管理</h1></div><div class="admin-bar screen-only"><a class="stats-link" href="./">有料プラン管理へ戻る</a><button id="print" type="button" disabled>最終確認書をPDFで保存（印刷）</button><button id="refresh" type="button">再読み込み</button></div></header>
    <div id="global-status" class="status" role="status" aria-live="polite"></div>
-   <section class="admin-section screen-only" aria-labelledby="filter-title"><div class="section-heading"><h2 id="filter-title">ご要望一覧</h2><label>状態で絞り込み <select id="status-filter"><option value="">すべて</option><option value="submitted">受付済み</option><option value="estimating">見積もり中</option><option value="answered">回答あり</option><option value="accepted">申込み済み</option><option value="objected">異議あり</option><option value="consulting">ご相談中</option><option value="withdrawn">取り下げ</option><option value="closed">終了</option></select></label></div><div id="request-list" class="request-list"></div></section>
-   <section id="detail-section" class="admin-section" hidden aria-labelledby="detail-title"><div class="section-heading"><div><p class="eyebrow">REQUEST DETAIL</p><h2 id="detail-title">ご要望の詳細</h2></div><span id="detail-status" class="status-badge"></span></div><div id="request-summary"></div><h3 class="document-title">カスタムプラン 最終確認書</h3><div id="feature-table" class="feature-table-wrap"></div><section id="request-note" class="keep-together"></section>
+   <section class="admin-section screen-only" aria-labelledby="filter-title"><div class="section-heading"><h2 id="filter-title">申請一覧</h2><label>状態で絞り込み <select id="status-filter"><option value="">すべて</option><option value="submitted">受付済み</option><option value="estimating">見積もり中</option><option value="answered">回答あり</option><option value="accepted">申込み済み</option><option value="objected">異議あり</option><option value="consulting">ご相談中</option><option value="withdrawn">取り下げ</option><option value="closed">終了</option></select></label></div><div id="request-list" class="request-list"></div></section>
+   <section id="detail-section" class="admin-section" hidden aria-labelledby="detail-title"><div class="section-heading"><div><p class="eyebrow">REQUEST DETAIL</p><h2 id="detail-title">申請の詳細</h2></div><span id="detail-status" class="status-badge"></span></div><div id="request-summary"></div><h3 class="document-title">カスタムプラン 最終確認書</h3><div id="feature-table" class="feature-table-wrap"></div><section id="request-note" class="keep-together"></section>
     <form id="answer-form" class="answer-form screen-only"><h3>運営の回答</h3><div class="answer-meta"><label>金額の目安（月額）<input id="answer-amount" type="text" maxlength="100" placeholder="例：月額5,000円" required></label><label>作成者<input id="answer-estimator" type="text" maxlength="50" required></label><label>サーバー数<input id="answer-servers" type="number" min="0" max="100" required></label><label>チャンネル数<input id="answer-channels" type="number" min="0" max="100" required></label><label>通知ルール数<input id="answer-rules" type="number" min="0" max="100" required></label></div><label>メモ<textarea id="answer-memo" rows="4" maxlength="2000"></textarea></label><div class="admin-bar"><button id="copy-request" class="secondary-btn" type="button">ご希望どおりに入れる</button><button type="submit">回答を送る</button></div></form>
     <section id="contract-workflow" class="contract-workflow screen-only" hidden aria-labelledby="contract-workflow-title">
      <p id="contract-warning" class="contract-warning" hidden>利用者はまだこの回答に申し込んでいません。利用者と合意済みの場合だけ進めてください。</p>
-     <div class="section-heading"><div><p class="eyebrow">CONTRACT PROCEDURE</p><h3 id="contract-workflow-title">ご要望から契約手続きへ</h3></div><p id="contract-state" class="contract-state">既存契約を確認中…</p></div>
+     <div class="section-heading"><div><p class="eyebrow">CONTRACT PROCEDURE</p><h3 id="contract-workflow-title">申請から契約手続きへ</h3></div><p id="contract-state" class="contract-state">既存契約を確認中…</p></div>
      <form id="contract-form">
       <fieldset class="contract-step"><legend><span>1</span> 内容の確認</legend>
        <div class="contract-fields"><label>Discord ID<input id="contract-uid" type="text" inputmode="numeric" pattern="[0-9]{17,20}" required></label><label>確認のためDiscord IDを再入力<input id="contract-confirm" type="text" inputmode="numeric" pattern="[0-9]{17,20}" required></label><label>サーバー<input id="contract-servers" type="number" min="1" max="50" required></label><label>チャンネル<input id="contract-channels" type="number" min="1" max="200" required></label><label>ルール<input id="contract-rules" type="number" min="1" max="500" required></label><label>月額（税込・円）<input id="contract-price" type="number" min="100" max="1000000" step="1" required></label></div>
@@ -53,10 +53,10 @@
  </div>
  <article id="final-document" class="final-document" aria-label="カスタムプラン 最終確認書">
   <h1>カスタムプラン 最終確認書</h1>
-  <dl class="document-meta"><div><dt>ご要望番号</dt><dd id="document-request-id">—</dd></div><div><dt>受付日</dt><dd id="document-received-at">—</dd></div><div><dt>回答日</dt><dd id="document-answered-at">—</dd></div><div><dt>印刷日</dt><dd id="document-printed-at">—</dd></div></dl>
+  <dl class="document-meta"><div><dt>申請番号</dt><dd id="document-request-id">—</dd></div><div><dt>受付日</dt><dd id="document-received-at">—</dd></div><div><dt>回答日</dt><dd id="document-answered-at">—</dd></div><div><dt>印刷日</dt><dd id="document-printed-at">—</dd></div></dl>
   <section class="document-block"><h2>お客様・お見積もり情報</h2><dl class="document-details"><div><dt>お名前</dt><dd id="document-name">—</dd></div><div><dt>メール</dt><dd id="document-email">—</dd></div><div><dt>Discord ID</dt><dd id="document-discord-id">—</dd></div><div><dt>ご予算</dt><dd id="document-budget">—</dd></div><div><dt>確定数量</dt><dd id="document-quantities">—</dd></div><div><dt>金額</dt><dd id="document-amount">—</dd></div><div><dt>見積もり作成者</dt><dd id="document-estimator">—</dd></div></dl></section>
   <section class="document-block document-feature-block"><h2>機能</h2><table class="document-feature-table"><thead><tr><th>種類</th><th>機能名</th><th>含まれる標準プラン</th><th>ご希望</th><th>提供</th><th>備考</th></tr></thead><tbody id="document-feature-body"></tbody></table></section>
-  <section class="document-block document-notes"><h2>そのほかのご要望</h2><p id="document-request-note">—</p></section>
+  <section class="document-block document-notes"><h2>そのほかのご希望</h2><p id="document-request-note">—</p></section>
   <section class="document-block document-notes"><h2>運営メモ</h2><p id="document-admin-memo">—</p></section>
   <section class="document-block confirmation-box"><p>上記の内容で契約します</p><div><span>日付：</span><span>署名：</span></div></section>
  </article>

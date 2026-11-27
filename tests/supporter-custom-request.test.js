@@ -132,7 +132,7 @@ test('回答済みなら申込み前でも契約機能を取得でき、回答�
  assert.deepEqual(customRequestFeatures(row),{features:['eewMap'],yes:['eewMap'],partial:[],servers:2,channels:5,rules:10});
 });
 
-test('ensure-accountはご要望の送り主をメール付きで作成し監査ログを残す',async()=>{
+test('ensure-accountは申請の送り主をメール付きで作成し監査ログを残す',async()=>{
  const {raw,db}=await database();
  await createCustomRequest(db,UID,requestInput(),{id:ID,now:100000});
  await answerCustomRequest(db,ID,answerInput(),0,{now:100010});
@@ -183,7 +183,7 @@ test('支払いURLメールは確定契約・種類別機能・日本時間の�
   assert.equal(response.status,200);const result=await response.json();assert.equal(result.sent,true);assert.equal(result.to,'user@example.com');assert.equal(typeof result.sentAt,'number');
  }finally{globalThis.fetch=originalFetch;}
  assert.equal(messages.length,1);const message=messages[0];assert.equal(message.to,'user@example.com');assert.equal(message.subject,'【DPI-Bot】カスタムプランのお支払いのご案内');
- assert.match(message.text,/Discord DM 様/);assert.match(message.text,/ご要望番号: 11111111-1111-4111-8111-111111111111/);
+ assert.match(message.text,/Discord DM 様/);assert.match(message.text,/申請番号: 11111111-1111-4111-8111-111111111111/);
  assert.match(message.text,/ご契約内容: サーバー 3／チャンネル 12／ルール 25/);assert.match(message.text,/月額: 12,345円/);
  assert.match(message.text,/【緊急地震速報（警報）の図】\n・全国：警報が発表されたら配信/);assert.match(message.text,/【気象警報・注意報の地図】\n・全国・地方の選択/);
  assert.ok(message.text.indexOf('【緊急地震速報（警報）の図】')<message.text.indexOf('【気象警報・注意報の地図】'));
@@ -243,7 +243,7 @@ test('機能が無効な間は認証済み利用者の書き込みを403にす�
   body:JSON.stringify({request:requestInput()}),
  }),env);
  assert.equal(response.status,403);
- assert.equal((await response.json()).message,'カスタムプランのご要望受付は現在無効です。');
+ assert.equal((await response.json()).message,'カスタムプランの申請受付は現在無効です。');
 });
 
 test('申込み後は理由を添えて異議を申し出られ、運営は見積もりからやり直せる',async()=>{

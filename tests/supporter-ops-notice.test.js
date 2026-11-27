@@ -136,6 +136,23 @@ test('返金・支払異議を支払いチャンネルへ送り、チャージ�
  const operations=adminMails.filter(mail=>mail.headers?.['X-DPI-Mail-Type']==='supporter-admin-notice');assert.equal(operations.length,1);assert.match(operations[0].text,/理由: 不正利用[\s\S]*回答期限:/);
 });
 
+test('通常・カスタムの全額返金は即時解約して監査し、一部返金は継続する',async t=>{
+ for(const custom of [false,true]){
+  const store=await database(t,custom?'カスタム利用者':'通常利用者');if(!store)return;
+  const env=envFor(store.db),sub=subscription(custom?{metadata:{dpi_custom_id:'custom-one'}}:{});let canceled=0;
+  const posts=mock(t,{stripe:{'GET subscriptions':{data:[sub]},'GET subscriptions/sub_x':sub,'DELETE subscriptions/sub_x':()=>{canceled+=1;return{...sub,status:'canceled'};}}});
+  await webhook(env,'charge.refunded',{id:`ch_${custom?'custom':'normal'}`,customer:CUSTOMER,payment_intent:`pi_${custom?'custom':'normal'}`,amount:500,amount_refunded:500,refunds:{data:[{amount:500,created:2}]},metadata:{dpi_checkout_kind:custom?'custom_subscription_initial':'initial_subscription'}},{id:`evt_full_${custom?'custom':'normal'}`});
+  assert.equal(canceled,1);assert.match(posts[0].embed.description,/区分: 全額返金[\s\S]*契約を即時解約し、配信を停止しました/);
+  const audit=store.raw.prepare("SELECT actor,action,details_json FROM admin_audit_events WHERE action='supporter.full_refund_canceled'").get();
+  assert.equal(audit.actor,'system:stripe');assert.equal(JSON.parse(audit.details_json).canceledSubscriptions,1);
+ }
+ const creditStore=await database(t,'チャージ利用者');if(!creditStore)return;let creditCanceled=0;
+ const creditEnv=envFor(creditStore.db),creditSub=subscription(),creditPosts=mock(t,{stripe:{'GET subscriptions':{data:[creditSub]},'GET subscriptions/sub_x':creditSub,'DELETE subscriptions/sub_x':()=>{creditCanceled+=1;return{...creditSub,status:'canceled'};}}});
+ await webhook(creditEnv,'charge.refunded',{id:'ch_credit',customer:CUSTOMER,payment_intent:'pi_credit',amount:500,amount_refunded:500,metadata:{dpi_checkout_kind:'credit_topup'}},{id:'evt_full_credit'});
+ assert.equal(creditCanceled,0);assert.match(creditPosts[0].embed.description,/対象: クレジットチャージ/);
+ assert.equal(creditStore.raw.prepare("SELECT COUNT(*) AS count FROM admin_audit_events WHERE action='supporter.full_refund_canceled'").get().count,0);
+});
+
 test('失敗理由を日本語の6分類へまとめる',()=>{
  assert.deepEqual(['insufficient_funds','expired_card','card_declined','authentication_required','payment_method_missing','unknown'].map(paymentFailureCategory),['残高不足','カードの期限切れ','カード会社による拒否','本人確認が必要','支払い方法が無い','その他']);
 });

@@ -4,8 +4,8 @@
  <meta charset="UTF-8">
  <meta name="viewport" content="width=device-width,initial-scale=1">
  <meta name="robots" content="noindex,nofollow">
- <meta name="description" content="DPI-Botカスタムプランのご要望と運営の回答を確認できます。">
- <title>カスタムプランのご要望 | DPI-Bot</title>
+ <meta name="description" content="DPI-Botカスタムプランの申請と運営の回答を確認できます。">
+ <title>カスタムプランの申請 | DPI-Bot</title>
  <link rel="icon" href="../../../img/dpi.png" type="image/png">
  <link rel="stylesheet" href="/site/reuse/style.css">
  <link rel="stylesheet" href="../style.css">
@@ -35,26 +35,26 @@
       </ul>
   </nav>
   <main class="main-content custom-main">
-   <nav class="breadcrumbs screen-only" aria-label="パンくずリスト"><a href="/site/supporter/plans.html">有料プラン</a><span aria-hidden="true"> / </span><strong>カスタムプランのご要望</strong></nav>
+   <nav class="breadcrumbs screen-only" aria-label="パンくずリスト"><a href="/site/supporter/plans.html">有料プラン</a><span aria-hidden="true"> / </span><strong>カスタムプランの申請</strong></nav>
    <header class="custom-hero">
-    <div><p class="eyebrow">CUSTOM PLAN REQUEST</p><h1>カスタムプランのご要望</h1><p>ご要望を送り、運営からの最終確認を見てからお申し込みいただけます。</p></div>
+    <div><p class="eyebrow">CUSTOM PLAN REQUEST</p><h1>カスタムプランの申請</h1><p>申請を送り、運営からの最終確認を見てからお申し込みいただけます。</p></div>
     <div class="print-actions screen-only">
-     <label for="print-request">印刷するご要望</label>
-     <select id="print-request" disabled><option value="">ご要望がありません</option></select>
+     <label for="print-request">印刷する申請</label>
+     <select id="print-request" disabled><option value="">申請がありません</option></select>
      <button id="print" class="secondary-btn" type="button" disabled>PDFで保存（印刷）</button>
     </div>
    </header>
    <p id="status" class="form-status" role="status" aria-live="polite"></p>
    <section class="section account-section screen-only" aria-labelledby="account-title">
     <h2 id="account-title">アカウント</h2>
-    <div class="account-row"><div><span class="account-label">Discordアカウント</span><h3 id="user">確認中…</h3></div><a id="login-link" class="discord-btn" href="/api/reuse/oauth/start">Discordでログイン</a></div>
+    <div class="account-row"><div><span class="account-label">Discordアカウント</span><h3 id="user">確認中…</h3></div><a id="login-link" class="discord-btn" href="/api/reuse/oauth/start?returnTo=%2Fsite%2Fsupporter%2Fcustom%2F">Discordでログイン</a></div>
    </section>
    <section id="preparing" class="section preparing" hidden>
     <h2>カスタムプランは準備中です</h2>
-    <p>現在はご要望の受付を行っていません。受付開始までお待ちください。</p>
+    <p>現在は申請の受付を行っていません。受付開始までお待ちください。</p>
    </section>
    <section id="request-section" class="section screen-only" hidden aria-labelledby="request-title">
-    <div class="section-heading"><div><p class="eyebrow">YOUR REQUEST</p><h2 id="request-title">ご要望を入力</h2></div><button id="cancel-edit" class="secondary-btn" type="button" hidden>編集をやめる</button></div>
+    <div class="section-heading"><div><p class="eyebrow">YOUR REQUEST</p><h2 id="request-title">申請内容を入力</h2></div><button id="cancel-edit" class="secondary-btn" type="button" hidden>編集をやめる</button></div>
     <form id="request-form">
      <input id="request-id" type="hidden">
      <input id="request-revision" type="hidden" value="0">
@@ -76,13 +76,13 @@
       <p>専用の画像配信（新しい種類の図や、地域・表示を合わせた図など）もご用意できます。内容と料金はご相談のうえで決めます。</p>
       <div id="planned-form"></div>
      </fieldset>
-     <fieldset class="form-block request-free"><legend>そのほかのご要望</legend><label for="request-text">ご利用方法、必要な条件、時期などを自由にご記入ください。</label><textarea id="request-text" name="request" rows="7" maxlength="2000"></textarea></fieldset>
-     <div class="button-row"><button id="submit-request" class="primary-btn" type="submit">ご要望を送信</button></div>
+     <fieldset class="form-block request-free"><legend>そのほかのご希望</legend><label for="request-text">ご利用方法、必要な条件、時期などを自由にご記入ください。</label><textarea id="request-text" name="request" rows="7" maxlength="2000"></textarea></fieldset>
+     <div class="button-row"><button id="submit-request" class="primary-btn" type="submit">申請を送信</button></div>
     </form>
    </section>
    <section id="contract" class="section request-card" hidden aria-live="polite"></section>
    <section id="items-section" class="section" hidden aria-labelledby="items-title">
-    <div class="section-heading"><div><p class="eyebrow">REQUEST HISTORY</p><h2 id="items-title">送ったご要望</h2></div></div>
+    <div class="section-heading"><div><p class="eyebrow">REQUEST HISTORY</p><h2 id="items-title">送った申請</h2></div></div>
     <div id="items" class="request-list"></div>
    </section>
       <!-- dpi-public-footer:start -->
@@ -101,7 +101,7 @@
       <!-- dpi-public-footer:end -->
   </main>
  </div>
- <article id="print-document" class="print-document" aria-label="カスタムプラン ご要望書（控え）"></article>
+ <article id="print-document" class="print-document" aria-label="カスタムプラン 申請書（控え）"></article>
  <script src="../../../script.js"></script>
  <script type="module" src="custom.js"></script>
 </body>

@@ -334,6 +334,8 @@ export function normalizeImageRuleFields(rule, type, limits = {}, catalogue = nu
   const radarCondition = clean(rule?.radarCondition) || 'scheduled';
   if (!['scheduled', 'rainfall-threshold'].includes(radarCondition)) reject('雨雲レーダー（高解像度版）の配信条件を確認してください。');
   if (radarCondition === 'rainfall-threshold' && !hasFeature(limits, 'hiresRadarThreshold')) reject('雨雲レーダー（高解像度版）の閾値配信はPro以上のプランで利用できます。');
+  const rainbandOnly = bool(rule?.rainbandOnly);
+  if (rainbandOnly && !hasFeature(limits, 'hiresRadarRainbandOnly')) reject('線状降水帯の解析があるときだけ配信する設定はPlus以上のプランで利用できます。');
   const requestedContents = rule?.radarContents === undefined || rule?.radarContents === null ? ['current'] : (Array.isArray(rule.radarContents) ? rule.radarContents.map(clean) : []);
   if (!requestedContents.length || requestedContents.some(id => !CONTENT_IDS.includes(id))) reject('雨雲レーダー（高解像度版）で送るもの（現在の図・予想）を1つ以上選択してください。');
   const radarContents = CONTENT_IDS.filter(id => requestedContents.includes(id));
@@ -362,7 +364,7 @@ export function normalizeImageRuleFields(rule, type, limits = {}, catalogue = nu
    rainfallThresholdMmPerHour = Number(thresholdText);
    if (!/^\d+$/.test(thresholdText) || !THRESHOLDS.has(rainfallThresholdMmPerHour)) reject('1時間降水量の閾値は10・20・30・50・80mm/hから選択してください。');
   }
-  return {region, linearRainband: bool(rule?.linearRainband), radarCondition, rainfallThresholdMmPerHour, radarContents,
+  return {region, linearRainband: bool(rule?.linearRainband), rainbandOnly, radarCondition, rainfallThresholdMmPerHour, radarContents,
    deliveryIntervalMinutes, deliveryIntervalHours: legacyHours(deliveryIntervalMinutes), forecastIntervalMinutes};
  }
  if (type === 'tsunami-map') {
@@ -432,6 +434,8 @@ function imageRuleSnapshotFieldsOnly(rule, features, tier) {
  if (type === 'hires-radar') {
   const threshold = rule?.radarCondition === 'rainfall-threshold';
   if (threshold && !hasFeature(features, 'hiresRadarThreshold')) return null;
+  const rainbandOnly = rule?.rainbandOnly === true;
+  if (rainbandOnly && !hasFeature(features, 'hiresRadarRainbandOnly')) return null;
   // Forecast (Pro) is dropped after a downgrade; a forecast-only rule is suspended, never turned into maps.
   const radarContents = savedRadarContents(rule).filter(id => id !== 'forecast' || hasFeature(features, 'hiresRadarForecast'));
   if (!radarContents.length) return null;
@@ -439,7 +443,7 @@ function imageRuleSnapshotFieldsOnly(rule, features, tier) {
   let minutes = savedRadarMinutes(rule);
   if (!hasFeature(features, 'hiresRadarInterval')) minutes = PLUS_MINUTES.find(value => value >= minutes) || PLUS_MINUTES.at(-1);
   return {
-   region, tier, linearRainband: rule?.linearRainband === true,
+   region, tier, linearRainband: rule?.linearRainband === true, rainbandOnly,
    radarCondition: threshold ? 'rainfall-threshold' : 'scheduled',
    ...(threshold ? {rainfallThresholdMmPerHour: Number(rule?.rainfallThresholdMmPerHour)} : {}),
    radarContents, deliveryIntervalMinutes: minutes, deliveryIntervalHours: legacyHours(minutes),

@@ -28,7 +28,7 @@ test('plan features are defined once and attached to the plan catalogue',()=>{
  const enabled=id=>FEATURE_NAMES.filter(name=>PLAN_FEATURES[id][name]);
  // Basic: 緊急地震速報（警報）の図 (national) and the national tsunami map.
  assert.deepEqual(enabled('supporter'),['eewMap','tsunamiMapNational']);
- assert.deepEqual(enabled('plus'),['rainfallThreshold','prefectureScope','eewMap','eewMapRegion','weatherMap','warningTableNational','hiresRadar','tsunamiMapNational','tsunamiMap','earthquakeMap']);
+ assert.deepEqual(enabled('plus'),['rainfallThreshold','prefectureScope','eewMap','eewMapRegion','weatherMap','warningTableNational','hiresRadar','hiresRadarRainbandOnly','tsunamiMapNational','tsunamiMap','earthquakeMap']);
  assert.equal(PLAN_FEATURES.supporter.imageDelivery,true);
  assert.equal(PLAN_FEATURES.supporter.hiresRadar,false);
  assert.deepEqual(enabled('pro'),FEATURE_NAMES);
@@ -79,7 +79,10 @@ test('Basic cannot save any image rule',()=>{
 test('Plus saves region-level image rules but not Pro-only options',()=>{
  const limits=limitsFor(active('plus'));
  const [r,t,w]=normalizeSupporterRules([radar,tsunami,weather],guilds,limits,catalogue,ENABLED);
- assert.deepEqual({...r,name:undefined},{name:undefined,guildId:guilds[0].id,channelId:CHANNEL,channelIds:[CHANNEL],type:'hires-radar',conditionLogic:'and',conditions:[],region:'kanto-koshin',linearRainband:true,radarCondition:'scheduled',rainfallThresholdMmPerHour:null,radarContents:["current"],deliveryIntervalMinutes:180,deliveryIntervalHours:3,forecastIntervalMinutes:60});
+ assert.deepEqual({...r,name:undefined},{name:undefined,guildId:guilds[0].id,channelId:CHANNEL,channelIds:[CHANNEL],type:'hires-radar',conditionLogic:'and',conditions:[],region:'kanto-koshin',linearRainband:true,rainbandOnly:false,radarCondition:'scheduled',rainfallThresholdMmPerHour:null,radarContents:["current"],deliveryIntervalMinutes:180,deliveryIntervalHours:3,forecastIntervalMinutes:60});
+ const [rainbandOnly]=normalizeSupporterRules([{...radar,rainbandOnly:true}],guilds,limits,catalogue,ENABLED);
+ assert.equal(rainbandOnly.rainbandOnly,true);
+ assert.throws(()=>normalizeSupporterRules([{...radar,rainbandOnly:true}],guilds,limitsFor(custom({customFeatures:['hiresRadar']})),catalogue,ENABLED),/Plus以上/);
  assert.deepEqual([t.includeTables,t.enlargedArea,t.region],[true,false,'all']);
  assert.deepEqual([w.products,w.minSeverity,w.prefecture,w.municipalities,w.municipalityDetail],[['VPWW55','VPWW58'],'warning',null,[],false]);
  assert.throws(()=>normalizeSupporterRules([{...radar,radarCondition:'rainfall-threshold',rainfallThresholdMmPerHour:'30'}],guilds,limits,catalogue,ENABLED),/Pro以上/);
@@ -109,6 +112,7 @@ test('Pro and custom save every image option, with strict field validation',()=>
   [{...radar,deliveryIntervalHours:'5'}],
   [{...radar,region:'kanto'}],
   [{...radar,linearRainband:'yes'}],
+  [{...radar,rainbandOnly:'yes'}],
   [{...weather,products:[]}],
   [{...weather,products:['VPWW62']}],
   [{...weather,minSeverity:'special'}],
@@ -138,7 +142,7 @@ function snapshotDatabase(rules){
  }};
 }
 const proRules=[
- {...radar,conditionLogic:'and',conditions:[],radarCondition:'rainfall-threshold',rainfallThresholdMmPerHour:30,deliveryIntervalHours:1},
+  {...radar,conditionLogic:'and',conditions:[],rainbandOnly:true,radarCondition:'rainfall-threshold',rainfallThresholdMmPerHour:30,deliveryIntervalHours:1},
  {...tsunami,conditionLogic:'and',conditions:[],enlargedArea:true},
  {...weather,conditionLogic:'and',conditions:[],prefecture:'13',municipalities:['1310100'],municipalityDetail:true},
  {...weather,name:'広域',conditionLogic:'and',conditions:[],prefecture:null,municipalities:[],municipalityDetail:true},
@@ -157,7 +161,7 @@ test('snapshot v4 carries image rules with the account tier',async()=>{
   assert.deepEqual(rule.channelIds,[CHANNEL]);
   assert.equal('conditions' in rule,false);
  }
- assert.deepEqual([r.radarCondition,r.rainfallThresholdMmPerHour,r.linearRainband,r.deliveryIntervalHours],['rainfall-threshold',30,true,1]);
+ assert.deepEqual([r.radarCondition,r.rainfallThresholdMmPerHour,r.linearRainband,r.rainbandOnly,r.deliveryIntervalHours],['rainfall-threshold',30,true,true,1]);
  assert.equal(t.enlargedArea,true);
  assert.deepEqual([w.prefecture,w.municipalities,w.municipalityDetail,w.products,w.minSeverity],['13',['1310100'],true,['VPWW55','VPWW58'],'warning']);
  assert.equal('prefecture' in wide,false);
@@ -223,7 +227,7 @@ test('comparison table lists the image delivery rows with the plan split (custom
   ['気象警報・注意報の地図','全国・地方',['—','○','○',C]],['気象警報・注意報の地図','都道府県・市区町村',['—','—','○',C]],
   ['気象警報・注意報の表','全国',['—','○','○',C]],['気象警報・注意報の表','地方',['—','—','○',C]],['気象警報・注意報の表','発表のたびに配信',['—','—','○',C]],
   ['気象警報・注意報の時系列予想','地方',['—','—','○',C]],['気象警報・注意報の時系列予想','発表のたびに配信',['—','—','○',C]],
-  ['雨雲レーダー（高解像度版）','配信頻度の選択',['—','○','○',C]],['雨雲レーダー（高解像度版）','1時間先までの予想',['—','—','○',C]],['雨雲レーダー（高解像度版）','配信頻度の自由な指定',['—','—','○',C]],
+  ['雨雲レーダー（高解像度版）','配信頻度の選択',['—','○','○',C]],['雨雲レーダー（高解像度版）','線状降水帯の解析時だけ配信',['—','○','○',C]],['雨雲レーダー（高解像度版）','1時間先までの予想',['—','—','○',C]],['雨雲レーダー（高解像度版）','配信頻度の自由な指定',['—','—','○',C]],
   ['雨雲レーダー（簡略版）','地方',['○','○','○','○']],['雨雲レーダー（簡略版）','配信頻度・降雨検知',['○','○','○','○']],['雨雲レーダー（簡略版）','降水量のしきい値',['—','○','○',C]],
   ['雨雲レーダー（高解像度版）','全国・地方',['—','○','○',C]],['雨雲レーダー（高解像度版）','降水量のしきい値',['—','—','○',C]],
   ['津波','地図（全国）',['○','○','○','○']],['津波','地図（地方）',['—','○','○',C]],['津波','表（満潮時刻を含む）',['—','○','○',C]],
@@ -264,7 +268,8 @@ test('dashboard offers image types only when the server enables them',async()=>{
  const [app,html]=await Promise.all(['site/supporter/app.js','site/supporter/index.html'].map(path=>readFile(new URL('../'+path,import.meta.url),'utf8')));
  assert.match(app,/if\(options\?\.imageRulesEnabled\)return \[\.\.\.TYPES/);
  assert.match(app,/function imageRuleFields\(article,rule\)/);
- for(const key of ['linearRainband','includeTables','enlargedArea','municipalityDetail','minSeverity','hiresRadarThresholds','weatherMapProducts'])assert.ok(app.includes(key),key);
+ assert.match(app,/if\(entitlements\.hiresRadarRainbandOnly\)checkboxField\(box,rule,'rainbandOnly'/);
+ for(const key of ['linearRainband','rainbandOnly','includeTables','enlargedArea','municipalityDetail','minSeverity','hiresRadarThresholds','weatherMapProducts'])assert.ok(app.includes(key),key);
  assert.match(app,/Pro以上/);
  assert.doesNotMatch(html,/image-rules-note|画像配信ルールでは追加条件/);
 });

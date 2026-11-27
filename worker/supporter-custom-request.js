@@ -4,7 +4,7 @@ import {readJson} from './reuse.js';
 import {customPublic,customRowFeatures,getCustomPlan} from './supporter-custom.js';
 import {mailHtml,stripe,supporterMailSignature} from './supporter-billing.js';
 
-// 準備中の画像配信。公開済み機能と同じキー空間で要望・回答を扱う。
+// 準備中の画像配信。公開済み機能と同じキー空間で申請・回答を扱う。
 export const CUSTOM_PLANNED_ITEMS = Object.freeze([
  {name:'estimatedIntensity',label:'推計震度分布'},
  {name:'typhoon',label:'台風の進路予想図'},
@@ -114,12 +114,12 @@ async function ownRow(db,id,uid){
 }
 async function requireOwnRow(db,id,uid){
  const row=await ownRow(db,id,uid);
- if(!row)fail('ご要望が見つかりません。',404);
+ if(!row)fail('申請が見つかりません。',404);
  return row;
 }
 async function requireAdminRow(db,id){
  const row=await db.prepare(`SELECT r.*,COALESCE(a.discord_name,'') AS discord_name FROM supporter_custom_requests r LEFT JOIN supporter_accounts a ON a.discord_user_id=r.discord_user_id WHERE r.id=?`).bind(id).first();
- if(!row)fail('ご要望が見つかりません。',404);
+ if(!row)fail('申請が見つかりません。',404);
  return row;
 }
 const changed=result=>Number(result?.meta?.changes||0)>0;
@@ -140,7 +140,7 @@ export async function createCustomRequest(db,uid,input,{now=nowSeconds(),id=cryp
   .bind(id,uid,JSON.stringify(value),now,now,uid,uid,now-86400).run();
  if(!changed(result)){
   const active=await db.prepare("SELECT 1 AS found FROM supporter_custom_requests WHERE discord_user_id=? AND status IN ('submitted','estimating','answered') LIMIT 1").bind(uid).first();
-  fail(active?'確認中のご要望があります。':'ご要望の受付は1日3件までです。',409);
+  fail(active?'確認中の申請があります。':'申請の受付は1日3件までです。',409);
  }
  return await requireOwnRow(db,id,uid);
 }
@@ -153,7 +153,7 @@ export async function updateCustomRequest(db,uid,id,input,revision,{now=nowSecon
  if(!changed(result)){
   const row=await requireOwnRow(db,id,uid);
   if(Number(row.revision)!==revision)fail('別の操作で更新されています。',409);
-  fail('提出済みのご要望だけ編集できます。',409);
+  fail('提出済みの申請だけ編集できます。',409);
  }
  return await requireOwnRow(db,id,uid);
 }
@@ -163,10 +163,10 @@ export async function decideCustomRequest(db,uid,id,decision,revision,{now=nowSe
  if(!Number.isInteger(revision)||revision<0)fail('revisionが正しくありません。');
  const row=await requireOwnRow(db,id,uid);
  if(Number(row.revision)!==revision)fail('別の操作で更新されています。',409);
- if(decision==='withdraw'&&!USER_DECISION_OPEN.has(row.status))fail('このご要望は取り下げできません。',409);
+ if(decision==='withdraw'&&!USER_DECISION_OPEN.has(row.status))fail('この申請は取り下げできません。',409);
  // 異議: 申し込んだ後（運営が契約を用意した後を含む）に、理由を添えて申し出る
  if(decision==='object'){
-  if(row.status!=='accepted')fail('申込み後のご要望にだけ異議を申し出られます。',409);
+  if(row.status!=='accepted')fail('申込み後の申請にだけ異議を申し出られます。',409);
   if(!String(message||'').trim())fail('異議の内容をご記入ください。');
  }else if(decision!=='withdraw'&&row.status!=='answered')fail('運営の回答後に決定してください。',409);
  const status={accept:'accepted',consult:'consulting',withdraw:'withdrawn',object:'objected'}[decision];
@@ -227,13 +227,13 @@ export async function handleSupporterCustomRequestApi(request,env,db,uid,{rateLi
   const contract=plan&&['offered','active'].includes(plan.status)?customPublic(plan):null;
   return json({enabled,items:await listCustomRequestsForUser(db,uid),plannedItems:CUSTOM_PLANNED_ITEMS,contract,paymentUrl:contract?.status==='offered'?'/site/supporter/#billing':''});
  }
- if(request.method!=='GET'&&!enabled)fail('カスタムプランのご要望受付は現在無効です。',403);
+ if(request.method!=='GET'&&!enabled)fail('カスタムプランの申請受付は現在無効です。',403);
  if(request.method==='POST'&&base){
   const input=bodyKeys(await readJson(request),['request']);
   await rateLimit();
   const row=await createCustomRequest(db,uid,input.request);
   const wants=Object.values(parseJson(row.request_json)?.wants||{}).filter(value=>value==='yes'||value==='maybe').length;
-  await queueNotice(env,db,{id:`custom-request:${row.id}:submitted`,channel:'membership',kind:'custom_request_submitted',title:'新しいご要望',lines:[`利用者 ID: ${uid}`,`希望の件数: ${wants}件`],tone:'info',at:row.created_at});
+  await queueNotice(env,db,{id:`custom-request:${row.id}:submitted`,channel:'membership',kind:'custom_request_submitted',title:'新しい申請',lines:[`利用者 ID: ${uid}`,`希望の件数: ${wants}件`],tone:'info',at:row.created_at});
   return json({item:customRequestPublic(row)},201);
  }
  if(request.method==='PUT'&&match&&!match[2]){
@@ -282,7 +282,7 @@ const paymentLinkMailText=(row,plan,session,url)=>{
   '',
   'DPI-Bot カスタムプランのお支払いについてご案内します。',
   '',
-  `ご要望番号: ${row.id}`,
+  `申請番号: ${row.id}`,
   `ご契約内容: サーバー ${Number(plan.server_limit)}／チャンネル ${Number(plan.channel_limit)}／ルール ${Number(plan.rule_limit)}`,
   `月額: ${Number(plan.confirmed_yen).toLocaleString('ja-JP')}円`,
   'ご利用いただける機能:',
@@ -307,7 +307,7 @@ async function sendPaymentLinkEmail(request,db,env,id){
  if(session.status!=='open')fail('支払いURLの有効期限が切れています。作り直してください。',409);
  if(!env?.NOTICE_EMAIL?.send)fail('メール送信機能が設定されていません。',503);
  let to;
- try{to=emailField({email:requestData.email});}catch{fail('ご要望のメールアドレスが登録されていないか、形式が正しくありません。');}
+ try{to=emailField({email:requestData.email});}catch{fail('申請のメールアドレスが登録されていないか、形式が正しくありません。');}
  const subject='【DPI-Bot】カスタムプランのお支払いのご案内',text=paymentLinkMailText(row,plan,session,url),sentAt=nowSeconds();
  try{
   await env.NOTICE_EMAIL.send({to,from:{email:String(env.NOTICE_FROM_EMAIL||'').trim(),name:'DPI-Bot'},subject,text,html:mailHtml(text),...(String(env.NOTICE_REPLY_TO_EMAIL||'').trim()?{replyTo:String(env.NOTICE_REPLY_TO_EMAIL).trim()}: {})});
@@ -327,11 +327,11 @@ async function writeAccountCreatedAudit(db,admin,uid,requestId){
 }
 async function ensureCustomRequestAccount(db,id,admin){
  const row=await requireAdminRow(db,id);
- if(row.status==='withdrawn')fail('取り下げ済みのご要望からアカウントは作成できません。',409);
+ if(row.status==='withdrawn')fail('取り下げ済みの申請からアカウントは作成できません。',409);
  if(!isObject(parseJson(row.answer_json)))fail('回答が登録されていません。');
  const request=parseJson(row.request_json);
  let email;
- try{email=emailField({email:request?.email});}catch{fail('ご要望のメールアドレスが登録されていないか、形式が正しくありません。');}
+ try{email=emailField({email:request?.email});}catch{fail('申請のメールアドレスが登録されていないか、形式が正しくありません。');}
  const now=new Date().toISOString();
  const result=await db.prepare(`INSERT INTO supporter_accounts(discord_user_id,discord_name,billing_email,registered_at,updated_at) VALUES(?,?,?,?,?)
   ON CONFLICT(discord_user_id) DO NOTHING`).bind(row.discord_user_id,'',email,now,now).run();

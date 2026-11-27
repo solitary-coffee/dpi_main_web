@@ -30,7 +30,10 @@ function clean(value) {
 function rulesFromSettings(settingsJson) {
     try {
         const value = JSON.parse(settingsJson || '{}');
-        return Array.isArray(value?.rules) ? value.rules : [];
+        return Array.isArray(value?.rules) ? value.rules.filter(rule => clean(rule?.detail) !== 'flood-level').map(rule => ({
+            ...rule,
+            conditions: Array.isArray(rule?.conditions) ? rule.conditions.filter(condition => !(clean(condition?.kind) === 'detail' && clean(condition?.value) === 'flood-level')) : rule?.conditions,
+        })) : [];
     } catch {
         return [];
     }

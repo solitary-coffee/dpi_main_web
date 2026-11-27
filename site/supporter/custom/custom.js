@@ -58,9 +58,9 @@ function collectRequest(){
  return {email:$('email').value.trim(),contact:$('contact').value.trim(),budget:$('budget').value.trim(),servers:countValue('servers'),channels:countValue('channels'),rules:countValue('rules'),wants,wantNotes,request:$('request-text').value.trim()};
 }
 function resetForm(){
- $('request-form').reset();$('request-id').value='';$('request-revision').value='0';$('servers').value='1';$('channels').value='2';$('rules').value='5';$('submit-request').textContent='ご要望を送信';$('cancel-edit').hidden=true;renderFeatureForm();updateFormVisibility();
+ $('request-form').reset();$('request-id').value='';$('request-revision').value='0';$('servers').value='1';$('channels').value='2';$('rules').value='5';$('submit-request').textContent='申請を送信';$('cancel-edit').hidden=true;renderFeatureForm();updateFormVisibility();
 }
-// 進行中（受付済み・見積もり中・回答あり）のご要望があるあいだは新しく送れない（サーバーも断る）ので、入力欄は編集のときだけ出す
+// 進行中（受付済み・見積もり中・回答あり）の申請があるあいだは新しく送れない（サーバーも断る）ので、入力欄は編集のときだけ出す
 let requestsEnabled=true;
 const ACTIVE_STATUSES=new Set(['submitted','estimating','answered']);
 function updateFormVisibility(){
@@ -115,37 +115,37 @@ function printAnswer(item){
 }
 function buildPrintDocument(item){
  const root=$('print-document');const request=item.request||{};root.replaceChildren();
- root.append(el('h1','','カスタムプラン ご要望書（控え）'));
- root.append(printInfo([['ご要望番号',item.id],['受付日',formatDate(item.createdAt)],['更新日',formatDate(item.updatedAt)],['印刷日',new Intl.DateTimeFormat('ja-JP',{dateStyle:'long'}).format(new Date())]]));
+ root.append(el('h1','','カスタムプラン 申請書（控え）'));
+ root.append(printInfo([['申請番号',item.id],['受付日',formatDate(item.createdAt)],['更新日',formatDate(item.updatedAt)],['印刷日',new Intl.DateTimeFormat('ja-JP',{dateStyle:'long'}).format(new Date())]]));
  root.append(printInfo([['お名前',request.contact||'未記入'],['メールアドレス',request.email||'—'],['ご予算',request.budget||'未記入'],['サーバー数',request.servers??'—'],['チャンネル数',request.channels??'—'],['ルール数',request.rules??'—']]));
  const features=el('section','print-block print-features-section');features.append(el('h2','','ご希望の機能'),printFeatureTable(item));root.append(features);
- const free=el('section','print-block print-free');free.append(el('h2','','そのほかのご要望'),el('p','',request.request||'記入なし'));root.append(free);
+ const free=el('section','print-block print-free');free.append(el('h2','','そのほかのご希望'),el('p','',request.request||'記入なし'));root.append(free);
  const answer=printAnswer(item);if(answer)root.append(answer);
  root.append(el('p','print-notice','この書類は控えです。契約・請求は運営が確定するまで発生しません。'));
 }
 function updatePrintSelection(){
  const select=$('print-request');const selected=select.value;select.replaceChildren();
- for(const item of items){const option=document.createElement('option');option.value=String(item.id);option.textContent=`ご要望 ${item.id}`;select.append(option);}
+ for(const item of items){const option=document.createElement('option');option.value=String(item.id);option.textContent=`申請 ${item.id}`;select.append(option);}
  if(items.some(item=>String(item.id)===selected))select.value=selected;
  const unavailable=items.length===0;select.disabled=unavailable;$('print').disabled=unavailable;
- if(unavailable){const option=document.createElement('option');option.value='';option.textContent='ご要望がありません';select.append(option);}
+ if(unavailable){const option=document.createElement('option');option.value='';option.textContent='申請がありません';select.append(option);}
 }
 function printSelectedRequest(){
  const item=items.find(candidate=>String(candidate.id)===$('print-request').value);
- if(!item){setStatus('印刷するご要望を選んでください。');return;}
+ if(!item){setStatus('印刷する申請を選んでください。');return;}
  buildPrintDocument(item);window.print();
 }
 function actionButton(label,className,handler){const button=el('button',className,label);button.type='button';button.addEventListener('click',handler);return button;}
 async function decide(item,decision,message=''){
- if(decision==='withdraw'&&!confirm('このご要望を取り下げますか？'))return;
+ if(decision==='withdraw'&&!confirm('この申請を取り下げますか？'))return;
  try{await api(`/api/supporter/custom-requests/${encodeURIComponent(item.id)}/decision`,'POST',{decision,revision:item.revision,message});setStatus(decision==='accept'?'この内容で申し込みました。':decision==='object'?'異議の申し出を受け付けました。運営からご連絡します。':'ご連絡を受け付けました。');await loadRequests();}catch(error){setStatus(error.message);}
 }
 function renderItem(item){
  const request=item.request||{},answer=item.answer||{};const card=el('article','request-card');card.dataset.status=item.status;
- const head=el('div','request-card-head');const title=el('h3','',`ご要望 ${item.id}`);const badge=el('span',`status-badge ${item.status}`,STATUS_LABELS[item.status]||item.status);head.append(title,badge);card.append(head,el('p','meta',`受付：${formatDate(item.createdAt)} ／ 更新：${formatDate(item.updatedAt)}`),el('h4','document-title',item.answer?'カスタムプラン 最終確認書':'カスタムプラン ご要望書'),summary(request,answer),featureTable(item));
- const free=el('section','request-notes');free.append(el('h4','','そのほかのご要望'),el('p','',request.request||'記入なし'));card.append(free);
+ const head=el('div','request-card-head');const title=el('h3','',`申請 ${item.id}`);const badge=el('span',`status-badge ${item.status}`,STATUS_LABELS[item.status]||item.status);head.append(title,badge);card.append(head,el('p','meta',`受付：${formatDate(item.createdAt)} ／ 更新：${formatDate(item.updatedAt)}`),el('h4','document-title',item.answer?'カスタムプラン 最終確認書':'カスタムプラン 申請書'),summary(request,answer),featureTable(item));
+ const free=el('section','request-notes');free.append(el('h4','','そのほかのご希望'),el('p','',request.request||'記入なし'));card.append(free);
  if(item.answer){const confirmation=el('section','confirmation-box');confirmation.append(el('h4','','運営の確認'),el('p','',`作成者：${answer.estimator||'—'}\n金額の目安：${answer.amount||'—'}\nサーバー：${answer.servers??'—'} ／ チャンネル：${answer.channels??'—'} ／ ルール：${answer.rules??'—'}\nメモ：${answer.memo||'—'}`));card.append(confirmation);}
- if(item.status==='submitted'){const row=el('div','button-row screen-only');row.append(actionButton('ご要望を編集','secondary-btn',()=>editItem(item)),actionButton('取り下げ','withdraw-btn',()=>decide(item,'withdraw')));card.append(row);}
+ if(item.status==='submitted'){const row=el('div','button-row screen-only');row.append(actionButton('申請を編集','secondary-btn',()=>editItem(item)),actionButton('取り下げ','withdraw-btn',()=>decide(item,'withdraw')));card.append(row);}
  if(item.status==='answered'){
   const panel=el('section','decision-panel screen-only');panel.append(el('strong','','運営の回答を確認してお選びください。'));const message=el('textarea','decision-message');message.rows=3;message.maxLength=500;message.placeholder='相談したい内容を一言ご記入ください。';const actions=el('div','decision-actions');actions.append(actionButton('この内容で申し込む','primary-btn',()=>decide(item,'accept')),actionButton('相談したい','secondary-btn',()=>{if(!message.value.trim()){message.focus();setStatus('相談内容を一言ご記入ください。');return;}decide(item,'consult',message.value.trim());}),actionButton('取り下げ','withdraw-btn',()=>decide(item,'withdraw')));panel.append(message,actions);card.append(panel);
  }
@@ -168,11 +168,11 @@ function renderContract(){
  if(contract.status==='offered'){root.append(el('p','accepted-note','お支払いが完了すると契約が始まります。'));if(paymentUrl){const pay=document.createElement('a');pay.className='primary-btn screen-only';pay.href=paymentUrl;pay.textContent='お支払いへ進む（有料プランの画面）';root.append(pay);}}
  else root.append(el('p','accepted-note','この内容で契約中です。'));
 }
-function renderItems(){renderContract();const root=$('items');root.replaceChildren();if(!items.length)root.append(el('p','empty-list','まだ送信したご要望はありません。'));else for(const item of items)root.append(renderItem(item));updatePrintSelection();$('items-section').hidden=false;}
+function renderItems(){renderContract();const root=$('items');root.replaceChildren();if(!items.length)root.append(el('p','empty-list','まだ送信した申請はありません。'));else for(const item of items)root.append(renderItem(item));updatePrintSelection();$('items-section').hidden=false;}
 async function loadRequests(){const data=await api('/api/supporter/custom-requests');plannedItems=Array.isArray(data.plannedItems)?data.plannedItems:[];items=Array.isArray(data.items)?data.items:[];contract=data.contract||null;paymentUrl=typeof data.paymentUrl==='string'&&data.paymentUrl.startsWith('/')?data.paymentUrl:'';$('preparing').hidden=data.enabled!==false;requestsEnabled=data.enabled!==false;if(!$('request-id').value)renderFeatureForm();renderItems();updateFormVisibility();}
 async function initialize(){
  $('print').addEventListener('click',printSelectedRequest);$('cancel-edit').addEventListener('click',resetForm);
- $('request-form').addEventListener('submit',async event=>{event.preventDefault();if(!$('request-form').reportValidity())return;const id=$('request-id').value;const body={request:collectRequest()};const method=id?'PUT':'POST';if(id)body.revision=Number($('request-revision').value);$('submit-request').disabled=true;try{await api(id?`/api/supporter/custom-requests/${encodeURIComponent(id)}`:'/api/supporter/custom-requests',method,body);setStatus(id?'ご要望を更新しました。':'ご要望を送信しました。');resetForm();await loadRequests();}catch(error){setStatus(error.message);}finally{$('submit-request').disabled=false;}});
+ $('request-form').addEventListener('submit',async event=>{event.preventDefault();if(!$('request-form').reportValidity())return;const id=$('request-id').value;const body={request:collectRequest()};const method=id?'PUT':'POST';if(id)body.revision=Number($('request-revision').value);$('submit-request').disabled=true;try{await api(id?`/api/supporter/custom-requests/${encodeURIComponent(id)}`:'/api/supporter/custom-requests',method,body);setStatus(id?'申請を更新しました。':'申請を送信しました。');resetForm();await loadRequests();}catch(error){setStatus(error.message);}finally{$('submit-request').disabled=false;}});
  try{session=await api('/api/reuse/session');if(!session.authenticated){$('user').textContent='Discordログインが必要です。';setStatus('このページの利用にはDiscordログインが必要です。');return;}$('user').textContent=session.user?.username||'ログイン済み';$('login-link').hidden=true;await loadRequests();}catch(error){setStatus(error.message);}
 }
 initialize();

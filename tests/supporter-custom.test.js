@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {normalizeSupporterRules} from '../worker/supporter.js';
+import {normalizeSupporterRules,withoutFloodLevelRules} from '../worker/supporter.js';
 import {PREFECTURES, geographicEntitlements} from '../worker/supporter-geo.js';
 import {estimateCustomMonthly,normalizeCustomPlan,customLocked,customSubscriptionMatches,enrichCustomSubscriptions} from '../worker/supporter-custom.js';
 import {buildSupporterSnapshot} from '../worker/supporter-snapshot.js';
@@ -64,13 +64,25 @@ test('EEW opt-out requires snapshot v3 to prevent older local workers ignoring i
  assert.equal(snapshot.rules[0].sendFinalReport,false);
 });
 
-test('weather options include the missing flood advisory and customer UI checkbox',async()=>{
+test('weather options exclude the unsupported flood advisory and keep customer UI controls',async()=>{
  const {WEATHER_DETAILS}=await import('../worker/supporter.js');
- assert.equal(WEATHER_DETAILS.some(item=>item[0]==='flood-level'),true);
+ assert.equal(WEATHER_DETAILS.some(item=>item[0]==='flood-level'),false);
  const client=await readFile(new URL('../site/supporter/app.js',import.meta.url),'utf8');
  assert.match(client,/最終報を送信する/);
  assert.match(client,/customPlanLocked/);
  const migration=await readFile(new URL('../migrations/0025_supporter_custom_plans.sql',import.meta.url),'utf8');
  assert.match(migration,/stripe_subscription_id/);
  assert.match(migration,/confirmed_yen/);
+});
+
+test('保存済みの洪水警報・注意報を読み込み・再保存・配信データから除く',async()=>{
+ const guildId='12345678901234567',channelId='98765432109876543',base={name:'気象',guildId,channelId,channelIds:[channelId],type:'weather',region:'all',conditionLogic:'and'};
+ const stored=[{...base,name:'洪水',detail:'flood-level',conditions:[]},{...base,name:'指定河川',detail:'designated-river',conditions:[{kind:'detail',operator:'equals',value:'flood-level'}]}];
+ const loaded=withoutFloodLevelRules(stored);assert.equal(loaded.length,1);assert.deepEqual(loaded[0].conditions,[]);
+ const saved=normalizeSupporterRules(stored,[{id:guildId}],{servers:1,channels:2,rules:5,complexConditions:true,multiDestination:false});
+ assert.equal(saved.length,1);assert.equal(saved[0].detail,'designated-river');assert.deepEqual(saved[0].conditions,[]);
+ const row={discord_user_id:'99999999999999999',customer_id:'cus1',revision:1,settings_json:JSON.stringify({rules:stored})};
+ const db={prepare:()=>({all:async()=>({results:[row]})})},loader=async()=>new Map([['cus1',[{status:'active',recognizedPlan:true,planId:'pro'}]]]);
+ const snapshot=await buildSupporterSnapshot(db,{},loader,1800000000000);
+ assert.equal(snapshot.rules.length,1);assert.equal(snapshot.rules[0].detail,'designated-river');assert.deepEqual(snapshot.rules[0].conditions,[]);
 });

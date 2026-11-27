@@ -23,14 +23,14 @@ async function database(){
  return {raw,db:{prepare:sql=>statement(sql),async batch(list){const out=[];for(const item of list)out.push(await item.run());return out;}}};
 }
 const session=(anchor,extra={})=>({id:'cs_test_nov',livemode:false,mode:'payment',status:'complete',payment_status:'paid',customer:'cus_1',client_reference_id:UID,payment_intent:'pi_1',amount_total:300,currency:'jpy',created:10,
- metadata:{dpi_checkout_kind:'initial_subscription',dpi_user:UID,dpi_plan:'supporter',dpi_channel_packs:'0',dpi_server_packs:'0',dpi_rule_packs:'0',dpi_legal_consent_version:'x',dpi_billing_anchor:String(anchor)},...extra});
+ metadata:{dpi_checkout_kind:'initial_subscription',dpi_user:UID,dpi_plan:'supporter',dpi_channel_packs:'0',dpi_server_packs:'0',dpi_rule_packs:'0',dpi_legal_consent_version:'x',dpi_billing_anchor:String(anchor),dpi_initial_total:'300'},...extra});
 // 本物と同じく、同じ冪等キーでは同じ結果を返す Stripe の代わり。
 function stripe(t,{failItem=0,created=0}={}){
  const state={subscriptions:[],items:[],keys:new Map(),failItem,calls:[]},original=globalThis.fetch;t.after(()=>{globalThis.fetch=original;});
  globalThis.fetch=async(url,init={})=>{
   const path=new URL(url).pathname.replace('/v1/',''),method=init.method||'GET',params=new URLSearchParams(init.body||''),key=init.headers?.['Idempotency-Key'];state.calls.push(`${method} ${path}`);
   if(path==='subscriptions'&&method==='GET')return Response.json({livemode:false,data:state.subscriptions,has_more:false});
-  if(path==='payment_intents/pi_1')return Response.json({livemode:false,id:'pi_1',payment_method:'pm_x'});
+  if(path==='payment_intents/pi_1')return Response.json({livemode:false,id:'pi_1',status:'succeeded',customer:'cus_1',amount_received:300,payment_method:'pm_x'});
   if(path==='subscriptions'&&method==='POST'){
    if(state.keys.has(key))return Response.json(state.keys.get(key));
    const metadata=Object.fromEntries([...params].filter(([k])=>k.startsWith('metadata[')).map(([k,v])=>[k.slice(9,-1),v]));
