@@ -3,6 +3,7 @@ import { enrichCustomGroup } from './supporter-custom.js';
 import { billingReady } from './supporter-billing.js';
 import { planFeatures, hasFeature, imageTier } from '../site/supporter/plan-features.js';
 import { IMAGE_RULE_TYPES, isImageRuleType, isImageRuleV2Type, deliveredImageType, imageRulesEnabled, imageRulesV2Enabled, imageRuleSnapshotFields } from './supporter-image-rules.js';
+import { developerSubscriptionSummary, isSupporterDeveloper, supporterDeveloperIds } from './supporter-developer.js';
 export const ACTIVE_SUBSCRIPTION_STATUSES = new Set(['active', 'trialing', 'past_due', 'unpaid', 'paused']);
 const ALLOWED_RULE_TYPES = new Set(['earthquake', 'eew', 'weather', 'rain-radar', ...IMAGE_RULE_TYPES]);
 const SNAPSHOT_TTL_SECONDS = 30 * 60 * 60;
@@ -14,6 +15,7 @@ const MAX_RESPONSE_BYTES = 128 * 1024;
 // 配信対象にする。テスト公開後に外部の人が登録・テスト決済をしても本番の配信には使わない。
 // 開始時刻が未設定・不正なら、許可リストの利用者だけにする（安全側）。
 function snapshotUserAllowed(env, row) {
+    if (isSupporterDeveloper(env, row?.discord_user_id)) return true;
     const flag = name => String(env[name] ?? '').trim().toLowerCase() === 'true';
     if (flag('SUPPORTER_PUBLIC_ENABLED') || !flag('SUPPORTER_PREVIEW_OPEN')) return true;
     const allowed = new Set(String(env.SUPPORTER_TEST_USER_IDS ?? '').split(',').map(value => value.trim()).filter(value => /^\d{17,20}$/.test(value)));
@@ -65,7 +67,7 @@ async function digestPrefix(value) {
 
 export async function buildSupporterSnapshot(db, env, loadSubscriptions, nowMs = Date.now()) {
     // 停止時刻（翌月1日0時）を過ぎた未払いは、停止の定期処理が遅れても含めない。整数だけを埋め込む。
-    const rows = await supporterEntitlementRows(db, nowMs);
+    const rows = await supporterEntitlementRows(db, env, nowMs);
     const accounts = (rows || []).filter(row => snapshotUserAllowed(env, row));
     const customerIds = [...new Set(accounts.map(row => clean(row.customer_id)).filter(Boolean))];
     const grouped = await enrichCustomGroup(db,accounts,await loadSubscriptions(env, customerIds));
@@ -74,7 +76,8 @@ export async function buildSupporterSnapshot(db, env, loadSubscriptions, nowMs =
     // eew-map / warning-table: only once every home server and the AWS Lambda know them.
     const imagesV2Enabled = imagesEnabled && imageRulesV2Enabled(env);
     for (const row of accounts) {
-        const subscriptions = grouped.get(row.customer_id) || [];
+        const developer = isSupporterDeveloper(env, row.discord_user_id);
+        const subscriptions = developer ? [developerSubscriptionSummary()] : (grouped.get(row.customer_id) || []);
         const entitled = subscriptions.some(isActiveSupporterSubscription);
         if (!entitled) continue;
         const geographicAccess = geographicEntitlements(subscriptions);
@@ -94,6 +97,7 @@ export async function buildSupporterSnapshot(db, env, loadSubscriptions, nowMs =
             (!custom.multiDestination&&destinations.length>1)))break;
         }
         if(custom&&(guilds.size>custom.servers||channels.size>custom.channels||allRules.some(rule=>(!custom.complexConditions&&(rule.conditionLogic==='or'||rule.conditions?.length))||(!custom.multiDestination&&Array.isArray(rule.channelIds)&&rule.channelIds.length>1))))continue;
+        const firstRuleIndex = rules.length;
         for (const [index, rule] of allRules.entries()) {
             if (isImageRuleType(rule?.type)) {
                 // Image rules ship only while the rollout flag is on (kill switch) and only when
@@ -115,6 +119,7 @@ export async function buildSupporterSnapshot(db, env, loadSubscriptions, nowMs =
             const value = normalizedRule(rule, id);
             if (value) rules.push(value);
         }
+        if (developer && rules.length > firstRuleIndex) await recordDeveloperSnapshotAudit(db,row.discord_user_id,Number(row.revision)||0,rules.length-firstRuleIndex);
     }
     if (rules.length > MAX_RULES) throw new Error('Supporter snapshot rule limit exceeded');
     const generatedAtMs = Math.max(1_000, Math.floor(Number(nowMs)));
@@ -139,19 +144,30 @@ export async function buildSupporterSnapshot(db, env, loadSubscriptions, nowMs =
 
 export const isActiveSupporterSubscription = item => item?.recognizedPlan !== false && ACTIVE_SUBSCRIPTION_STATUSES.has(item?.status);
 
-export async function supporterEntitlementRows(db, nowMs = Date.now()) {
+export async function supporterEntitlementRows(db, env = {}, nowMs = Date.now()) {
     const nowSeconds = Math.max(0, Math.floor(Number(nowMs) / 1000)) || 0;
-    const rows = await db.prepare(`SELECT a.discord_user_id,a.settings_json,a.revision,a.registered_at,b.customer_id
+    const developerIds = supporterDeveloperIds(env);
+    const developerClause = developerIds.length ? ` OR a.discord_user_id IN (${developerIds.map(()=>'?').join(',')})` : '';
+    const statement = db.prepare(`SELECT a.discord_user_id,a.settings_json,a.revision,a.registered_at,b.customer_id
         FROM supporter_accounts a
-        JOIN supporter_billing b ON b.discord_user_id=a.discord_user_id
-        WHERE a.account_status='active' AND b.customer_id IS NOT NULL
+        LEFT JOIN supporter_billing b ON b.discord_user_id=a.discord_user_id
+        WHERE ((a.account_status='active' AND b.customer_id IS NOT NULL
           AND NOT EXISTS (
             SELECT 1 FROM supporter_dunning d
             WHERE d.customer_id=b.customer_id AND (d.status='suspended'
               OR (d.status IN ('suspend_scheduled','retry_scheduled') AND d.suspend_at<=${nowSeconds}))
-          )
-        ORDER BY a.discord_user_id`).all();
+          ))${developerClause})
+        ORDER BY a.discord_user_id`);
+    const rows = developerIds.length ? await statement.bind(...developerIds).all() : await statement.all();
     return rows.results || [];
+}
+
+async function recordDeveloperSnapshotAudit(db,discordUserId,revision,ruleCount){
+ try{
+  await db.prepare(`INSERT INTO admin_audit_events
+   (id,actor,action,entity_type,entity_id,details_json,created_at) VALUES(?,?,?,?,?,?,?)`)
+   .bind(crypto.randomUUID(),'system','supporter.developer_snapshot_included','supporter_account',discordUserId,JSON.stringify({revision,ruleCount}),new Date().toISOString()).run();
+ }catch(error){console.error('Developer snapshot audit write failed',{errorName:error?.name||'Error'});}
 }
 
 async function readBoundedJson(response) {
