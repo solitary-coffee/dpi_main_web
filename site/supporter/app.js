@@ -25,6 +25,7 @@ let availableCredits=0;
 let creditBalanceLoaded=false;
 let creditBalanceFailed=false;
 let billingUnavailable=false;
+let developerMode=false;
 const channelsByGuild = new Map();
 const PLAN_OPTIONS=[['supporter','Basic 月額300円'],['plus','Plus 月額800円'],['pro','Pro 月額1,280円']];
 const CHANNEL_PACK_OPTIONS=[[0,'チャンネル追加なし'],[1,'＋3チャンネル / 月額＋200円'],[2,'＋6チャンネル / 月額＋400円'],[3,'＋9チャンネル / 月額＋600円'],[4,'＋12チャンネル / 月額＋800円'],[5,'＋15チャンネル / 月額＋1,000円']];
@@ -848,19 +849,26 @@ async function loadAccount() {
  options = await api('/api/supporter/options');
  try{const data=await api('/api/supporter/areas');areaCatalogue={municipalities:data.municipalities||[],districts:data.districts||[]};areaCatalogueFailed=false;}
  catch(error){areaCatalogue={municipalities:[],districts:[]};areaCatalogueFailed=true;status(error.message);}
- const {account,billingEnabled,intakePaused} = await api('/api/supporter/account');
+ const {account,billingEnabled,intakePaused,developer,developerSubscription} = await api('/api/supporter/account');
+ developerMode=developer===true;
+ if(developerMode){
+  for(const button of document.querySelectorAll('[data-billing-action]'))button.hidden=true;
+  topupButton.hidden=true;
+  legalConsentLabel.hidden=true;
+ }
  applyIntakePaused(intakePaused);
  stripeBillingEnabled=billingEnabled===true;
- applyAccountEnforcement({suspended:account?.account_status==='suspended',status:account?.account_status||'active',reason:account?.status_reason||'',updatedAt:account?.status_updated_at||null});
+ applyAccountEnforcement(developerMode?{suspended:false,status:'active',reason:'',updatedAt:null}:{suspended:account?.account_status==='suspended',status:account?.account_status||'active',reason:account?.status_reason||'',updatedAt:account?.status_updated_at||null});
  topupButton.disabled=!billingAvailable;
  const savedBillingEmail=account?.billing_email || '';
  billingEmail.value=savedBillingEmail;
  topupEmail.value=savedBillingEmail;
  updateCheckoutAvailability();
- if(!billingAvailable)billingActionStatus.textContent=accountSuspended?'有料プランアカウントがBANされているため、申込み・チャージ・契約変更は利用できません。':'決済設定が完了していないため、現在は申し込みできません。';
+ if(developerMode)billingActionStatus.textContent='開発者（無料）として全機能を利用できます。支払いは発生しません。';
+ else if(!billingAvailable)billingActionStatus.textContent=accountSuspended?'有料プランアカウントがBANされているため、申込み・チャージ・契約変更は利用できません。':'決済設定が完了していないため、現在は申し込みできません。';
  $('add').disabled = $('save').disabled = true;
  billingUnavailable=!billingEnabled;
- if(!billingEnabled){showPlanBanner('現在、契約プランを確認できません。');updateCheckoutAvailability();}
+ if(!billingEnabled&&!developerMode){showPlanBanner('現在、契約プランを確認できません。');updateCheckoutAvailability();}
  // まだ登録していない人は、契約も残高も無い（申込み・チャージのときに登録される）。
  if(!account&&billingEnabled){renderCreditDetails({balance:0});renderContracts([]);}
  if (account) {
@@ -868,7 +876,8 @@ async function loadAccount() {
   rules = savedRules(account);
   await Promise.allSettled([...new Set(rules.map(rule => rule.guildId).filter(Boolean))].map(guildId => loadChannels(guildId)));
   render();
-  if(billingEnabled){
+  if(developerMode){renderCreditDetails({balance:0});renderContracts([developerSubscription]);renderInvoices([]);}
+  else if(billingEnabled){
    try{
     const billingState=await api('/api/supporter/billing/status');applyAccountEnforcement(billingState.accountEnforcement);
     renderCreditDetails(billingState.creditDetails||{balance:Number(billingState.credits||0)});renderContracts(billingState.subscriptions||[],billingState.dunning,billingState.customPlan,billingState.customCheckoutUrl,billingState.customChange,billingState.customChangeCheckoutUrl,billingState.unpaid);renderInvoices(billingState.invoices||[]);
@@ -1239,7 +1248,7 @@ function renderContracts(subscriptions,dunning={},customPlan=null,customCheckout
   return;
  }
  const active=subscriptions.filter(item=>item.recognizedPlan!==false&&['active','trialing','past_due','unpaid','paused'].includes(item.status));
- entitlements={...active.reduce((limits,item)=>({servers:Math.max(limits.servers,Number(item.servers)||1),channels:Math.max(limits.channels,Number(item.channels)||2),rules:Math.max(limits.rules,Number(item.rules)||5),complexConditions:limits.complexConditions||item.complexConditions===true,multiDestination:limits.multiDestination||item.multiDestination===true}),{servers:1,channels:2,rules:5,complexConditions:false,multiDestination:false}),...featureEntitlements(active)};
+ entitlements=developerMode?{servers:Infinity,channels:Infinity,rules:Infinity,unlimited:true,complexConditions:true,multiDestination:true,...featureEntitlements(active)}:{...active.reduce((limits,item)=>({servers:Math.max(limits.servers,Number(item.servers)||1),channels:Math.max(limits.channels,Number(item.channels)||2),rules:Math.max(limits.rules,Number(item.rules)||5),complexConditions:limits.complexConditions||item.complexConditions===true,multiDestination:limits.multiDestination||item.multiDestination===true}),{servers:1,channels:2,rules:5,complexConditions:false,multiDestination:false}),...featureEntitlements(active)};
  const current=active[0]||subscriptions[0];
  if(dunning?.usageSuspended){const warning=document.createElement('p');warning.className='billing-suspension';warning.textContent=dunning.reason==='dispute'?'お支払いへの異議申立てを確認中のため、有料プランの通知設定は利用停止中です。停止中は新しい月額料金を請求しません。お問い合わせください。':'お支払いを確認できなかったため、有料プランの通知設定は利用停止中です。未払いの請求書をすべてお支払いいただくと再開します。停止中は新しい月額料金を請求しません。停止から1か月間お支払いを確認できない場合は、自動的に解約します。';contract.append(warning);}
  if(current){
@@ -1264,9 +1273,9 @@ function renderContracts(subscriptions,dunning={},customPlan=null,customCheckout
    ['現在の期間開始',dateText(subscription.currentPeriodStart)],
    [subscription.cancelAtPeriodEnd ? '契約終了予定' : '次回更新日',dateText(subscription.nextRenewalAt)],
    ['月額合計',moneyText(subscription.amount,subscription.currency)],
-   ['チャンネル上限',subscription.recognizedPlan===false?'確認が必要':`${subscription.channels}チャンネル`],
-   ['サーバー上限',subscription.recognizedPlan===false?'確認が必要':`${subscription.servers}サーバー`],
-   ['通知ルール上限',subscription.recognizedPlan===false?'確認が必要':`${subscription.rules}件`],
+   ['チャンネル上限',subscription.unlimited?'無制限':subscription.recognizedPlan===false?'確認が必要':`${subscription.channels}チャンネル`],
+   ['サーバー上限',subscription.unlimited?'無制限':subscription.recognizedPlan===false?'確認が必要':`${subscription.servers}サーバー`],
+   ['通知ルール上限',subscription.unlimited?'無制限':subscription.recognizedPlan===false?'確認が必要':`${subscription.rules}件`],
    ['固定請求日','毎月26日'],
   ];
   for (const [term,value] of entries) {
@@ -1398,9 +1407,9 @@ application.append(launchNotice,paymentChoiceTitle,paymentChoices,billingActions
 function updateCheckoutAvailability(){
  if(!checkoutButton)return;
  const price=selectedInitialCharge(plan.value,channelPacks.value,serverPacks.value,rulePacks.value);const payment=creditFirstPayment(price.initial,availableCredits,creditBalanceLoaded);
- checkoutButton.hidden=hasExistingContract;topupChoiceButton.hidden=hasExistingContract||payment.state==='credits';
- if(updateButton)updateButton.hidden=!hasExistingContract;
- paymentChoiceTitle.hidden=hasExistingContract;paymentChoiceTitle.textContent=legalConsent.checked?'お支払い方法を選ぶ':'お支払い方法を選ぶ（上の同意にチェックすると押せます）';
+ checkoutButton.hidden=developerMode||hasExistingContract;topupChoiceButton.hidden=developerMode||hasExistingContract||payment.state==='credits';
+ if(updateButton)updateButton.hidden=developerMode||!hasExistingContract;
+ paymentChoiceTitle.hidden=developerMode||hasExistingContract;paymentChoiceTitle.textContent=legalConsent.checked?'お支払い方法を選ぶ':'お支払い方法を選ぶ（上の同意にチェックすると押せます）';
  checkoutButton.disabled=!billingAvailable||customPlanLocked||!legalConsent.checked||hasExistingContract||!creditBalanceLoaded;
  topupChoiceButton.disabled=!billingAvailable||customPlanLocked||!legalConsent.checked||hasExistingContract||!creditBalanceLoaded;
  const checkingText=creditBalanceFailed?'残高を確認できません':session?.authenticated===false?'ログイン後に申し込めます':billingUnavailable?'現在は申し込めません':'残高を確認中';
@@ -1414,6 +1423,7 @@ for (const [label,action] of [['このプランで申し込む','checkout'],['�
  button.textContent = label;
  button.className=action==='checkout'?'primary-btn':'secondary-btn';
  button.type='button';button.dataset.billingAction=action;
+ if(developerMode)button.hidden=true;
  if(action==='checkout'){checkoutButton=button;paymentChoices.prepend(button);updateCheckoutAvailability();}
  else if(action==='update'){updateButton=button;button.textContent='変更内容と料金を確認';paymentChoices.append(button);}
  button.onclick = async () => {

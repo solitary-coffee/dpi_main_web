@@ -309,6 +309,7 @@ function accountCard(account) {
  const details=element('button','detail-btn','詳細');details.type='button';details.addEventListener('click',()=>openDetails(account));
  const manage=element('button','manage-btn','契約を管理');manage.type='button';manage.addEventListener('click',()=>openAction(account));
  const custom=element('button','detail-btn','カスタム設定');custom.type='button';custom.addEventListener('click',()=>openCustomForAccount(account));
+ if(account.developer){manage.hidden=true;custom.hidden=true;title.append('（開発者・無料）');}
  actions.append(details,manage,custom);heading.append(title,actions);
  const meta=element('div','account-meta');
  meta.append(element('span','',`Discord ID ${account.discordUserId}`),element('span','',`メール ${account.billingEmail||'未登録'}`),element('span','',`クレジット ${Number(account.credits||0).toLocaleString('ja-JP')}（${Number(account.credits||0).toLocaleString('ja-JP')}円分）`),element('span',account.accountStatus==='suspended'?'account-status-badge suspended':'account-status-badge',account.accountStatus==='suspended'?'BAN中':'利用可能'),element('span','',`登録 ${dateText(account.registeredAt)}`),element('span','',`更新 ${dateText(account.updatedAt)}`),element('span','',`通知ルール ${account.ruleCount}件`),element('span','',`設定revision ${account.revision}`));
@@ -340,7 +341,7 @@ async function openDetails(account) {
 function renderDetails(account, failedGuildIds) {
  const content=$('detail-content');content.replaceChildren();
  const identity=element('div','detail-identity');
- identity.append(element('h3','',account.discordName||'契約者名を取得できません'),element('p','',`Discord ID: ${account.discordUserId}`),element('p',account.accountStatus==='suspended'?'billing-error':'',account.accountStatus==='suspended'?`アカウントBAN中: ${account.statusReason||'理由未登録'}`:'有料機能は利用可能です。'));
+ identity.append(element('h3','',account.discordName||'契約者名を取得できません'),element('p','',`Discord ID: ${account.discordUserId}`),element('p',account.accountStatus==='suspended'?'billing-error':'',account.developer?'開発者（無料）・全機能・上限なし':account.accountStatus==='suspended'?`アカウントBAN中: ${account.statusReason||'理由未登録'}`:'有料機能は利用可能です。'));
  content.append(identity);
  if(failedGuildIds.length)content.append(element('p','detail-warning','一部サーバーのチャンネル名をDiscordから取得できませんでした。IDは確認できます。'));
  const rules=Array.isArray(account.rules)?account.rules:[];
@@ -375,7 +376,7 @@ function subscriptionCard(subscription) {
  card.append(element('h4','',subscription.plan||'契約中プラン'));
  const list=element('dl');
  const status=`${STATUS_LABELS[subscription.status]||subscription.status}${subscription.cancelAtPeriodEnd?'（期間末で終了）':''}`;
- const entries=[['状態',status],['支払い開始',unixDate(subscription.startedAt)],['現在期間の開始',unixDate(subscription.currentPeriodStart)],[subscription.cancelAtPeriodEnd?'終了予定':'次回更新',unixDate(subscription.nextRenewalAt)],['月額',money(subscription.amount,subscription.currency)],['チャンネル上限',`${subscription.channels||'—'}チャンネル`],['サーバー上限',`${subscription.servers||'—'}サーバー`],['固定請求日','毎月26日']];
+ const entries=[['状態',status],['支払い開始',unixDate(subscription.startedAt)],['現在期間の開始',unixDate(subscription.currentPeriodStart)],[subscription.cancelAtPeriodEnd?'終了予定':'次回更新',unixDate(subscription.nextRenewalAt)],['月額',money(subscription.amount,subscription.currency)],['チャンネル上限',subscription.unlimited?'無制限':`${subscription.channels||'—'}チャンネル`],['サーバー上限',subscription.unlimited?'無制限':`${subscription.servers||'—'}サーバー`],['固定請求日','毎月26日']];
  for(const [term,value] of entries){list.append(element('dt','',term),element('dd','',value));}
  card.append(list);return card;
 }

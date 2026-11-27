@@ -3,6 +3,7 @@ import {queueNotice} from './supporter-ops-notice.js';
 import {readJson} from './reuse.js';
 import {customPublic,customRowFeatures,getCustomPlan} from './supporter-custom.js';
 import {mailHtml,stripe,supporterMailSignature} from './supporter-billing.js';
+import {isSupporterDeveloper} from './supporter-developer.js';
 
 // 準備中の画像配信。公開済み機能と同じキー空間で申請・回答を扱う。
 export const CUSTOM_PLANNED_ITEMS = Object.freeze([
@@ -345,6 +346,10 @@ export async function handleSupporterCustomRequestAdminApi(request,db,env,admin)
  const url=new URL(request.url),path=url.pathname;
  const base=path==='/site/supporter-admin/api/custom-requests',match=adminMatch(path);
  if(!base&&!match)return null;
+ if(request.method==='POST'&&match){
+  const row=await requireAdminRow(db,match[1]);
+  if(isSupporterDeveloper(env,row.discord_user_id))fail('開発者（無料）はカスタム契約操作の対象外です。',403);
+ }
  if(request.method==='GET'&&base){
   const status=url.searchParams.get('status')||'';
   if(status&&!STATUS_SET.has(status))fail('statusが正しくありません。');

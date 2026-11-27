@@ -1,5 +1,6 @@
 import { enrichCustomGroup } from './supporter-custom.js';
 import { isActiveSupporterSubscription, supporterEntitlementRows } from './supporter-snapshot.js';
+import { developerSubscriptionSummary, isSupporterDeveloper } from './supporter-developer.js';
 
 const clean = value => String(value ?? '').trim();
 const snowflake = value => /^\d{17,20}$/.test(clean(value));
@@ -50,13 +51,13 @@ export async function reconcileSupporterRoles(env, db, loadSubscriptions, option
    if (!snowflake(owner?.discord_user_id)) return {requests: 0};
    onlyUid = owner.discord_user_id;
   }
-  let accounts = await supporterEntitlementRows(db, options.nowMs || Date.now());
+  let accounts = await supporterEntitlementRows(db, env, options.nowMs || Date.now());
   if (onlyUid) accounts = accounts.filter(row => row.discord_user_id === onlyUid);
   const ids = [...new Set(accounts.map(row => clean(row.customer_id)).filter(Boolean))];
   const grouped = await enrichCustomGroup(db, accounts, await loadSubscriptions(env, ids));
   const trackedStatement = db.prepare(`SELECT discord_user_id,role_id,status,updated_at,last_error FROM supporter_discord_roles${onlyUid ? ' WHERE discord_user_id=?' : ''} ORDER BY updated_at,discord_user_id,role_id`);
   const tracked = await (onlyUid ? trackedStatement.bind(onlyUid) : trackedStatement).all();
-  const byUid = new Map(accounts.map(row => [row.discord_user_id, desiredSupporterRoles(config, grouped.get(row.customer_id) || [])]));
+  const byUid = new Map(accounts.map(row => [row.discord_user_id, desiredSupporterRoles(config,isSupporterDeveloper(env,row.discord_user_id)?[developerSubscriptionSummary()]:(grouped.get(row.customer_id) || []))]));
   const known = new Map((tracked.results || []).filter(row => config.all.has(row.role_id)).map(row => [`${row.discord_user_id}:${row.role_id}`, row]));
   const removals = [], grants = [], renewals = [];
   // 付けたロールと、外せなかったロールを外す。付けたか分からない（時間切れ・5xx）ものも外す。断られた（4xx）ものは付いていない。

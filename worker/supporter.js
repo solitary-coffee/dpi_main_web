@@ -12,6 +12,7 @@ import { basicCredentialsValid, reviewAccessConfigured, reviewChallenge, reviewC
 import { imageRulesEnabled, imageRulesV2Enabled, isImageRuleType, isImageRuleV2Type, imageRuleOptions, savedTsunamiOutputs, savedRadarContents, savedRadarMinutes, radarIntervalText, HIRES_RADAR_CONTENTS, TSUNAMI_MAP_OUTPUTS, WARNING_TABLE_KINDS, WARNING_TABLE_DELIVER_ON, normalizeImageRuleFields, loadEarthquakeMunicipalities, IMAGE_RULE_TYPE_OPTIONS, HIRES_RADAR_CONDITIONS, WEATHER_MAP_PRODUCTS, WEATHER_MAP_SEVERITIES, EARTHQUAKE_MAP_PRODUCTS, EARTHQUAKE_MAP_INTENSITIES } from './supporter-image-rules.js';
 import { supporterAdminPayments } from './supporter-admin-payments.js';
 import {customRequestsEnabled,handleSupporterCustomRequestApi,handleSupporterCustomRequestAdminApi} from './supporter-custom-request.js';
+import { developerLimits, developerSubscriptionSummary, isSupporterDeveloper } from './supporter-developer.js';
 
 const response = (data, status = 200) => Response.json(data, {status, headers: {'Cache-Control':'no-store'}});
 const refreshSupporterAccessSafely = (env, db, reason, discordUserId) => Promise.all([
@@ -34,7 +35,7 @@ function ruleCount(settingsJson) {
   return Array.isArray(settings.rules) ? settings.rules.length : 0;
  } catch { return 0; }
 }
-export function supporterAdminAccount(row, subscriptions = [], billingError = '', credits = 0, customPlan = null, pendingCustomChange = null) {
+export function supporterAdminAccount(row, subscriptions = [], billingError = '', credits = 0, customPlan = null, pendingCustomChange = null, developer = false) {
  return {
   discordUserId: row.discord_user_id,
   discordName: row.discord_name || '',
@@ -52,6 +53,7 @@ export function supporterAdminAccount(row, subscriptions = [], billingError = ''
   billingError,
   customPlan:customPublic(customPlan),
   pendingCustomChange:customChangePublic(pendingCustomChange),
+  developer,
  };
 }
 export function supporterAccountEnforcement(row){
@@ -213,7 +215,7 @@ async function compensationTargets(env,db,targetType,targetValue){
   FROM supporter_accounts a LEFT JOIN supporter_billing b ON b.discord_user_id=a.discord_user_id
   WHERE COALESCE(a.account_status,'active')<>'suspended' AND (b.customer_id IS NOT NULL OR COALESCE(a.billing_email,'')<>'')
   ORDER BY a.discord_user_id`).all();
- let targets=rows.results||[];
+ let targets=(rows.results||[]).filter(row=>!isSupporterDeveloper(env,row.discord_user_id));
  if(targetType==='user')targets=targets.filter(row=>row.discord_user_id===targetValue);
  if(targetType==='plan'){
   const grouped=await subscriptionSummariesByCustomer(env,targets.map(row=>row.customer_id).filter(Boolean));
@@ -516,6 +518,7 @@ export function supporterAdminDetails(row, channelsByGuild = {}) {
   statusReason:row.status_reason||'',
   statusUpdatedAt:row.status_updated_at||null,
   statusUpdatedBy:row.status_updated_by||'',
+  developer:row.developer===true,
   rules:rules.map((rule,index)=>{
    const type=clean(rule?.type);const guildId=clean(rule?.guildId);
    const requested=Array.isArray(rule?.channelIds)?rule.channelIds.map(clean).filter(Boolean):[];
@@ -618,8 +621,9 @@ function storedImageRuleMatch(rule, storedImageRules) {
 
 export function normalizeSupporterRules(input, guilds, limits = {servers:1,channels:2,rules:5,complexConditions:false,multiDestination:false}, catalogue = null, {imageRules = false, imageRulesV2 = false, storedImageRules = []} = {}) {
  input=withoutFloodLevelRules(input);
- const ruleLimit=Math.max(1,Number(limits.rules)||5);
- if (!Array.isArray(input) || input.length > ruleLimit) throw Object.assign(new Error(`通知ルールは${ruleLimit}件までです。`),{status:400});
+ const unlimited=limits.unlimited===true;
+ const ruleLimit=unlimited?Infinity:Math.max(1,Number(limits.rules)||5);
+ if (!Array.isArray(input) || (!unlimited&&input.length > ruleLimit)) throw Object.assign(new Error(`通知ルールは${ruleLimit}件までです。`),{status:400});
  const rules = input.map(rule => {
   const name = clean(rule?.name);
   const guildId = clean(rule?.guildId);
@@ -692,8 +696,8 @@ export function normalizeSupporterRules(input, guilds, limits = {servers:1,chann
  const channelCount = new Set(rules.flatMap(rule => rule.channelIds.map(channelId=>`${rule.guildId}:${channelId}`))).size;
  const serverLimit = Math.max(1,Number(limits.servers)||1);
  const channelLimit = Math.max(1,Number(limits.channels)||2);
- if (serverCount > serverLimit) throw Object.assign(new Error(`契約上限は${serverLimit}サーバーです。サーバー追加オプションを契約するか、同じサーバーを選択してください。`),{status:400});
- if (channelCount > channelLimit) throw Object.assign(new Error(`契約上限は${channelLimit}チャンネルです。チャンネル追加オプションを契約するか、通知先を減らしてください。`),{status:400});
+ if (!unlimited&&serverCount > serverLimit) throw Object.assign(new Error(`契約上限は${serverLimit}サーバーです。サーバー追加オプションを契約するか、同じサーバーを選択してください。`),{status:400});
+ if (!unlimited&&channelCount > channelLimit) throw Object.assign(new Error(`契約上限は${channelLimit}チャンネルです。チャンネル追加オプションを契約するか、通知先を減らしてください。`),{status:400});
  return rules;
 }
 
@@ -713,8 +717,9 @@ export function supporterOptions(env) {
  return imageRulesEnabled(env)?{...base,imageRulesEnabled:true,...imageRuleOptions(imageRulesV2Enabled(env))}:{...base,imageRulesEnabled:false};
 }
 
-async function supporterLimits(env, db, uid) {
+export async function supporterLimits(env, db, uid) {
  const fallback = {servers:1,channels:2,rules:5,complexConditions:false,multiDestination:false,rainfallThreshold:false};
+ if (isSupporterDeveloper(env,uid)) return {...developerLimits(),...geographicEntitlements([developerSubscriptionSummary()])};
  if (!billingReady(env)) throw Object.assign(new Error('決済設定を確認できないため、通知設定を保存できません。'),{status:503});
  const account=await db.prepare('SELECT account_status,status_reason,status_updated_at FROM supporter_accounts WHERE discord_user_id=?').bind(uid).first();
  assertSupporterAccountActive(account);
@@ -770,6 +775,7 @@ function supporterPlansResponse(env) {
  return {mode:billingMode(env), billingEnabled:billingReady(env), intakePaused:supporterIntakePaused(env), previewOpen:supporterPreviewOpen(env)&&!supporterPublicEnabled(env), deliveryEnabled:supporterPublicEnabled(env)&&billingReady(env), customRequests:{enabled:customRequestsEnabled(env)}, plans:publicPlans(), addons:{channel:{yen:200,channels:3},server:{yen:200,servers:2},rule:{yen:200,rules:3},prorated:false},billingDay:26};
 }
 export function supporterTestUserAllowed(env, discordUserId) {
+ if (isSupporterDeveloper(env,discordUserId)) return true;
  if (supporterPublicEnabled(env) || supporterPreviewOpen(env)) return true;
  const allowed = new Set(clean(env.SUPPORTER_TEST_USER_IDS)
   .split(',')
@@ -851,6 +857,7 @@ export async function handleSupporterRequest(request, env, ctx) {
     const input=await readJson(request);
     const uid=clean(input.discordUserId),reason=clean(input.reason),requestId=clean(input.requestId);
     if(!/^\d{17,20}$/.test(uid)||input.confirmDiscordUserId!==uid)return response({message:'対象Discord IDを再入力してください。'},400);
+    if(isSupporterDeveloper(env,uid))return response({message:'開発者（無料）はカスタム契約・決済操作の対象外です。'},403);
     if(reason.length<5||reason.length>500)return response({message:'変更理由を5〜500文字で入力してください。'},400);
     if(!/^[0-9a-f-]{36}$/i.test(requestId))return response({message:'要求IDが不正です。'},400);
     const account=await db.prepare(`SELECT a.discord_user_id,a.billing_email,a.account_status,b.customer_id
@@ -1006,6 +1013,7 @@ export async function handleSupporterRequest(request, env, ctx) {
     const input = await readJson(request);
     const uid = clean(input.discordUserId);
     if (!/^\d{17,20}$/.test(uid) || input.confirmDiscordUserId !== uid) return response({message:'対象Discord IDの確認入力が一致しません。'},400);
+    if(isSupporterDeveloper(env,uid))return response({message:'開発者（無料）は課金・返金・解約・クレジット操作の対象外です。'},403);
     const account = await db.prepare(`SELECT a.discord_user_id, a.billing_email, a.account_status, a.status_reason, a.status_updated_at, a.status_updated_by, a.status_request_id, b.customer_id
      FROM supporter_accounts a LEFT JOIN supporter_billing b ON b.discord_user_id=a.discord_user_id
      WHERE a.discord_user_id=?`).bind(uid).first();
@@ -1115,12 +1123,14 @@ export async function handleSupporterRequest(request, env, ctx) {
      LEFT JOIN supporter_billing b ON b.discord_user_id = a.discord_user_id
      ORDER BY a.updated_at DESC LIMIT 100`).all(),db.prepare(`SELECT discord_user_id,customer_id FROM supporter_billing WHERE customer_id IS NOT NULL`).all()]);
     const stripeEnabled = billingReady(env);
+    const paidRows=(rows.results||[]).filter(row=>!isSupporterDeveloper(env,row.discord_user_id));
+    const paidBillingRows=(billingRows.results||[]).filter(row=>!isSupporterDeveloper(env,row.discord_user_id));
     let grouped = new Map();
     let creditBalances = new Map();
     let billingError = '';
     if (stripeEnabled) {
-     const subscriptionCustomers=(rows.results||[]).map(row=>row.customer_id);
-     const creditCustomers=(billingRows.results||[]).map(row=>row.customer_id);
+     const subscriptionCustomers=paidRows.map(row=>row.customer_id);
+     const creditCustomers=paidBillingRows.map(row=>row.customer_id);
      const [subscriptionResult,creditResult] = await Promise.allSettled([subscriptionSummariesByCustomer(env,subscriptionCustomers),creditsByCustomer(env,creditCustomers)]);
      if (subscriptionResult.status === 'fulfilled') grouped = subscriptionResult.value;
      else billingError = 'Stripeから契約情報を取得できませんでした。';
@@ -1133,9 +1143,9 @@ export async function handleSupporterRequest(request, env, ctx) {
     ]);
     const customByUid=new Map((customRows.results||[]).map(row=>[row.discord_user_id,row]));
     const pendingByUid=new Map((pendingRows.results||[]).map(row=>[row.discord_user_id,row]));
-    const accounts = (rows.results||[]).map(row=>{const custom=customByUid.get(row.discord_user_id);return supporterAdminAccount(row,enrichCustomSubscriptions(grouped.get(row.customer_id)||[],custom),row.customer_id?billingError:'',creditBalances.get(row.customer_id)||0,custom,pendingByUid.get(row.discord_user_id));});
+    const accounts = (rows.results||[]).map(row=>{const developer=isSupporterDeveloper(env,row.discord_user_id);const custom=developer?null:customByUid.get(row.discord_user_id);return supporterAdminAccount(row,developer?[developerSubscriptionSummary()]:enrichCustomSubscriptions(grouped.get(row.customer_id)||[],custom),developer?'':row.customer_id?billingError:'',developer?0:creditBalances.get(row.customer_id)||0,custom,developer?null:pendingByUid.get(row.discord_user_id),developer);});
     let creditSummary=null,creditSummaryError='';
-    try{creditSummary=await supporterCreditMetrics(db,billingRows.results||[],creditBalances,stripeEnabled&&!billingError.includes('クレジット残高'));}
+    try{creditSummary=await supporterCreditMetrics(db,paidBillingRows,creditBalances,stripeEnabled&&!billingError.includes('クレジット残高'));}
     catch(error){console.error('Paid plan credit summary failed',{errorName:error?.name||'Error'});creditSummaryError='クレジット集計を取得できませんでした。';}
     let creditCampaigns=[];
     try{const result=await db.prepare('SELECT * FROM supporter_credit_campaigns ORDER BY created_at DESC LIMIT 20').all();creditCampaigns=(result.results||[]).map(compensationCampaignView);}
@@ -1168,7 +1178,8 @@ export async function handleSupporterRequest(request, env, ctx) {
      catch{return{guildId,channels:[],failed:true};}
     }));
     const channelsByGuild=Object.fromEntries(channelResults.map(result=>[result.guildId,result.channels]));
-    return response({account:supporterAdminDetails(row,channelsByGuild),customPlan:customPublic(await getCustomPlan(db,uid)),channelLookupFailedGuildIds:channelResults.filter(result=>result.failed).map(result=>result.guildId)});
+    row.developer=isSupporterDeveloper(env,uid);
+    return response({account:supporterAdminDetails(row,channelsByGuild),customPlan:row.developer?null:customPublic(await getCustomPlan(db,uid)),channelLookupFailedGuildIds:channelResults.filter(result=>result.failed).map(result=>result.guildId)});
    }
    // 利用者側（非公開の間は 404）と同じ機能の定義を、管理者の認証を通るこの場所から読む。
    const shared = path === '/site/supporter-admin/plan-features.js' ? new Request(new URL('/site/supporter/plan-features.js', request.url), {headers: {Accept: 'text/javascript'}}) : request;
@@ -1198,6 +1209,7 @@ export async function handleSupporterRequest(request, env, ctx) {
   }
   if(path==='/api/supporter/custom-requests'||path.startsWith('/api/supporter/custom-requests/')){
    if(request.method!=='GET'){assertSameOrigin(request);assertCsrf(request,session);}
+   if(isSupporterDeveloper(env,uid)&&request.method!=='GET')return response({message:'開発者（無料）はカスタム契約操作の対象外です。'},403);
    return await handleSupporterCustomRequestApi(request,env,db,uid,{rateLimit:()=>assertSupporterRate(env,`custom-request:${uid}`)});
   }
   // 受付停止中でも、契約者の支払い方法の変更と解約（portal）は止めない。
@@ -1208,6 +1220,10 @@ export async function handleSupporterRequest(request, env, ctx) {
    const expected=path.endsWith('/status')?'GET':'POST';
    if(request.method!==expected)return response({message:'Method not allowed'},405);
    const input=request.method==='POST'?await readJson(request):{};
+   if(isSupporterDeveloper(env,uid)){
+    if(path.endsWith('/status'))return response({developer:true,subscriptions:[developerSubscriptionSummary()],invoices:[],credits:0,creditDetails:{balance:0},dunning:{},unpaid:{count:0,total:0,payableWithCredits:false},accountEnforcement:{suspended:false,status:'active',reason:'',updatedAt:null},rulesAdjustment:{changed:false,removedRules:0,removedDestinations:0,simplifiedRules:0},deliveryEnabled:true});
+    return response({message:'開発者（無料）は支払い・契約操作の対象外です。'},403);
+   }
    if(pausedPortal)input.existingOnly=true;
    if(path.endsWith('/checkout')||path.endsWith('/topup')||path.endsWith('/pay-unpaid'))await assertSupporterRate(env,`billing:${uid}`);
    if(path.endsWith('/checkout')||path.endsWith('/topup')){
@@ -1226,10 +1242,16 @@ export async function handleSupporterRequest(request, env, ctx) {
   }
   if (path === '/api/supporter/account' && request.method === 'GET') {
    const discordName=clean(session.discord_username).slice(0,100);
+   const developer=isSupporterDeveloper(env,uid);
+   if(developer){
+    const now=new Date().toISOString();
+    await db.prepare(`INSERT INTO supporter_accounts(discord_user_id,registered_at,updated_at) VALUES(?,?,?)
+     ON CONFLICT(discord_user_id) DO NOTHING`).bind(uid,now,now).run();
+   }
    if(discordName)await db.prepare('UPDATE supporter_accounts SET discord_name=? WHERE discord_user_id=? AND COALESCE(discord_name,\'\')<>?').bind(discordName,uid,discordName).run();
    const account = await db.prepare('SELECT * FROM supporter_accounts WHERE discord_user_id=?').bind(uid).first();
    if(account?.settings_json)try{const settings=JSON.parse(account.settings_json);account.settings_json=JSON.stringify({...settings,rules:withoutFloodLevelRules(settings?.rules)});}catch{/* 壊れた既存値は従来どおりそのまま返す。 */}
-   return response({account,customPlan:customPublic(await getCustomPlan(db,uid)),mode:billingMode(env),deliveryEnabled:supporterPublicEnabled(env)&&billingReady(env),billingEnabled:billingReady(env),intakePaused:supporterIntakePaused(env)});
+   return response({account,developer,developerSubscription:developer?developerSubscriptionSummary():null,customPlan:developer?null:customPublic(await getCustomPlan(db,uid)),mode:billingMode(env),deliveryEnabled:developer||(supporterPublicEnabled(env)&&billingReady(env)),billingEnabled:billingReady(env),intakePaused:supporterIntakePaused(env)});
   }
   if (path === '/api/supporter/account' && request.method === 'POST') {
    const input = await readJson(request);
@@ -1264,7 +1286,8 @@ export async function handleSupporterRequest(request, env, ctx) {
    if (!result.meta.changes) return response({message:'未登録、または別画面で更新されています。再読み込みしてください。'},409);
    const snapshotTask=refreshSupporterSnapshotSafely(env,db,subscriptionSummariesByCustomer,'settings_saved');
    if(ctx?.waitUntil)ctx.waitUntil(snapshotTask);else await snapshotTask;
-   return response({success:true,revision:input.revision+1});
+   const auditRecorded=isSupporterDeveloper(env,uid)?await writeSupporterAudit(db,'developer','developer_settings_saved',uid,{revision:input.revision+1,ruleCount:rules.length}):undefined;
+   return response({success:true,revision:input.revision+1,...(auditRecorded===undefined?{}:{auditRecorded})});
   }
   return response({message:'この操作は利用できません。'},404);
  } catch(error) { return response({message:error.publicMessage || (error.status && error.status<500 ? error.message : '現在利用できません。')},error.status || 503); }
