@@ -2,6 +2,7 @@ import {showLaunchNotice} from './launch-notice.js';
 import { planFeatures, imageTypeAllowed } from './plan-features.js';
 import { PREVIEW_BASE, attachPreview } from './preview-lightbox.js';
 import { creditFirstPayment } from './credit-first.js';
+import {findRuleTargetMismatches,imageRuleTargetSummary,nextCheckboxSelection,normalizeWarningTableSelection} from './rule-targets.js';
 
 let session;
 let revision = 0;
@@ -367,12 +368,12 @@ function geoScopeFields(container,rule){
  }
 }
 
-function removeButton(index){
+function removeButton(rule){
  const remove = document.createElement('button');
  remove.type = 'button';
  remove.className = 'danger';
  remove.textContent = '削除';
- remove.onclick = () => { rules.splice(index, 1); render(); };
+ remove.onclick = () => { const index=rules.indexOf(rule);if(index>=0)rules.splice(index,1);render(); };
  return remove;
 }
 
@@ -397,7 +398,7 @@ function checkboxGroup(container,legendText,choices,selected,onChange,limit=Infi
   const label=document.createElement('label');label.className='channel-check-option';
   const checkbox=document.createElement('input');checkbox.type='checkbox';checkbox.value=value;checkbox.checked=selected.includes(value);
   checkbox.onchange=()=>{
-   const next=checkbox.checked?[...selected,value]:selected.filter(item=>item!==value);
+   const next=nextCheckboxSelection(selected,value,checkbox.checked);
    if(next.length>limit){checkbox.checked=false;status(`選択できるのは${limit}件までです。`);return;}
    selected=next;onChange(next);
   };
@@ -581,7 +582,7 @@ function warningTableFields(box,rule){
  const kinds=[...(options.warningTableKinds||[['national','全国の表'],['regional','地方の表']]),...(rule.tables.includes('timeseries')?[['timeseries','時系列予想']]:[])];
  const allowed=id=>entitlements[WARNING_TABLE_FEATURES[id]]===true;
  const shown=kinds.filter(([id])=>allowed(id)||rule.tables.includes(id));
- checkboxGroup(box,'送る表（1つ以上）',shown.map(([id,text])=>[id,allowed(id)?text:`${text}（現在の契約では配信されません）`]),rule.tables,next=>{rule.tables=next;render();});
+ checkboxGroup(box,'送る表（1つ以上）',shown.map(([id,text])=>[id,allowed(id)?text:`${text}（現在の契約では配信されません）`]),rule.tables,next=>{Object.assign(rule,normalizeWarningTableSelection(next,rule.regions));render();});
  const hidden=kinds.filter(([id])=>!shown.some(([value])=>value===id));
  if(hidden.length)helpNote(box,`${hidden.map(([,text])=>text).join('・')}はProで使えます。`);
  if(rule.tables.includes('regional')||rule.tables.includes('timeseries')){
@@ -733,7 +734,8 @@ function render() {
   const article = document.createElement('article');
   article.className = 'rule';
   const heading = document.createElement('h3');
-  heading.textContent = `通知ルール ${index + 1}`;
+  const target=imageRuleTargetSummary(rule);
+  heading.textContent = `通知ルール ${index + 1}${target?` — ${target}`:''}`;
   article.append(heading);
   field(article, rule, 'name', 'ルール名', null, {maxlength:'80'});
   field(article, rule, 'guildId', 'サーバー', session.guilds.map(guild => [guild.id, guild.name]));
@@ -747,7 +749,7 @@ function render() {
   field(article, rule, 'type', '情報種別', typeChoices(rule));
   if(isImageType(rule.type)){
    imageRuleFields(article,rule);
-   article.append(removeButton(index));
+   article.append(removeButton(rule));
    $('rules').append(article);
    return;
   }
@@ -793,7 +795,7 @@ function render() {
   }
   article.append(conditionFields);
   if(entitlements.complexConditions)additionalConditionsField(article,rule);
-  article.append(removeButton(index));
+  article.append(removeButton(rule));
   $('rules').append(article);
  });
 }
@@ -926,6 +928,8 @@ $('save').onclick = run(async () => {
  if(!hasConfigurableContract)return status('通知設定は有料プランの契約後に利用できます。');
  const saveButton=$('save');
  if(saveButton.disabled)return;
+ const mismatches=findRuleTargetMismatches(rules);
+ if(mismatches.length&&!window.confirm(`ルール名と選択した対象が食い違っています。\n\n${mismatches.map(item=>`「${item.name}」\n選択：${item.selection}`).join('\n\n')}\n\nこのまま保存しますか？`))return;
  saveButton.disabled=true;
  try{
   const data = await api('/api/supporter/settings','PUT',{revision,rules});
