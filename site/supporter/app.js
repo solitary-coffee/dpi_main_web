@@ -3,6 +3,7 @@ import { planFeatures, imageTypeAllowed } from './plan-features.js';
 import { PREVIEW_BASE, attachPreview } from './preview-lightbox.js';
 import { creditFirstPayment } from './credit-first.js';
 import {findRuleTargetMismatches,imageRuleTargetSummary,nextCheckboxSelection,normalizeWarningTableSelection} from './rule-targets.js';
+import { CATEGORIES, categoryOf, typeChoices as categorizedTypeChoices } from './rule-categories.js';
 
 let session;
 let revision = 0;
@@ -119,10 +120,11 @@ function selectOptions(input, values, current, placeholder) {
   option.textContent = placeholder;
   input.append(option);
  }
- for (const [value, text] of values) {
+ for (const [value, text, disabled] of values) {
   const option = document.createElement('option');
   option.value = value;
   option.textContent = text;
+  if (disabled) option.disabled = true;
   input.append(option);
  }
  input.value = current ?? '';
@@ -747,7 +749,18 @@ function render() {
    article.append(warning);
   }
   channelField(article, rule);
-  field(article, rule, 'type', '情報種別', typeChoices(rule));
+  const available = typeChoices(rule);
+  const currentCategory = categoryOf(rule.type);
+  const catInput = field(article, { category: currentCategory }, 'category', '大枠', CATEGORIES.map(c => [c.id, c.name]));
+  catInput.onchange = () => {
+   const choices = categorizedTypeChoices(catInput.value, available).filter(c => !c[2]);
+   // 選べる種類が無い大枠（すべて準備中）は、今のルールを変えずに知らせる
+   if (!choices.length) { catInput.value = currentCategory; status('この大枠の情報はすべて準備中です。公開までお待ちください。'); return; }
+   rule.type = choices[0][0];
+   rule.detail = 'all';rule.conditions=[];rule.radarCondition=rule.type==='hires-radar'?'scheduled':'all';rule.rainfallThresholdMmPerHour=rule.type==='hires-radar'?'10':'';rule.products=defaultProducts(rule.type);if(isImageType(rule.type)){rule.conditionLogic='and';rule.region='all';rule.regions=[];rule.tables=defaultWarningTables();rule.radarContents=['current'];rule.deliveryIntervalMinutes=60;rule.forecastIntervalMinutes=60;rule.deliverOn='changed';rule.showAllAreas=false;rule.tsunamiOutputs=entitlements.tsunamiMap?[...TSUNAMI_OUTPUT_IDS]:['map'];}
+   render();
+  };
+  field(article, rule, 'type', '情報種別', categorizedTypeChoices(currentCategory, available));
   if(isImageType(rule.type)){
    imageRuleFields(article,rule);
    article.append(removeButton(rule));
