@@ -18,6 +18,14 @@
 .cdn-bar-fill.cdn-warn { background: #ffce6a; }
 .cdn-bar-fill.cdn-bad { background: #ff8f86; }
 .cdn-total-row td { border-top: 2px solid #75bfff; font-weight: 800; }
+.cdn-inventory-locations { display: grid; gap: 14px; }
+.cdn-inventory-location { min-width: 0; padding: 16px; border: 1px solid #5d6772; border-radius: 8px; background: #333940; }
+.cdn-inventory-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.cdn-inventory-heading h3, .cdn-inventory-heading p { margin: 0; }
+.cdn-inventory-error { color: #ffb4ad; }
+.cdn-inventory-location .table-wrap { max-width: 100%; overflow-x: auto; }
+.cdn-inventory-location table { min-width: 520px; }
 @media (max-width: 680px) {
     .cdn-card-grid { grid-template-columns: 1fr; }
+    .cdn-inventory-heading { align-items: flex-start; flex-direction: column; }
 }

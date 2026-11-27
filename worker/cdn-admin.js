@@ -7,7 +7,7 @@
 
 const STATS_KEY = 'admin-stats.json';
 const USAGE_KEY = 'usage.json';
-const MAX_OBJECT_BYTES = 256 * 1024;
+const MAX_OBJECT_BYTES = 2 * 1024 * 1024;
 
 export class CdnAdminError extends Error {
     constructor(status, message, code) {
