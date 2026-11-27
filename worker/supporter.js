@@ -367,7 +367,6 @@ export const WEATHER_DETAILS = Object.freeze([
  ['all', 'すべての気象情報'],
  ['heavy-rain-level', '大雨に関する警戒レベル情報'],
  ['landslide-level', '土砂災害に関する警戒レベル情報'],
- ['flood-level', '洪水警報・洪水注意報'],
  ['storm-surge-level', '高潮に関する警戒レベル情報'],
  ['storm-blizzard-warning', '暴風・暴風雪に関する警報・注意報'],
  ['wave-warning', '波浪に関する警報・注意報'],
@@ -424,7 +423,7 @@ const DETAILS = {
  weather: new Set(WEATHER_DETAILS.map(([id]) => id)),
  'rain-radar': new Set(['all']),
 };
-const WEATHER_ALERT_DETAILS = new Set(['heavy-rain-level','landslide-level','flood-level','storm-surge-level']);
+const WEATHER_ALERT_DETAILS = new Set(['heavy-rain-level','landslide-level','storm-surge-level']);
 const WEATHER_WARNING_DETAILS = new Set(['storm-blizzard-warning','wave-warning','heavy-snow-warning','other-advisory']);
 const SUPPORTER_TYPE_LABELS = Object.freeze({earthquake:'地震情報',eew:'緊急地震速報',weather:'気象情報','rain-radar':'雨雲レーダー（簡略版）',...Object.fromEntries(IMAGE_RULE_TYPE_OPTIONS)});
 const INTENSITY_LABELS = Object.freeze({'1':'震度1','2':'震度2','3':'震度3','4':'震度4','5-':'震度5弱','5+':'震度5強','6-':'震度6弱','6+':'震度6強','7':'震度7'});
@@ -509,7 +508,7 @@ export function supporterAdminDetails(row, channelsByGuild = {}) {
  let settings={};let guilds=[];
  try{settings=JSON.parse(row.settings_json||'{}');}catch{/* Keep an empty rule set for malformed legacy data. */}
  try{const parsed=JSON.parse(row.guilds_json||'[]');guilds=Array.isArray(parsed)?parsed:[];}catch{/* Guild names remain unavailable. */}
- const rules=Array.isArray(settings.rules)?settings.rules:[];
+ const rules=withoutFloodLevelRules(settings.rules);
  return {
   discordUserId:row.discord_user_id,
   discordName:row.discord_name||'',
@@ -618,6 +617,7 @@ function storedImageRuleMatch(rule, storedImageRules) {
 }
 
 export function normalizeSupporterRules(input, guilds, limits = {servers:1,channels:2,rules:5,complexConditions:false,multiDestination:false}, catalogue = null, {imageRules = false, imageRulesV2 = false, storedImageRules = []} = {}) {
+ input=withoutFloodLevelRules(input);
  const ruleLimit=Math.max(1,Number(limits.rules)||5);
  if (!Array.isArray(input) || input.length > ruleLimit) throw Object.assign(new Error(`通知ルールは${ruleLimit}件までです。`),{status:400});
  const rules = input.map(rule => {
@@ -695,6 +695,16 @@ export function normalizeSupporterRules(input, guilds, limits = {servers:1,chann
  if (serverCount > serverLimit) throw Object.assign(new Error(`契約上限は${serverLimit}サーバーです。サーバー追加オプションを契約するか、同じサーバーを選択してください。`),{status:400});
  if (channelCount > channelLimit) throw Object.assign(new Error(`契約上限は${channelLimit}チャンネルです。チャンネル追加オプションを契約するか、通知先を減らしてください。`),{status:400});
  return rules;
+}
+
+// 廃止済みの洪水警報・注意報は、移行前の保存データが来ても読み込み・再保存で残さない。
+export function withoutFloodLevelRules(input){
+ if(!Array.isArray(input))return[];
+ return input.filter(rule=>clean(rule?.detail)!=='flood-level').map(rule=>{
+  if(!rule||typeof rule!=='object'||Array.isArray(rule))return rule;
+  const conditions=Array.isArray(rule.conditions)?rule.conditions.filter(condition=>!(clean(condition?.kind)==='detail'&&clean(condition?.value)==='flood-level')):rule.conditions;
+  return conditions===rule.conditions?rule:{...rule,conditions};
+ });
 }
 
 export function supporterOptions(env) {
@@ -1218,6 +1228,7 @@ export async function handleSupporterRequest(request, env, ctx) {
    const discordName=clean(session.discord_username).slice(0,100);
    if(discordName)await db.prepare('UPDATE supporter_accounts SET discord_name=? WHERE discord_user_id=? AND COALESCE(discord_name,\'\')<>?').bind(discordName,uid,discordName).run();
    const account = await db.prepare('SELECT * FROM supporter_accounts WHERE discord_user_id=?').bind(uid).first();
+   if(account?.settings_json)try{const settings=JSON.parse(account.settings_json);account.settings_json=JSON.stringify({...settings,rules:withoutFloodLevelRules(settings?.rules)});}catch{/* 壊れた既存値は従来どおりそのまま返す。 */}
    return response({account,customPlan:customPublic(await getCustomPlan(db,uid)),mode:billingMode(env),deliveryEnabled:supporterPublicEnabled(env)&&billingReady(env),billingEnabled:billingReady(env),intakePaused:supporterIntakePaused(env)});
   }
   if (path === '/api/supporter/account' && request.method === 'POST') {

@@ -148,7 +148,8 @@ async function startDiscordOAuth(request, env) {
     await ensureDatabase(env);
 
     const state = randomToken(32);
-    const returnTo = safeOAuthReturnPath(new URL(request.url).searchParams.get('return_to'));
+    const startUrl = new URL(request.url);
+    const returnTo = safeOAuthReturnPath(startUrl.searchParams.get('returnTo') ?? startUrl.searchParams.get('return_to'));
     const stateHash = await sha256(state);
     const now = Date.now();
     const statements = [
@@ -176,7 +177,7 @@ async function startDiscordOAuth(request, env) {
         'Referrer-Policy': 'no-referrer',
     });
     headers.append('Set-Cookie', cookie('dpi_reuse_oauth', state, OAUTH_STATE_SECONDS));
-    headers.append('Set-Cookie', cookie('dpi_reuse_return', returnTo, OAUTH_STATE_SECONDS));
+    headers.append('Set-Cookie', cookie('dpi_reuse_return', oauthReturnCookieValue(state, returnTo), OAUTH_STATE_SECONDS));
     return new Response(null, {
         status: 302,
         headers,
@@ -202,7 +203,7 @@ async function completeDiscordOAuth(request, env) {
     const code = stringValue(url.searchParams.get('code'));
     const state = stringValue(url.searchParams.get('state'));
     const cookieState = readCookie(request, 'dpi_reuse_oauth');
-    const returnTo = safeOAuthReturnPath(readCookie(request, 'dpi_reuse_return'));
+    const returnTo = oauthReturnPath(readCookie(request, 'dpi_reuse_return'), state);
 
     if (url.searchParams.get('error')) {
         return redirectAfterOAuth('discord_denied', returnTo, [
@@ -1145,8 +1146,29 @@ function redirectAfterOAuth(result, returnTo, setCookie) {
     return new Response(null, { status: 302, headers });
 }
 
-function safeOAuthReturnPath(value) {
-    return value === '/site/survey/' ? value : '/site/reuse/';
+function safeOAuthReturnPath(value, fallback = '/site/reuse/') {
+    if (typeof value !== 'string' || !value.startsWith('/') || value.startsWith('//') || value.includes('\\')) return fallback;
+    try {
+        const url = new URL(value, 'https://dpi-bot.com');
+        if (url.origin !== 'https://dpi-bot.com') return fallback;
+        return `${url.pathname}${url.search}${url.hash}`;
+    } catch {
+        return fallback;
+    }
+}
+
+function oauthReturnCookieValue(state, returnTo) {
+    return encodeURIComponent(JSON.stringify({state, returnTo: safeOAuthReturnPath(returnTo)}));
+}
+
+function oauthReturnPath(value, state) {
+    try {
+        const stored = JSON.parse(decodeURIComponent(value));
+        if (!stored || typeof stored !== 'object' || !timingSafeEqual(stored.state, state)) return '/site/reuse/';
+        return safeOAuthReturnPath(stored.returnTo);
+    } catch {
+        return '/site/reuse/';
+    }
 }
 
 function oauthRedirectUri(request, env) {
@@ -1417,5 +1439,7 @@ export const __test = Object.freeze({
     isApplicationEditable,
     oauthStartAllowed,
     reuseEmailSignature,
+    oauthReturnCookieValue,
+    oauthReturnPath,
     safeOAuthReturnPath,
 });

@@ -19,7 +19,7 @@ test('最終確認書は画面と分離したA4縦の印刷専用書類である
  assert.match(script,/for\(const value of \[def\.label,def\.plan==='custom'\?'準備中'/);
 });
 
-test('ご要望詳細に保存と支払いURL作成までの3段階がある',async()=>{
+test('申請詳細に保存と支払いURL作成までの3段階がある',async()=>{
  const [html,script]=await Promise.all([read('../site/supporter-admin/custom-requests.html'),read('../site/supporter-admin/custom-requests.js')]);
  for(const id of ['contract-workflow','contract-form','contract-uid','contract-confirm','contract-servers','contract-channels','contract-rules','contract-price','contract-feature-list','contract-save','contract-checkout','contract-save-result','contract-checkout-result'])assert.match(html,new RegExp(`id="${id}"`));
  assert.match(html,/id="contract-checkout" type="button" disabled/);
@@ -30,18 +30,18 @@ test('ご要望詳細に保存と支払いURL作成までの3段階がある',as
  assert.match(script,/navigator\.clipboard\.writeText\(url\)/);
 });
 
-test('保存時のアカウント作成はご要望の送り主と入力IDが同じ場合だけ呼ぶ',async()=>{
+test('保存時のアカウント作成は申請の送り主と入力IDが同じ場合だけ呼ぶ',async()=>{
  const script=await read('../site/supporter-admin/custom-requests.js');
  assert.match(script,/if\(payload\.discordUserId===current\.discordUserId\)\{[\s\S]*?\/ensure-account`,'POST',\{\}\);/);
- assert.match(script,/有料プランに未登録だったため、ご要望のメールアドレスでアカウントを作成しました。/);
+ assert.match(script,/有料プランに未登録だったため、申請のメールアドレスでアカウントを作成しました。/);
 });
 
 test('回答後の契約欄表示条件と未申込みの注意を備える',async()=>{
  const [html,script]=await Promise.all([read('../site/supporter-admin/custom-requests.html'),read('../site/supporter-admin/custom-requests.js')]);
  assert.match(html,/id="contract-warning"[^>]*hidden>利用者はまだこの回答に申し込んでいません。利用者と合意済みの場合だけ進めてください。/);
- // 終了したご要望でも契約手続きへ進める（取り下げは除く）
+ // 終了した申請でも契約手続きへ進める（取り下げは除く）
  assert.match(script,/const showContract=Boolean\(item\.answer\)&&item\.status!=='withdrawn';/);
- assert.match(script,/このご要望は終了しています。/);
+ assert.match(script,/この申請は終了しています。/);
  assert.match(script,/\$\('contract-warning'\)\.hidden=!showContract\|\|item\.status==='accepted'/);
  assert.match(script,/if\(showContract\)loadContractWorkflow\(item\)/);
 });

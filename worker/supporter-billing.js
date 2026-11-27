@@ -877,7 +877,13 @@ async function discardOpenCheckout(env,db,uid,row){
  else if(checkout.status==='complete')fail('決済結果を確認中です。契約状態を更新してください。',409);
  await db.prepare('UPDATE supporter_billing SET checkout_key=NULL,checkout_id=NULL,checkout_params=NULL WHERE discord_user_id=? AND checkout_key=?').bind(uid,row.checkout_key).run();
 }
-export async function provisionPaidCheckoutSubscription(env,session){
+async function flagInitialPaymentMismatch(env,db,session,reason){
+ if(!db)return;
+ const metadata=checkoutMetadata(session),uid=clean(metadata.dpi_user||session?.client_reference_id),now=Math.floor(Date.now()/1000);
+ await queueNotice(env,db,{id:`initial-payment-mismatch:${clean(session?.id)||'unknown'}`,channel:'billing',kind:'payment_mismatch',title:'初回決済の確認が必要',tone:'bad',at:now,
+  lines:[`利用者ID: ${uid||'不明'}`,`Checkout: ${clean(session?.id)||'不明'}`,`理由: ${reason}`,'契約は作成していません。Stripe の決済内容を確認してください。']});
+}
+export async function provisionPaidCheckoutSubscription(env,session,db=null){
  const metadata=checkoutMetadata(session);
  if(session?.mode!=='payment'||metadata.dpi_checkout_kind!=='initial_subscription'||session.payment_status!=='paid')return null;
  const customer=typeof session.customer==='string'?session.customer:session.customer?.id;
@@ -890,6 +896,14 @@ export async function provisionPaidCheckoutSubscription(env,session){
  const paymentIntentId=typeof session.payment_intent==='string'?session.payment_intent:session.payment_intent?.id;
  if(!paymentIntentId)fail('初回決済情報を確認できませんでした。',502);
  const paymentIntent=await stripe(env,`payment_intents/${encodeURIComponent(paymentIntentId)}`);
+ const creditApplied=Number(metadata.dpi_credit_applied||0),expectedTotal=Number(metadata.dpi_initial_total);
+ const mismatch=!Number.isSafeInteger(expectedTotal)||expectedTotal<1||!Number.isSafeInteger(creditApplied)||creditApplied<0
+  ||!Number.isSafeInteger(Number(session.amount_total))||Number(session.amount_total)<1
+  ||clean(session.currency).toLowerCase()!=='jpy'
+  ||Number(session.amount_total)+creditApplied!==expectedTotal
+  ||paymentIntent.status!=='succeeded'||stripeId(paymentIntent.customer)!==customer
+  ||Number(paymentIntent.amount_received)!==Number(session.amount_total);
+ if(mismatch){await flagInitialPaymentMismatch(env,db,session,'通貨・期待総額・PaymentIntent の内容が一致しません。');fail('初回決済の照合が必要です。契約は作成していません。',409);}
  const params=paidCheckoutSubscriptionParams(env,session,paymentIntent);
  params['metadata[dpi_initial_session]']=String(session.id||'');
  await applyInitialCredit(env,session);
@@ -935,7 +949,7 @@ export async function reconcilePaidCheckoutSubscription(env,customer,uid,db=null
  const candidates=unconsumed.filter(item=>recoverablePaidCheckout(item,customer,uid)).sort((a,b)=>Number(b.created||0)-Number(a.created||0));
  let session=null;for(const candidate of candidates){if(db&&await rejectDisciplinedCheckout(env,db,candidate))continue;session=candidate;break;}
  if(!session)return {subscription:null,recovered:false,checkoutId:null};
- const subscription=await provisionPaidCheckoutSubscription(env,session);
+ const subscription=await provisionPaidCheckoutSubscription(env,session,db);
  if(subscription&&db)await recordInitialCredit(env,db,session);
  return {subscription,recovered:!!subscription,checkoutId:session.id};
 }
@@ -1362,12 +1376,12 @@ export async function billingAction(request,env,db,uid,input={}){
   'payment_intent_data[setup_future_usage]':'off_session','payment_intent_data[metadata][dpi_user]':uid,
   'metadata[dpi_checkout_kind]':'initial_subscription','metadata[dpi_user]':uid,'metadata[dpi_plan]':choice.plan,
   'metadata[dpi_legal_consent_version]':legalConsentVersion,'metadata[dpi_channel_packs]':String(choice.channelPacks),
-  'metadata[dpi_server_packs]':String(choice.serverPacks),'metadata[dpi_rule_packs]':String(choice.rulePacks),'metadata[dpi_billing_anchor]':String(schedule.anchor),
+  'metadata[dpi_server_packs]':String(choice.serverPacks),'metadata[dpi_rule_packs]':String(choice.rulePacks),'metadata[dpi_billing_anchor]':String(schedule.anchor),'metadata[dpi_initial_total]':String(initialTotal),
   success_url:`${origin}/site/supporter/?checkout=returned`,cancel_url:`${origin}/site/supporter/?checkout=canceled`,expires_at:String(Math.floor(Date.now()/1000)+3600),integration_identifier:integrationIdentifier('dpi_paid_')};
  const line=0;
  params[`line_items[${line}][price_data][currency]`]='jpy';
  params[`line_items[${line}][price_data][unit_amount]`]=String(initialTotal-creditApplied);
- if(creditApplied>0){params['metadata[dpi_credit_applied]']=String(creditApplied);params['metadata[dpi_initial_total]']=String(initialTotal);}
+ if(creditApplied>0)params['metadata[dpi_credit_applied]']=String(creditApplied);
  params[`line_items[${line}][price_data][product_data][name]`]=`${PLAN_CATALOG[choice.plan].name} ${schedule.novemberOffer?'初回利用料（1か月分。11月・12月に利用できます）':schedule.lateMonth?'初回利用料（当月分・翌月分の2か月分）':'初回利用料（当月分）'}${creditApplied>0?`（総額${initialTotal.toLocaleString('ja-JP')}円のうち事前チャージの残高から${creditApplied.toLocaleString('ja-JP')}円を使用）`:''}`;
  params[`line_items[${line}][quantity]`]='1';
  await db.prepare('UPDATE supporter_billing SET checkout_key=?,checkout_params=? WHERE discord_user_id=? AND checkout_key IS NULL').bind(crypto.randomUUID(),JSON.stringify(params),uid).run();
@@ -1384,7 +1398,7 @@ export async function billingAction(request,env,db,uid,input={}){
   return json({message:'前回のお申込みは完了済みでした。もう一度「申し込む」を押してください。'},409);
  }
  if(checkout.status!=='open')return json({message:'決済結果を確認中です。契約状態を更新してください。'},409);
- if(saved['metadata[dpi_plan]']!==params['metadata[dpi_plan]']||saved['metadata[dpi_channel_packs]']!==params['metadata[dpi_channel_packs]']||saved['metadata[dpi_server_packs]']!==params['metadata[dpi_server_packs]']||String(saved['metadata[dpi_rule_packs]']||0)!==params['metadata[dpi_rule_packs]']||String(saved['metadata[dpi_credit_applied]']||0)!==String(params['metadata[dpi_credit_applied]']||0)){
+ if(saved['metadata[dpi_plan]']!==params['metadata[dpi_plan]']||saved['metadata[dpi_channel_packs]']!==params['metadata[dpi_channel_packs]']||saved['metadata[dpi_server_packs]']!==params['metadata[dpi_server_packs]']||String(saved['metadata[dpi_rule_packs]']||0)!==params['metadata[dpi_rule_packs]']||String(saved['metadata[dpi_credit_applied]']||0)!==String(params['metadata[dpi_credit_applied]']||0)||String(saved['metadata[dpi_initial_total]']||'')!==params['metadata[dpi_initial_total]']){
   // プラン・残高が変わった。前の支払い画面は取り消し、新しい条件で作り直せるようにする。
   await discardOpenCheckout(env,db,uid,row);
   return json({message:'条件が変わったため、前の決済画面を取り消しました。もう一度「申し込む」を押してください。'},409);
@@ -1749,6 +1763,20 @@ async function recordPaymentAlert(env,db,event){
   VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(event_id) DO NOTHING`).bind(event.id,kind,clean(object.status).slice(0,40),paymentIntent,customer,clean(owner?.discord_user_id),amount,Number(event.created)||Math.floor(Date.now()/1000)).run();
  return{kind,object,charge,paymentIntent,customer};
 }
+async function cancelFullyRefundedPlan(env,db,event,paymentAlert){
+ if(event.type!=='charge.refunded'||!paymentAlert?.customer)return 0;
+ const charge=paymentAlert.object,amount=Number(charge?.amount)||0,refunded=Number(charge?.amount_refunded)||0;
+ if(amount<=0||refunded<amount)return 0;
+ if(checkoutMetadata(charge).dpi_checkout_kind==='credit_topup')return 0;
+ if(paymentAlert.paymentIntent&&await db.prepare('SELECT request_id FROM supporter_credit_topups WHERE payment_intent_id=?').bind(paymentAlert.paymentIntent).first())return 0;
+ const managed=(await subscriptions(env,paymentAlert.customer)).filter(item=>{const summary=subscriptionSummary(item,env);return summary.recognizedPlan===true||!!summary.customId;});
+ let canceled=0;
+ for(const subscription of managed){await cancelCustomSubscription(env,subscription.id,`dpi-full-refund-cancel-${event.id}-${subscription.id}`);canceled+=1;}
+ const owner=await db.prepare('SELECT discord_user_id FROM supporter_billing WHERE customer_id=?').bind(paymentAlert.customer).first();
+ await db.prepare(`INSERT INTO admin_audit_events(id,actor,action,entity_type,entity_id,details_json,created_at)
+  VALUES(?,?,'supporter.full_refund_canceled','supporter_account',?,?,?)`).bind(crypto.randomUUID(),'system:stripe',clean(owner?.discord_user_id),JSON.stringify({eventId:event.id,chargeId:clean(charge?.id),amount,customer:paymentAlert.customer,canceledSubscriptions:canceled}),new Date().toISOString()).run();
+ return canceled;
+}
 // 契約管理画面（Stripe）でのカード変更は顧客の既定カードに入る。契約にはカードを固定しているため、
 // 同じカードへそろえないと、毎月の更新と月末の再決済が古いカードのままになる。
 async function syncDefaultPaymentMethod(env,db,event){
@@ -1805,7 +1833,7 @@ export async function billingWebhook(request,env,ctx){
   }
   else{
    if(checkoutMetadata(session).dpi_checkout_kind==='initial_subscription')await assertCheckoutOwner(db,session);
-   const provisioned=await provisionPaidCheckoutSubscription(env,session);
+   const provisioned=await provisionPaidCheckoutSubscription(env,session,db);
    if(provisioned)await recordInitialCredit(env,db,session);
    if(provisioned&&session?.payment_status==='paid')await sendBillingNotificationSafely(env,db,'payment_succeeded',{id:session.id,customer:session.customer,amount_paid:Number(session.amount_total||0),currency:session.currency||'jpy',credit_applied:Number(checkoutMetadata(session).dpi_credit_applied||0)});
   }
@@ -1833,6 +1861,7 @@ export async function billingWebhook(request,env,ctx){
   if(event.type==='checkout.session.async_payment_failed'&&checkoutMetadata(session).dpi_checkout_kind==='credit_topup')await sendBillingNotificationSafely(env,db,'credit_topup_failed',{id:sessionId,customer:session.customer,amount_due:Number(session.amount_total||0),currency:session.currency||'jpy'});
  }
  const paymentAlert=await recordPaymentAlert(env,db,event);
+ if(paymentAlert)paymentAlert.canceledSubscriptions=await cancelFullyRefundedPlan(env,db,event,paymentAlert);
  if(event.type.startsWith('charge.dispute.'))await syncDisputeHold(env,db,event.data?.object);
  if(event.type==='customer.updated'){await syncCustomerEmail(db,event.data?.object);await syncDefaultPaymentMethod(env,db,event);}
  if(['customer.subscription.created','customer.subscription.updated'].includes(event.type)){
@@ -1907,7 +1936,8 @@ async function queueEventNotices(env,db,event,paymentAlert=null){
      if(target==='クレジットチャージ'){
       const credit=await db.prepare(`SELECT credit_delta FROM supporter_credit_events WHERE id LIKE ? AND reason='credit_refunded' ORDER BY created_at DESC LIMIT 1`).bind(`refunded:${clean(object.id)}:%`).first();
       if(Number(credit?.credit_delta)<0)lines.push(`クレジットを取り消した額: ${yen(-Number(credit.credit_delta))}`);
-     }else lines.push('契約は続きます');
+     }else if(original>0&&cumulative>=original)lines.push(`契約を即時解約し、配信を停止しました（${Number(paymentAlert?.canceledSubscriptions)||0}件）`);
+     else lines.push('契約は続きます');
     }else if(alert==='disputed'){
      const held=await db.prepare(`SELECT status FROM supporter_dunning WHERE invoice_id=?`).bind(`${DISPUTE_PREFIX}${clean(object.id)}`).first();
      lines.push('【申立て】',`理由: ${disputeReason(object.reason)}`,Number(row.amount)?`金額: ${yen(row.amount)}`:'',object.evidence_details?.due_by?`回答期限: ${alertDate(object.evidence_details.due_by)}`:'',`対象: ${target}`,'【配信】',`状態: ${held?.status==='suspended'?'申立てで停止した':'停止していない'}`,'【次にすること】','Stripe のダッシュボードで期限までに証拠を提出してください',object.evidence_details?.due_by?'期限を過ぎると異議に負けます':'','管理画面: https://dpi-bot.com/site/supporter-admin/');

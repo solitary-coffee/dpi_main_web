@@ -44,6 +44,7 @@ export const FEATURE_DEFINITIONS = Object.freeze([
  {name: 'warningTableTimeseries', section: 'warning-timeseries', plan: 'pro', label: '時系列予想（地方を選ぶ・複数可）'},
  // --- hires-radar: 雨雲レーダー（高解像度版） ---
  {name: 'hiresRadar', section: 'hires-radar', plan: 'plus', label: '全国・地方の選択・定時配信（30分・1・3・6・12時間ごと）・線状降水帯の表示'},
+ {name: 'hiresRadarRainbandOnly', section: 'hires-radar', plan: 'plus', label: '線状降水帯の解析があるときだけ配信', requires: ['hiresRadar']},
  {name: 'hiresRadarThreshold', section: 'hires-radar', plan: 'pro', label: '閾値以上で配信（10・20・30・50・80mm/h）', requires: ['hiresRadar']},
  {name: 'hiresRadarInterval', section: 'hires-radar', plan: 'pro', label: '配信頻度を自由に指定（10分〜24時間・10分単位）', requires: ['hiresRadar']},
  {name: 'hiresRadarForecast', section: 'hires-radar', plan: 'pro', label: '1時間先までの予想（GIF・配信頻度は10分〜12時間）', requires: ['hiresRadar']},
@@ -79,7 +80,7 @@ export function sortFeatureNames(names) {
 // Feature names of a legacy custom contract (saved before per-contract feature flags existed):
 // every image feature (custom used to match Pro) plus the rainfall threshold, and the text
 // features its old columns allowed. migrations/0032 writes exactly this list into features_json.
-const AFTER_LEGACY = new Set(['tsunamiMapNational', 'hiresRadarInterval', 'hiresRadarForecast']);
+const AFTER_LEGACY = new Set(['tsunamiMapNational', 'hiresRadarRainbandOnly', 'hiresRadarInterval', 'hiresRadarForecast']);
 export function legacyCustomFeatureNames(flags = {}) {
  const branching = flags.municipalityBranching === true;
  // 後から増えた機能（AFTER_LEGACY）は含めない（従来のカスタム契約の一覧 = migrations/0032 は変えない）

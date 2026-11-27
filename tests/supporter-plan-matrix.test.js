@@ -29,7 +29,7 @@ test('the entitlement matrix per standard plan',()=>{
  const yes=(plan,name)=>PLAN_FEATURES[plan][name]===true;
  const matrix={
   eewMap:[true,true,true], eewMapRegion:[false,true,true],
-  hiresRadar:[false,true,true], hiresRadarThreshold:[false,false,true],
+  hiresRadar:[false,true,true], hiresRadarRainbandOnly:[false,true,true], hiresRadarThreshold:[false,false,true],
   hiresRadarInterval:[false,false,true], hiresRadarForecast:[false,false,true],
   warningTableNational:[false,true,true], warningTableRegional:[false,false,true],
   warningTableTimeseries:[false,false,true], warningTableEvery:[false,false,true],

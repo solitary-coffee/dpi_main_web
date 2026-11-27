@@ -66,7 +66,7 @@
       <tr><th scope="row">チャンネル</th><td>2</td><td>10</td><td>20</td><td>契約による</td></tr>
       <tr><th scope="row">ルール</th><td>5</td><td>15</td><td>30</td><td>契約による</td></tr>
       <tr><th scope="row">追加（チャンネル3・サーバー2・ルール3）</th><td>各＋200円</td><td>各＋200円</td><td>各＋200円</td><td>個別</td></tr>
-      <tr class="compare-cta-row"><th scope="row">お申込み</th><td><a href="/site/supporter/?plan=supporter#billing">Basicを契約する</a></td><td><a href="/site/supporter/?plan=plus#billing">Plusを契約する</a></td><td><a href="/site/supporter/?plan=pro#billing">Proを契約する</a></td><td><a href="/site/supp/index.html?type=custom_plan">カスタムを相談する</a><br><a href="/site/supporter/custom/" data-feature-gate="customRequests" hidden>ご要望を送る</a></td></tr>
+      <tr class="compare-cta-row"><th scope="row">お申込み</th><td><a href="/site/supporter/?plan=supporter#billing">Basicを契約する</a></td><td><a href="/site/supporter/?plan=plus#billing">Plusを契約する</a></td><td><a href="/site/supporter/?plan=pro#billing">Proを契約する</a></td><td><a href="/site/supp/index.html?type=custom_plan">カスタムを相談する</a><br><a href="/site/supporter/custom/" data-feature-gate="customRequests" hidden>カスタムプランを申請</a></td></tr>
      </tbody>
     </table>
    </div>
@@ -140,8 +140,9 @@
       <tr><th scope="row">降水量のしきい値</th><td>—</td><td>○</td><td>○</td><td>契約による</td></tr>
      </tbody>
      <tbody>
-      <tr><th scope="rowgroup" rowspan="5" class="comparison-kind">雨雲レーダー（高解像度版）<a class="detail-ref" href="#hires-radar-detail" aria-label="雨雲レーダー（高解像度版）の詳細を見る">※</a></th><th scope="row">全国・地方</th><td>—</td><td>○</td><td>○</td><td>契約による</td></tr>
+      <tr><th scope="rowgroup" rowspan="6" class="comparison-kind">雨雲レーダー（高解像度版）<a class="detail-ref" href="#hires-radar-detail" aria-label="雨雲レーダー（高解像度版）の詳細を見る">※</a></th><th scope="row">全国・地方</th><td>—</td><td>○</td><td>○</td><td>契約による</td></tr>
       <tr><th scope="row">配信頻度の選択</th><td>—</td><td>○</td><td>○</td><td>契約による</td></tr>
+      <tr><th scope="row">線状降水帯の解析時だけ配信</th><td>—</td><td>○</td><td>○</td><td>契約による</td></tr>
       <tr><th scope="row">降水量のしきい値</th><td>—</td><td>—</td><td>○</td><td>契約による</td></tr>
       <tr><th scope="row">1時間先までの予想（GIF）</th><td>—</td><td>—</td><td>○</td><td>契約による</td></tr>
       <tr><th scope="row">配信頻度の自由な指定</th><td>—</td><td>—</td><td>○</td><td>契約による</td></tr>
@@ -297,7 +298,6 @@
       <li>すべての気象情報</li>
       <li>大雨に関する警戒レベル情報</li>
       <li>土砂災害に関する警戒レベル情報</li>
-      <li>洪水警報・洪水注意報</li>
       <li>高潮に関する警戒レベル情報</li>
       <li>暴風・暴風雪に関する警報・注意報</li>
       <li>波浪に関する警報・注意報</li>
@@ -413,7 +413,7 @@
     <details class="delivery-category" id="hires-radar-detail">
      <summary>雨雲レーダー（高解像度版） <span class="delivery-count">画像配信・Plus以上</span></summary>
      <ul>
-      <li>Plus：全国・地方、線状降水帯の表示</li>
+       <li>Plus：全国・地方、線状降水帯の表示、線状降水帯の解析があるときだけ配信</li>
       <li>Plus：配信頻度は30分・1・3・6・12時間ごと</li>
       <li>Pro：配信頻度は10分〜24時間で自由に指定、1時間降水量のしきい値（10・20・30・50・80 mm/h）</li>
       <li>Pro：1時間先までの予想（GIF。配信頻度は10分〜12時間で自由に指定）</li>
@@ -493,7 +493,7 @@
     <li>上位プランへの変更はすぐに反映し、残りの期間の差額を請求します。下位プランへの変更は次回26日から反映し、返金はありません。</li>
     <li>解約はいつでも手続きでき、契約期間の終わりまで利用できます。お客様のご都合による途中解約の返金はありません。</li>
     <li>下位プランへの変更などで上限を超えた通知ルールや通知先は、一覧の下から順に削除されます。新しいプランで使えない地域や条件を含むルールは配信されません。</li>
-    <li>カスタムは個別のお見積りです。ご要望に応じて、専用の画像配信（新しい種類の図や、地域・表示を合わせた図など）もご用意できます。内容と料金はご相談のうえで決めます。解約は画面から手続きでき、それ以外の変更は<a href="/site/supp/index.html?type=custom_plan">お問い合わせ</a>ください。</li>
+    <li>カスタムは個別のお見積りです。ご希望に応じて、専用の画像配信（新しい種類の図や、地域・表示を合わせた図など）もご用意できます。内容と料金はご相談のうえで決めます。解約は画面から手続きでき、それ以外の変更は<a href="/site/supp/index.html?type=custom_plan">お問い合わせ</a>ください。</li>
    </ul>
    <h3>配信の内容と地域の指定</h3>
    <ul>

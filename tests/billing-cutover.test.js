@@ -44,21 +44,23 @@ test('公開設定は本番モードで一般公開。本番用の欄は用意�
  for (const values of Object.values(STAGES)) for (const name of Object.keys(values)) assert.ok(name in config.vars, name);
 });
 
-test('切替時の削除は有料プランの表をすべて含み、監査ログや二次利用の申請は含まない', async t => {
+test('切替時の削除は有料プランの表をすべて含み、監査ログ・移行バックアップ・二次利用の申請は含まない', async t => {
  let DatabaseSync;
  try { ({DatabaseSync} = await import('node:sqlite')); } catch { t.skip('node:sqlite is not available'); return; }
  const raw = new DatabaseSync(':memory:');
  raw.exec('PRAGMA foreign_keys=ON');
  const dir = new URL('../migrations/', import.meta.url);
  for (const name of (await readdir(dir)).filter(item => item.endsWith('.sql')).sort()) raw.exec(await readFile(new URL(name, dir), 'utf8'));
- const tables = raw.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'supporter_%'").all().map(row => row.name);
+ const tables = raw.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'supporter_%' AND name<>'supporter_settings_backup_20261127'").all().map(row => row.name);
  assert.deepEqual([...PURGE_TABLES].sort(), tables.sort());
  // 親子の行があっても、外部キーの順に消せる
  raw.prepare("INSERT INTO supporter_accounts(discord_user_id,billing_email,registered_at,updated_at) VALUES('1','a@example.jp','x','x')").run();
+ raw.prepare("INSERT INTO supporter_settings_backup_20261127(discord_user_id,settings_json,revision,backed_up_at) VALUES('1','{}',0,'x')").run();
  raw.prepare("INSERT INTO supporter_billing(discord_user_id,customer_id) VALUES('1','cus')").run();
  raw.prepare("INSERT INTO supporter_credit_lots(id,discord_user_id,source_type,source_id,original_amount,remaining_amount,status,created_at,updated_at) VALUES('l','1','admin','s',1,1,'active',1,1)").run();
  raw.exec(purgeSql());
  for (const name of PURGE_TABLES) assert.equal(raw.prepare(`SELECT COUNT(*) AS n FROM ${name}`).get().n, 0, name);
+ assert.equal(raw.prepare('SELECT COUNT(*) AS n FROM supporter_settings_backup_20261127').get().n,1);
 });
 
 test('Webhook の一覧は、Worker が受け付けるイベントと一致する', async () => {

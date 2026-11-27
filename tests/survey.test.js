@@ -28,10 +28,32 @@ test('未ログインのアンケート状態確認はWorker例外にせずJSON 
     });
 });
 
-test('Discord OAuthの戻り先はアンケート画面と二次利用画面だけを許可する', () => {
+test('Discord OAuthの戻り先は同一オリジンの相対パスだけを許可する', () => {
     assert.equal(reuseTest.safeOAuthReturnPath('/site/survey/'), '/site/survey/');
-    assert.equal(reuseTest.safeOAuthReturnPath('/site/reuse/'), '/site/reuse/');
+    assert.equal(reuseTest.safeOAuthReturnPath('/site/supporter/?plan=plus#billing'), '/site/supporter/?plan=plus#billing');
     assert.equal(reuseTest.safeOAuthReturnPath('https://example.com/'), '/site/reuse/');
+    assert.equal(reuseTest.safeOAuthReturnPath('//evil.example/'), '/site/reuse/');
+    assert.equal(reuseTest.safeOAuthReturnPath('https://dpi-bot.com/site/supporter/'), '/site/reuse/');
+    assert.equal(reuseTest.safeOAuthReturnPath(123), '/site/reuse/');
+});
+
+test('Discord OAuthの戻り先は開始時のstateに結び付いた値だけを使う', () => {
+    const cookie = reuseTest.oauthReturnCookieValue('state-a', '/site/supporter/custom/');
+    assert.equal(reuseTest.oauthReturnPath(cookie, 'state-a'), '/site/supporter/custom/');
+    assert.equal(reuseTest.oauthReturnPath(cookie, 'state-b'), '/site/reuse/');
+});
+
+test('Discordログインを始める各画面が現在のパスを渡す', async () => {
+    const paths = [
+        ['../site/supporter/index.html', '%2Fsite%2Fsupporter%2F'],
+        ['../site/supporter/custom/index.html', '%2Fsite%2Fsupporter%2Fcustom%2F'],
+        ['../site/reuse/index.html', '%2Fsite%2Freuse%2F'],
+        ['../site/survey/index.html', '%2Fsite%2Fsurvey%2F'],
+    ];
+    for (const [path, encodedReturnTo] of paths) {
+        const html = await readFile(new URL(path, import.meta.url), 'utf8');
+        assert.match(html, new RegExp(`/api/reuse/oauth/start\\?returnTo=${encodedReturnTo}`));
+    }
 });
 
 test('GoogleフォームURLと回答編集URLをGoogle Formsへ限定する', () => {

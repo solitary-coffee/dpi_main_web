@@ -62,11 +62,11 @@ function loadCustomRequestDraft(){
   $('custom-rules').value=String(draft.rules??30);
   setFeatures(draft.features||[]);
   customRequestId=draft.requestId||'';
-  $('custom-reason').value=draft.requestId?`カスタムプランご要望 ${draft.requestId} を反映`:'';
-  $('custom-result').textContent='申込み済みのご要望を読み込みました。対象Discord ID、料金、機能を確認して保存してください。';
+  $('custom-reason').value=draft.requestId?`カスタムプラン申請 ${draft.requestId} を反映`:'';
+  $('custom-result').textContent='申込み済みの申請を読み込みました。対象Discord ID、料金、機能を確認して保存してください。';
   sessionStorage.removeItem('supporter-admin-custom-draft');
   updateCustomEstimate();
- }catch{$('custom-result').textContent='ご要望の読み込みに失敗しました。';}
+ }catch{$('custom-result').textContent='申請の読み込みに失敗しました。';}
 }
 
 // Custom contract features: one checkbox per feature of plan-features.js, grouped by section.

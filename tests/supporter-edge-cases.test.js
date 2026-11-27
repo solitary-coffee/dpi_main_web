@@ -200,11 +200,11 @@ test('遅延決済はCheckout完了時に未払いなら付与せず、非同期
   return{meta:{changes:1}};
  }};},async batch(statements){for(const statement of statements)await statement.run();}};
  const env={...envBase(),REUSE_DB:db,NOTICE_EMAIL:{async send(message){emails.push(message);}}};
- const session={id:'cs_async',mode:'payment',status:'complete',customer:'cus_async',payment_intent:'pi_async',client_reference_id:uid,amount_total:300,currency:'jpy',metadata:{dpi_checkout_kind:'initial_subscription',dpi_user:uid,dpi_plan:'supporter',dpi_channel_packs:'0',dpi_server_packs:'0',dpi_billing_anchor:String(Math.floor(Date.now()/1000)+86400),dpi_legal_consent_version:'2026-11-15'}};
+ const session={id:'cs_async',mode:'payment',status:'complete',customer:'cus_async',payment_intent:'pi_async',client_reference_id:uid,amount_total:300,currency:'jpy',metadata:{dpi_checkout_kind:'initial_subscription',dpi_user:uid,dpi_plan:'supporter',dpi_channel_packs:'0',dpi_server_packs:'0',dpi_billing_anchor:String(Math.floor(Date.now()/1000)+86400),dpi_legal_consent_version:'2026-11-15',dpi_initial_total:'300'}};
  const originalFetch=globalThis.fetch,calls=[];
  globalThis.fetch=async(url,init={})=>{const path=new URL(url).pathname,method=init.method||'GET';calls.push({path,method});let data={livemode:false};
   if(path==='/v1/subscriptions'&&method==='GET')data={livemode:false,data:subscription?[subscription]:[]};
-  else if(path==='/v1/payment_intents/pi_async')data={livemode:false,id:'pi_async',payment_method:'pm_async'};
+  else if(path==='/v1/payment_intents/pi_async')data={livemode:false,id:'pi_async',status:'succeeded',customer:'cus_async',amount_received:300,payment_method:'pm_async'};
   else if(path==='/v1/subscriptions'&&method==='POST'){subscription={livemode:false,id:'sub_async',status:'active',customer:'cus_async',items:{data:[]}};data=subscription;}
   return new Response(JSON.stringify(data),{status:200,headers:{'content-type':'application/json'}});
  };

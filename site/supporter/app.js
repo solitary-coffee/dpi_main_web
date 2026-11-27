@@ -70,7 +70,7 @@ function typeChoices(rule){
  const saved=IMAGE_TYPES.find(([value])=>value===rule?.type);
  return saved?[...TYPES,[saved[0],`${saved[1]}（準備中）`]]:TYPES;
 }
-const WEATHER_ALERT_DETAILS = new Set(['heavy-rain-level','landslide-level','flood-level','storm-surge-level']);
+const WEATHER_ALERT_DETAILS = new Set(['heavy-rain-level','landslide-level','storm-surge-level']);
 const WEATHER_WARNING_DETAILS = new Set(['storm-blizzard-warning','wave-warning','heavy-snow-warning','other-advisory']);
 
 async function api(path, method = 'GET', body, retry = true) {
@@ -267,6 +267,7 @@ function normalizeRule(rule) {
   eewWarningAreaMode: rule.eewWarningAreaMode || 'all',
   radarCondition: rule.radarCondition || (type==='hires-radar'?'scheduled':'all'),
   linearRainband: rule.linearRainband===true,
+  rainbandOnly: rule.rainbandOnly===true,
   includeTables: rule.includeTables!==false,
   enlargedArea: rule.enlargedArea===true,
   products: Array.isArray(rule.products)&&rule.products.length?rule.products.filter(id=>(type==='earthquake-map'?EARTHQUAKE_MAP_LEGACY_PRODUCT_IDS:WEATHER_MAP_PRODUCT_IDS).includes(id)):defaultProducts(type),
@@ -669,6 +670,11 @@ function imageRuleFields(article,rule){
  if(rule.type==='hires-radar'){
   if(!['scheduled','rainfall-threshold'].includes(rule.radarCondition))rule.radarCondition='scheduled';
   checkboxField(box,rule,'linearRainband','線状降水帯の発生情報を重ねて表示する');
+   if(entitlements.hiresRadarRainbandOnly)checkboxField(box,rule,'rainbandOnly','線状降水帯の解析があるときだけ配信する');
+   else if(rule.rainbandOnly){
+    upgradeNote(box,'保存済みの「線状降水帯の解析があるときだけ配信」は現在の契約では利用できません。契約内容を変更するか、この設定を解除してください。');
+    const reset=document.createElement('button');reset.type='button';reset.className='secondary-btn';reset.textContent='線状降水帯の解析時だけ配信を解除';reset.onclick=()=>{rule.rainbandOnly=false;render();};box.append(reset);
+   }
   const conditions=(options.hiresRadarConditions||[]).filter(([id])=>id!=='rainfall-threshold'||entitlements.hiresRadarThreshold||rule.radarCondition==='rainfall-threshold');
   field(box,rule,'radarCondition','配信条件',conditions);
   if(!entitlements.hiresRadarThreshold){
@@ -808,7 +814,11 @@ function applyIntakePaused(paused) {
 async function checkIntakePaused() {
  try {
   const response = await fetch('/api/supporter/plans', {credentials:'same-origin', cache:'no-store', headers:{Accept:'application/json'}});
-  if (response.ok) applyIntakePaused((await response.json()).intakePaused === true);
+  if(response.ok){
+   const flags=await response.json();
+   applyIntakePaused(flags.intakePaused===true);
+   if(flags.customRequests?.enabled===true)for(const item of document.querySelectorAll('[data-feature-gate="customRequests"]'))item.hidden=false;
+  }
  } catch { /* 案内を出せなくても、受付はサーバー側で止まっている。 */ }
 }
 
