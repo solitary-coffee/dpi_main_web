@@ -254,6 +254,7 @@ function normalizeRule(rule) {
  const detail = type === 'eew' && rule.detail === 'intensity-change' ? 'forecast' : (rule.detail || 'all');
  return {
   ...rule,
+  groupId: typeof rule.groupId === 'string' && /^[0-9a-zA-Z-]{1,64}$/.test(rule.groupId) ? rule.groupId : undefined,
   type,
   detail,
   sendFinalReport:rule.sendFinalReport!==false,
@@ -734,21 +735,24 @@ function render() {
  $('rules').replaceChildren();
  if(!hasConfigurableContract)return;
  rules.forEach((rule, index) => {
+  const isChild = rule.groupId && index > 0 && rules[index - 1].groupId === rule.groupId;
   const article = document.createElement('article');
   article.className = 'rule';
   const heading = document.createElement('h3');
   const target=imageRuleTargetSummary(rule);
-  heading.textContent = `通知ルール ${index + 1}${target?` — ${target}`:''}`;
+  heading.textContent = isChild ? `同じ送信先の追加の情報種別${target?` — ${target}`:''}` : `通知ルール ${index + 1}${target?` — ${target}`:''}`;
   article.append(heading);
-  field(article, rule, 'name', 'ルール名', null, {maxlength:'80'});
-  field(article, rule, 'guildId', 'サーバー', session.guilds.map(guild => [guild.id, guild.name]));
-  if(index>0&&rules[0]?.guildId&&rule.guildId!==rules[0].guildId){
-   const warning=document.createElement('p');warning.className='server-warning';warning.setAttribute('role','alert');
-   const used=new Set(rules.slice(0,index+1).map(item=>item.guildId).filter(Boolean)).size;
-   warning.textContent=`別サーバーを使用しています（${used}/${entitlements.servers}サーバー）。上限を超える場合はサーバー追加オプションが必要です。`;
-   article.append(warning);
+  if (!isChild) {
+   field(article, rule, 'name', 'ルール名', null, {maxlength:'80'});
+   field(article, rule, 'guildId', 'サーバー', session.guilds.map(guild => [guild.id, guild.name]));
+   if(index>0&&rules[0]?.guildId&&rule.guildId!==rules[0].guildId){
+    const warning=document.createElement('p');warning.className='server-warning';warning.setAttribute('role','alert');
+    const used=new Set(rules.slice(0,index+1).map(item=>item.guildId).filter(Boolean)).size;
+    warning.textContent=`別サーバーを使用しています（${used}/${entitlements.servers}サーバー）。上限を超える場合はサーバー追加オプションが必要です。`;
+    article.append(warning);
+   }
+   channelField(article, rule);
   }
-  channelField(article, rule);
   const available = typeChoices(rule);
   const currentCategory = categoryOf(rule.type);
   const catInput = field(article, { category: currentCategory }, 'category', '大枠', CATEGORIES.map(c => [c.id, c.name]));
@@ -809,7 +813,31 @@ function render() {
   }
   article.append(conditionFields);
   if(entitlements.complexConditions)additionalConditionsField(article,rule);
-  article.append(removeButton(rule));
+  const actions = document.createElement('div');
+  actions.className = 'rule-actions';
+  actions.append(removeButton(rule));
+  if (entitlements.complexConditions) {
+   const addType = document.createElement('button');
+   addType.type = 'button';
+   addType.className = 'secondary';
+   addType.textContent = '＋ 情報種別を追加';
+   addType.onclick = () => {
+    if (!rule.groupId) rule.groupId = crypto.randomUUID();
+    const child = normalizeRule({
+     groupId: rule.groupId,
+     name: rule.name,
+     guildId: rule.guildId,
+     channelId: rule.channelId,
+     channelIds: rule.channelIds ? [...rule.channelIds] : [],
+     type: 'earthquake'
+    });
+    const currentIndex = rules.indexOf(rule);
+    if (currentIndex >= 0) rules.splice(currentIndex + 1, 0, child);
+    render();
+   };
+   actions.append(addType);
+  }
+  article.append(actions);
   $('rules').append(article);
  });
 }
@@ -950,6 +978,17 @@ $('save').onclick = run(async () => {
  if(!hasConfigurableContract)return status('通知設定は有料プランの契約後に利用できます。');
  const saveButton=$('save');
  if(saveButton.disabled)return;
+ let currentParent = null;
+ for (const rule of rules) {
+  if (rule.groupId && currentParent && currentParent.groupId === rule.groupId) {
+   rule.name = currentParent.name;
+   rule.guildId = currentParent.guildId;
+   rule.channelId = currentParent.channelId;
+   rule.channelIds = currentParent.channelIds ? [...currentParent.channelIds] : [];
+  } else {
+   currentParent = rule;
+  }
+ }
  const mismatches=findRuleTargetMismatches(rules);
  if(mismatches.length&&!window.confirm(`ルール名と選択した対象が食い違っています。\n\n${mismatches.map(item=>`「${item.name}」\n選択：${item.selection}`).join('\n\n')}\n\nこのまま保存しますか？`))return;
  saveButton.disabled=true;

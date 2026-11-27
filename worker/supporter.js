@@ -625,6 +625,8 @@ export function normalizeSupporterRules(input, guilds, limits = {servers:1,chann
  const ruleLimit=unlimited?Infinity:Math.max(1,Number(limits.rules)||5);
  if (!Array.isArray(input) || (!unlimited&&input.length > ruleLimit)) throw Object.assign(new Error(`通知ルールは${ruleLimit}件までです。`),{status:400});
  const rules = input.map(rule => {
+  // Pro の情報種別の複数選択：同じ送信先のルールのまとまりの印（英数字とハイフン。不正なら付けない）
+  const groupId = typeof rule?.groupId === 'string' && /^[0-9a-zA-Z-]{1,64}$/.test(rule.groupId) ? rule.groupId : undefined;
   const name = clean(rule?.name);
   const guildId = clean(rule?.guildId);
   const requestedChannelIds=Array.isArray(rule?.channelIds)?rule.channelIds.map(clean).filter(Boolean):[];
@@ -645,7 +647,7 @@ export function normalizeSupporterRules(input, guilds, limits = {servers:1,chann
     throw Object.assign(new Error('入力内容とサーバー管理権限を確認してください。'),{status:400});
    if(channelIds.length>1&&!limits.multiDestination)throw Object.assign(new Error('1つのルールから複数チャンネルへの配信はPROプランで利用できます。'),{status:400});
    // Conditions and OR logic do not apply to image rules.
-   return {name,guildId,channelId,channelIds,type,conditionLogic:'and',conditions:[],...normalizeImageRuleFields(rule,type,limits,catalogue)};
+   return {name,...(groupId?{groupId}:{}),guildId,channelId,channelIds,type,conditionLogic:'and',conditions:[],...normalizeImageRuleFields(rule,type,limits,catalogue)};
   }
   const region = clean(rule?.region) || 'all';
   const conditionLogic=clean(rule?.conditionLogic)||'and';
@@ -673,14 +675,14 @@ export function normalizeSupporterRules(input, guilds, limits = {servers:1,chann
    if(radarCondition==='rainfall-threshold'&&limits.rainfallThreshold!==true)throw Object.assign(new Error('1時間降水量の閾値指定はPlus以上のプランで利用できます。'),{status:400});
    const rainfallThresholdMmPerHour=radarCondition==='rainfall-threshold'?optionalRainfallThreshold(rule?.rainfallThresholdMmPerHour):null;
    if(radarCondition==='rainfall-threshold'&&rainfallThresholdMmPerHour===null)throw Object.assign(new Error('1時間降水量の閾値を入力してください。'),{status:400});
-   return {name,guildId,channelId,channelIds,type,detail:'all',region,...geographic,conditionLogic,conditions,intensityMode:'',intensity:'',magnitudeMode:'',magnitudeMin:null,weatherLevel:'',warningLevel:'',eewWarningAreaMode:'',radarCondition,rainfallThresholdMmPerHour,deliveryIntervalHours:Number(deliveryIntervalHours)};
+   return {name,...(groupId?{groupId}:{}),guildId,channelId,channelIds,type,detail:'all',region,...geographic,conditionLogic,conditions,intensityMode:'',intensity:'',magnitudeMode:'',magnitudeMin:null,weatherLevel:'',warningLevel:'',eewWarningAreaMode:'',radarCondition,rainfallThresholdMmPerHour,deliveryIntervalHours:Number(deliveryIntervalHours)};
   }
   if (type === 'weather') {
    const weatherLevel = WEATHER_ALERT_DETAILS.has(detail) ? (clean(rule?.weatherLevel) || 'all') : '';
    const warningLevel = WEATHER_WARNING_DETAILS.has(detail) ? (clean(rule?.warningLevel) || 'all') : '';
    if (weatherLevel && !WEATHER_LEVEL_IDS.has(weatherLevel)) throw Object.assign(new Error('気象情報の警戒レベルを確認してください。'),{status:400});
    if (warningLevel && !WARNING_LEVEL_IDS.has(warningLevel)) throw Object.assign(new Error('警報・注意報の条件を確認してください。'),{status:400});
-   return {name,guildId,channelId,channelIds,type,detail,region,...geographic,conditionLogic,conditions,intensityMode:'',intensity:'',magnitudeMode:'',magnitudeMin:null,weatherLevel,warningLevel,eewWarningAreaMode:'',radarCondition:'',rainfallThresholdMmPerHour:null,deliveryIntervalHours:null};
+   return {name,...(groupId?{groupId}:{}),guildId,channelId,channelIds,type,detail,region,...geographic,conditionLogic,conditions,intensityMode:'',intensity:'',magnitudeMode:'',magnitudeMin:null,weatherLevel,warningLevel,eewWarningAreaMode:'',radarCondition:'',rainfallThresholdMmPerHour:null,deliveryIntervalHours:null};
   }
   const intensityMode = thresholdMode(rule,'intensityMode','intensityChange',rule?.intensity);
   const magnitudeMode = thresholdMode(rule,'magnitudeMode','magnitudeChange',rule?.magnitudeMin);
@@ -690,8 +692,16 @@ export function normalizeSupporterRules(input, guilds, limits = {servers:1,chann
   if (magnitudeMode === 'threshold' && magnitudeMin === null) throw Object.assign(new Error('閾値以上で通知するマグニチュードを入力してください。'),{status:400});
   const eewWarningAreaMode = type === 'eew' && detail === 'warning' ? (clean(rule?.eewWarningAreaMode) || 'all') : '';
   if (eewWarningAreaMode && !EEW_WARNING_AREA_MODE_IDS.has(eewWarningAreaMode)) throw Object.assign(new Error('緊急地震速報（警報）の対象地方条件を確認してください。'),{status:400});
-  return {name,guildId,channelId,channelIds,type,detail,region,...geographic,conditionLogic,conditions,intensityMode,intensity,magnitudeMode,magnitudeMin,weatherLevel:'',warningLevel:'',eewWarningAreaMode,sendFinalReport:type==='eew'?rule?.sendFinalReport!==false:true,radarCondition:'',rainfallThresholdMmPerHour:null,deliveryIntervalHours:null};
+  return {name,...(groupId?{groupId}:{}),guildId,channelId,channelIds,type,detail,region,...geographic,conditionLogic,conditions,intensityMode,intensity,magnitudeMode,magnitudeMin,weatherLevel:'',warningLevel:'',eewWarningAreaMode,sendFinalReport:type==='eew'?rule?.sendFinalReport!==false:true,radarCondition:'',rainfallThresholdMmPerHour:null,deliveryIntervalHours:null};
  });
+ if (!limits.complexConditions) {
+  const groups = new Map();
+  for (const rule of rules) {
+   if (!rule.groupId) continue;
+   groups.set(rule.groupId, (groups.get(rule.groupId) || 0) + 1);
+   if (groups.get(rule.groupId) >= 2) throw Object.assign(new Error('情報種別の複数選択は Pro 以上で使えます。'),{status:400});
+  }
+ }
  const serverCount = new Set(rules.map(rule => rule.guildId)).size;
  const channelCount = new Set(rules.flatMap(rule => rule.channelIds.map(channelId=>`${rule.guildId}:${channelId}`))).size;
  const serverLimit = Math.max(1,Number(limits.servers)||1);
